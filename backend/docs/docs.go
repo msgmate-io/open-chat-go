@@ -16,7 +16,40 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/user/self/": {
+        "/api/user/login/": {
+            "post": {
+                "description": "Login a user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Login a user",
+                "parameters": [
+                    {
+                        "description": "username",
+                        "name": "username",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "password",
+                        "name": "password",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {}
+            }
+        },
+        "/api/user/self/": {
             "get": {
                 "summary": "Show a bottle",
                 "responses": {}
@@ -28,8 +61,8 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "3.1",
-	Host:             "beta.msgmate.io",
-	BasePath:         "/api/",
+	Host:             "localhost:3000",
+	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Open-Chat 2.0 API",
 	Description:      "Hello there :)",
