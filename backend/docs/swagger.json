@@ -7,10 +7,43 @@
         "contact": {},
         "version": "3.1"
     },
-    "host": "beta.msgmate.io",
-    "basePath": "/api/",
+    "host": "localhost:3000",
+    "basePath": "/",
     "paths": {
-        "/user/self/": {
+        "/api/user/login/": {
+            "post": {
+                "description": "Login a user",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "Login a user",
+                "parameters": [
+                    {
+                        "description": "username",
+                        "name": "username",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "password",
+                        "name": "password",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {}
+            }
+        },
+        "/api/user/self/": {
             "get": {
                 "summary": "Show a bottle",
                 "responses": {}
