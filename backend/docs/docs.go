@@ -15,14 +15,21 @@ const docTemplate = `{
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
-    "paths": {}
+    "paths": {
+        "/user/self/": {
+            "get": {
+                "summary": "Show a bottle",
+                "responses": {}
+            }
+        }
+    }
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "3.1",
 	Host:             "beta.msgmate.io",
-	BasePath:         "/v2",
+	BasePath:         "/api/",
 	Schemes:          []string{},
 	Title:            "Open-Chat 2.0 API",
 	Description:      "Hello there :)",
