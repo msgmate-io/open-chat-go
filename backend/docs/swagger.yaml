@@ -1,0 +1,10 @@
+basePath: /v2
+host: beta.msgmate.io
+info:
+  contact: {}
+  description: Hello there :)
+  termsOfService: http://swagger.io/terms/
+  title: Open-Chat 2.0 API
+  version: "3.1"
+paths: {}
+swagger: "2.0"

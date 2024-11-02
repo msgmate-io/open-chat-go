@@ -1,0 +1,13 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Hello there :)",
+        "title": "Open-Chat 2.0 API",
+        "termsOfService": "http://swagger.io/terms/",
+        "contact": {},
+        "version": "3.1"
+    },
+    "host": "beta.msgmate.io",
+    "basePath": "/v2",
+    "paths": {}
+}
