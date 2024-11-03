@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"backend/api"
+	"backend/server"
 	"context"
 	"fmt"
-	"github.com/rs/cors"
 	"github.com/urfave/cli/v3"
-	"net/http"
 )
 
 func ServerCli() *cli.Command {
@@ -39,7 +37,7 @@ func ServerCli() *cli.Command {
 				Name:        "host",
 				Destination: &host,
 				Aliases:     []string{"b"},
-				Value:       "0.0.0.0",
+				Value:       "127.0.0.1",
 				Usage:       "server bind address",
 			},
 			&cli.BoolFlag{
@@ -60,33 +58,11 @@ func ServerCli() *cli.Command {
 			},
 		},
 		Action: func(context.Context, *cli.Command) error {
-			router := api.BackendRouting()
-			var protocol string
-			var fullHost string
 
-			if ssl {
-				protocol = "https"
-			} else {
-				protocol = "http"
-			}
+			s, fullHost := server.BackendServer(host, port, debug, ssl)
+			fmt.Printf("Starting server on %s\n", fullHost)
 
-			fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
-
-			fmt.Println(fmt.Sprintf("Starting Server at %s", fullHost))
-
-			server := http.Server{
-				Addr: fmt.Sprintf("%s:%d", host, port),
-				Handler: api.CreateStack(
-					api.Logging,
-					cors.New(cors.Options{
-						AllowedOrigins:   []string{fullHost},
-						AllowCredentials: true,
-						Debug:            debug,
-					}).Handler,
-				)(router),
-			}
-
-			server.ListenAndServe()
+			s.ListenAndServe()
 
 			return nil
 		},
