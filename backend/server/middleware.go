@@ -1,4 +1,4 @@
-package api
+package server
 
 // Stolen from 'https://github.com/dreamsofcode-io/nethttp'
 import (
