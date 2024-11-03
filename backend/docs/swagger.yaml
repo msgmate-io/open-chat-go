@@ -1,5 +1,5 @@
-basePath: /api/
-host: beta.msgmate.io
+basePath: /
+host: localhost:3000
 info:
   contact: {}
   description: Hello there :)
@@ -7,7 +7,29 @@ info:
   title: Open-Chat 2.0 API
   version: "3.1"
 paths:
-  /user/self/:
+  /api/user/login/:
+    post:
+      consumes:
+      - application/json
+      description: Login a user
+      parameters:
+      - description: username
+        in: body
+        name: username
+        required: true
+        schema:
+          type: string
+      - description: password
+        in: body
+        name: password
+        required: true
+        schema:
+          type: string
+      produces:
+      - application/json
+      responses: {}
+      summary: Login a user
+  /api/user/self/:
     get:
       responses: {}
       summary: Show a bottle

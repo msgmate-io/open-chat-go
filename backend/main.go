@@ -10,6 +10,8 @@ Notes:
 - use token based authentication for now: github.com/go-chi/jwtauth
 - add csrf potection later https://github.com/francoposa/go-csrf-examples
 - Generate api schema `$HOME/go/bin/swag init`
+- https://github.com/tauri-apps/tauri
+- https://github.com/swaggo/swag/tree/v2
 
 */
 
@@ -21,6 +23,7 @@ import (
 )
 
 const serverPort int = 3000
+const Debug bool = true
 const dbBackend Models.DbBackend = Models.SqLite
 
 // @title Open-Chat 2.0 API
@@ -28,8 +31,8 @@ const dbBackend Models.DbBackend = Models.SqLite
 // @description Hello there :)
 // @termsOfService http://swagger.io/terms/
 
-// @host beta.msgmate.io
-// @BasePath /api/
+// @host localhost:3000
+// @BasePath /
 func main() {
 	// 1 - Setup the database
 	Models.SetupDatabase(dbBackend)
