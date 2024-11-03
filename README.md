@@ -1,13 +1,12 @@
-## Open-Chat Go-Server
+## open-chat-go (mvp)
 
-> ⚠️ this is very early stage & I'm pretty much learning 'go' along the way so don't exprect to much here yet
+### Testing
 
-A re-write of the [open-chat api spec](https://beta.msgmate.io/api/schema/swagger-ui/)
-but in go.
+```bash
+go test -v ./...
+```
 
-Reasons are mainly portability & the future ability to re-write the api to interace as matrix-client.
+### non standart lib packages
 
-### Software choices
-
-- ORM via gorm
-- Chi-Go as server
+- `github.com/urfave/cli/v3` for cli
+- `github.com/rs/cors` for cors
