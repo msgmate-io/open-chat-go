@@ -56,8 +56,8 @@ func UserSelfHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type UserLoginRequest struct {
-	Username string
-	Password string
+	Username string `json:"username" form:"username"`
+	Password string `json:"password" form:"password"`
 }
 
 // UserLoginHandler godoc
@@ -71,16 +71,19 @@ type UserLoginRequest struct {
 //		@Router			/api/user/login/ [post]
 func UserLoginHandler(w http.ResponseWriter, r *http.Request) {
 	var request UserLoginRequest
-	err := json.NewDecoder(r.Body).Decode(&request)
+	err := ParseRequest(r, &request)
+
+	w.Header().Set("Content-Type", "application/json")
 
 	if err != nil {
-		fmt.Println("Error decoding request:", err)
 		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "bad request",
+			"msg":   err.Error(),
+		})
 		return
 	}
 
-	fmt.Printf("DEBUG: request is %v\n", request)
 	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("ok"))
+	json.NewEncoder(w).Encode(request)
 }
