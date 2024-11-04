@@ -2,8 +2,11 @@ package server
 
 // Stolen from 'https://github.com/dreamsofcode-io/nethttp'
 import (
+	"context"
+	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -30,6 +33,26 @@ func (w *wrappedWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
+const jsonDataKey int = 0
+
+// curl -X POST http://localhost:8080/api/v1/test -H "Content-Type: application/json" -d '{"key1": "value1", "key2": "value2"}'
+func JsonBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			var data map[string]interface{}
+
+			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), jsonDataKey, data)
+			r = r.WithContext(ctx)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -42,5 +65,9 @@ func Logging(next http.Handler) http.Handler {
 		next.ServeHTTP(wrapped, r)
 
 		log.Println(wrapped.statusCode, r.Method, r.URL.Path, time.Since(start))
+
+		if jsonData := r.Context().Value(jsonDataKey); jsonData != nil {
+			log.Printf("JSON Body: %v", jsonData)
+		}
 	})
 }
