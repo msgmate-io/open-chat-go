@@ -27,6 +27,7 @@ func BackendServer(
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", host, port),
 		Handler: CreateStack(
+			JsonBody,
 			Logging,
 			cors.New(cors.Options{
 				AllowedOrigins:   []string{"foo.com"},
