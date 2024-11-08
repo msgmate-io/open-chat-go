@@ -17,24 +17,28 @@ func main() {
 			&cli.StringFlag{
 				Sources: cli.EnvVars("MVP_DB_BACKEND"),
 				Name:    "db",
+				Aliases: []string{"b"},
 				Value:   "sqlite",
 				Usage:   "database driver to use",
 			},
 			&cli.StringFlag{
 				Sources: cli.EnvVars("MVP_DB_DSN"),
 				Name:    "dbdns",
+				Aliases: []string{"d"},
 				Value:   "db=./database",
 				Usage:   "database connect string",
 			},
 			&cli.StringFlag{
 				Sources: cli.EnvVars("MVP_HOST"),
 				Name:    "bind",
+				Aliases: []string{"s"},
 				Value:   "127.0.0.1",
 				Usage:   "server bind address",
 			},
 			&cli.IntFlag{
 				Sources: cli.EnvVars("MVP_PORT"),
 				Name:    "port",
+				Aliases: []string{"p"},
 				Value:   4000,
 				Usage:   "server port",
 			},
