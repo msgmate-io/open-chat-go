@@ -1,10 +1,10 @@
 package cmd
 
 import (
+	"backend/database"
 	"backend/server"
 	"context"
 	"fmt"
-
 	"github.com/urfave/cli/v3"
 )
 
@@ -51,6 +51,7 @@ func ServerCli() *cli.Command {
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 
+			database.SetupDatabase(c.String("db-backend"), c.Bool("debug"))
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 
