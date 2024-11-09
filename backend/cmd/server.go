@@ -31,7 +31,7 @@ func ServerCli() *cli.Command {
 				Sources: cli.EnvVars("DEBUG"),
 				Name:    "debug",
 				Aliases: []string{"d"},
-				Value:   false,
+				Value:   true, // TODO default to false
 				Usage:   "enable debug mode",
 			},
 			&cli.StringFlag{
@@ -58,7 +58,8 @@ func ServerCli() *cli.Command {
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 
-			database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
+			database.DB = database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
+
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 
