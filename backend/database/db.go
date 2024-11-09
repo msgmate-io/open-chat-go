@@ -10,13 +10,16 @@ import (
 )
 
 var SessionManager *scs.SessionManager
+var DB *gorm.DB
 
 func SetupSessionManager(
 	db *gorm.DB,
 ) {
 	var err error
 	SessionManager = scs.New()
-	if SessionManager.Store, err = gormstore.New(db); err != nil {
+	SessionManager.Store, err = gormstore.New(db)
+
+	if err != nil {
 		log.Fatal(err)
 	}
 }
