@@ -46,8 +46,10 @@ func ServerCli() *cli.Command {
 			fmt.Println(fmt.Sprintf("Starting Server at %s:%d", host, port))
 
 			server := http.Server{
-				Addr:    fmt.Sprintf("%s:%d", host, port),
-				Handler: router,
+				Addr: fmt.Sprintf("%s:%d", host, port),
+				Handler: api.CreateStack(
+					api.Logging,
+				)(router),
 			}
 
 			server.ListenAndServe()
