@@ -1,9 +1,11 @@
 package server
 
 import (
+	"backend/database"
 	"fmt"
-	"github.com/rs/cors"
 	"net/http"
+
+	"github.com/rs/cors"
 )
 
 func BackendServer(
@@ -27,6 +29,7 @@ func BackendServer(
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", host, port),
 		Handler: CreateStack(
+			database.SessionManager.LoadAndSave,
 			JsonBody,
 			Logging,
 			cors.New(cors.Options{
