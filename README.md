@@ -6,6 +6,7 @@ Aim is portability and performance to enable planned p2p features.
 ### test
 
 ```bash
+cd backend
 go test -v ./...
 go test -v ./... -run "^SomeTest_Func$" 
 ```
