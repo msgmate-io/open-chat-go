@@ -1,6 +1,7 @@
 package server
 
 import (
+	"backend/api"
 	"net/http"
 )
 
@@ -10,6 +11,10 @@ func BackendRouting() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/test", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Hello, World!"))
 	})
+
+	userHandler := &api.UserHandler{}
+
+	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
 
 	return mux
 }
