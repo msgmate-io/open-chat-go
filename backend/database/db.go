@@ -44,7 +44,12 @@ func SetupDatabase(
 
 	db.AutoMigrate(&User{})
 	if debug {
-		db.Create(&User{Name: "Test User", Email: "tim+test@timschupp.de"})
+		user, err := RegisterUser(db, "Test User", "tim+test@timschupp.de", []byte("password"))
+		if err != nil {
+			panic(fmt.Sprintf("Failed to create test user: %v", err))
+		} else {
+			log.Println("Created test user %v", user)
+		}
 	}
 
 	SetupSessionManager(db)
