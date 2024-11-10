@@ -1,12 +1,26 @@
 package server
 
 import (
-	"backend/database"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
-	"net/http"
-
 	"github.com/rs/cors"
+	"golang.org/x/crypto/bcrypt"
+	"log"
+	"net/http"
 )
+
+func GenerateToken(email string) string {
+	hash, err := bcrypt.GenerateFromPassword([]byte(email), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Hash to store:", string(hash))
+
+	hasher := md5.New()
+	hasher.Write(hash)
+	return hex.EncodeToString(hasher.Sum(nil))
+}
 
 func BackendServer(
 	host string,
@@ -29,7 +43,7 @@ func BackendServer(
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", host, port),
 		Handler: CreateStack(
-			database.SessionManager.LoadAndSave,
+			// database.SessionManager.LoadAndSave, TODO: depricate we can roll that our selfs
 			// JsonBody, TODO: depricate bad practice
 			Logging,
 			cors.New(cors.Options{
