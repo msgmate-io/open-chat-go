@@ -6,6 +6,10 @@ import (
 
 type Handler struct{}
 
+func Login(w http.ResponseWriter, r *http.Request) {
+
+}
+
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte("User Created"))
