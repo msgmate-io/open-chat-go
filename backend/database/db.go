@@ -8,13 +8,14 @@ import (
 
 func SetupDatabase(
 	dbBackend string,
+	dbPathSqlite string,
 	debug bool,
 ) *gorm.DB {
 	if dbBackend != "sqlite" {
 		panic(fmt.Sprintf("Unsupported/Unimplemented database backend: %s", dbBackend))
 	}
 
-	db, err := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbPathSqlite), &gorm.Config{})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to connect to database: %v", err))
 	}
