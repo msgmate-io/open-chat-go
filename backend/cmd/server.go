@@ -20,6 +20,13 @@ func ServerCli() *cli.Command {
 				Value:   "sqlite",
 				Usage:   "database driver to use",
 			},
+			&cli.StringFlag{
+				Sources: cli.EnvVars("DB_PATH"),
+				Name:    "db-path",
+				Aliases: []string{"dp"},
+				Value:   "data.db",
+				Usage:   "For sqlite the path to the database file",
+			},
 			&cli.BoolFlag{
 				Sources: cli.EnvVars("DEBUG"),
 				Name:    "debug",
@@ -51,7 +58,7 @@ func ServerCli() *cli.Command {
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 
-			database.SetupDatabase(c.String("db-backend"), c.Bool("debug"))
+			database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 
