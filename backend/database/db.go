@@ -2,9 +2,24 @@ package database
 
 import (
 	"fmt"
+	"github.com/alexedwards/scs/gormstore"
+	"github.com/alexedwards/scs/v2"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"log"
 )
+
+var SessionManager *scs.SessionManager
+
+func SetupSessionManager(
+	db *gorm.DB,
+) {
+	var err error
+	SessionManager = scs.New()
+	if SessionManager.Store, err = gormstore.New(db); err != nil {
+		log.Fatal(err)
+	}
+}
 
 func SetupDatabase(
 	dbBackend string,
@@ -28,6 +43,8 @@ func SetupDatabase(
 	if debug {
 		db.Create(&User{Name: "Test User", Email: "tim+test@timschupp.de"})
 	}
+
+	SetupSessionManager(db)
 
 	return db
 }
