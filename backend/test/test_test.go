@@ -1,22 +1,41 @@
 package test
 
 import (
-	"backend/api"
-	"fmt"
+	"backend/server"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func TestHelloHandler(t *testing.T) {
-	mux := api.BackendRouting()
-	ts := httptest.NewServer(mux)
+func TestJsonMiddleware_BadJson(t *testing.T) {
+	s, _ := server.BackendServer("localhost", 1984, true, false)
+
+	ts := httptest.NewServer(s.Handler)
 	defer ts.Close()
 
-	res, err := http.Get(ts.URL + "/api/v1/test")
+	res, err := http.Post(ts.URL+"/api/v1/test", "application/json", strings.NewReader(`{"name": "test}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	fmt.Println(res)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected status code 400, got %d", res.StatusCode)
+	}
+}
+
+func TestJsonMiddleware_GoodJson(t *testing.T) {
+	s, _ := server.BackendServer("localhost", 1984, true, false)
+
+	ts := httptest.NewServer(s.Handler)
+	defer ts.Close()
+
+	res, err := http.Post(ts.URL+"/api/v1/test", "application/json", strings.NewReader(`{"name": "test"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("Expected status code 200, got %d", res.StatusCode)
+	}
 }
