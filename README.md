@@ -20,4 +20,6 @@ go build -ldflags "-s -w"
 
 - `github.com/urfave/cli/v3` for cli
 - `github.com/rs/cors` for cors
-- `github.com/golang-jwt/jwt/v5` for jwt's
+- `github.com/alexedwards/scs/v2` for session authentication 
+- `gorm.io/gorm + ...` as orm for sqlite + psql and convenience
+- `golang.org/x/crypto` password hashing
