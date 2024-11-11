@@ -33,9 +33,8 @@ func (w *wrappedWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
-const jsonDataKey int = 0
-
 // curl -X POST http://localhost:8080/api/v1/test -H "Content-Type: application/json" -d '{"key1": "value1", "key2": "value2"}'
+// TODO: depricate bad practice
 func JsonBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
@@ -46,7 +45,7 @@ func JsonBody(next http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), jsonDataKey, data)
+			ctx := context.WithValue(r.Context(), "json", data)
 			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
@@ -66,7 +65,7 @@ func Logging(next http.Handler) http.Handler {
 
 		log.Println(wrapped.statusCode, r.Method, r.URL.Path, time.Since(start))
 
-		if jsonData := r.Context().Value(jsonDataKey); jsonData != nil {
+		if jsonData := r.Context().Value("json"); jsonData != nil {
 			log.Printf("JSON Body: %v", jsonData)
 		}
 	})
