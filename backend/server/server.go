@@ -30,7 +30,7 @@ func BackendServer(
 		Addr: fmt.Sprintf("%s:%d", host, port),
 		Handler: CreateStack(
 			database.SessionManager.LoadAndSave,
-			JsonBody,
+			// JsonBody, TODO: depricate bad practice
 			Logging,
 			cors.New(cors.Options{
 				AllowedOrigins:   []string{"foo.com"},
