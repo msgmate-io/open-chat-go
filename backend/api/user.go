@@ -3,11 +3,10 @@ package api
 import (
 	"backend/database"
 	"encoding/json"
-	"log"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"net/mail"
-
-	"golang.org/x/crypto/bcrypt"
+	"time"
 )
 
 type UserHandler struct{}
@@ -53,7 +52,26 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expiry := time.Now().Add(24 * time.Hour)
+	token := GenerateToken(user.Email) //TODO: based on something else! or random!
+	session := database.Session{
+		Token:  token,
+		Data:   []byte{},
+		Expiry: expiry,
+	}
+
+	q = database.DB.Create(&session)
+
+	if q.Error != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	cookie := CreateSessionToken(w, "session_id", time.Now().Add(24*time.Hour))
+
+	w.Header().Add("Set-Cookie", cookie.String())
+	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
+
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Login successful"))
-	// TODO: generate session token and return it as `Set-Cookie` header
 }
