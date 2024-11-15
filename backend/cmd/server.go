@@ -63,9 +63,7 @@ func ServerCli() *cli.Command {
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 
-			s.ListenAndServe()
-
-			return nil
+			return s.ListenAndServe()
 		},
 	}
 
