@@ -7,6 +7,9 @@ import (
 	"os"
 )
 
+// make version a variable so the build system can inject it
+var version = "unknown"
+
 func main() {
 
 	cmd := cmd.ServerCli()
