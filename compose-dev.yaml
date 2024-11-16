@@ -1,0 +1,15 @@
+---
+version: "3.7"
+services:
+  app:
+    build:
+      dockerfile: dev.dockerfile
+      context: .
+    image: dev-backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend:/backend
+    environment:
+      HOST: "0.0.0.0"
+      PORT: 8080
