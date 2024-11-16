@@ -1,0 +1,18 @@
+
+services:
+  mvpapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prod
+  mvpapp-alpine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: prod-alpine
+  mvpapp-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: basebuilder
+  
