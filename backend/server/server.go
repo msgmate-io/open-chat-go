@@ -31,7 +31,7 @@ func BackendServer(
 	var protocol string
 	var fullHost string
 
-	router := BackendRouting()
+	router := BackendRouting(debug)
 	if ssl {
 		protocol = "https"
 	} else {

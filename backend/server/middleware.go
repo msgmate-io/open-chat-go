@@ -1,6 +1,6 @@
 package server
 
-// Stolen from 'https://github.com/dreamsofcode-io/nethttp'
+// Some stuff stolen from 'https://github.com/dreamsofcode-io/nethttp'
 import (
 	"context"
 	"encoding/json"
