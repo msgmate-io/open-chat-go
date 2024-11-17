@@ -24,6 +24,21 @@ type UserRegister struct {
 
 // curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:8080" -d '{"email":"tim+test@timschupp.de","password":"password"}' http://localhost:8080/api/v1/user/login -v
 // https://stackoverflow.com/questions/23259586/bcrypt-password-hashing-in-golang-compatible-with-node-js
+
+// Login a user
+//
+//		@Summary      Login a user
+//		@Description  Login a user
+//		@Tags         accounts
+//		@Accept       json
+//		@Produce      json
+//	 	@Param        email body string true "Email"
+//	 	@Param        password body string true "Password"
+//		@Success      200  {string}  string	"Login successful"
+//		@Success      200  {string}  string	"Login successful"
+//		@Failure      400  {string}  string	"Invalid email or password"
+//		@Failure      500  {object}  string	"Internal server error"
+//		@Router       /api/v1/user/login [post]
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var data UserLogin
 	var defaultErrorMessage string = "Invalid email or password"
@@ -83,6 +98,23 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:1984" -d '{"name": "Tim Here", "email":"tim+test@timschupp.de","password":"password"}' http://localhost:1984/api/v1/user/register -v
+
+// Register a user
+//
+//	@Summary      Register a user
+//	@Description  Register a user
+//	@Tags         accounts
+//	@Accept       json
+//	@Produce      json
+//	@Param        name body string true "Name"
+//	@Param        email body string true "Email"
+//	@Param        password body string true "Password"
+//	@Success      201  {string}  string	"User created"
+//	@Failure      400  {string}  string	"Invalid email"
+//	@Failure      400  {string}  string	"Email already in use"
+//	@Failure      400  {string}  string	"Password too short"
+//	@Failure      500  {string}  string	"Internal server error"
+//	@Router       /api/v1/user/register [post]
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var data UserRegister
 
