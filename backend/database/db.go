@@ -23,12 +23,25 @@ func SetupDatabase(
 		panic(fmt.Sprintf("Failed to connect to database: %v", err))
 	}
 
+	stmt := &gorm.Statement{DB: db}
 	if debug {
-		db.Migrator().DropTable(&User{})
+		for i, table := range Tabels {
+			stmt.Parse(table)
+			tableName := stmt.Schema.Table
+			log.Println(fmt.Sprintf("Dropping tables (%v/%v): %v", i, len(Tabels), tableName))
+			db.Migrator().DropTable(table)
+		}
 	}
 
-	db.AutoMigrate(&User{})
-	db.AutoMigrate(&Session{})
+	for i, table := range Tabels {
+		stmt.Parse(table)
+		tableName := stmt.Schema.Table
+		log.Println(fmt.Sprintf("Migrating table (%v/%v): %v", i, len(Tabels), tableName))
+		err = db.AutoMigrate(table)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to migrate table: %v", err))
+		}
+	}
 
 	if debug {
 		user, err := RegisterUser(db, "Test User", "tim+test@timschupp.de", []byte("password"))
