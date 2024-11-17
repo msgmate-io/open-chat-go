@@ -13,8 +13,24 @@ type User struct {
 	PasswordHash string
 }
 
+func (u *User) AddContact(
+	user *User,
+) (*Contact, error) {
+	contact := Contact{
+		OwningUserId:  u.ID,
+		ContactUserId: user.ID,
+	}
+
+	r := DB.Create(&contact)
+
+	if r.Error != nil {
+		return nil, r.Error
+	}
+
+	return &contact, nil
+}
+
 func RegisterUser(
-	db *gorm.DB,
 	name string,
 	email string,
 	password []byte,
@@ -36,11 +52,11 @@ func RegisterUser(
 		PasswordHash: string(hashedPassword),
 	}
 
-	r := db.Create(&user)
+	r := DB.Create(&user)
 
 	if r.Error != nil {
 		return nil, r.Error
 	}
 
-	return &user, r.Error
+	return &user, nil
 }
