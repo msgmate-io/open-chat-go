@@ -22,7 +22,7 @@ type UserRegister struct {
 	Password string `json:"password"`
 }
 
-// curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:1984" -d '{"email":"tim+test@timschupp.de","password":"password"}' http://localhost:1984/api/v1/user/login -v
+// curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:8080" -d '{"email":"tim+test@timschupp.de","password":"password"}' http://localhost:8080/api/v1/user/login -v
 // https://stackoverflow.com/questions/23259586/bcrypt-password-hashing-in-golang-compatible-with-node-js
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var data UserLogin
