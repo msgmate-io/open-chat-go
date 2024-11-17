@@ -35,7 +35,7 @@ func SetupDatabase(
 		if err != nil {
 			panic(fmt.Sprintf("Failed to create test user: %v", err))
 		} else {
-			log.Println("Created test user %v", user)
+			log.Println(fmt.Sprintf("Created test user: %v", user))
 		}
 	}
 
