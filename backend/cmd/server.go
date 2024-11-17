@@ -60,6 +60,10 @@ func ServerCli() *cli.Command {
 
 			database.DB = database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
 
+			if c.Bool("debug") {
+				database.SetupTestUsers()
+			}
+
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 
