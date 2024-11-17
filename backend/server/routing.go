@@ -15,6 +15,7 @@ func BackendRouting() *http.ServeMux {
 	userHandler := &api.UserHandler{}
 
 	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
+	mux.HandleFunc("POST /api/v1/user/register", userHandler.Register)
 
 	return mux
 }
