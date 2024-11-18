@@ -1,6 +1,8 @@
 package server
 
 import (
+	"backend/api/chats"
+	"backend/api/contacts"
 	"backend/api/reference"
 	"backend/api/user"
 	"net/http"
@@ -10,21 +12,23 @@ func BackendRouting(
 	debug bool,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
-	v1PublicApis := http.NewServeMux()
+	v1PrivateApis := http.NewServeMux()
 
 	userHandler := &user.UserHandler{}
+	chatsHandler := &chats.ChatsHandler{}
+	contactsHandler := &contacts.ContactsHander{}
 
-	if debug {
-		v1PublicApis.HandleFunc("POST /test", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("Hello, World!"))
-		})
-	}
+	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
+	v1PrivateApis.HandleFunc("POST /chats/create", chatsHandler.Create)
 
-	v1PublicApis.HandleFunc("POST /user/login", userHandler.Login)
-	v1PublicApis.HandleFunc("POST /user/register", userHandler.Register)
+	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
+	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
 
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", v1PublicApis))
+	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 
+	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
+	mux.HandleFunc("POST /api/v1/user/register", userHandler.Register)
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", AuthMiddleware(v1PrivateApis)))
 	mux.HandleFunc("/reference", reference.ScalarReference)
 
 	return mux
