@@ -3,6 +3,7 @@ package user
 import (
 	"backend/database"
 	"encoding/json"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"net/mail"
@@ -71,6 +72,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Name:         data.Name,
 		Email:        data.Email,
 		PasswordHash: string(hashedPassword),
+		ContactToken: uuid.New().String(),
 	}
 
 	q = database.DB.Create(&user)
