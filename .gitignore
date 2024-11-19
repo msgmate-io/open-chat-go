@@ -1,3 +1,5 @@
 backend/backend
 backend/data.db
+# don't commit the generated swagger docs:
+backend/docs
 .env
