@@ -1,7 +1,8 @@
 package server
 
 import (
-	"backend/api"
+	"backend/api/reference"
+	"backend/api/user"
 	"net/http"
 )
 
@@ -11,7 +12,7 @@ func BackendRouting(
 	mux := http.NewServeMux()
 	v1PublicApis := http.NewServeMux()
 
-	userHandler := &api.UserHandler{}
+	userHandler := &user.UserHandler{}
 
 	if debug {
 		v1PublicApis.HandleFunc("POST /test", func(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +24,8 @@ func BackendRouting(
 	v1PublicApis.HandleFunc("POST /user/register", userHandler.Register)
 
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", v1PublicApis))
+
+	mux.HandleFunc("/reference", reference.ScalarReference)
 
 	return mux
 }
