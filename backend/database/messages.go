@@ -1,12 +1,8 @@
 package database
 
-import (
-	"gorm.io/gorm"
-)
-
 // Some inspiration from: https://github.com/omept/go-chat/
 type Message struct {
-	gorm.Model
+	Model
 	SenderId   uint   `json:"SenderId" gorm:"index"`
 	Sender     User   `json:"User" gorm:"foreignKey:SenderId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	ReceiverId uint   `json:"ReceiverId" gorm:"index"`
@@ -16,7 +12,7 @@ type Message struct {
 }
 
 type Chat struct {
-	gorm.Model
+	Model
 	User1Id         uint    `json:"User1Id" gorm:"index"`
 	User2Id         uint    `json:"User2Id" gorm:"index"`
 	User1           User    `json:"User1" gorm:"foreignKey:User1Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
@@ -27,18 +23,19 @@ type Chat struct {
 }
 
 type ChatSettings struct {
-	gorm.Model
+	Model
 	ChatId uint `json:"ChatId" gorm:"index"`
 	Chat   Chat `json:"Chat" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	// TODO
 }
 
 type Contact struct {
-	gorm.Model
-	OwningUserId  uint `json:"OwningUserId" gorm:"index"`
-	ContactUserId uint `json:"ContactUserId" gorm:"index"`
-	OwningUser    User `json:"OwningUser" gorm:"foreignKey:OwningUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	Contact       User `json:"Contact" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Model
+	ContactToken  string `json:"contact_token" gorm:"index"`
+	OwningUserId  uint   `json:"-" gorm:"index"`
+	ContactUserId uint   `json:"-" gorm:"index"`
+	OwningUser    User   `json:"-" gorm:"foreignKey:OwningUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Contact       User   `json:"-" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 }
 
 func (contact *Contact) List(
