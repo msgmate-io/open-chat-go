@@ -66,6 +66,7 @@ func ServerCli() *cli.Command {
 
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
+			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
 			return s.ListenAndServe()
 		},
