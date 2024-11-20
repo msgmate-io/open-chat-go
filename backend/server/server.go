@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
-	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
 	"log"
 	"net/http"
@@ -43,14 +42,12 @@ func BackendServer(
 	server := &http.Server{
 		Addr: fmt.Sprintf("%s:%d", host, port),
 		Handler: CreateStack(
-			// database.SessionManager.LoadAndSave, TODO: depricate we can roll that our selfs
-			// JsonBody, TODO: depricate bad practice
 			Logging,
-			cors.New(cors.Options{
-				AllowedOrigins:   []string{"foo.com"},
-				AllowCredentials: true,
-				Debug:            debug,
-			}).Handler,
+			/**cors.New(cors.Options{
+			AllowedOrigins:   []string{"foo.com"},
+			AllowCredentials: true,
+			Debug:            debug,
+			}).Handler, **/
 		)(router),
 	}
 

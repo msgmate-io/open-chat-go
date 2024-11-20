@@ -8,6 +8,8 @@ require github.com/rs/cors v1.11.1
 
 require golang.org/x/crypto v0.29.0
 
+require github.com/google/uuid v1.6.0
+
 // gorm stuff
 require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
