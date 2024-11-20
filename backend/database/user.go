@@ -2,15 +2,15 @@ package database
 
 import (
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 	"net/mail"
 )
 
 type User struct {
-	gorm.Model
-	Name         string
+	Model
+	Name         string `json:"name"`
 	Email        string `gorm:"unique"`
-	PasswordHash string
+	PasswordHash string `json:"-"`
+	ContactToken string `json:"contact_token"`
 }
 
 func (u *User) AddContact(
