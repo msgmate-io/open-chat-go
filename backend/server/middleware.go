@@ -2,8 +2,10 @@ package server
 
 // Some stuff stolen from 'https://github.com/dreamsofcode-io/nethttp'
 import (
+	"backend/database"
 	"context"
 	"encoding/json"
+	"gorm.io/gorm"
 	"log"
 	"net/http"
 	"strings"
@@ -33,25 +35,6 @@ func (w *wrappedWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
-// curl -X POST http://localhost:8080/api/v1/test -H "Content-Type: application/json" -d '{"key1": "value1", "key2": "value2"}'
-// TODO: depricate bad practice
-func JsonBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-			var data map[string]interface{}
-
-			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-				http.Error(w, "Invalid JSON", http.StatusBadRequest)
-				return
-			}
-
-			ctx := context.WithValue(r.Context(), "json", data)
-			r = r.WithContext(ctx)
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -68,5 +51,55 @@ func Logging(next http.Handler) http.Handler {
 		if jsonData := r.Context().Value("json"); jsonData != nil {
 			log.Printf("JSON Body: %v", jsonData)
 		}
+	})
+}
+
+const UserContextKey = "user"
+
+func UserFromContext(ctx context.Context) *database.User {
+	user, ok := ctx.Value(UserContextKey).(*database.User)
+	if !ok {
+		return nil
+	}
+	return user
+}
+
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("session_id")
+		log.Println(cookie)
+		if err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		token := strings.TrimSpace(cookie.Value)
+
+		var session database.Session
+		if err := database.DB.First(&session, "token = ?", token).Error; err != nil {
+
+			if err == gorm.ErrRecordNotFound {
+				http.Error(w, "Invalid token", http.StatusForbidden)
+				return
+			}
+
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			log.Println(err)
+			return
+		}
+
+		if session.Expiry.Before(time.Now()) {
+			http.Error(w, "Session expired", http.StatusForbidden)
+			return
+		}
+
+		var user database.User
+		if err := database.DB.First(&user, "id = ?", session.UserId).Error; err != nil {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), UserContextKey, &user)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
