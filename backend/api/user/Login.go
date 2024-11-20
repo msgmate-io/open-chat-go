@@ -28,7 +28,6 @@ type UserLogin struct {
 //	 	@Param        email body string true "Email"
 //	 	@Param        password body string true "Password"
 //		@Success      200  {string}  string	"Login successful"
-//		@Success      200  {string}  string	"Login successful"
 //		@Failure      400  {string}  string	"Invalid email or password"
 //		@Failure      500  {object}  string	"Internal server error"
 //		@Router       /api/v1/user/login [post]
@@ -52,7 +51,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user database.User
+	var user database.User // TODO: sql injection?
 	q := database.DB.First(&user, "email = ?", data.Email)
 
 	if q.Error != nil {
@@ -72,6 +71,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Token:  token,
 		Data:   []byte{},
 		Expiry: expiry,
+		UserId: user.ID,
 	}
 
 	q = database.DB.Create(&session)
