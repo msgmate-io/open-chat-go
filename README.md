@@ -8,7 +8,8 @@ Aim is portability and performance to enable planned p2p features.
 auto-reload go-backend and auto-rebuild api docs
 
 ```bash
-docker compose -f compose-dev.yaml up --build
+docker compose -f compose-dev.yaml build
+docker compose -f compose-dev.yaml up
 ```
 
 ### test
@@ -31,6 +32,7 @@ go build -ldflags "-s -w"
 - `github.com/rs/cors` for cors
 - `gorm.io/gorm + drivers` as orm for sqlite + psql and convenience
 - `golang.org/x/crypto` password hashing
+- `github.com/google/uuid` for uuids
 
 Development only packages
 
