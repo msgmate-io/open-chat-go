@@ -8,7 +8,7 @@ import (
 type User struct {
 	Model
 	Name         string `json:"name"`
-	Email        string `gorm:"unique"`
+	Email        string `json:"-" gorm:"unique"`
 	PasswordHash string `json:"-"`
 	ContactToken string `json:"contact_token"`
 }
