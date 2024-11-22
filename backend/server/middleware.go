@@ -4,7 +4,6 @@ package server
 import (
 	"backend/database"
 	"context"
-	"encoding/json"
 	"gorm.io/gorm"
 	"log"
 	"net/http"
