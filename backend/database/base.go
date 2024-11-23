@@ -9,8 +9,8 @@ import (
 type Model struct {
 	UUID      string         `gorm:"type:uuid;" json:"uuid"`
 	ID        uint           `gorm:"primarykey" json:"-"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	CreatedAt time.Time      `json:"-"`
+	UpdatedAt time.Time      `json:"-"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
