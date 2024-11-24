@@ -91,18 +91,57 @@ CONTACT_TOKEN=$(curl -X GET \
      -H "Cookie: session_id=$SESSION_ID_A" \
      http://localhost:8080/api/v1/contacts/list | jq -r '.rows[0].contact_token')
 
-# Create a new Chat 
-echo "User B contact token: $CONTACT_TOKEN"
-curl -X POST \
-     -H "Content-Type: application/json" \
-     -H "Origin: localhost:8080" \
-     -H "Cookie: session_id=$SESSION_ID_A" \
-     -d '{"contact_token":"'$CONTACT_TOKEN'"}' \
-     http://localhost:8080/api/v1/chats/create | jq
 
 # List Existing Chats
-curl -X POST \
+curl -X GET \
      -H "Content-Type: application/json" \
      -H "Origin: localhost:8080" \
      -H "Cookie: session_id=$SESSION_ID_A" \
      http://localhost:8080/api/v1/chats/list | jq
+
+CHATS_LENGTH=$(curl -X GET \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/chats/list | jq '.rows | length')
+
+if [ "$CHATS_LENGTH" -lt 1 ]; then
+     # Create a new Chat 
+     echo "Create a new Chat"
+     curl -X POST \
+          -H "Content-Type: application/json" \
+          -H "Origin: localhost:8080" \
+          -H "Cookie: session_id=$SESSION_ID_A" \
+          -d '{"contact_token":"'$CONTACT_TOKEN'"}' \
+          http://localhost:8080/api/v1/chats/create | jq
+fi
+
+# List The Messages inside the first chat
+FIRST_CHAT=$(curl -X GET \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/chats/list | jq -r '.rows[0].uuid')
+
+echo "First Chat: $FIRST_CHAT"
+curl -X GET \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/chats/$FIRST_CHAT/messages/list | jq
+
+# send a message
+curl -X POST \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     -d '{"text":"Hello World"}' \
+     http://localhost:8080/api/v1/chats/$FIRST_CHAT/messages/send | jq
+
+# List messages again
+echo "First Chat: $FIRST_CHAT"
+curl -X GET \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/chats/$FIRST_CHAT/messages/list | jq
