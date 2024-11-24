@@ -40,15 +40,8 @@ func BackendServer(
 	fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 
 	server := &http.Server{
-		Addr: fmt.Sprintf("%s:%d", host, port),
-		Handler: CreateStack(
-			Logging,
-			/**cors.New(cors.Options{
-			AllowedOrigins:   []string{"foo.com"},
-			AllowCredentials: true,
-			Debug:            debug,
-			}).Handler, **/
-		)(router),
+		Addr:    fmt.Sprintf("%s:%d", host, port),
+		Handler: router,
 	}
 
 	return server, fullHost
