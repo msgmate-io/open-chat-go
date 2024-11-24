@@ -43,7 +43,6 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/list [get]
 func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
-	// TODO - implement pagination!
 	var chats []database.Chat
 
 	user, ok := r.Context().Value("user").(*database.User)
