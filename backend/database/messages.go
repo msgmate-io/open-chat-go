@@ -39,6 +39,25 @@ type Contact struct {
 	ContactUser   User   `json:"contact_user" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 }
 
+type Node struct {
+	Model
+	NodeName  string        `json:"node_name" gorm:"index"`
+	Addresses []NodeAddress `json:"addresses" gorm:"foreignKey:NodeID;references:ID"`
+}
+
+type NodeAddress struct {
+	Model
+	NodeID      uint   `gorm:"index"`
+	PartnetNode Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Address     string `json:"address"`
+}
+
+func (node *Node) List() []Node {
+	var nodes []Node
+	DB.Find(&nodes)
+	return nodes
+}
+
 func (contact *Contact) List(
 	owningUser User,
 ) []Contact {
