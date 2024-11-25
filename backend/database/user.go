@@ -11,6 +11,7 @@ type User struct {
 	Email        string `json:"-" gorm:"unique"`
 	PasswordHash string `json:"-"`
 	ContactToken string `json:"contact_token"`
+	IsAdmin      bool   `json:"is_admin"`
 }
 
 func (u *User) AddContact(
