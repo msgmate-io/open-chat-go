@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/urfave/cli/v3"
+	"strings"
 )
 
 func ServerCli() *cli.Command {
@@ -55,6 +56,26 @@ func ServerCli() *cli.Command {
 				Value:   1984,
 				Usage:   "server port",
 			},
+			&cli.IntFlag{
+				Sources: cli.EnvVars("PORT"),
+				Name:    "p2pport",
+				Aliases: []string{"pp2p"},
+				Value:   1984,
+				Usage:   "server port",
+			},
+			&cli.StringSliceFlag{
+				Sources: cli.EnvVars("PEERS"),
+				Name:    "peers",
+				Aliases: []string{"bp"},
+				Usage:   "peers to connect to",
+			},
+			&cli.StringFlag{
+				Sources: cli.EnvVars("ROOT_CREDENTIALS"),
+				Name:    "root-credentials",
+				Aliases: []string{"rc"},
+				Usage:   "root credentials",
+				Value:   "admin:password",
+			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 
@@ -67,6 +88,18 @@ func ServerCli() *cli.Command {
 			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
+
+			fmt.Println("Peers to connect to: ", c.StringSlice("peers"))
+			peers := c.StringSlice("peers")
+
+			// Create default admin user
+			rootCredentials := strings.Split(c.String("root-credentials"), ":")
+			username := rootCredentials[0]
+			password := rootCredentials[1]
+			server.CreateRootUser(username, password)
+
+			// start channels to other nodes
+			server.StartP2PFederation(int(c.Int("p2pport")), true, true, peers)
 
 			return s.ListenAndServe()
 		},
