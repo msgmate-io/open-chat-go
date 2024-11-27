@@ -27,7 +27,6 @@ func contactToContactListed(contacts []database.Contact, userId uint) []ListedCo
 	// check if the contact is online
 
 	subscribers := websocket.ConnectionHandler.GetSubscribers()
-
 	listedContacts := make([]ListedContact, len(contacts))
 
 	// check if any contact.user.id is in the subscribers
