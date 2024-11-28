@@ -145,3 +145,30 @@ curl -X GET \
      -H "Origin: localhost:8080" \
      -H "Cookie: session_id=$SESSION_ID_A" \
      http://localhost:8080/api/v1/chats/$FIRST_CHAT/messages/list | jq
+
+# print multiline string cat eof style
+cat <<EOF
+Connect User A:
+./bin/websocat --header="Cookie: session_id=$SESSION_ID_A" ws://localhost:8080/ws/connect
+
+Connect User B:
+./bin/websocat --header="Cookie: session_id=$SESSION_ID_B" ws://localhost:8080/ws/connect
+
+Send a Message From User A to User B:
+curl -X POST \\
+     -H "Content-Type: application/json" \\
+     -H "Origin: localhost:8080" \\
+     -H "Cookie: session_id=$SESSION_ID_A" \\
+     -d '{"text":"Hello World"}' \\
+     http://localhost:8080/api/v1/chats/$FIRST_CHAT/messages/send | jq
+EOF
+
+curl -X GET \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/contacts/list | jq
+
+# Try to connect to the websocket
+# echo "Try to connect to the websocket"
+#./bin/websocat --header="Cookie: session_id=$SESSION_ID_B" ws://localhost:8080/ws/connect
