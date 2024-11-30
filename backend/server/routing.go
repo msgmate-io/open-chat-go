@@ -3,6 +3,7 @@ package server
 import (
 	"backend/api/chats"
 	"backend/api/contacts"
+	"backend/api/federation"
 	"backend/api/reference"
 	"backend/api/user"
 	"backend/api/websocket"
@@ -19,6 +20,7 @@ func BackendRouting(
 	userHandler := &user.UserHandler{}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
+	federationHandler := &federation.FederationHandler{}
 	websocketHandler := websocket.ConnectionHandler
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
@@ -30,6 +32,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
+	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
 
 	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
 	mux.HandleFunc("POST /api/v1/user/register", userHandler.Register)
