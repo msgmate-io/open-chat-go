@@ -74,7 +74,7 @@ func ServerCli() *cli.Command {
 				Name:    "root-credentials",
 				Aliases: []string{"rc"},
 				Usage:   "root credentials",
-				Value:   "admin:password",
+				Value:   "admin@mail.de:password",
 			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
@@ -90,7 +90,7 @@ func ServerCli() *cli.Command {
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
 			fmt.Println("Peers to connect to: ", c.StringSlice("peers"))
-			peers := c.StringSlice("peers")
+			// peers := c.StringSlice("peers")
 
 			// Create default admin user
 			rootCredentials := strings.Split(c.String("root-credentials"), ":")
@@ -99,7 +99,8 @@ func ServerCli() *cli.Command {
 			server.CreateRootUser(username, password)
 
 			// start channels to other nodes
-			server.StartP2PFederation(int(c.Int("p2pport")), true, true, peers)
+			// server.StartP2PFederation(int(c.Int("p2pport")), true, true, peers)
+			server.CreateFederationHost(int(c.Int("p2pport")))
 
 			return s.ListenAndServe()
 		},
