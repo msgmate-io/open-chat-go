@@ -47,7 +47,7 @@ type Node struct {
 
 type NodeAddress struct {
 	Model
-	NodeID      uint   `gorm:"index"`
+	NodeID      uint   `gorm:"index" json:"-"`
 	PartnetNode Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	Address     string `json:"address"`
 }
