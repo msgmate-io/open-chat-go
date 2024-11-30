@@ -78,6 +78,7 @@ func ServerCli() *cli.Command {
 			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
+			server.Config = c // TODO: do cooler, more go-like way saw something something 'config *func(c options)'
 
 			database.DB = database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
 
