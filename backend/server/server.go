@@ -22,9 +22,12 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/multiformats/go-multiaddr"
+	"github.com/urfave/cli/v3"
 	"io"
 	mrand "math/rand"
 )
+
+var Config *cli.Command
 
 func CreateRootUser(username string, password string) {
 	log.Println("Creating root user")
