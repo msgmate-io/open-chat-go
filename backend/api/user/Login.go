@@ -67,6 +67,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	expiry := time.Now().Add(24 * time.Hour)
 	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!
+	// TODO: make sure sessions expire!
 	session := database.Session{
 		Token:  token,
 		Data:   []byte{},
