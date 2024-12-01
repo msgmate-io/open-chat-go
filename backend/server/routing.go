@@ -7,6 +7,7 @@ import (
 	"backend/api/reference"
 	"backend/api/user"
 	"backend/api/websocket"
+	"fmt"
 	"net/http"
 )
 
@@ -38,6 +39,15 @@ func BackendRouting(
 
 	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
 	mux.HandleFunc("POST /api/v1/user/register", userHandler.Register)
+	mux.HandleFunc("GET /_health", func(w http.ResponseWriter, r *http.Request) {
+		if ServerStatus != "running" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(fmt.Sprintf("Server is not running, status: %s", ServerStatus)))
+		} else {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Server is running"))
+		}
+	})
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", Logging(AuthMiddleware(v1PrivateApis))))
 	mux.HandleFunc("/reference", reference.ScalarReference)
 
