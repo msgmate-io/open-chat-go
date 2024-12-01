@@ -28,6 +28,7 @@ import (
 )
 
 var Config *cli.Command
+var ServerStatus string = "unknown"
 
 func CreateRootUser(username string, password string) {
 	log.Println("Creating root user")
