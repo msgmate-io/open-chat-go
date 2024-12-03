@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/urfave/cli/v3"
+	"log"
 	"strings"
 )
 
 func ServerCli() *cli.Command {
+	log.Println("Hello from server cli")
 	cmd := &cli.Command{
 		Name:  "boom",
 		Usage: "make an explosive entrance",
@@ -60,7 +62,7 @@ func ServerCli() *cli.Command {
 				Sources: cli.EnvVars("PORT"),
 				Name:    "p2pport",
 				Aliases: []string{"pp2p"},
-				Value:   1984,
+				Value:   1985,
 				Usage:   "server port",
 			},
 			&cli.StringSliceFlag{
@@ -78,6 +80,7 @@ func ServerCli() *cli.Command {
 			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
+			server.ServerStatus = "starting"
 			server.Config = c // TODO: do cooler, more go-like way saw something something 'config *func(c options)'
 
 			database.DB = database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
@@ -102,8 +105,14 @@ func ServerCli() *cli.Command {
 			// start channels to other nodes
 			// server.StartP2PFederation(int(c.Int("p2pport")), true, true, peers)
 			server.CreateFederationHost(int(c.Int("p2pport")))
+			server.ServerStatus = "running"
+			err := s.ListenAndServe()
 
-			return s.ListenAndServe()
+			if err != nil {
+				return err
+			}
+
+			return nil
 		},
 	}
 
