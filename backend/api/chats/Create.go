@@ -6,6 +6,7 @@ import (
 	"net/http"
 )
 
+// TODO: should also supply user Id
 type CreateChat struct {
 	ContactToken string `json:"contact_token"`
 }
