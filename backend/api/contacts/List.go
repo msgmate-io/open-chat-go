@@ -11,6 +11,7 @@ import (
 type ListedContact struct {
 	ContactToken string `json:"contact_token"`
 	Name         string `json:"name"`
+	UserUUID     string `json:"user_uuid"`
 	IsOnline     bool   `json:"is_online"`
 }
 
@@ -41,12 +42,14 @@ func contactToContactListed(contacts []database.Contact, userId uint) []ListedCo
 			listedContacts[i] = ListedContact{
 				ContactToken: partner.ContactToken,
 				Name:         partner.Name,
+				UserUUID:     partner.UUID,
 				IsOnline:     true,
 			}
 		} else {
 			listedContacts[i] = ListedContact{
 				ContactToken: partner.ContactToken,
 				Name:         partner.Name,
+				UserUUID:     partner.UUID,
 				IsOnline:     false,
 			}
 		}

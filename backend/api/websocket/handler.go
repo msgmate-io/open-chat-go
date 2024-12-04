@@ -13,6 +13,7 @@ import (
 )
 
 var ConnectionHandler = NewWebSocketHandler()
+var MessageHandler = &Messages{}
 
 type Subscriber struct {
 	msgs      chan []byte
