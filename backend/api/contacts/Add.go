@@ -6,6 +6,7 @@ import (
 	"net/http"
 )
 
+// TODO: should probably also require a UserUUID, just to protect agains brute force
 type AddContact struct {
 	ContactToken string `json:"contact_token"`
 }
