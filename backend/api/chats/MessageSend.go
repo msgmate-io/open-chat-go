@@ -4,7 +4,6 @@ import (
 	"backend/api/websocket"
 	"backend/database"
 	"encoding/json"
-	"fmt"
 	"net/http"
 )
 
@@ -71,9 +70,13 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	q := database.DB.Create(&message)
 
 	// Now publish websocket updates to online & subscribed users
-	websocket.ConnectionHandler.PublishInChannel(
-		[]byte(fmt.Sprintf("new message in chat:%v '%v'", chatUuid, data.Text)),
+	websocket.MessageHandler.SendMessage(
 		receiverId,
+		websocket.MessageHandler.NewMessage(
+			chatUuid,
+			user.UUID,
+			data.Text,
+		),
 	)
 
 	if q.Error != nil {
