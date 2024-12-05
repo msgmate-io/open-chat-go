@@ -2,19 +2,36 @@ package database
 
 import (
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 	"net/mail"
 )
 
 type User struct {
-	gorm.Model
-	Name         string
-	Email        string `gorm:"unique"`
-	PasswordHash string
+	Model
+	Name         string `json:"name"`
+	Email        string `json:"-" gorm:"unique"`
+	PasswordHash string `json:"-"`
+	ContactToken string `json:"contact_token"`
+	IsAdmin      bool   `json:"is_admin"`
+}
+
+func (u *User) AddContact(
+	user *User,
+) (*Contact, error) {
+	contact := Contact{
+		OwningUserId:  u.ID,
+		ContactUserId: user.ID,
+	}
+
+	r := DB.Create(&contact)
+
+	if r.Error != nil {
+		return nil, r.Error
+	}
+
+	return &contact, nil
 }
 
 func RegisterUser(
-	db *gorm.DB,
 	name string,
 	email string,
 	password []byte,
@@ -36,11 +53,11 @@ func RegisterUser(
 		PasswordHash: string(hashedPassword),
 	}
 
-	r := db.Create(&user)
+	r := DB.Create(&user)
 
 	if r.Error != nil {
 		return nil, r.Error
 	}
 
-	return &user, r.Error
+	return &user, nil
 }
