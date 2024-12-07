@@ -28,7 +28,7 @@ export function UserMessageItem({
     </div>
 }
 
-export function MessageItem({
+export function BotMessageItem({
     message,
     chat,
     selfIsSender = false
@@ -37,6 +37,43 @@ export function MessageItem({
     chat: any,
     selfIsSender?: boolean
 }) {
-    // Hide if it's a data message with hide = True
-    return <UserMessageItem message={message} chat={chat} selfIsSender={selfIsSender} />
+
+    if(selfIsSender){
+        return <div key={message.uuid} className="flex flex-row px-4 w-full relativ max-w-full">
+            <div className="flex grow content-center items-end justify-end">
+                <div className="article prose w-95 overflow-x-auto p-2 px-4 rounded-2xl bg-base-200">
+                    <Markdown>{message.text}</Markdown>
+                </div>
+            </div>
+        </div>
+    }else{
+        return <div key={message.uuid} className="flex flex-row px-4 w-full relativ max-w-full">
+            <div className="flex p-2 hidden md:flex">
+                <img className="h-9 m-3 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={"TODO"} />
+            </div>
+            <div className="w-full flex flex-col flex-grow relative">
+                <div className="article prose w-95 pt-3 pl-1 overflow-x-auto">
+                    <Markdown>{message.text}</Markdown>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+export function MessageItem({
+    message,
+    chat,
+    selfIsSender = false,
+    isBotChat = false,
+}: {
+    message: any,
+    chat: any,
+    selfIsSender?: boolean,
+    isBotChat?: boolean
+}) {
+    if(isBotChat){
+        return <BotMessageItem message={message} chat={chat} selfIsSender={selfIsSender} />
+    }else{
+        return <UserMessageItem message={message} chat={chat} selfIsSender={selfIsSender} />
+    }
 }

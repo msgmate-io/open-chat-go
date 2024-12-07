@@ -45,12 +45,14 @@ function useDesktopConfig(defaultLeftSize = null, defaultRightSize = null) {
 }
 
 export const ResizableChatLayout = forwardRef(({
+    chatUUID,
     left,
     right,
     leftPannelRef,
     rightPannelRef,
     setLeftCollapsed
 }: {
+    chatUUID: string | null,
     left: any,
     right: any,
     leftPannelRef: any,
@@ -58,7 +60,6 @@ export const ResizableChatLayout = forwardRef(({
     setLeftCollapsed: any
 }, ref) => {
     const frontend = null
-    const chatId = "abc"
     const { isSm: biggerThanSm } = useBreakpoint('sm');
     const [, setRightCollapsed] = useState(false);
 
@@ -71,26 +72,26 @@ export const ResizableChatLayout = forwardRef(({
     }
     const defaultLayoutLeft = defaultLayout ? defaultLayout[0] : null;
     const defaultLayoutRight = defaultLayout ? defaultLayout[1] : null;
-    const mobileConfig = useMobileConfig(chatId, defaultLayoutLeft, defaultLayoutRight);
+    const mobileConfig = useMobileConfig(chatUUID, defaultLayoutLeft, defaultLayoutRight);
     const desktopConfig = useDesktopConfig(defaultLayoutLeft, defaultLayoutRight);
 
-    console.log("chatId", chatId);
+    console.log("chatId", chatUUID);
     console.log("FRONTEND", frontend);
 
     useEffect(() => {
         if (!biggerThanSm) {
             // layout changed to mobile
-            if (chatId) {
+            if (chatUUID) {
                 // chat selected -> hide left panel
                 leftPannelRef.current.collapse();
                 setLeftCollapsed(true);
-            } else if (!chatId) {
+            } else if (!chatUUID) {
                 // chat not selected -> hide right panel
                 rightPannelRef.current.collapse();
                 setRightCollapsed(true);
             }
         }
-    }, [biggerThanSm, chatId, leftPannelRef, rightPannelRef]);
+    }, [biggerThanSm, chatUUID, leftPannelRef, rightPannelRef]);
 
     const onLeftPannelCollapseChanged = () => {
         setLeftCollapsed(leftPannelRef.current.isCollapsed());
@@ -150,12 +151,13 @@ export const ResizableChatLayout = forwardRef(({
 //                    {/*chatId === "new" && <NewChatOverview leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}
 //                   {/*chatId === "create" && <StartChatCard initUserName={null} userId={userId} leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}
 //                    {/*chatId === "createAudio" && <CreateAudioChatCard />*/}
-export function ChatBase({children}: {
-    children: ReactNode
+export function ChatBase({
+    children,
+    chatUUID=null
+}: {
+    children: ReactNode,
+    chatUUID: string | null
 }) {
-    const chatId = "abc"
-    const userId = "abc"
-
     const [leftPannelCollapsed, setLeftCollapsed] = useState(false);
     const leftPannelRef = useRef<any>(null);
     const rightPannelRef = useRef<any>(null);
@@ -174,6 +176,7 @@ export function ChatBase({children}: {
     return <>
         <div className="flex h-screen">
             <ResizableChatLayout
+                chatUUID={chatUUID}
                 leftPannelRef={leftPannelRef}
                 rightPannelRef={rightPannelRef}
                 setLeftCollapsed={setLeftCollapsed}
