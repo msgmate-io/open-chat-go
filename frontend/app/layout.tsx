@@ -28,10 +28,12 @@ export default async function RootLayout({
   if(isPublicRoute && sessionIdPresent){
     // try to fetch the user using the present session_id
     const res = await fetch(`${SERVER_ROUTE}/api/v1/user/self`, { method: "GET" })
+    console.log("Fected", res.ok)
     if (res.ok) {
       redirect("/chat")
-    }else{
-      // TODO then we should invalidate the current present session
+    }else if(pathName != "/"){
+      // TODO then we should inactivate the current present session
+      redirect("/")
     }
   }
 
