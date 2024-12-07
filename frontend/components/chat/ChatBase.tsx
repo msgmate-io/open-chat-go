@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { ChatsList } from "@/components/chat/ChatsList";
 import { useMediaQuery } from 'react-responsive';
 import { Cookies } from "typescript-cookie";
 import {
@@ -212,7 +213,7 @@ export function ChatBase() {
                 leftPannelRef={leftPannelRef}
                 rightPannelRef={rightPannelRef}
                 setLeftCollapsed={setLeftCollapsed}
-                left={<>Hi there{/*<ChatsList leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}</>}
+                left={<ChatsList leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />}
                 right={<>
                     Hello there
                     {/*(chatId && !(chatMessageViews.indexOf(chatId) !== -1)) && <MessagesView
