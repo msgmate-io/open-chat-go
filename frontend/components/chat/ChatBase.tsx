@@ -1,58 +1,14 @@
 "use client"
 
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle, ReactNode } from "react";
 import { ChatsList } from "@/components/chat/ChatsList";
-import { useMediaQuery } from 'react-responsive';
+import { useBreakpoint } from "@/components/utils";
 import { Cookies } from "typescript-cookie";
 import {
     ResizableHandle,
     ResizablePanel,
     ResizablePanelGroup
 } from "@/components/chat/Resizable";
-
-
-const screens = {
-    sm: "640px",
-    // => @media (min-width: 640px) { ... }
-    md: "768px",
-    // => @media (min-width: 768px) { ... }
-    lg: "1024px",
-    // => @media (min-width: 1024px) { ... }
-    xl: "1280px",
-    // => @media (min-width: 1280px) { ... }
-    "2xl": "1536px",
-    // => @media (min-width: 1536px) { ... }
-}
-
-type BreakpointKey = keyof typeof breakpoints;
-
-const breakpoints = screens;
-  
-
-export function useBreakpoint<K extends BreakpointKey>(breakpointKey: K) {
-    const [queryResult, setQueryResult] = useState(true);
-    // https://stackoverflow.com/a/71098593
-    const bool = useMediaQuery({
-      query: `(min-width: ${breakpoints[breakpointKey]})`,
-    });
-  
-    const capitalizedKey = breakpointKey[0].toUpperCase() + breakpointKey.substring(1);
-    type Key = `is${Capitalize<K>}`;
-    useEffect(() => {
-      // Layout sizes can only be determined client-side
-      // we return 'false' by default and just set it after hidration to avoid and SSR issues
-      setQueryResult(bool);
-    }, []);
-  
-    useEffect(() => {
-      if (queryResult !== bool) {
-        setQueryResult(bool);
-      }
-    }, [bool]);
-    return {
-      [`is${capitalizedKey}`]: queryResult,
-    } as Record<Key, boolean>;
-  }
   
 function useMobileConfig(chatId: any, defaultLeftSize = null, defaultRightSize = null) {
     return {
@@ -87,8 +43,6 @@ function useDesktopConfig(defaultLeftSize = null, defaultRightSize = null) {
         },
     };
 }
-
-  
 
 export const ResizableChatLayout = forwardRef(({
     left,
@@ -188,7 +142,17 @@ export const ResizableChatLayout = forwardRef(({
 });
 
 
-export function ChatBase() {
+//                   Hello there
+//                   {/*(chatId && !(chatMessageViews.indexOf(chatId) !== -1)) && <MessagesView
+//                        chatId={chatId}
+//                       leftPannelCollapsed={leftPannelCollapsed}
+//                      onToggleCollapse={onToggleCollapse} />*/}
+//                    {/*chatId === "new" && <NewChatOverview leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}
+//                   {/*chatId === "create" && <StartChatCard initUserName={null} userId={userId} leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}
+//                    {/*chatId === "createAudio" && <CreateAudioChatCard />*/}
+export function ChatBase({children}: {
+    children: ReactNode
+}) {
     const chatId = "abc"
     const userId = "abc"
 
@@ -214,16 +178,7 @@ export function ChatBase() {
                 rightPannelRef={rightPannelRef}
                 setLeftCollapsed={setLeftCollapsed}
                 left={<ChatsList leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />}
-                right={<>
-                    Hello there
-                    {/*(chatId && !(chatMessageViews.indexOf(chatId) !== -1)) && <MessagesView
-                        chatId={chatId}
-                        leftPannelCollapsed={leftPannelCollapsed}
-                        onToggleCollapse={onToggleCollapse} />*/}
-                    {/*chatId === "new" && <NewChatOverview leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}
-                    {/*chatId === "create" && <StartChatCard initUserName={null} userId={userId} leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />*/}
-                    {/*chatId === "createAudio" && <CreateAudioChatCard />*/}
-                </>}
+                right={children}
             />
         </div>
     </>

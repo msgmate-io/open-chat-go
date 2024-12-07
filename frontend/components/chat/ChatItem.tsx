@@ -10,6 +10,7 @@ import {
     CardHeader,
 } from "@/components/Card";
 import { Button } from "@/components/Button";
+import { useRouter } from "next/navigation";
 
 function DotsHorizontal({ colorClass = "text-black-200" }) {
     return (
@@ -66,6 +67,7 @@ export function ChatItemCompact({ chat = null, isSelected = false }: {
     isSelected?: boolean
 }) {
     const [settingsOpen, setSettingsOpen] = useState(false)
+    const router = useRouter()
 
 
     //const content = chat?.settings?.title ? chat?.settings?.title : (chat.partner.is_bot ? chat.newest_message.text : `${chat.partner.first_name} ${chat.partner.second_name}`)
@@ -81,7 +83,7 @@ export function ChatItemCompact({ chat = null, isSelected = false }: {
                 )}
                     key={chat?.uuid} onClick={() => {
                         if (!settingsOpen) {
-                            // navigate(null, { chat: chat.uuid })
+                            router.push(`/chat/${chat?.uuid}`)
                         }
                     }}>
                     <div className="p-[5px] px-2">
