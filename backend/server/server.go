@@ -30,7 +30,11 @@ import (
 var Config *cli.Command
 var ServerStatus string = "unknown"
 
-func CreateRootUser(username string, password string) {
+func CreateUser(
+	username string,
+	password string,
+	isAdminUser bool,
+) (error, *database.User) {
 	log.Println("Creating root user")
 	// first chaeck if that user already exists
 	var user database.User
@@ -38,7 +42,7 @@ func CreateRootUser(username string, password string) {
 
 	if user.ID != 0 {
 		log.Fatal("User already exists")
-		return
+		return fmt.Errorf("User already exists"), nil
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -59,7 +63,14 @@ func CreateRootUser(username string, password string) {
 
 	if q.Error != nil {
 		log.Fatal(q.Error)
+		return fmt.Errorf("Error writing user to db"), nil
 	}
+
+	return nil, &user
+}
+
+func CreateRootUser(username string, password string) (error, *database.User) {
+	return CreateUser(username, password, true)
 }
 
 func GenerateToken(email string) string {
@@ -276,4 +287,58 @@ func BackendServer(
 	}
 
 	return server, fullHost
+}
+
+func SetupBaseConnections(
+	adminUserId uint, baseBotId uint,
+) error {
+	var adminUser database.User
+	if err := database.DB.First(&adminUser, "id = ?", adminUserId).Error; err != nil {
+		return err
+	}
+
+	var botUser database.User
+	if err := database.DB.First(&botUser, "id = ?", baseBotId).Error; err != nil {
+		return err
+	}
+
+	// add to each others contacts
+	contact := database.Contact{
+		OwningUserId:  adminUser.ID,
+		ContactUserId: botUser.ID,
+	}
+
+	r := database.DB.Create(&contact)
+
+	if r.Error != nil {
+		return r.Error
+	}
+
+	chat := database.Chat{
+		User1Id: contact.OwningUserId,
+		User2Id: contact.ContactUserId,
+	}
+
+	r = database.DB.Create(&chat)
+
+	if r.Error != nil {
+		return r.Error
+	}
+
+	// Now create a hello word message from the bot to the user
+	text := "Hello World"
+	message := database.Message{
+		SenderId:   botUser.ID,
+		ReceiverId: adminUser.ID,
+		ChatId:     chat.ID,
+		Text:       &text,
+	}
+
+	r = database.DB.Create(&message)
+
+	if r.Error != nil {
+		return r.Error
+	}
+
+	return nil
 }
