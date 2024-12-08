@@ -16,8 +16,8 @@ export const Typewriter = ({ texts = TEXTS, typingSpeed = 100, delay = 2000 }) =
     const [prompt, setPrompt] = useState(TEXTS[0].prompt);
 
     useEffect(() => {
-        let typingInterval;
-        let timeout;
+        let typingInterval : any;
+        let timeout: any;
 
         const type = () => {
             setDisplayedText((prev) => {
