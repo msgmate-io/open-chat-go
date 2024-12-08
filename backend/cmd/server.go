@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"backend/api/msgmate"
 	"backend/database"
 	"backend/server"
 	"context"
@@ -8,6 +9,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"log"
 	"strings"
+	"time"
 )
 
 func ServerCli() *cli.Command {
@@ -65,18 +67,26 @@ func ServerCli() *cli.Command {
 				Value:   1985,
 				Usage:   "server port",
 			},
-			&cli.StringSliceFlag{
-				Sources: cli.EnvVars("PEERS"),
-				Name:    "peers",
-				Aliases: []string{"bp"},
-				Usage:   "peers to connect to",
-			},
 			&cli.StringFlag{
 				Sources: cli.EnvVars("ROOT_CREDENTIALS"),
 				Name:    "root-credentials",
 				Aliases: []string{"rc"},
 				Usage:   "root credentials",
-				Value:   "admin@mail.de:password",
+				Value:   "admin:password",
+			},
+			&cli.StringFlag{
+				Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
+				Name:    "default-bot",
+				Aliases: []string{"botc"},
+				Usage:   "bot login credentials",
+				Value:   "bot:password",
+			},
+			&cli.BoolFlag{
+				Sources: cli.EnvVars("START_BOT"),
+				Name:    "start-bot",
+				Aliases: []string{"sb"},
+				Value:   true,
+				Usage:   "If the in-build msgmate bot should be started",
 			},
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
@@ -93,20 +103,47 @@ func ServerCli() *cli.Command {
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
-			fmt.Println("Peers to connect to: ", c.StringSlice("peers"))
-			// peers := c.StringSlice("peers")
-
-			// Create default admin user
 			rootCredentials := strings.Split(c.String("root-credentials"), ":")
 			username := rootCredentials[0]
 			password := rootCredentials[1]
-			server.CreateRootUser(username, password)
+			err, adminUser := server.CreateRootUser(username, password)
+
+			if err != nil {
+				return err
+			}
+
+			// Create the default msgmate-io bot
+			botCredentials := strings.Split(c.String("default-bot"), ":")
+			usernameBot := botCredentials[0]
+			passwordBot := botCredentials[1]
+
+			err, botUser := server.CreateUser(usernameBot, passwordBot, false)
+			if err != nil {
+				return err
+			}
+
+			// Create default connection with admin user
+			err = server.SetupBaseConnections(adminUser.ID, botUser.ID)
+			if err != nil {
+				return err
+			}
 
 			// start channels to other nodes
-			// server.StartP2PFederation(int(c.Int("p2pport")), true, true, peers)
 			server.CreateFederationHost(int(c.Int("p2pport")))
 			server.ServerStatus = "running"
-			err := s.ListenAndServe()
+
+			if c.Bool("start-bot") {
+				go func() {
+					time.Sleep(1 * time.Second)
+					log.Printf("Starting bot ...")
+					err := msgmate.StartBot(usernameBot, passwordBot)
+					if err != nil {
+						log.Printf("Error starting bot: %v", err)
+					}
+				}()
+			}
+
+			err = s.ListenAndServe()
 
 			if err != nil {
 				return err
