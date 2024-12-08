@@ -1,6 +1,6 @@
 "use client"
 
-import useSWR from "swr"
+import useSWR, { mutate } from "swr"
 import { MessageItem } from "@/components/chat/MessageItem"
 import React, { useEffect, useState, useRef, forwardRef } from 'react';
 import { cn } from "@/components/utils";
@@ -18,7 +18,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "@/components/DropdownMenu";
-const fetcher = (...args) => fetch(...args).then(res => res.json())
+const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
 export const SendMessageButton = ({ 
         onClick, 
@@ -123,11 +123,11 @@ export const MessageInput = forwardRef<
     stopBotResponse = () => { },
     maxHeight = 300,
     minHeight = 30
-}, ref) => {
+}, ref: any) => {
 
 
     useEffect(() => {
-        if (ref.current) {
+        if (ref?.current) {
             const scrollHeight = ref.current.scrollHeight;
             let updatedHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
             if (text != "") {
@@ -138,11 +138,11 @@ export const MessageInput = forwardRef<
         }
     }, [ref, text, maxHeight, minHeight]);
 
-    const handleTextChange = (e) => {
+    const handleTextChange = (e: any) => {
         setText(e.target.value);
     };
 
-    const handleKeyPress = (e) => {
+    const handleKeyPress = (e: any) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSendMessage();
@@ -150,7 +150,7 @@ export const MessageInput = forwardRef<
     };
 
     const resetInput = () => {
-        if (ref.current) {
+        if (ref?.current) {
             ref.current.style.height = 'auto';
             ref.current.style.height = `${minHeight}px`;
             ref.current.style.overflowY = 'hidden';
@@ -219,12 +219,22 @@ export function MessagesScroll({
         }
     }
 
-
     useEffect(() => {
         scrollToBottom()
     }, [messages])
 
-    const onSendMessage = () => {
+    const onSendMessage = async () => {
+        const res = await fetch(`/api/v1/chats/${chat.uuid}/messages/send`, {
+            method: "POST",
+            body: JSON.stringify({
+                text: text
+            })
+        })
+
+        if(res.ok){
+            mutate(`/api/v1/chats/${chat.uuid}/messages/list`)
+        }
+        // TODO: some error or toast if the message sending failed
     }
 
     const onStopBotResponse = () => {
@@ -232,7 +242,7 @@ export function MessagesScroll({
 
     return <div className="flex flex-col h-full w-full lg:max-w-[900px] relative">
         <div ref={scrollRef} className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto relative pb-4 pt-2">
-            {messages && messages.rows.map((message) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
+            {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
         </div>
         {!hideInput && <MessageInput text={text} setText={setText} isLoading={false} isBotResponding={false} stopBotResponse={onStopBotResponse} onSendMessage={onSendMessage} ref={inputRef} />}
     </div>
@@ -249,12 +259,9 @@ export function MessagesView({
         onToggleCollapse: () => void
     }) {
 
-    //const chat = useSelector((state: RootState) => getChatByChatId(state, chatId))
     const { data: chat } = useSWR(`/api/v1/chats/${chatUUID}`, fetcher)
     const { data: messages } = useSWR(`/api/v1/chats/${chatUUID}/messages/list`, fetcher)
     const { data: user } = useSWR(`/api/v1/user/self`, fetcher)
-
-    console.log("CHAT", chat, user, messages);
 
     return <>
         <div className="flex flex-col h-full w-full content-center items-center">
@@ -263,9 +270,7 @@ export function MessagesView({
                     <CollapseIndicator leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />
                 </div>
             </div>}
-            <div className="absolute left-0 p-2 flex items-center content-center justify-left z-30">
-                was geht denn hier? {chatUUID}
-            </div>
+            <div className="absolute left-0 p-2 flex items-center content-center justify-left z-30"></div>
             <MessagesScroll messages={messages} chat={chat} user={user} hideInput={false} />
         </div>
     </>
