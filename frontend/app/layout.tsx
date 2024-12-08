@@ -5,9 +5,18 @@ import { redirect } from 'next/navigation'
 import { Layout } from "@/components/Layout";
 import { headers, cookies } from "next/headers";
 
-const PUBLIC_ROUTES = ["/"]
 const SERVER_ROUTE = "http://localhost:1984"
-const AUTH_REDIRECT_ROUTES = ["/login"]
+
+const AUTH_REDIRECTS = [{
+  expr: new RegExp("/login?"),
+  to: "/chat"
+}]
+
+const UNAUTH_REDIRECTS = [{
+  expr: new RegExp("/chat?"),
+  to: "/login"
+}]
+
 
 export const metadata: Metadata = {
   title: "Open Chat Go",
@@ -19,24 +28,6 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const heads = await headers() 
-  const cookieStore = await cookies()
-  const pathName = heads.get("x-pathname") || ""
-  const sessionIdPresent = cookieStore.get("session_id") || false
-  const isPublicRoute = PUBLIC_ROUTES.includes(pathName)
-  
-  if(isPublicRoute && sessionIdPresent){
-    // try to fetch the user using the present session_id
-    const res = await fetch(`${SERVER_ROUTE}/api/v1/user/self`, { method: "GET" })
-    console.log("Fected", res.ok)
-    if (res.ok) {
-      redirect("/chat")
-    }else if(pathName != "/"){
-      // TODO then we should inactivate the current present session
-      redirect("/")
-    }
-  }
-
   return (
     <Layout>
         {children}
