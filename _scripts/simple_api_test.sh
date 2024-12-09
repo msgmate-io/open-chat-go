@@ -78,10 +78,31 @@ curl -X POST \
      -d '{"contact_token":"'$USER_A_CONTACT_TOKEN'"}' \
      http://localhost:8080/api/v1/contacts/add
 
-
 echo "User A contacts:"
 curl -X GET \
      -H "Content-Type: application/json" \
      -H "Origin: localhost:8080" \
      -H "Cookie: session_id=$SESSION_ID_A" \
      http://localhost:8080/api/v1/contacts/list | jq
+
+CONTACT_TOKEN=$(curl -X GET \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/contacts/list | jq -r '.rows[0].contact_token')
+
+# Create a new Chat 
+echo "User B contact token: $CONTACT_TOKEN"
+curl -X POST \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     -d '{"contact_token":"'$CONTACT_TOKEN'"}' \
+     http://localhost:8080/api/v1/chats/create | jq
+
+# List Existing Chats
+curl -X POST \
+     -H "Content-Type: application/json" \
+     -H "Origin: localhost:8080" \
+     -H "Cookie: session_id=$SESSION_ID_A" \
+     http://localhost:8080/api/v1/chats/list | jq
