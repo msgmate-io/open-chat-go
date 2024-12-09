@@ -1,11 +1,60 @@
 package contacts
 
 import (
+	"backend/api/websocket"
 	"backend/database"
 	"encoding/json"
 	"net/http"
 	"strconv"
 )
+
+type ListedContact struct {
+	ContactToken string `json:"contact_token"`
+	Name         string `json:"name"`
+	IsOnline     bool   `json:"is_online"`
+}
+
+func isSubscriber(subscribers []websocket.Subscriber, userId uint) bool {
+	for _, subscriber := range subscribers {
+		if userId == subscriber.UserId {
+			return true
+		}
+	}
+	return false
+}
+
+func contactToContactListed(contacts []database.Contact, userId uint) []ListedContact {
+	// check if the contact is online
+
+	subscribers := websocket.ConnectionHandler.GetSubscribers()
+
+	listedContacts := make([]ListedContact, len(contacts))
+
+	// check if any contact.user.id is in the subscribers
+	for i, contact := range contacts {
+		var partner database.User
+		if contact.ContactUserId == userId {
+			partner = contact.OwningUser
+		} else {
+			partner = contact.ContactUser
+		}
+		if isSubscriber(subscribers, partner.ID) {
+			listedContacts[i] = ListedContact{
+				ContactToken: partner.ContactToken,
+				Name:         partner.Name,
+				IsOnline:     true,
+			}
+		} else {
+			listedContacts[i] = ListedContact{
+				ContactToken: partner.ContactToken,
+				Name:         partner.Name,
+				IsOnline:     false,
+			}
+		}
+	}
+
+	return listedContacts
+}
 
 type PaginatedContacts struct {
 	database.Pagination
@@ -62,7 +111,7 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination.Rows = contacts
+	pagination.Rows = contactToContactListed(contacts, user.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pagination)
