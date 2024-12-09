@@ -1,8 +1,10 @@
 package chats
 
 import (
+	"backend/api/websocket"
 	"backend/database"
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -52,14 +54,27 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 	}
 
+	var receiverId uint
+	if chat.User1.ID == user.ID {
+		receiverId = chat.User2.ID
+	} else {
+		receiverId = chat.User1.ID
+	}
+
 	var message database.Message = database.Message{
 		ChatId:     chat.ID,
 		SenderId:   user.ID,
-		ReceiverId: chat.User1.ID,
+		ReceiverId: receiverId,
 		Text:       &data.Text,
 	}
 
 	q := database.DB.Create(&message)
+
+	// Now publish websocket updates to online & subscribed users
+	websocket.ConnectionHandler.PublishInChannel(
+		[]byte(fmt.Sprintf("new message in chat:%v '%v'", chatUuid, data.Text)),
+		receiverId,
+	)
 
 	if q.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
