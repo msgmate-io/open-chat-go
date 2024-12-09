@@ -13,12 +13,12 @@ type Message struct {
 
 type Chat struct {
 	Model
-	User1Id         uint    `json:"User1Id" gorm:"index"`
-	User2Id         uint    `json:"User2Id" gorm:"index"`
-	User1           User    `json:"User1" gorm:"foreignKey:User1Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	User2           User    `json:"User2" gorm:"foreignKey:User2Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	LatestMessageId uint    `json:"LatestMessageId" gorm:"index"`
-	LatestMessage   Message `json:"Latest" gorm:"foreignKey:LatestMessageId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	User1Id         uint     `json:"-" gorm:"index"`
+	User2Id         uint     `json:"-" gorm:"index"`
+	User1           User     `json:"user1" gorm:"foreignKey:User1Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	User2           User     `json:"user2" gorm:"foreignKey:User2Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	LatestMessageId *uint    `json:"-" gorm:"index"` // Make this a pointer
+	LatestMessage   *Message `json:"latest_message" gorm:"foreignKey:LatestMessageId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	// TODO Chat Settings?
 }
 
@@ -35,7 +35,7 @@ type Contact struct {
 	OwningUserId  uint   `json:"-" gorm:"index"`
 	ContactUserId uint   `json:"-" gorm:"index"`
 	OwningUser    User   `json:"-" gorm:"foreignKey:OwningUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	Contact       User   `json:"-" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	ContactUser   User   `json:"contact_user" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 }
 
 func (contact *Contact) List(
