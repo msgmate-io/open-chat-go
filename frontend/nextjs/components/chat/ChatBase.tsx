@@ -153,10 +153,12 @@ export const ResizableChatLayout = forwardRef(({
 //                    {/*chatId === "createAudio" && <CreateAudioChatCard />*/}
 export function ChatBase({
     children,
-    chatUUID=null
+    chatUUID=null,
+    navigateTo
 }: {
     children: ReactNode,
-    chatUUID: string | null
+    chatUUID: string | null,
+    navigateTo: (to: string) => void
 }) {
     const [leftPannelCollapsed, setLeftCollapsed] = useState(false);
     const leftPannelRef = useRef<any>(null);
@@ -180,7 +182,7 @@ export function ChatBase({
                 leftPannelRef={leftPannelRef}
                 rightPannelRef={rightPannelRef}
                 setLeftCollapsed={setLeftCollapsed}
-                left={<ChatsList leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />}
+                left={<ChatsList chatUUID={chatUUID} leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} navigateTo={navigateTo} />}
                 right={children}
             />
         </div>
