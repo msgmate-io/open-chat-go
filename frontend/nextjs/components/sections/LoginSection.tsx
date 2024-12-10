@@ -1,6 +1,5 @@
 "use client"
 
-import { useRouter } from 'next/navigation'
 import { Button } from "@/components/Button"
 import { EyeIcon, EyeOff } from 'lucide-react';
 import { ReloadIcon } from "@radix-ui/react-icons";
@@ -29,8 +28,11 @@ const formSchema = z.object({
 
 type ErrorResult = null | { [key: string]: string }
 
-export default function LoginHero() {
-    const router = useRouter()
+export default function LoginHero({
+    navigateTo
+}: {
+    navigateTo: (to: string) => void
+}) {
     const [showPassword, setShowPassword] = useState(false)
     const togglePasswordVisibility = () => setShowPassword(!showPassword);
     const [error, setError] = useState<ErrorResult>(null)
@@ -45,7 +47,7 @@ export default function LoginHero() {
        }).then(res => {
         if(res.ok){
             console.log("logged in!")
-            router.push("/chat")
+            navigateTo("/chat")
         }else{
             res.text().then(
                 text => {
