@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 
 import { CinematicLogo } from "@/components/CinematicLogo"
 import { Typewriter } from "@/components/TypewriterEffect"
@@ -67,8 +66,11 @@ function DefaultFooter() {
     </>
 }
 
-function IndexTab() {
-    const router = useRouter()
+function IndexTab({
+    navigateTo
+}: {
+    navigateTo: (to: string) => void
+}) {
     const setTab = useTabs(state => state.setTab)
     return <>
         <CinematicLogo className={"mr-8"} size={420} />
@@ -80,7 +82,7 @@ function IndexTab() {
             </div>
             <div className="flex w-1/2 justify-start pl-4">
                 <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2" onClick={() => {
-                    router.push("/login")
+                    navigateTo("/login")
                 }}>Log-in</Button>
             </div>
         </div>
