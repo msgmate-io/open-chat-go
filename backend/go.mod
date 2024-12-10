@@ -10,6 +10,8 @@ require golang.org/x/crypto v0.29.0
 
 require github.com/google/uuid v1.6.0
 
+require github.com/coder/websocket v1.8.12 // indirect
+
 // gorm stuff
 require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
