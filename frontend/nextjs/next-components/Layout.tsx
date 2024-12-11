@@ -12,6 +12,15 @@ export async function Layout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  if (process.env.STATIC_EXPORT) {
+    return (
+      <html lang="en" data-theme="dark">
+        <body>
+          {children}
+        </body>
+      </html>
+    );
+  }
   const theme = await getServerSideTheme();
   
   return (
