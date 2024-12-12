@@ -14,8 +14,3 @@ export default function Login() {
 
   return <LandingHero navigateTo={(to: string) => {navigate(to)}} />;
 }
-
-// Disable server-side rendering for this route
-export const handle = {
-  hydrate: true,
-}; 
