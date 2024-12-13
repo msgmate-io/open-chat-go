@@ -81,6 +81,13 @@ func ServerCli() *cli.Command {
 				Usage:   "bot login credentials",
 				Value:   "bot:password",
 			},
+			&cli.StringFlag{
+				Sources: cli.EnvVars("FRONTEND_PROXY"),
+				Name:    "frontend-proxy",
+				Aliases: []string{"fpx"},
+				Usage:   "Path '' for no proxy, e.g.: 'http://localhost:5173/' for remix",
+				Value:   "",
+			},
 			&cli.BoolFlag{
 				Sources: cli.EnvVars("START_BOT"),
 				Name:    "start-bot",
@@ -91,22 +98,27 @@ func ServerCli() *cli.Command {
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 			server.ServerStatus = "starting"
-			server.Config = c // TODO: do cooler, more go-like way saw something something 'config *func(c options)'
-
-			database.DB = database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
+			DB := database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
 
 			if c.Bool("debug") {
-				database.SetupTestUsers()
+				database.SetupTestUsers(DB)
 			}
 
-			s, fullHost := server.BackendServer(c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"))
+			// start channels to other nodes
+			federationHost, err := server.CreateFederationHost(c.String("host"), int(c.Int("p2pport")))
+
+			if err != nil {
+				return err
+			}
+
+			s, fullHost := server.BackendServer(DB, federationHost, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("frontend-proxy"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
 			rootCredentials := strings.Split(c.String("root-credentials"), ":")
 			username := rootCredentials[0]
 			password := rootCredentials[1]
-			err, adminUser := server.CreateRootUser(username, password)
+			err, adminUser := server.CreateRootUser(DB, username, password)
 
 			if err != nil {
 				return err
@@ -117,19 +129,17 @@ func ServerCli() *cli.Command {
 			usernameBot := botCredentials[0]
 			passwordBot := botCredentials[1]
 
-			err, botUser := server.CreateUser(usernameBot, passwordBot, false)
+			err, botUser := server.CreateUser(DB, usernameBot, passwordBot, false)
 			if err != nil {
 				return err
 			}
 
 			// Create default connection with admin user
-			err = server.SetupBaseConnections(adminUser.ID, botUser.ID)
+			err = server.SetupBaseConnections(DB, adminUser.ID, botUser.ID)
 			if err != nil {
 				return err
 			}
 
-			// start channels to other nodes
-			server.CreateFederationHost(int(c.Int("p2pport")))
 			server.ServerStatus = "running"
 
 			if c.Bool("start-bot") {

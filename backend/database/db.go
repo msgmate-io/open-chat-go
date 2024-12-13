@@ -7,8 +7,6 @@ import (
 	"log"
 )
 
-var DB *gorm.DB
-
 func SetupDatabase(
 	dbBackend string,
 	dbPathSqlite string,
@@ -46,10 +44,10 @@ func SetupDatabase(
 	return db
 }
 
-func SetupTestUsers() {
+func SetupTestUsers(DB *gorm.DB) {
 	var users []*User
 	for i, email := range []string{"tim+test1@timschupp.de", "tim+test2@timschupp.de"} {
-		user, err := RegisterUser(fmt.Sprintf("Test-User-%v", i+1), email, []byte("password"))
+		user, err := RegisterUser(DB, fmt.Sprintf("Test-User-%v", i+1), email, []byte("password"))
 		users = append(users, user)
 		if err != nil {
 			panic(fmt.Sprintf("Failed to create test user: %v", err))
@@ -58,7 +56,7 @@ func SetupTestUsers() {
 		}
 	}
 
-	contact, err := users[0].AddContact(users[1])
+	contact, err := users[0].AddContact(DB, users[1])
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create test contact: %v", err))
 	} else {

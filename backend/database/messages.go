@@ -1,5 +1,7 @@
 package database
 
+import "gorm.io/gorm"
+
 // Some inspiration from: https://github.com/omept/go-chat/
 type Message struct {
 	Model
@@ -52,15 +54,13 @@ type NodeAddress struct {
 	Address     string `json:"address"`
 }
 
-func (node *Node) List() []Node {
+func (node *Node) List(DB *gorm.DB) []Node {
 	var nodes []Node
 	DB.Find(&nodes)
 	return nodes
 }
 
-func (contact *Contact) List(
-	owningUser User,
-) []Contact {
+func (contact *Contact) List(DB *gorm.DB, owningUser User) []Contact {
 	var contacts []Contact
 	DB.Where("owning_user_id = ?", owningUser.ID).Find(&contacts)
 	return contacts

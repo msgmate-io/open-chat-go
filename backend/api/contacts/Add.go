@@ -2,6 +2,7 @@ package contacts
 
 import (
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 )
@@ -23,10 +24,10 @@ type AddContact struct {
 // @Failure      500  {object}  string	"Internal server error"
 // @Router       /api/v1/contacts/add [post]
 func (h *ContactsHander) Add(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -37,7 +38,7 @@ func (h *ContactsHander) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var otherUser database.User
-	if err := database.DB.First(&otherUser, "contact_token = ?", data.ContactToken).Error; err != nil {
+	if err := DB.First(&otherUser, "contact_token = ?", data.ContactToken).Error; err != nil {
 		http.Error(w, "Invalid contact token", http.StatusBadRequest)
 		return
 	}
@@ -48,7 +49,7 @@ func (h *ContactsHander) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var contact database.Contact
-	if err := database.DB.First(&contact, "owning_user_id = ? AND contact_user_id = ?", user.ID, otherUser.ID).Error; err == nil {
+	if err := DB.First(&contact, "owning_user_id = ? AND contact_user_id = ?", user.ID, otherUser.ID).Error; err == nil {
 		http.Error(w, "Contact already exists", http.StatusBadRequest)
 		return
 	}
@@ -59,7 +60,7 @@ func (h *ContactsHander) Add(w http.ResponseWriter, r *http.Request) {
 		ContactToken:  otherUser.ContactToken,
 	}
 
-	database.DB.Create(&newContact)
+	DB.Create(&newContact)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Contact added"))

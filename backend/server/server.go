@@ -1,36 +1,31 @@
 package server
 
 import (
-	"backend/api/federation"
 	"backend/database"
 	"bufio"
 	"context"
 	"crypto/md5"
-	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
-	"log"
-	"net/http"
-
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/google/uuid"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"io"
-	mrand "math/rand"
+	"log"
+	"net/http"
 )
 
 var Config *cli.Command
 var ServerStatus string = "unknown"
 
 func CreateUser(
+	DB *gorm.DB,
 	username string,
 	password string,
 	isAdminUser bool,
@@ -38,7 +33,7 @@ func CreateUser(
 	log.Println("Creating root user")
 	// first chaeck if that user already exists
 	var user database.User
-	database.DB.First(&user, "email = ?", username)
+	DB.First(&user, "email = ?", username)
 
 	if user.ID != 0 {
 		log.Fatal("User already exists")
@@ -59,7 +54,7 @@ func CreateUser(
 		IsAdmin:      true,
 	}
 
-	q := database.DB.Create(&user)
+	q := DB.Create(&user)
 
 	if q.Error != nil {
 		log.Fatal(q.Error)
@@ -69,8 +64,8 @@ func CreateUser(
 	return nil, &user
 }
 
-func CreateRootUser(username string, password string) (error, *database.User) {
-	return CreateUser(username, password, true)
+func CreateRootUser(DB *gorm.DB, username string, password string) (error, *database.User) {
+	return CreateUser(DB, username, password, true)
 }
 
 func GenerateToken(email string) string {
@@ -153,126 +148,19 @@ func writeData(rw *bufio.ReadWriter, message string) error {
 	return nil
 }
 
-func handleStream(s network.Stream) {
-	log.Println("Got a new stream!")
-	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-	go readData(rw)
-	go writeData(rw, "Connected sucessfully, hello from host "+federation.FederationHost.ID().String())
-}
-
-func StartP2PFederation(
-	port int,
-	createTestNodes bool,
-	rootNodeHost bool,
-	bootstrapPeerNodes []string,
-) {
-	const debug bool = true
-	// 0 - Create Test Nodes
-	if createTestNodes {
-		var nodeAdresses []database.NodeAddress
-		for _, address := range bootstrapPeerNodes {
-			fmt.Println("Registered Bootstrap Peer:", address)
-			nodeAdresses = append(nodeAdresses, database.NodeAddress{
-				Address: address,
-			})
-		}
-
-		if len(nodeAdresses) > 0 {
-			fmt.Println("Node Addresses:", nodeAdresses)
-			var node = database.Node{
-				NodeName:  "Node 1",
-				Addresses: nodeAdresses,
-			}
-			database.DB.Create(&node)
-		} else {
-			fmt.Println("No Bootstrap Peers")
-		}
-	}
-
-	// 1 - Get all 'Nodes'
-	var nodes []database.Node
-
-	//database.DB.Find(&nodes)
-
-	database.DB.Preload("Addresses").Find(&nodes)
-
-	for _, node := range nodes {
-		fmt.Println("Node:", node.NodeName)
-		for _, address := range node.Addresses {
-			fmt.Println("Address:", address.Address)
-		}
-	}
-
-	if rootNodeHost {
-		// Create a p2p host
-		var r io.Reader
-		if debug {
-			r = mrand.New(mrand.NewSource(int64(port)))
-		} else {
-			r = rand.Reader
-		}
-
-		h, err := makeHost(port, r)
-		fmt.Println("================", "Setting up Host Node", "================")
-		fmt.Println("Host Identity:", h.ID())
-		p2pAdress := fmt.Sprintf("%s/p2p/%s", h.Addrs()[0], h.ID())
-		fmt.Println("P2P Address:", p2pAdress)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		// Start the peer
-		startPeer(context.Background(), h, handleStream)
-		federation.FederationHost = h
-		fmt.Println("================", "================", "================")
-
-	}
-
-	streams := make(map[string]network.Stream)
-	for federationNode := range nodes {
-		// (3) - Connect to all federation nodes
-		fmt.Println("Connecting to Federation Node:", nodes[federationNode])
-		maddr, err := multiaddr.NewMultiaddr(nodes[federationNode].Addresses[0].Address)
-		if err != nil {
-			panic(err)
-		}
-
-		info, err := peer.AddrInfoFromP2pAddr(maddr)
-		if err != nil {
-			panic(err)
-		}
-
-		fmt.Println("Starting Federation Peer ID:", info.ID, info.Addrs, "HOST", federation.FederationHost)
-
-		// Register address in peerstore
-		federation.FederationHost.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
-
-		stream, err := federation.FederationHost.NewStream(context.Background(), info.ID, "/chat/1.0.0")
-		if err != nil {
-			panic(err)
-		}
-
-		streams[info.ID.String()] = stream
-
-		rw := bufio.NewReadWriter(bufio.NewReader(stream), bufio.NewWriter(stream))
-
-		writeData(rw, "Hello World from "+federation.FederationHost.ID().String())
-		go readData(rw)
-
-	}
-}
-
 func BackendServer(
+	db *gorm.DB,
+	federationHost *host.Host,
 	host string,
 	port int64,
 	debug bool,
 	ssl bool,
+	frontendProxy string,
 ) (*http.Server, string) {
 	var protocol string
 	var fullHost string
 
-	router := BackendRouting(debug)
+	router := BackendRouting(db, federationHost, debug, frontendProxy)
 	if ssl {
 		protocol = "https"
 	} else {
@@ -290,15 +178,16 @@ func BackendServer(
 }
 
 func SetupBaseConnections(
+	DB *gorm.DB,
 	adminUserId uint, baseBotId uint,
 ) error {
 	var adminUser database.User
-	if err := database.DB.First(&adminUser, "id = ?", adminUserId).Error; err != nil {
+	if err := DB.First(&adminUser, "id = ?", adminUserId).Error; err != nil {
 		return err
 	}
 
 	var botUser database.User
-	if err := database.DB.First(&botUser, "id = ?", baseBotId).Error; err != nil {
+	if err := DB.First(&botUser, "id = ?", baseBotId).Error; err != nil {
 		return err
 	}
 
@@ -308,7 +197,7 @@ func SetupBaseConnections(
 		ContactUserId: botUser.ID,
 	}
 
-	r := database.DB.Create(&contact)
+	r := DB.Create(&contact)
 
 	if r.Error != nil {
 		return r.Error
@@ -319,7 +208,7 @@ func SetupBaseConnections(
 		User2Id: contact.ContactUserId,
 	}
 
-	r = database.DB.Create(&chat)
+	r = DB.Create(&chat)
 
 	if r.Error != nil {
 		return r.Error
@@ -334,7 +223,19 @@ func SetupBaseConnections(
 		Text:       &text,
 	}
 
-	r = database.DB.Create(&message)
+	r = DB.Create(&message)
+
+	if r.Error != nil {
+		return r.Error
+	}
+
+	// ok lets create another chat
+	chat = database.Chat{
+		User1Id: contact.OwningUserId,
+		User2Id: contact.ContactUserId,
+	}
+
+	r = DB.Create(&chat)
 
 	if r.Error != nil {
 		return r.Error

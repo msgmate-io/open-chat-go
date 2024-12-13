@@ -2,6 +2,7 @@ package chats
 
 import (
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -39,10 +40,10 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 //	@Router       /api/v1/chats/{chat_uuid}/messages/list [get]
 func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	var messages []database.Message
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -67,7 +68,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	// First find the chat by its id and user.ID
 	var chat database.Chat
-	result := database.DB.Preload("User1").
+	result := DB.Preload("User1").
 		Preload("User2").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
@@ -77,7 +78,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Now list the messages paginated
-	result = database.DB.Scopes(database.Paginate(&messages, &pagination, database.DB)).
+	result = DB.Scopes(database.Paginate(&messages, &pagination, DB)).
 		Where("chat_id = ? AND (receiver_id = ? OR sender_id = ?)", chat.ID, user.ID, user.ID).
 		Where("deleted_at IS NULL").
 		Preload("Sender").

@@ -7,12 +7,49 @@ import (
 	"backend/api/reference"
 	"backend/api/user"
 	"backend/api/websocket"
+	"context"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/host"
+	"gorm.io/gorm"
+	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+	"time"
 )
 
+func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("[ TinyRP ] Request received at %s at %s\n", r.URL, time.Now().UTC())
+		// Update the headers to allow for SSL redirection
+		r.URL.Host = url.Host
+		r.URL.Scheme = url.Scheme
+		r.Header.Set("X-Forwarded-Host", r.Header.Get("Host"))
+		r.Host = url.Host
+		//trim reverseProxyRoutePrefix
+		path := r.URL.Path
+		r.URL.Path = strings.TrimLeft(path, endpoint)
+		// Note that ServeHttp is non blocking and uses a go routine under the hood
+		fmt.Printf("[ TinyRP ] Redirecting request to %s at %s\n", r.URL, time.Now().UTC())
+		proxy.ServeHTTP(w, r)
+	}
+}
+
+func dbMiddleware(db *gorm.DB) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), "db", db)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func BackendRouting(
+	DB *gorm.DB,
+	federationHost *host.Host,
 	debug bool,
+	frontendProxy string,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
@@ -21,7 +58,9 @@ func BackendRouting(
 	userHandler := &user.UserHandler{}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
-	federationHandler := &federation.FederationHandler{}
+	federationHandler := &federation.FederationHandler{
+		Host: *federationHost,
+	}
 	websocketHandler := websocket.ConnectionHandler
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
@@ -38,8 +77,8 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
 
-	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
-	mux.HandleFunc("POST /api/v1/user/register", userHandler.Register)
+	mux.Handle("POST /api/v1/user/login", dbMiddleware(DB)(http.HandlerFunc(userHandler.Login)))
+	mux.Handle("POST /api/v1/user/register", dbMiddleware(DB)(http.HandlerFunc(userHandler.Register)))
 	mux.HandleFunc("GET /_health", func(w http.ResponseWriter, r *http.Request) {
 		if ServerStatus != "running" {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -49,11 +88,32 @@ func BackendRouting(
 			w.Write([]byte("Server is running"))
 		}
 	})
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", Logging(AuthMiddleware(v1PrivateApis))))
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", dbMiddleware(DB)(Logging(AuthMiddleware(v1PrivateApis)))))
 	mux.HandleFunc("/reference", reference.ScalarReference)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
-	mux.Handle("/ws/", http.StripPrefix("/ws", AuthMiddleware(websocketMux)))
+	mux.Handle("/ws/", http.StripPrefix("/ws", dbMiddleware(DB)(AuthMiddleware(websocketMux))))
+
+	fs := http.FileServer(http.Dir("./frontend"))
+	if frontendProxy == "" {
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// TODO: directory traversal volnerability?
+			if r.URL.Path != "/" {
+				if _, err := http.Dir("./frontend").Open(r.URL.Path); err != nil {
+					http.ServeFile(w, r, "./frontend/index.html")
+					return
+				}
+			}
+			fs.ServeHTTP(w, r)
+		}))
+	} else {
+		targetURL, err := url.Parse(frontendProxy)
+		if err != nil {
+			log.Fatal(err)
+		}
+		proxy := httputil.NewSingleHostReverseProxy(targetURL)
+		mux.HandleFunc("/", ProxyRequestHandler(proxy, targetURL, "/"))
+	}
 
 	return mux
 }

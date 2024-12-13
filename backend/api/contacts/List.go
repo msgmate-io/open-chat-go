@@ -3,6 +3,7 @@ package contacts
 import (
 	"backend/api/websocket"
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -76,10 +77,10 @@ type PaginatedContacts struct {
 // @Failure      500 {string} string "Internal server error"
 // @Router       /api/v1/contacts/list [get]
 func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -97,7 +98,7 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var contacts []database.Contact
-	q := database.DB.Scopes(database.Paginate(&contacts, &pagination, database.DB)).
+	q := DB.Scopes(database.Paginate(&contacts, &pagination, DB)).
 		Where("owning_user_id = ?", user.ID).
 		Where("deleted_at IS NULL").
 		Preload("ContactUser").

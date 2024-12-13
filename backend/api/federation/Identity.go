@@ -33,19 +33,19 @@ func (h *FederationHandler) Identity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	FederationHost.ID()
+	h.Host.ID()
 
 	var addresses []string
 	var connectAddresses []string
 
-	for _, addr := range FederationHost.Addrs() {
+	for _, addr := range h.Host.Addrs() {
 		addresses = append(addresses, addr.String())
-		connectAddr := addr.String() + "/p2p/" + FederationHost.ID().String()
+		connectAddr := addr.String() + "/p2p/" + h.Host.ID().String()
 		connectAddresses = append(connectAddresses, connectAddr)
 	}
 
 	response := IdentityResponse{
-		ID:                 FederationHost.ID().String(),
+		ID:                 h.Host.ID().String(),
 		Addresses:          addresses,
 		ConnectMultiadress: connectAddresses,
 	}

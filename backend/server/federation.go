@@ -7,7 +7,6 @@ package server
  */
 
 import (
-	"backend/api/federation"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -82,54 +81,39 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 	return nil
 }
 
-func IncomingRequestStreamHander(stream network.Stream) {
-	// Remember to close the stream when we are done.
-	defer stream.Close()
+// CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
+func CreateIncomingRequestStreamHandler(host string, port int) network.StreamHandler {
+	return func(stream network.Stream) {
+		// Remember to close the stream when we are done.
+		defer stream.Close()
 
-	// Create a new buffered reader, as ReadRequest needs one.
-	// The buffered reader reads from our stream, on which we
-	// have sent the HTTP request (see ServeHTTP())
-	buf := bufio.NewReader(stream)
+		buf := bufio.NewReader(stream)
+		req, err := http.ReadRequest(buf)
+		if err != nil {
+			stream.Reset()
+			log.Println(err)
+			return
+		}
+		defer req.Body.Close()
 
-	req, err := http.ReadRequest(buf)
-	if err != nil {
-		stream.Reset()
-		log.Println(err)
-		return
+		// Configure request URL with provided host and port
+		fullHost := fmt.Sprintf("%s:%d", host, port)
+		req.URL.Scheme = "http"
+		req.URL.Host = fullHost
+
+		outreq := new(http.Request)
+		*outreq = *req
+
+		fmt.Printf("Making request to %s\n", req.URL)
+		resp, err := http.DefaultTransport.RoundTrip(outreq)
+		if err != nil {
+			stream.Reset()
+			log.Println(err)
+			return
+		}
+
+		resp.Write(stream)
 	}
-	defer req.Body.Close()
-
-	// We need to reset these fields in the request
-	// URL as they are not maintained.
-	fmt.Println("TBS, request url", req.URL)
-	req.URL.Scheme = "http"
-	// hp := strings.Split(req.Host, ":")
-	//if len(hp) > 1 && hp[1] == "443" {
-	//	req.URL.Scheme = "https"
-	//} else {
-	//	req.URL.Scheme = "http"
-	//}
-	fullHost := fmt.Sprintf("%s:%d", Config.String("host"), Config.Int("port"))
-	req.URL.Scheme = "http"
-	req.URL.Host = fullHost
-	fmt.Println("TBS 2, request url", req.URL)
-	// always only relay to self!
-
-	outreq := new(http.Request)
-	*outreq = *req
-
-	// We now make the request
-	fmt.Printf("Making request to %s\n", req.URL)
-	resp, err := http.DefaultTransport.RoundTrip(outreq)
-	if err != nil {
-		stream.Reset()
-		log.Println(err)
-		return
-	}
-
-	// resp.Write writes whatever response we obtained for our
-	// request back to the stream.
-	resp.Write(stream)
 }
 
 func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
@@ -156,8 +140,9 @@ func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler n
 
 // Starts a libp2p host for this server node that can be dialed from any other open-chat node
 func CreateFederationHost(
+	host string,
 	port int,
-) {
+) (*host.Host, error) {
 	var debug = true
 	var r io.Reader
 	if debug {
@@ -173,10 +158,10 @@ func CreateFederationHost(
 	fmt.Println("P2P Address:", p2pAdress)
 	if err != nil {
 		log.Println(err)
-		return
+		return nil, err
 	}
 
 	// Start the peer
-	StartRequestReceivingPeer(context.Background(), h, IncomingRequestStreamHander)
-	federation.FederationHost = h
+	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, port))
+	return &h, nil
 }
