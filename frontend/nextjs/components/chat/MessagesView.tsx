@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, forwardRef } from 'react';
 import { cn } from "@/components/utils";
 import { Card } from "@/components/Card";
 import { Textarea } from "../Textarea";
+import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { useMediaQuery } from 'react-responsive';
 import {
     Button
@@ -16,7 +17,40 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "@/components/DropdownMenu";
+import { devtools } from "zustand/middleware";
+import { create } from "zustand";
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
+
+interface PartialMessageState {
+    // uuid -> partial message
+    partialMessages: Record<string, string>
+    addPartialMessage: (uuid: string, message: string) => void
+    appendPartialMessage: (uuid: string, message: string) => void
+    removePartialMessage: (uuid: string) => void
+}
+
+export const usePartialMessageStore = create<PartialMessageState>()(
+    devtools(
+        (set) => ({
+            partialMessages: {},
+            addPartialMessage: (uuid: string, message: string) => set((state) => ({ 
+                partialMessages: { ...state.partialMessages, [uuid]: message } 
+            })),
+            appendPartialMessage: (uuid: string, message: string) => set((state) => {
+                const currentMessage = state.partialMessages[uuid] || ""
+                return { 
+                    partialMessages: { ...state.partialMessages, [uuid]: currentMessage + message } 
+                }
+            }),
+            removePartialMessage: (uuid: string) => set((state) => ({ 
+                partialMessages: Object.fromEntries(
+                    Object.entries(state.partialMessages)
+                    .filter(([key]) => key !== uuid)
+                )
+            })),
+        })
+    )
+)
 
 export const SendMessageButton = ({ 
         onClick, 
@@ -194,6 +228,40 @@ export const MessageInput = forwardRef<
     </div>
 });
 
+export function DebugView(){
+    const [socketUrl, setSocketUrl] = useState('ws://localhost:1984/ws/connect');
+    const [messageHistory, setMessageHistory] = useState<MessageEvent<any>[]>([]);
+    const { partialMessages, addPartialMessage, appendPartialMessage, removePartialMessage } = usePartialMessageStore()
+  
+    const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
+  
+    useEffect(() => {
+      if (lastMessage !== null) {
+        setMessageHistory((prev) => prev.concat(lastMessage));
+        const parsedMessage = JSON.parse(lastMessage.data)
+        console.log("parsedMessage", parsedMessage)
+        if(parsedMessage.type === "new_partial_message"){
+            appendPartialMessage(parsedMessage?.content?.chat_uuid, parsedMessage?.content?.text)
+        }
+      }
+    }, [lastMessage]);
+  
+    const connectionStatus = {
+      [ReadyState.CONNECTING]: 'Connecting',
+      [ReadyState.OPEN]: 'Open',
+      [ReadyState.CLOSING]: 'Closing',
+      [ReadyState.CLOSED]: 'Closed',
+      [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
+    }[readyState];
+
+    return <div className="absolute top-0 left-0 z-50 bg-base-200 p-2">
+        <div className="flex flex-col">
+            <div className="flex flex-col">
+                <div className="text-sm">Debug connection status: {connectionStatus}</div>
+            </div>
+        </div>
+    </div>
+}
 
 export function MessagesScroll({ 
     chat,
@@ -208,9 +276,12 @@ export function MessagesScroll({
 }) {
     const [text, setText] = useState("");
 
+    const [stickScroll, setStickScroll] = useState(false)
+    const { partialMessages, addPartialMessage, removePartialMessage } = usePartialMessageStore()
     const scrollRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLTextAreaElement>(null)
 
+    // TODO: allow deteching the scroll
     const scrollToBottom = () => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -220,6 +291,12 @@ export function MessagesScroll({
     useEffect(() => {
         scrollToBottom()
     }, [messages])
+    
+    useEffect(() => {
+        if(chat?.uuid && partialMessages?.[chat.uuid] && stickScroll){
+            scrollToBottom()
+        }
+    }, [partialMessages])
 
     const onSendMessage = async () => {
         const res = await fetch(`/api/v1/chats/${chat.uuid}/messages/send`, {
@@ -232,6 +309,8 @@ export function MessagesScroll({
         if(res.ok){
             mutate(`/api/v1/chats/${chat.uuid}/messages/list`)
         }
+        
+        setStickScroll(true)
         // TODO: some error or toast if the message sending failed
     }
 
@@ -239,8 +318,10 @@ export function MessagesScroll({
     }
 
     return <div className="flex flex-col h-full w-full lg:max-w-[900px] relative">
+        <DebugView />
         <div ref={scrollRef} className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto relative pb-4 pt-2">
             {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
+            {chat?.uuid && partialMessages?.[chat.uuid] && <MessageItem key={`msg_${chat.uuid}`} message={{text: partialMessages[chat.uuid]}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
         </div>
         {!hideInput && <MessageInput text={text} setText={setText} isLoading={false} isBotResponding={false} stopBotResponse={onStopBotResponse} onSendMessage={onSendMessage} ref={inputRef} />}
     </div>
