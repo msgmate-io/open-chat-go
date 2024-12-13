@@ -105,7 +105,7 @@ func ServerCli() *cli.Command {
 			}
 
 			// start channels to other nodes
-			federationHost, err := server.CreateFederationHost(c.String("host"), int(c.Int("p2pport")))
+			federationHost, err := server.CreateFederationHost(c.String("host"), int(c.Int("p2pport")), int(c.Int("port")))
 
 			if err != nil {
 				return err
