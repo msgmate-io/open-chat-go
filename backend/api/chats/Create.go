@@ -2,6 +2,7 @@ package chats
 
 import (
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 )
@@ -23,10 +24,10 @@ type CreateChat struct {
 //	@Failure      500  {object}  string	"Internal server error"
 //	@Router       /api/v1/chats/create [post]
 func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -37,7 +38,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var otherUser database.User
-	if err := database.DB.First(&otherUser, "contact_token = ?", data.ContactToken).Error; err != nil {
+	if err := DB.First(&otherUser, "contact_token = ?", data.ContactToken).Error; err != nil {
 		http.Error(w, "Invalid contact token", http.StatusBadRequest)
 		return
 	}
@@ -58,8 +59,8 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	database.DB.Create(&chat)
-	database.DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
+	DB.Create(&chat)
+	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chat)

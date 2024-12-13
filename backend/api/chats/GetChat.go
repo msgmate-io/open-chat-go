@@ -2,15 +2,16 @@ package chats
 
 import (
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 )
 
 func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -21,7 +22,7 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var chat database.Chat
-	result := database.DB.Preload("User1").
+	result := DB.Preload("User1").
 		Preload("User2").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
