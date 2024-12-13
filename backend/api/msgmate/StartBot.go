@@ -130,7 +130,6 @@ func StartBot(username string, password string) error {
 func readWebSocketMessages(ctx context.Context, conn *websocket.Conn, sessionId string) error {
 	var rawMessage json.RawMessage
 	err := wsjson.Read(ctx, conn, &rawMessage)
-	fmt.Errorf("GOT MESSAGE", rawMessage)
 	if err != nil {
 		// Differentiating between normal disconnection and error
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||

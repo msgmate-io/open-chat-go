@@ -1,3 +1,9 @@
 package user
 
-type UserHandler struct{}
+import (
+	"gorm.io/gorm"
+)
+
+type UserHandler struct {
+	DB *gorm.DB
+}
