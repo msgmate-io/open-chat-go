@@ -2,6 +2,7 @@ package federation
 
 import (
 	"backend/database"
+	"backend/server/util"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -22,10 +23,10 @@ type RequestNode struct {
 }
 
 func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -43,7 +44,7 @@ func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) 
 	// Retrieve the node
 	var node database.Node
 
-	q := database.DB.Preload("Addresses").Where("uuid = ?", nodeUuid).First(&node)
+	q := DB.Preload("Addresses").Where("uuid = ?", nodeUuid).First(&node)
 
 	if q.Error != nil {
 		http.Error(w, "Couldn't find node with that UUID", http.StatusNotFound)
@@ -51,7 +52,6 @@ func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var data RequestNode
-
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -73,8 +73,9 @@ func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) 
 	// TODO: possibly re-order by 'reachability'
 
 	// (3) - Connect to all federation nodes
-	log.Println("Connecting to Federation Node:", node)
-	maddr, err := multiaddr.NewMultiaddr(node.Addresses[1].Address)
+	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
+	log.Println("Connecting to Federation Node:", string(prettyFederationNode))
+	maddr, err := multiaddr.NewMultiaddr(node.Addresses[0].Address)
 	if err != nil {
 		http.Error(w, "Invalid address", http.StatusBadRequest)
 		return
@@ -86,13 +87,14 @@ func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	log.Println("Starting Federation Peer ID:", info.ID, info.Addrs, "HOST", FederationHost)
+	log.Println("Starting Federation Peer ID:", info.ID, info.Addrs, "HOST", h.Host)
 
 	// Register address in peerstore TODO: first check if that peer is already present in the peerstore
-	FederationHost.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+	h.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 
-	stream, err := FederationHost.NewStream(context.Background(), info.ID, "/t1m-http-request/0.0.1")
+	stream, err := h.Host.NewStream(context.Background(), info.ID, "/t1m-http-request/0.0.1")
 	if err != nil {
+		log.Println("Error opening stream to node:", err)
 		http.Error(w, "Couldn't open stream to node", http.StatusInternalServerError)
 		return
 	}
