@@ -45,12 +45,21 @@ func dbMiddleware(db *gorm.DB) func(next http.Handler) http.Handler {
 	}
 }
 
+func websocketMiddleware(ch *websocket.WebSocketHandler) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), "websocket", ch)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func BackendRouting(
 	DB *gorm.DB,
 	federationHost *host.Host,
 	debug bool,
 	frontendProxy string,
-) *http.ServeMux {
+) (*http.ServeMux, *websocket.WebSocketHandler) {
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
 	websocketMux := http.NewServeMux()
@@ -61,7 +70,7 @@ func BackendRouting(
 	federationHandler := &federation.FederationHandler{
 		Host: *federationHost,
 	}
-	websocketHandler := websocket.ConnectionHandler
+	websocketHandler := websocket.NewWebSocketHandler()
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
@@ -77,8 +86,13 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
 
-	mux.Handle("POST /api/v1/user/login", dbMiddleware(DB)(http.HandlerFunc(userHandler.Login)))
-	mux.Handle("POST /api/v1/user/register", dbMiddleware(DB)(http.HandlerFunc(userHandler.Register)))
+	providerMiddlewares := CreateStack(
+		dbMiddleware(DB),
+		websocketMiddleware(websocketHandler),
+	)
+
+	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
+	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
 	mux.HandleFunc("GET /_health", func(w http.ResponseWriter, r *http.Request) {
 		if ServerStatus != "running" {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -88,11 +102,11 @@ func BackendRouting(
 			w.Write([]byte("Server is running"))
 		}
 	})
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", dbMiddleware(DB)(Logging(AuthMiddleware(v1PrivateApis)))))
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", providerMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 	mux.HandleFunc("/reference", reference.ScalarReference)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
-	mux.Handle("/ws/", http.StripPrefix("/ws", dbMiddleware(DB)(AuthMiddleware(websocketMux))))
+	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
 
 	fs := http.FileServer(http.Dir("./frontend"))
 	if frontendProxy == "" {
@@ -115,5 +129,5 @@ func BackendRouting(
 		mux.HandleFunc("/", ProxyRequestHandler(proxy, targetURL, "/"))
 	}
 
-	return mux
+	return mux, websocketHandler
 }
