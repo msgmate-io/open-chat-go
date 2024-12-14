@@ -1,3 +1,4 @@
 package contacts
 
-type ContactsHander struct{}
+type ContactsHander struct {
+}
