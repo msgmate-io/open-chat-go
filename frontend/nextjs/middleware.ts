@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers'
 
-const SERVER_ROUTE = "http://localhost:1984"
+const SERVER_ROUTE = "http://backend:1984"
 
 const AUTH_REDIRECTS = [{
   expr: new RegExp("/login?"),
