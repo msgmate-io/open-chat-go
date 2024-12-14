@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -91,7 +92,7 @@ func sendChatMessage(host string, sessionId string, chatUUID string, data SendMe
 
 }
 
-func StartBot(username string, password string) error {
+func StartBot(ch *wsapi.WebSocketHandler, username string, password string) error {
 	ctx := context.Background() // Persistent context for the WebSocket connection
 
 	// Login the bot
@@ -120,14 +121,14 @@ func StartBot(username string, password string) error {
 		log.Println("Bot connected to WebSocket")
 
 		// Blocking call to continuously read messages
-		err = readWebSocketMessages(ctx, c, sessionId)
+		err = readWebSocketMessages(ch, ctx, c, sessionId)
 		if err != nil {
 			log.Printf("Error reading from WebSocket: %v", err)
 		}
 	}
 }
 
-func readWebSocketMessages(ctx context.Context, conn *websocket.Conn, sessionId string) error {
+func readWebSocketMessages(ch *wsapi.WebSocketHandler, ctx context.Context, conn *websocket.Conn, sessionId string) error {
 	var rawMessage json.RawMessage
 	err := wsjson.Read(ctx, conn, &rawMessage)
 	if err != nil {
@@ -141,14 +142,14 @@ func readWebSocketMessages(ctx context.Context, conn *websocket.Conn, sessionId 
 	}
 
 	// Process the message
-	if err := processMessage(rawMessage, sessionId); err != nil {
+	if err := processMessage(ch, rawMessage, sessionId); err != nil {
 		log.Printf("Error processing message: %v", err)
 	}
 
 	return nil
 }
 
-func processMessage(rawMessage json.RawMessage, sessionId string) error {
+func processMessage(ch *wsapi.WebSocketHandler, rawMessage json.RawMessage, sessionId string) error {
 
 	var messageMap map[string]interface{}
 	err := json.Unmarshal(rawMessage, &messageMap)
@@ -167,8 +168,50 @@ func processMessage(rawMessage json.RawMessage, sessionId string) error {
 			return err
 		}
 
+		// send a message trough the websocket
+		chunks, errs := streamChatCompletion(
+			"http://localai:8080",
+			"meta-llama-3.1-8b-instruct",
+			[]map[string]string{
+				{"role": "user", "content": message.Content.Text},
+			})
+
+		var fullText strings.Builder
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					chunks = nil
+				} else {
+					// send partial message to the user
+
+					ch.MessageHandler.SendMessage(
+						ch,
+						message.Content.SenderUUID,
+						ch.MessageHandler.NewPartialMessage(
+							message.Content.ChatUUID,
+							message.Content.SenderUUID,
+							chunk,
+						),
+					)
+					fullText.WriteString(chunk)
+				}
+			case err, ok := <-errs:
+				if ok && err != nil {
+					// Handle error
+					log.Fatalf("streamChatCompletion error: %v", err)
+				}
+				errs = nil
+			}
+
+			// End when both channels are nil or closed
+			if chunks == nil && errs == nil {
+				break
+			}
+		}
+
 		sendChatMessage("http://localhost:1984", sessionId, message.Content.ChatUUID, SendMessage{
-			Text: "You said: " + message.Content.Text,
+			Text: fullText.String(),
 		})
 	}
 

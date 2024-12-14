@@ -1,7 +1,6 @@
 package chats
 
 import (
-	"backend/api/websocket"
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
@@ -31,6 +30,12 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ch, err := util.GetWebsocket(r)
+	if err != nil {
+		http.Error(w, "Unable to get websocket", http.StatusBadRequest)
+		return
+	}
+
 	var data SendMessage
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -55,13 +60,13 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var receiverId uint
-	//var receiver database.User
+	var receiver database.User
 	if chat.User1.ID == user.ID {
 		receiverId = chat.User2.ID
-		//receiver = chat.User2
+		receiver = chat.User2
 	} else {
 		receiverId = chat.User1.ID
-		//receiver = chat.User1
+		receiver = chat.User1
 	}
 
 	var message database.Message = database.Message{
@@ -77,17 +82,20 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	DB.Model(&chat).Update("latest_message_id", message.ID)
 
 	// Now publish websocket updates to online & subscribed users
-	websocket.MessageHandler.SendMessage(
-		receiverId,
-		websocket.MessageHandler.NewMessage(
+	ch.MessageHandler.SendMessage(
+		ch,
+		receiver.UUID,
+		ch.MessageHandler.NewMessage(
 			chatUuid,
 			user.UUID,
 			data.Text,
 		),
 	)
-	websocket.MessageHandler.SendMessage(
-		user.ID,
-		websocket.MessageHandler.NewMessage(
+
+	ch.MessageHandler.SendMessage(
+		ch,
+		user.UUID,
+		ch.MessageHandler.NewMessage(
 			chatUuid,
 			user.UUID,
 			data.Text,

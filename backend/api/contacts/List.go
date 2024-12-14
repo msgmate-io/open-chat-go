@@ -16,19 +16,19 @@ type ListedContact struct {
 	IsOnline     bool   `json:"is_online"`
 }
 
-func isSubscriber(subscribers []websocket.Subscriber, userId uint) bool {
+func isSubscriber(subscribers []websocket.Subscriber, userUUID string) bool {
 	for _, subscriber := range subscribers {
-		if userId == subscriber.UserId {
+		if userUUID == subscriber.UserUUID {
 			return true
 		}
 	}
 	return false
 }
 
-func contactToContactListed(contacts []database.Contact, userId uint) []ListedContact {
+func contactToContactListed(ch *websocket.WebSocketHandler, contacts []database.Contact, userId uint) []ListedContact {
 	// check if the contact is online
 
-	subscribers := websocket.ConnectionHandler.GetSubscribers()
+	subscribers := ch.GetSubscribers()
 	listedContacts := make([]ListedContact, len(contacts))
 
 	// check if any contact.user.id is in the subscribers
@@ -39,7 +39,7 @@ func contactToContactListed(contacts []database.Contact, userId uint) []ListedCo
 		} else {
 			partner = contact.ContactUser
 		}
-		if isSubscriber(subscribers, partner.ID) {
+		if isSubscriber(subscribers, partner.UUID) {
 			listedContacts[i] = ListedContact{
 				ContactToken: partner.ContactToken,
 				Name:         partner.Name,
@@ -84,6 +84,12 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ch, err := util.GetWebsocket(r)
+	if err != nil {
+		http.Error(w, "Unable to get websocket", http.StatusBadRequest)
+		return
+	}
+
 	pagination := database.Pagination{Page: 1, Limit: 10}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, err := strconv.Atoi(pageParam); err == nil && page > 0 {
@@ -114,7 +120,7 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination.Rows = contactToContactListed(contacts, user.ID)
+	pagination.Rows = contactToContactListed(ch, contacts, user.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pagination)

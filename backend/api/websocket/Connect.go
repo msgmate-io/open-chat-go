@@ -11,7 +11,7 @@ func (ws *WebSocketHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	err := ws.SubscribeChannel(w, r, user.ID)
+	err := ws.SubscribeChannel(w, r, user.UUID)
 
 	if err != nil {
 		ws.logf("error: %v", err)
