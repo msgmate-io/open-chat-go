@@ -1,6 +1,7 @@
 package server
 
 import (
+	"backend/api/websocket"
 	"backend/database"
 	"bufio"
 	"context"
@@ -156,11 +157,11 @@ func BackendServer(
 	debug bool,
 	ssl bool,
 	frontendProxy string,
-) (*http.Server, string) {
+) (*http.Server, *websocket.WebSocketHandler, string) {
 	var protocol string
 	var fullHost string
 
-	router := BackendRouting(db, federationHost, debug, frontendProxy)
+	router, websocketHandler := BackendRouting(db, federationHost, debug, frontendProxy)
 	if ssl {
 		protocol = "https"
 	} else {
@@ -174,7 +175,7 @@ func BackendServer(
 		Handler: router,
 	}
 
-	return server, fullHost
+	return server, websocketHandler, fullHost
 }
 
 func SetupBaseConnections(
