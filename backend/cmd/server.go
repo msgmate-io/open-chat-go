@@ -111,7 +111,7 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			s, fullHost := server.BackendServer(DB, federationHost, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("frontend-proxy"))
+			s, ch, fullHost := server.BackendServer(DB, federationHost, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("frontend-proxy"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
@@ -141,12 +141,11 @@ func ServerCli() *cli.Command {
 			}
 
 			server.ServerStatus = "running"
-
 			if c.Bool("start-bot") {
 				go func() {
 					time.Sleep(1 * time.Second)
 					log.Printf("Starting bot ...")
-					err := msgmate.StartBot(usernameBot, passwordBot)
+					err := msgmate.StartBot(ch, usernameBot, passwordBot)
 					if err != nil {
 						log.Printf("Error starting bot: %v", err)
 					}
