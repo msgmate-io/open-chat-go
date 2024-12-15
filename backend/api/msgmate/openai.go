@@ -55,7 +55,7 @@ func streamChatCompletion(host string, model string, messages []map[string]strin
 		req.Header.Set("Authorization", "Bearer YOUR_API_KEY")
 
 		// Construct an HTTP client with a timeout (for safety).
-		client := &http.Client{Timeout: 30 * time.Second}
+		client := &http.Client{Timeout: 300 * time.Second}
 
 		// Perform the request.
 		resp, err := client.Do(req)
