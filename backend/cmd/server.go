@@ -39,6 +39,19 @@ func ServerCli() *cli.Command {
 				Value:   true, // TODO default to false
 				Usage:   "enable debug mode",
 			},
+			&cli.BoolFlag{
+				Sources: cli.EnvVars("SETUP_TEST_USERS"),
+				Name:    "setup-test-users",
+				Aliases: []string{"stu"},
+				Value:   false,
+				Usage:   "setup test users",
+			},
+			&cli.BoolFlag{
+				Sources: cli.EnvVars("RESET_DB"),
+				Name:    "reset-db",
+				Aliases: []string{"rdb"},
+				Value:   false,
+			},
 			&cli.StringFlag{
 				Sources: cli.EnvVars("HOST"),
 				Name:    "host",
@@ -98,20 +111,20 @@ func ServerCli() *cli.Command {
 		},
 		Action: func(_ context.Context, c *cli.Command) error {
 			server.ServerStatus = "starting"
-			DB := database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"))
+			DB := database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"), c.Bool("reset-db"))
 
-			if c.Bool("debug") {
+			if c.Bool("setup-test-users") {
 				database.SetupTestUsers(DB)
 			}
 
 			// start channels to other nodes
-			federationHost, err := server.CreateFederationHost(c.String("host"), int(c.Int("p2pport")), int(c.Int("port")))
+			_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")))
 
 			if err != nil {
 				return err
 			}
 
-			s, ch, fullHost := server.BackendServer(DB, federationHost, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("frontend-proxy"))
+			s, ch, fullHost := server.BackendServer(DB, federationHandler, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("frontend-proxy"))
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
@@ -145,12 +158,18 @@ func ServerCli() *cli.Command {
 				go func() {
 					time.Sleep(1 * time.Second)
 					log.Printf("Starting bot ...")
-					err := msgmate.StartBot(ch, usernameBot, passwordBot)
+					err := msgmate.StartBot(fullHost, ch, usernameBot, passwordBot)
 					if err != nil {
 						log.Printf("Error starting bot: %v", err)
 					}
 				}()
 			}
+
+			err = server.PreloadPeerstore(DB, federationHandler)
+			if err != nil {
+				return err
+			}
+			server.StartProxies(DB, federationHandler)
 
 			err = s.ListenAndServe()
 
