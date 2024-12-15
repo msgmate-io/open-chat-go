@@ -1,10 +1,10 @@
 package server
 
 import (
+	"backend/api/federation"
 	"backend/api/websocket"
 	"backend/database"
 	"bufio"
-	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -12,7 +12,6 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/urfave/cli/v3"
 	"golang.org/x/crypto/bcrypt"
@@ -34,11 +33,16 @@ func CreateUser(
 	log.Println("Creating root user")
 	// first chaeck if that user already exists
 	var user database.User
-	DB.First(&user, "email = ?", username)
+	q := DB.First(&user, "email = ?", username)
 
-	if user.ID != 0 {
-		log.Fatal("User already exists")
-		return fmt.Errorf("User already exists"), nil
+	if q.Error != nil {
+		if q.Error.Error() != "record not found" {
+			log.Fatal(q.Error)
+			return fmt.Errorf("Error reading user from db"), nil
+		}
+	} else {
+		log.Println("User already exists")
+		return nil, &user
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -55,7 +59,7 @@ func CreateUser(
 		IsAdmin:      true,
 	}
 
-	q := DB.Create(&user)
+	q = DB.Create(&user)
 
 	if q.Error != nil {
 		log.Fatal(q.Error)
@@ -100,28 +104,6 @@ func makeHost(port int, randomness io.Reader) (host.Host, error) {
 	)
 }
 
-func startPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
-	// Set a function as stream handler.
-	// This function is called when a peer connects, and starts a stream with this protocol.
-	// Only applies on the receiving side.
-	h.SetStreamHandler("/chat/1.0.0", streamHandler)
-
-	// Let's get the actual TCP port from our listen multiaddr, in case we're using 0 (default; random available port).
-	var port string
-	for _, la := range h.Network().ListenAddresses() {
-		fmt.Println("Listen Address:", la)
-		if p, err := la.ValueForProtocol(multiaddr.P_TCP); err == nil {
-			port = p
-			break
-		}
-	}
-
-	if port == "" {
-		log.Println("was not able to find actual local port")
-		return
-	}
-}
-
 func readData(rw *bufio.ReadWriter) {
 	for {
 		str, err := rw.ReadString('\n')
@@ -151,7 +133,7 @@ func writeData(rw *bufio.ReadWriter, message string) error {
 
 func BackendServer(
 	db *gorm.DB,
-	federationHost *host.Host,
+	federationHandler *federation.FederationHandler,
 	host string,
 	port int64,
 	debug bool,
@@ -161,7 +143,7 @@ func BackendServer(
 	var protocol string
 	var fullHost string
 
-	router, websocketHandler := BackendRouting(db, federationHost, debug, frontendProxy)
+	router, websocketHandler := BackendRouting(db, federationHandler, debug, frontendProxy)
 	if ssl {
 		protocol = "https"
 	} else {
