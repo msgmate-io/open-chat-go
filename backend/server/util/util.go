@@ -21,6 +21,14 @@ func GetDBAndUser(r *http.Request) (*gorm.DB, *database.User, error) {
 	return DB, user, nil
 }
 
+func GetDB(r *http.Request) (*gorm.DB, error) {
+	DB, ok := r.Context().Value("db").(*gorm.DB)
+	if !ok {
+		return nil, errors.New("invalid database")
+	}
+	return DB, nil
+}
+
 func GetWebsocket(r *http.Request) (*websocket.WebSocketHandler, error) {
 	websocket, ok := r.Context().Value("websocket").(*websocket.WebSocketHandler)
 	if !ok {
