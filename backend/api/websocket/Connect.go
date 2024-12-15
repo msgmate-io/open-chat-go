@@ -11,12 +11,12 @@ func (ws *WebSocketHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	err := ws.SubscribeChannel(w, r, user.UUID)
 
-	if err != nil {
-		ws.logf("error: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	// Handle WebSocket subscription first, before any potential writes to the response
+	if err := ws.SubscribeChannel(w, r, user.UUID); err != nil {
+		// Log the error but use http.Error before any WebSocket upgrade happens
+		ws.logf("error soket connection error: %v", err)
+		// http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
