@@ -111,7 +111,6 @@ func BackendRouting(
 	fs := http.FileServer(http.Dir("./frontend"))
 	if frontendProxy == "" {
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// TODO: directory traversal volnerability?
 			if r.URL.Path != "/" {
 				if _, err := http.Dir("./frontend").Open(r.URL.Path); err != nil {
 					http.ServeFile(w, r, "./frontend/index.html")
