@@ -11,6 +11,7 @@ func SetupDatabase(
 	dbBackend string,
 	dbPathSqlite string,
 	debug bool,
+	resetDB bool,
 ) *gorm.DB {
 	if dbBackend != "sqlite" {
 		panic(fmt.Sprintf("Unsupported/Unimplemented database backend: %s", dbBackend))
@@ -22,7 +23,7 @@ func SetupDatabase(
 	}
 
 	stmt := &gorm.Statement{DB: db}
-	if debug {
+	if resetDB {
 		for i, table := range Tabels {
 			stmt.Parse(table)
 			tableName := stmt.Schema.Table
