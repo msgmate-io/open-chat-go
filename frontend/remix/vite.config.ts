@@ -12,7 +12,7 @@ declare module "@remix-run/node" {
 export default defineConfig({
   plugins: [
     remix({
-      ssr: false,
+      ssr: false, // TODO only for web-deployment of frontend
       future: {
         v3_fetcherPersist: true,
         v3_relativeSplatPath: true,
@@ -23,6 +23,9 @@ export default defineConfig({
     }),
     tsconfigPaths(),
   ],
+  server: {
+    host: true,
+  },
   resolve: {
     alias: {
       "@/": path.resolve(__dirname, "./"),
