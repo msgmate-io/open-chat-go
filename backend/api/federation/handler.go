@@ -6,4 +6,5 @@ import (
 
 type FederationHandler struct {
 	Host host.Host
+	// port -> service_uuid map TODO
 }

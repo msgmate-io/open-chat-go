@@ -4,6 +4,8 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"log"
 	"net/http"
 )
@@ -46,8 +48,19 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 
 	var nodeAddresses []database.NodeAddress
 
+	var info *peer.AddrInfo
 	for _, address := range data.Addresses {
 		log.Println("Register Address: ", address)
+		maddr, err := multiaddr.NewMultiaddr(address)
+		if err != nil {
+			http.Error(w, "Invalid address", http.StatusBadRequest)
+			return
+		}
+		info, err = peer.AddrInfoFromP2pAddr(maddr)
+		if err != nil {
+			http.Error(w, "Invalid address", http.StatusBadRequest)
+			return
+		}
 		nodeAddresses = append(nodeAddresses, database.NodeAddress{
 			Address: address,
 		})
@@ -55,9 +68,9 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 
 	// TODO: query all existing node adresses to make sure a NodeAdress is NEVER registered to multiple nodes
 	// If a NodeAddress is registered twice this should almost always mean that the host nodes-peer-id has changed!
-
 	var node = database.Node{
 		NodeName:  data.Name,
+		PeerID:    info.ID.String(),
 		Addresses: nodeAddresses,
 	}
 
@@ -67,6 +80,17 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// directly try to 'ping' the node once!
+	ownPeerId := h.Host.ID()
+	SendNodeRequest(DB, h, node.UUID, RequestNode{
+		Method: "GET",
+		Path:   "/api/v1/federation/nodes/" + ownPeerId.String() + "/ping",
+		Headers: map[string]string{
+			"X-Proxy-Route": node.Addresses[0].Address,
+		},
+		Body: "",
+	})
 
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
