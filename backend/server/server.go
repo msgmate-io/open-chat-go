@@ -56,7 +56,7 @@ func CreateUser(
 		Email:        username,
 		PasswordHash: string(hashedPassword),
 		ContactToken: uuid.New().String(),
-		IsAdmin:      true,
+		IsAdmin:      isAdminUser,
 	}
 
 	q = DB.Create(&user)
