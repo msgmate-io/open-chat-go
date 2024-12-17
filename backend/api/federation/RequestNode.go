@@ -25,15 +25,7 @@ type RequestNode struct {
 	Body    string            `json:"body"`
 }
 
-func SendNodeRequest(DB *gorm.DB, h *FederationHandler, nodeUUID string, data RequestNode) (*http.Response, error) {
-	// Retrieve the node
-	var node database.Node
-	q := DB.Preload("Addresses").Where("uuid = ?", nodeUUID).First(&node)
-
-	if q.Error != nil {
-		return nil, fmt.Errorf("Couldn't find node with that UUID")
-	}
-
+func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNode) (*http.Response, error) {
 	// now we build a new request based on the data
 	req, err := http.NewRequest(data.Method, data.Path, strings.NewReader(data.Body))
 	if err != nil {
@@ -103,6 +95,18 @@ func SendNodeRequest(DB *gorm.DB, h *FederationHandler, nodeUUID string, data Re
 	}
 
 	return resp, nil
+}
+
+func SendNodeRequest(DB *gorm.DB, h *FederationHandler, nodeUUID string, data RequestNode) (*http.Response, error) {
+	// Retrieve the node
+	var node database.Node
+	q := DB.Preload("Addresses").Where("uuid = ?", nodeUUID).First(&node)
+
+	if q.Error != nil {
+		return nil, fmt.Errorf("Couldn't find node with that UUID")
+	}
+
+	return SendRequestToNode(h, node, data)
 }
 
 func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) {

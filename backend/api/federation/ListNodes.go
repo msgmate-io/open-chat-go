@@ -16,7 +16,7 @@ type ListedNode struct {
 
 type PaginatedNodes struct {
 	database.Pagination
-	Rows []ListedNode
+	Rows []ListedNode `json:"rows"`
 }
 
 // List Nodes
