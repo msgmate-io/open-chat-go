@@ -34,7 +34,7 @@ func CreateHost(
 	DB *gorm.DB,
 	port int,
 	randomness io.Reader,
-) (host.Host, error) {
+) (host.Host, *federation.WhitelistGater, error) {
 	// 0 - check if the key already exists
 	var existingKey database.Key
 	q := DB.First(&existingKey, "key_type = ? AND key_name = ?", "private", "libp2p")
@@ -60,18 +60,38 @@ func CreateHost(
 
 	if err != nil {
 		log.Println(err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// TODO: allow resstriction listen address via param
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port))
 	fmt.Println("Host Listen Address:", sourceMultiAddr)
 
-	return libp2p.New(
+	// generally allow all peer id's that are registered
+	var allPeerIds []string
+	DB.Model(&database.Node{}).Pluck("peer_id", &allPeerIds)
+	var allPeerIdsP2p []peer.ID
+	for _, peerId := range allPeerIds {
+		pID, err := peer.Decode(peerId)
+		if err != nil {
+			log.Printf("Failed to decode peer ID %s: %v", peerId, err)
+			continue
+		}
+		allPeerIdsP2p = append(allPeerIdsP2p, pID)
+	}
+
+	fmt.Println("All Peer IDs:", allPeerIds, allPeerIdsP2p)
+
+	gater := federation.NewWhitelistGater(allPeerIdsP2p)
+
+	h, err := libp2p.New(
 		libp2p.ListenAddrs(sourceMultiAddr),
 		libp2p.Identity(prvKey),
+		libp2p.ConnectionGater(gater),
 		// Enable stuff for hole punching etc...
 	)
+
+	return h, gater, err
 }
 
 func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
@@ -106,7 +126,6 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 // CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
 func CreateIncomingRequestStreamHandler(host string, hostPort int) network.StreamHandler {
 	return func(stream network.Stream) {
-		// Remember to close the stream when we are done.
 		defer stream.Close()
 
 		buf := bufio.NewReader(stream)
@@ -126,6 +145,9 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 		outreq := new(http.Request)
 		*outreq = *req
 
+		// Preserve the original request headers
+		outreq.Header = req.Header
+
 		fmt.Printf("[f-proxy] Making request to %s\n", req.URL)
 		resp, err := http.DefaultTransport.RoundTrip(outreq)
 		if err != nil {
@@ -134,7 +156,29 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 			return
 		}
 
-		resp.Write(stream)
+		// Create a response writer that will write to the stream
+		writer := bufio.NewWriter(stream)
+
+		// Write the response status line
+		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+
+		// Write all response headers
+		for key, values := range resp.Header {
+			for _, value := range values {
+				fmt.Fprintf(writer, "%s: %s\r\n", key, value)
+			}
+		}
+
+		// Write the empty line that separates headers from body
+		fmt.Fprintf(writer, "\r\n")
+
+		// Flush the headers
+		writer.Flush()
+
+		// Copy the response body
+		io.Copy(writer, resp.Body)
+		writer.Flush()
+		resp.Body.Close()
 	}
 }
 
@@ -171,7 +215,8 @@ func CreateFederationHost(
 	var r io.Reader
 	r = rand.Reader
 
-	h, err := CreateHost(DB, p2pPort, r)
+	h, gater, err := CreateHost(DB, p2pPort, r)
+	gater.AddAllowedPeer(h.ID())
 	fmt.Println("================", "Setting up Host Node", "================")
 	fmt.Println("Host Identity:", h.ID())
 	for _, addr := range h.Addrs() {
@@ -188,6 +233,7 @@ func CreateFederationHost(
 	federationHandler := &federation.FederationHandler{
 		Host:      h,
 		AutoPings: make(map[string]context.CancelFunc),
+		Gater:     gater,
 	}
 
 	return &h, federationHandler, nil
