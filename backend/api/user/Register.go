@@ -73,6 +73,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Email:        data.Email,
 		PasswordHash: string(hashedPassword),
 		ContactToken: uuid.New().String(),
+		IsAdmin:      false,
 	}
 
 	q = database.DB.Create(&user)
