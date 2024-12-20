@@ -12,10 +12,15 @@ var version = "unknown"
 
 func main() {
 
-	cmd := cmd.ServerCli()
-	err := cmd.Run(context.Background(), os.Args)
+	if true {
+		cmd := cmd.ServerCli()
+		err := cmd.Run(context.Background(), os.Args)
 
-	if err != nil {
-		log.Fatal(err)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		// cmd.Start()
+		cmd.Start()
 	}
 }
