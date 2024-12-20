@@ -5,6 +5,7 @@ import (
 	"backend/server/util"
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -18,7 +19,7 @@ import (
 	"strings"
 )
 
-func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node) http.HandlerFunc {
+func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, proxy database.Proxy) http.HandlerFunc {
 	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
 	if err != nil {
 		log.Println("Couldn't marshal node", err)
@@ -103,14 +104,12 @@ func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, nod
 		defer resp.Body.Close()
 
 		fmt.Println("PROXY ===> RESPONSE HEADERS:", resp.Header)
-		// Copy response headers
+		// Modifies the domain of `Set-Cookie` headers to the requesting host
 		for k, v := range resp.Header {
 			if k == "Set-Cookie" {
-				// Rewrite cookie domain to requesting host
 				for _, cookie := range v {
 					c, err := http.ParseSetCookie(cookie)
 					if err == nil {
-						// For IP addresses, don't set the domain at all
 						host := r.Host
 						if i := strings.Index(host, ":"); i != -1 {
 							host = host[:i]
@@ -120,7 +119,6 @@ func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, nod
 						} else {
 							c.Domain = host
 						}
-						// Convert back to header string
 						w.Header().Add(k, c.String())
 					} else {
 						fmt.Println("PROXY ===> COOKIE ERROR:", err)
@@ -132,11 +130,19 @@ func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, nod
 		}
 		w.WriteHeader(resp.StatusCode)
 
-		// Stream the response body
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			log.Println("Error copying response:", err)
 		}
 	}
+}
+
+type CreateAndStartProxyRequest struct {
+	UseTLS        bool   `json:"use_tls"`
+	KeyPrefix     string `json:"key_prefix"`
+	NodeUUID      string `json:"node_uuid"`
+	Port          string `json:"port"`
+	Kind          string `json:"kind"`
+	TrafficOrigin string `json:"traffic_origin"`
 }
 
 func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.Request) {
@@ -152,32 +158,72 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	nodeUuid := r.PathValue("node_uuid")
-	if nodeUuid == "" {
-		http.Error(w, "Invalid node UUID", http.StatusBadRequest)
+	var req CreateAndStartProxyRequest
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
-	portS := r.PathValue("local_port")
+	portS := req.Port
 	if portS == "" {
 		http.Error(w, "Invalid port", http.StatusBadRequest)
 		return
 	}
 
 	var node database.Node
-	q := DB.Preload("Addresses").Where("uuid = ?", nodeUuid).First(&node)
+	q := DB.Preload("Addresses").Where("uuid = ?", req.NodeUUID).First(&node)
 	if q.Error != nil {
-		log.Println("Couldn't find node with that UUID", nodeUuid)
+		log.Println("Couldn't find node with that UUID", req.NodeUUID)
 		http.Error(w, "Couldn't find node with that UUID", http.StatusNotFound)
 		return
 	}
 
-	proxy := database.Proxy{
-		NodeID: node.ID,
-		Node:   node,
-		Port:   portS,
-		Active: true,
+	// set defaults for 'Kind' and 'TrafficOrigin'
+	if req.Kind == "" {
+		req.Kind = "p2p"
 	}
+	if req.TrafficOrigin == "" {
+		req.TrafficOrigin = "0.0.0.0"
+	}
+
+	proxy := database.Proxy{
+		NodeID:        node.ID,
+		Node:          node,
+		Port:          portS,
+		Active:        true,
+		UseTLS:        req.UseTLS,
+		Kind:          req.Kind,
+		TrafficOrigin: req.TrafficOrigin,
+	}
+
+	var certPEM, keyPEM, issuerPEM database.Key
+	var certPEMBytes, keyPEMBytes []byte
+	if proxy.UseTLS {
+		// Now we try to load 3 keys from the database
+		q = DB.Where("key_type = ? AND key_name = ?", "cert", fmt.Sprintf("%s_cert.pem", req.KeyPrefix)).First(&certPEM)
+		if q.Error != nil {
+			log.Println("Couldn't find cert key for node", node.ID)
+			http.Error(w, "Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!", http.StatusInternalServerError)
+			return
+		}
+		q = DB.Where("key_type = ? AND key_name = ?", "key", fmt.Sprintf("%s_key.pem", req.KeyPrefix)).First(&keyPEM)
+		if q.Error != nil {
+			log.Println("Couldn't find key key for node", node.ID)
+			http.Error(w, "Couldn't find key key for node, if you want to use TLS for this proxy create the keys first!", http.StatusInternalServerError)
+			return
+		}
+		q = DB.Where("key_type = ? AND key_name = ?", "issuer", fmt.Sprintf("%s_issuer.pem", req.KeyPrefix)).First(&issuerPEM)
+		if q.Error != nil {
+			log.Println("Couldn't find issuer key for node", node.ID)
+			http.Error(w, "Couldn't find issuer key for node, if you want to use TLS for this proxy create the keys first!", http.StatusInternalServerError)
+			return
+		}
+
+		certPEMBytes = certPEM.KeyContent
+		keyPEMBytes = keyPEM.KeyContent
+	}
+
 	// check if already exists
 	q = DB.First(&proxy, "node_id = ? AND port = ?", node.ID, portS)
 	if q.Error == nil {
@@ -188,8 +234,34 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 
 	go func() {
 		mux := http.NewServeMux()
-		mux.Handle("/", CreateProxyHandler(h, DB, portS, node))
-		http.ListenAndServe(":"+portS, mux)
+		mux.Handle("/", CreateProxyHandler(h, DB, portS, node, proxy))
+
+		server := &http.Server{
+			Addr:    ":" + portS,
+			Handler: mux,
+		}
+
+		if proxy.UseTLS {
+			cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+			if err != nil {
+				log.Printf("Error loading certificates: %v", err)
+				return
+			}
+
+			server.TLSConfig = &tls.Config{
+				Certificates: []tls.Certificate{cert},
+			}
+
+			err = server.ListenAndServeTLS("", "")
+			if err != nil {
+				log.Printf("Error starting TLS server: %v", err)
+			}
+		} else {
+			err := server.ListenAndServe()
+			if err != nil {
+				log.Printf("Error starting server: %v", err)
+			}
+		}
 	}()
 
 	w.WriteHeader(http.StatusOK)
