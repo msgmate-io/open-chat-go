@@ -7,4 +7,6 @@ var Tabels []interface{} = []interface{}{
 	&Chat{},
 	&ChatSettings{},
 	&Contact{},
+	&Node{},
+	&NodeAddress{},
 }
