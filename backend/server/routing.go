@@ -9,8 +9,11 @@ import (
 	"backend/api/user"
 	"backend/api/websocket"
 	"context"
+	"embed"
 	"fmt"
 	"gorm.io/gorm"
+	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -18,6 +21,9 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed all:frontend
+var frontendFS embed.FS
 
 func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -113,16 +119,35 @@ func BackendRouting(
 	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
 
 	// server frontend or proxy to dev-frontend
-	fs := http.FileServer(http.Dir("./frontend"))
 	if frontendProxy == "" {
+		fsys, err := fs.Sub(frontendFS, "frontend")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fs := http.FileServer(http.FS(fsys))
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/" {
-				if _, err := http.Dir("./frontend").Open(r.URL.Path); err != nil {
-					http.ServeFile(w, r, "./frontend/index.html")
+			path := r.URL.Path
+
+			// Serve static assets directly
+			if strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/build/") {
+				if _, err := fsys.Open(strings.TrimPrefix(path, "/")); err != nil {
+					http.NotFound(w, r)
 					return
 				}
+				fs.ServeHTTP(w, r)
+				return
 			}
-			fs.ServeHTTP(w, r)
+
+			// For all other routes, serve index.html directly from the filesystem
+			indexFile, err := fsys.Open("index.html")
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			defer indexFile.Close()
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			http.ServeContent(w, r, "index.html", time.Time{}, indexFile.(io.ReadSeeker))
 		}))
 	} else {
 		targetURL, err := url.Parse(frontendProxy)
