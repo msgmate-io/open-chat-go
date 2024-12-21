@@ -1,6 +1,7 @@
 package server
 
 import (
+	"backend/api/federation"
 	"backend/database"
 	"bufio"
 	"context"
@@ -26,6 +27,7 @@ import (
 )
 
 func CreateRootUser(username string, password string) {
+	log.Println("Creating root user")
 	// first chaeck if that user already exists
 	var user database.User
 	database.DB.First(&user, "email = ?", username)
@@ -46,7 +48,7 @@ func CreateRootUser(username string, password string) {
 		Email:        username,
 		PasswordHash: string(hashedPassword),
 		ContactToken: uuid.New().String(),
-		IsAdmin:      false,
+		IsAdmin:      true,
 	}
 
 	q := database.DB.Create(&user)
@@ -55,8 +57,6 @@ func CreateRootUser(username string, password string) {
 		log.Fatal(q.Error)
 	}
 }
-
-var FederationHost host.Host
 
 func GenerateToken(email string) string {
 	hash, err := bcrypt.GenerateFromPassword([]byte(email), bcrypt.DefaultCost)
@@ -142,7 +142,7 @@ func handleStream(s network.Stream) {
 	log.Println("Got a new stream!")
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 	go readData(rw)
-	go writeData(rw, "Connected sucessfully, hello from host "+FederationHost.ID().String())
+	go writeData(rw, "Connected sucessfully, hello from host "+federation.FederationHost.ID().String())
 }
 
 func StartP2PFederation(
@@ -209,7 +209,7 @@ func StartP2PFederation(
 
 		// Start the peer
 		startPeer(context.Background(), h, handleStream)
-		FederationHost = h
+		federation.FederationHost = h
 		fmt.Println("================", "================", "================")
 
 	}
@@ -228,12 +228,12 @@ func StartP2PFederation(
 			panic(err)
 		}
 
-		fmt.Println("Starting Federation Peer ID:", info.ID, info.Addrs, "HOST", FederationHost)
+		fmt.Println("Starting Federation Peer ID:", info.ID, info.Addrs, "HOST", federation.FederationHost)
 
 		// Register address in peerstore
-		FederationHost.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+		federation.FederationHost.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 
-		stream, err := FederationHost.NewStream(context.Background(), info.ID, "/chat/1.0.0")
+		stream, err := federation.FederationHost.NewStream(context.Background(), info.ID, "/chat/1.0.0")
 		if err != nil {
 			panic(err)
 		}
@@ -242,7 +242,7 @@ func StartP2PFederation(
 
 		rw := bufio.NewReadWriter(bufio.NewReader(stream), bufio.NewWriter(stream))
 
-		writeData(rw, "Hello World from "+FederationHost.ID().String())
+		writeData(rw, "Hello World from "+federation.FederationHost.ID().String())
 		go readData(rw)
 
 	}
