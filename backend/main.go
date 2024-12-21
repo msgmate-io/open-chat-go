@@ -26,6 +26,8 @@ func main() {
 			fmt.Println("invalid client command")
 			return
 		}
+	} else if len(os.Args) > 1 && os.Args[1] == "install" {
+		runCmd = cmd.InstallCli()
 	} else {
 		runCmd = cmd.ServerCli()
 	}
