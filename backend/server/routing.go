@@ -33,6 +33,9 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
+	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
+	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/ping", federationHandler.PingNode)
+	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
 
 	mux.HandleFunc("POST /api/v1/user/login", userHandler.Login)
 	mux.HandleFunc("POST /api/v1/user/register", userHandler.Register)
