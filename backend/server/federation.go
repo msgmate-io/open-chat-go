@@ -135,6 +135,9 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 			log.Println(err)
 			return
 		}
+		// get the Referer header
+		referer := req.Header.Get("Referer")
+		fmt.Println("Received request from:", req.URL, req.URL.Path, req.Header, referer)
 		defer req.Body.Close()
 
 		// Configure request URL with provided host and port
@@ -216,15 +219,16 @@ func CreateFederationHost(
 	r = rand.Reader
 
 	h, gater, err := CreateHost(DB, p2pPort, r)
+	if err != nil {
+		log.Println(err)
+		return nil, nil, err
+	}
+
 	gater.AddAllowedPeer(h.ID())
 	fmt.Println("================", "Setting up Host Node", "================")
 	fmt.Println("Host Identity:", h.ID())
 	for _, addr := range h.Addrs() {
 		fmt.Println("Host P2P Address(es):", addr)
-	}
-	if err != nil {
-		log.Println(err)
-		return nil, nil, err
 	}
 
 	// Start the peer
@@ -254,7 +258,7 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 		DB.Preload("Addresses").First(&proxy.Node, proxy.NodeID)
 		log.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port)
 		go func(proxy database.Proxy) {
-			http.ListenAndServe(fmt.Sprintf(":%s", proxy.Port), federation.CreateProxyHandler(h, DB, proxy.Port, proxy.Node))
+			http.ListenAndServe(fmt.Sprintf(":%s", proxy.Port), federation.CreateProxyHandler(h, DB, proxy.Port, proxy.Node, proxy))
 		}(proxy)
 	}
 }
