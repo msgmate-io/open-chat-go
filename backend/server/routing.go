@@ -5,6 +5,7 @@ import (
 	"backend/api/contacts"
 	"backend/api/federation"
 	"backend/api/reference"
+	"backend/api/tls"
 	"backend/api/user"
 	"backend/api/websocket"
 	"context"
@@ -83,7 +84,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /federation/nodes/list", federationHandler.ListNodes)
 	v1PrivateApis.HandleFunc("GET /federation/nodes/whitelisted", federationHandler.WhitelistedPeers)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
-	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy/{node_uuid}/{local_port}/", federationHandler.CreateAndStartProxy)
+	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
+	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
+	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
 
 	providerMiddlewares := CreateStack(
 		dbMiddleware(DB),
