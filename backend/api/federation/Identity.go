@@ -2,7 +2,6 @@ package federation
 
 import (
 	"backend/database"
-	"backend/server"
 	"encoding/json"
 	"net/http"
 )
@@ -34,19 +33,19 @@ func (h *FederationHandler) Identity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	server.FederationHost.ID()
+	FederationHost.ID()
 
 	var addresses []string
 	var connectAddresses []string
 
-	for _, addr := range server.FederationHost.Addrs() {
+	for _, addr := range FederationHost.Addrs() {
 		addresses = append(addresses, addr.String())
-		connectAddr := addr.String() + "/p2p/" + server.FederationHost.ID().String()
+		connectAddr := addr.String() + "/p2p/" + FederationHost.ID().String()
 		connectAddresses = append(connectAddresses, connectAddr)
 	}
 
 	response := IdentityResponse{
-		ID:                 server.FederationHost.ID().String(),
+		ID:                 FederationHost.ID().String(),
 		Addresses:          addresses,
 		ConnectMultiadress: connectAddresses,
 	}
