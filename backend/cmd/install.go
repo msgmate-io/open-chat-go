@@ -29,6 +29,13 @@ func InstallCli() *cli.Command {
 			// check if service is already installed
 			if _, err := os.Stat("/etc/systemd/system/open-chat.service"); err == nil {
 				fmt.Println("service is already installed performing update instead!")
+				// check if service is running
+				if exec.Command("systemctl", "is-active", "--quiet", "open-chat").Run() == nil {
+					fmt.Println("service is running, stopping it...")
+					if err := exec.Command("systemctl", "stop", "open-chat").Run(); err != nil {
+						return fmt.Errorf("failed to stop service: %w", err)
+					}
+				}
 			} else {
 				fmt.Println("service is not installed, installing for the first time...")
 				DB := database.SetupDatabase(c.String("db-backend"), "./data.db", c.Bool("debug"), true)
