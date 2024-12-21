@@ -23,7 +23,6 @@ import (
 	mrand "math/rand"
 	"net/http"
 	"os"
-	"strings"
 )
 
 func CreateHost(
@@ -104,13 +103,17 @@ func IncomingRequestStreamHander(stream network.Stream) {
 	// URL as they are not maintained.
 	fmt.Println("TBS, request url", req.URL)
 	req.URL.Scheme = "http"
-	hp := strings.Split(req.Host, ":")
-	if len(hp) > 1 && hp[1] == "443" {
-		req.URL.Scheme = "https"
-	} else {
-		req.URL.Scheme = "http"
-	}
-	req.URL.Host = req.Host
+	// hp := strings.Split(req.Host, ":")
+	//if len(hp) > 1 && hp[1] == "443" {
+	//	req.URL.Scheme = "https"
+	//} else {
+	//	req.URL.Scheme = "http"
+	//}
+	fullHost := fmt.Sprintf("%s:%d", Config.String("host"), Config.Int("port"))
+	req.URL.Scheme = "http"
+	req.URL.Host = fullHost
+	fmt.Println("TBS 2, request url", req.URL)
+	// always only relay to self!
 
 	outreq := new(http.Request)
 	*outreq = *req
@@ -133,7 +136,7 @@ func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler n
 	// Set a function as stream handler.
 	// This function is called when a peer connects, and starts a stream with this protocol.
 	// Only applies on the receiving side.
-	h.SetStreamHandler("/http-request/1.0.0", streamHandler)
+	h.SetStreamHandler("/t1m-http-request/0.0.1", streamHandler)
 
 	// Let's get the actual TCP port from our listen multiaddr, in case we're using 0 (default; random available port).
 	var port string
