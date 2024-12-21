@@ -3,6 +3,7 @@ package federation
 import (
 	"backend/database"
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -46,10 +47,14 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 	var nodeAddresses []database.NodeAddress
 
 	for _, address := range data.Addresses {
+		log.Println("Register Address: ", address)
 		nodeAddresses = append(nodeAddresses, database.NodeAddress{
 			Address: address,
 		})
 	}
+
+	// TODO: query all existing node adresses to make sure a NodeAdress is NEVER registered to multiple nodes
+	// If a NodeAddress is registered twice this should almost always mean that the host nodes-peer-id has changed!
 
 	var node = database.Node{
 		NodeName:  data.Name,
@@ -63,4 +68,7 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(node)
 }
