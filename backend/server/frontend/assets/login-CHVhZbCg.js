@@ -1,0 +1,1 @@
+import{q as e,r,j as i}from"./index-y_eFCewu.js";import{u as s,L as n}from"./LandingPage-DtNnCQFl.js";import"./typescript-cookie-DFuQ5SlG.js";import"./middleware-CfpRXIov.js";function g(){s(t=>t.tab);const a=s(t=>t.setTab),o=e();return r.useEffect(()=>{a("login")},[a]),i.jsx(n,{navigateTo:t=>{o(t)}})}export{g as default};

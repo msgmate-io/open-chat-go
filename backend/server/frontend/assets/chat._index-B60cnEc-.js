@@ -1,0 +1,1 @@
+import{q as e,j as n}from"./index-y_eFCewu.js";import{a as o}from"./ChatBase-DTu_sU-n.js";import"./typescript-cookie-DFuQ5SlG.js";function c(){const t=e();return n.jsx(o,{chatUUID:null,navigateTo:a=>{t(a)},children:"no chat selected"})}const h={hydrate:!0};export{c as default,h as handle};
