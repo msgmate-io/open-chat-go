@@ -2,12 +2,17 @@ package federation
 
 import (
 	"backend/database"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
 	"io"
@@ -15,6 +20,17 @@ import (
 	"net"
 	"time"
 )
+
+// connWrapper wraps a net.Conn and overrides its Read 5432
+type connWrapper struct {
+	net.Conn
+	reader io.Reader
+}
+
+// Read implements io.Reader using the wrapped reader
+func (c *connWrapper) Read(b []byte) (int, error) {
+	return c.reader.Read(b)
+}
 
 func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, proxy database.Proxy, tlsConfig *tls.Config) (func(listener net.Listener), net.Listener, error) {
 	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
@@ -59,12 +75,19 @@ func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, 
 				continue
 			}
 
-			go handleTCPConnection(h, conn, info.ID, tlsConfig)
+			go handleTCPConnection(h, conn, info.ID, tlsConfig, proxy.TrafficTarget)
 		}
 	}, listenerNew, nil
 }
 
-func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.ID, tlsConfig *tls.Config) {
+func HashTrafficTarget(trafficTarget string) string {
+	// should create a hash of the traffic target
+	hash := sha256.New()
+	hash.Write([]byte(trafficTarget))
+	return fmt.Sprintf("%x", hash.Sum(nil))
+}
+
+func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.ID, tlsConfig *tls.Config, trafficTarget string) {
 	defer clientConn.Close()
 
 	log.Printf("Received connection from %s", clientConn.RemoteAddr())
@@ -72,15 +95,17 @@ func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.
 	if tlsConfig != nil {
 		// Read the first byte to check if it's a PostgreSQL SSL request
 		firstByte := make([]byte, 1)
-		_, err := clientConn.Read(firstByte)
+		n, err := clientConn.Read(firstByte)
 		if err != nil {
 			log.Printf("Error reading first byte: %v", err)
 			return
 		}
 
-		// PostgreSQL SSL request message is 8 bytes long and starts with messageLength=8 (4 bytes) followed by requestCode=80877103 (4 bytes)
-		if firstByte[0] == 0 {
-			// This might be a PostgreSQL SSL request
+		var isPostgres bool
+		var prefixedConn io.Reader = clientConn
+
+		if n == 1 && firstByte[0] == 0 {
+			// Read the rest of what might be a PostgreSQL SSL request
 			restOfMessage := make([]byte, 7)
 			_, err := io.ReadFull(clientConn, restOfMessage)
 			if err != nil {
@@ -88,43 +113,63 @@ func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.
 				return
 			}
 
-			log.Println("Received PostgreSQL SSL request")
-
-			// Respond with 'S' to indicate we accept SSL
-			_, err = clientConn.Write([]byte("S"))
-			if err != nil {
-				log.Printf("Error sending SSL acceptance: %v", err)
-				return
+			// Verify it's a PostgreSQL SSL request
+			if isPostgreSQLSSLRequest(append(firstByte[:], restOfMessage...)) {
+				log.Println("Handling PostgreSQL SSL request")
+				isPostgres = true
+				// Respond with 'S' to indicate we accept SSL
+				_, err = clientConn.Write([]byte("S"))
+				if err != nil {
+					log.Printf("Error sending SSL acceptance: %v", err)
+					return
+				}
+			} else {
+				// Not a PostgreSQL request, treat as regular TLS
+				prefixedConn = io.MultiReader(bytes.NewReader(append(firstByte[:], restOfMessage...)), clientConn)
 			}
+		} else if n == 1 {
+			prefixedConn = io.MultiReader(bytes.NewReader(firstByte[:]), clientConn)
+		}
 
-			log.Println("Sent SSL acceptance, upgrading to TLS")
+		// Create wrapped connection
+		wrappedConn := &connWrapper{
+			Conn:   clientConn,
+			reader: prefixedConn,
+		}
 
-			// Upgrade the connection to TLS
-			tlsConn := tls.Server(clientConn, tlsConfig)
+		// For PostgreSQL, we need to wait for the actual SSL/TLS handshake after sending 'S'
+		if isPostgres {
+			// Don't use the prefixed reader for PostgreSQL as we've already handled the SSL request
+			wrappedConn.reader = clientConn
+		}
 
-			// Set a deadline for the handshake
-			tlsConn.SetDeadline(time.Now().Add(10 * time.Second))
-			err = tlsConn.Handshake()
-			// Clear the deadline
-			tlsConn.SetDeadline(time.Time{})
+		// Upgrade to TLS connection
+		tlsConn := tls.Server(wrappedConn, tlsConfig)
 
-			if err != nil {
-				log.Printf("TLS handshake failed: %v", err)
-				return
-			}
+		// Set a deadline for the handshake
+		tlsConn.SetDeadline(time.Now().Add(10 * time.Second))
+		err = tlsConn.Handshake()
+		// Clear the deadline
+		tlsConn.SetDeadline(time.Time{})
 
-			log.Printf("TLS handshake completed successfully. Protocol: %s", tlsConn.ConnectionState().NegotiatedProtocol)
-
-			// Use the TLS connection for the rest of the communication
-			clientConn = tlsConn
-		} else {
-			log.Printf("Not a PostgreSQL SSL request, first byte: %d", firstByte[0])
+		if err != nil {
+			log.Printf("TLS handshake failed: %v", err)
 			return
 		}
+
+		log.Printf("TLS handshake completed successfully. Protocol: %s", tlsConn.ConnectionState().NegotiatedProtocol)
+		clientConn = tlsConn
 	}
 
 	// Open libp2p stream
-	stream, err := h.Host.NewStream(context.Background(), peerID, "/t1m-tcp-proxy/0.0.1")
+	var stream network.Stream
+	var err error
+	if trafficTarget == "" {
+		stream, err = h.Host.NewStream(context.Background(), peerID, "/t1m-tcp-proxy/0.0.1")
+	} else {
+		protocolID := protocol.ID(fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", HashTrafficTarget(trafficTarget)))
+		stream, err = h.Host.NewStream(context.Background(), peerID, protocolID)
+	}
 	if err != nil {
 		log.Printf("Error opening stream to peer: %v", err)
 		return
@@ -150,5 +195,46 @@ func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.
 	err = <-errChan
 	if err != nil && err != io.EOF {
 		log.Printf("Error in TCP proxy: %v", err)
+	}
+}
+
+// Helper function to verify PostgreSQL SSL request
+func isPostgreSQLSSLRequest(data []byte) bool {
+	if len(data) != 8 {
+		return false
+	}
+	// PostgreSQL SSL request format:
+	// Length (4 bytes) = 8
+	// Request Code (4 bytes) = 80877103
+	return data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 8 &&
+		data[4] == 0x04 && data[5] == 0xd2 && data[6] == 0x16 && data[7] == 0x2f
+}
+
+func TCPReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler, trafficTarget string) {
+	h.SetStreamHandler(protocol.ID(fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", HashTrafficTarget(trafficTarget))), streamHandler)
+}
+
+func copyStream(closer chan struct{}, dst io.Writer, src io.Reader) {
+	defer func() { closer <- struct{}{} }() // connection is closed, send signal to stop proxy
+	io.Copy(dst, src)
+}
+
+func CreateLocalTCPProxyHandler(dstaddress string) network.StreamHandler {
+	return func(stream network.Stream) {
+		fmt.Printf("Connecting to '%s'\n", dstaddress)
+		c, err := net.Dial("tcp", dstaddress)
+		if err != nil {
+			fmt.Printf("Reset %s: %s\n", stream.Conn().RemotePeer().String(), err.Error())
+			stream.Reset()
+			return
+		}
+		closer := make(chan struct{}, 2)
+		go copyStream(closer, stream, c)
+		go copyStream(closer, c, stream)
+		<-closer
+
+		stream.Close()
+		c.Close()
+		fmt.Printf("(service %s) Handled correctly '%s'\n", dstaddress, stream.Conn().RemotePeer().String())
 	}
 }
