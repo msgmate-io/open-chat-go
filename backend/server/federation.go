@@ -186,24 +186,15 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int, pathPrefixWhi
 		// Create a response writer that will write to the stream
 		writer := bufio.NewWriter(stream)
 
-		// Write the response status line
-		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\n", resp.StatusCode, http.StatusText(resp.StatusCode))
-
-		// Write all response headers
-		for key, values := range resp.Header {
-			for _, value := range values {
-				fmt.Fprintf(writer, "%s: %s\r\n", key, value)
-			}
+		// Instead of manually writing status and headers, use http.Response.Write
+		// which handles the entire response writing in the correct format
+		err = resp.Write(writer)
+		if err != nil {
+			stream.Reset()
+			log.Println("Error writing response:", err)
+			return
 		}
 
-		// Write the empty line that separates headers from body
-		fmt.Fprintf(writer, "\r\n")
-
-		// Flush the headers
-		writer.Flush()
-
-		// Copy the response body
-		io.Copy(writer, resp.Body)
 		writer.Flush()
 		resp.Body.Close()
 	}
