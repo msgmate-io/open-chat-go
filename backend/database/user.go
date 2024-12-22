@@ -15,6 +15,15 @@ type User struct {
 	IsAdmin      bool   `json:"is_admin"`
 }
 
+type Contact struct {
+	Model
+	ContactToken  string `json:"contact_token" gorm:"index"`
+	OwningUserId  uint   `json:"-" gorm:"index"`
+	ContactUserId uint   `json:"-" gorm:"index"`
+	OwningUser    User   `json:"-" gorm:"foreignKey:OwningUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	ContactUser   User   `json:"contact_user" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+}
+
 func (u *User) AddContact(
 	DB *gorm.DB,
 	user *User,
