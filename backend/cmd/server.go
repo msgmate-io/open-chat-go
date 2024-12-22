@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"backend/api/federation"
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/server"
+	"backend/server/util"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v3"
 	"log"
@@ -73,7 +77,7 @@ func GetServerFlags() []cli.Flag {
 			Sources: cli.EnvVars("PORT"),
 			Name:    "p2pport",
 			Aliases: []string{"pp2p"},
-			Value:   1985,
+			Value:   0,
 			Usage:   "server port",
 		},
 		&cli.StringFlag{
@@ -96,6 +100,22 @@ func GetServerFlags() []cli.Flag {
 			Aliases: []string{"fpx"},
 			Usage:   "Path '' for no proxy, e.g.: 'http://localhost:5173/' for remix",
 			Value:   "",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("DEFAULT_NETOWORK_CREDENTIALS"),
+			Name:    "default-network-credentials",
+			Aliases: []string{"dnc"},
+			// If empty default network is disabled
+			Value: "network:password",
+			Usage: "default network credentials",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("NET_BOOTSTRAP_PEERS"),
+			Name:    "network-bootstrap-peers",
+			Value: []string{
+				"eyJuYW1lIjoiUW1QaVlzQ0M4S1N2a0hUeXZaOUJNN2pZalNRczV3dzNCaWlWSGdSUTI2U29NVSIsImFkZHJlc3NlcyI6WyIvaXA0Lzg5LjU4LjI1LjE4OC90Y3AvODA4Mi9wMnAvUW1QaVlzQ0M4S1N2a0hUeXZaOUJNN2pZalNRczV3dzNCaWlWSGdSUTI2U29NVSIsIi9pcDQvMTI3LjAuMC4xL3RjcC84MDgyL3AycC9RbVBpWXNDQzhLU3ZrSFR5dlo5Qk03allqU1FzNXd3M0JpaVZIZ1JRMjZTb01VIl19",
+			},
+			Usage: "List of bootstrap peers to connect to on startup",
 		},
 		&cli.BoolFlag{
 			Sources: cli.EnvVars("START_BOT"),
@@ -135,7 +155,7 @@ func ServerCli() *cli.Command {
 			rootCredentials := strings.Split(c.String("root-credentials"), ":")
 			username := rootCredentials[0]
 			password := rootCredentials[1]
-			err, adminUser := server.CreateRootUser(DB, username, password)
+			err, adminUser := util.CreateRootUser(DB, username, password)
 
 			if err != nil {
 				return err
@@ -146,18 +166,80 @@ func ServerCli() *cli.Command {
 			usernameBot := botCredentials[0]
 			passwordBot := botCredentials[1]
 
-			err, botUser := server.CreateUser(DB, usernameBot, passwordBot, false)
+			err, botUser := util.CreateUser(DB, usernameBot, passwordBot, false)
 			if err != nil {
 				return err
 			}
 
+			var usernameNetwork string
+			var passwordNetwork string
+			if c.String("default-network-credentials") != "" {
+				// create default network
+				networkCredentials := strings.Split(c.String("default-network-credentials"), ":")
+				usernameNetwork = networkCredentials[0]
+				passwordNetwork = networkCredentials[1]
+				// call network.Create
+				err = federationHandler.NetworkCreateRAW(DB, usernameNetwork, passwordNetwork)
+				if err != nil {
+					return err
+				}
+			}
 			// Create default connection with admin user
+			// TODO: re-implement
 			err = server.SetupBaseConnections(DB, adminUser.ID, botUser.ID)
 			if err != nil {
 				return err
 			}
 
-			server.ServerStatus = "running"
+			// we must assure that the own node is in the meers store
+			ownPeerId := federationHandler.Host.ID().String()
+			var ownNode database.Node
+			DB.Where("peer_id = ?", ownPeerId).First(&ownNode)
+			if ownNode.ID == 0 {
+				log.Println("Own node not found, creating it")
+				ownIdentity := federationHandler.GetIdentity()
+				_, err := federation.RegisterNodeRaw(
+					DB,
+					federationHandler,
+					federation.RegisterNode{
+						Name:                "self",
+						Addresses:           ownIdentity.ConnectMultiadress,
+						RequestRegistration: false,
+						AddToNetwork:        usernameNetwork,
+					},
+				)
+				if err != nil {
+					log.Println("Error registering own node", err)
+				}
+			}
+			server.InitializeNetworks(DB, federationHandler)
+			// Now we also have to register the bootstrap peers!
+			for _, peer := range c.StringSlice("network-bootstrap-peers") {
+				log.Println("Registering bootstrap peer", peer)
+				decoded, err := base64.StdEncoding.DecodeString(peer)
+				if err != nil {
+					return fmt.Errorf("failed to decode bootstrap peer b64: %w", err)
+				}
+				var nodeInfo federation.NodeInfo
+				err = json.Unmarshal(decoded, &nodeInfo)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
+				}
+
+				var registerNode federation.RegisterNode
+				registerNode.Name = nodeInfo.Name
+				registerNode.Addresses = nodeInfo.Addresses
+				registerNode.AddToNetwork = usernameNetwork
+				_, err = federation.RegisterNodeRaw(
+					DB,
+					federationHandler,
+					registerNode,
+				)
+				if err != nil {
+					log.Println("Error registering bootstrap peer", err)
+				}
+			}
+
 			if c.Bool("start-bot") {
 				go func() {
 					time.Sleep(1 * time.Second)
@@ -173,6 +255,8 @@ func ServerCli() *cli.Command {
 			if err != nil {
 				return err
 			}
+
+			server.ServerStatus = "running"
 			server.StartProxies(DB, federationHandler)
 
 			err = s.ListenAndServe()
