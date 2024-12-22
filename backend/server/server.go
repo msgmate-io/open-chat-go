@@ -5,16 +5,12 @@ import (
 	"backend/api/websocket"
 	"backend/database"
 	"bufio"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/urfave/cli/v3"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"io"
 	"log"
@@ -23,75 +19,6 @@ import (
 
 var Config *cli.Command
 var ServerStatus string = "unknown"
-
-func CreateUser(
-	DB *gorm.DB,
-	username string,
-	password string,
-	isAdminUser bool,
-) (error, *database.User) {
-	log.Println("Creating root user")
-	// first chaeck if that user already exists
-	var user database.User
-	q := DB.First(&user, "email = ?", username)
-
-	if q.Error != nil {
-		if q.Error.Error() != "record not found" {
-			log.Fatal(q.Error)
-			return fmt.Errorf("Error reading user from db"), nil
-		}
-	} else {
-		log.Println("User already exists")
-		return nil, &user
-	}
-
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	user = database.User{
-		Name:         username,
-		Email:        username,
-		PasswordHash: string(hashedPassword),
-		ContactToken: uuid.New().String(),
-		IsAdmin:      isAdminUser,
-	}
-
-	q = DB.Create(&user)
-
-	if q.Error != nil {
-		log.Fatal(q.Error)
-		return fmt.Errorf("Error writing user to db"), nil
-	}
-
-	return nil, &user
-}
-
-func CreateRootUser(DB *gorm.DB, username string, password string) (error, *database.User) {
-	// First check if one IsAdmin user already exists
-	var user database.User
-	q := DB.First(&user, "is_admin = ?", true)
-
-	if q.Error != nil {
-		return CreateUser(DB, username, password, true)
-	}
-
-	return nil, &user
-}
-
-func GenerateToken(email string) string {
-	hash, err := bcrypt.GenerateFromPassword([]byte(email), bcrypt.DefaultCost)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Hash to store:", string(hash))
-
-	hasher := md5.New()
-	hasher.Write(hash)
-	return hex.EncodeToString(hasher.Sum(nil))
-}
 
 func makeHost(port int, randomness io.Reader) (host.Host, error) {
 	// Creates a new RSA key pair for this host.
