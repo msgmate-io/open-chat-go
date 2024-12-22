@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"backend/database"
-	"backend/server"
+	"backend/server/util"
 	"context"
 	"fmt"
 	"github.com/urfave/cli/v3"
@@ -44,7 +44,7 @@ func InstallCli() *cli.Command {
 				rootCredentials := strings.Split(c.String("root-credentials"), ":")
 				username := rootCredentials[0]
 				password := rootCredentials[1]
-				err, _ = server.CreateRootUser(DB, username, password)
+				err, _ = util.CreateUser(DB, username, password, true)
 				if err != nil {
 					return fmt.Errorf("failed to create root user: %w", err)
 				}
@@ -53,7 +53,7 @@ func InstallCli() *cli.Command {
 				botCredentials := strings.Split(c.String("default-bot"), ":")
 				usernameBot := botCredentials[0]
 				passwordBot := botCredentials[1]
-				err, _ = server.CreateUser(DB, usernameBot, passwordBot, false)
+				err, _ = util.CreateUser(DB, usernameBot, passwordBot, false)
 				if err != nil {
 					return fmt.Errorf("failed to create bot user: %w", err)
 				}
