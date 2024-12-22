@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -199,35 +198,6 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 	}
 }
 
-func TCPReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
-	h.SetStreamHandler("/t1m-tcp-proxy/0.0.1", streamHandler)
-}
-
-func copyStream(closer chan struct{}, dst io.Writer, src io.Reader) {
-	defer func() { closer <- struct{}{} }() // connection is closed, send signal to stop proxy
-	io.Copy(dst, src)
-}
-
-func CreateLocalTCPProxyHandler(dstaddress string) network.StreamHandler {
-	return func(stream network.Stream) {
-		fmt.Printf("Connecting to '%s'\n", dstaddress)
-		c, err := net.Dial("tcp", dstaddress)
-		if err != nil {
-			fmt.Printf("Reset %s: %s\n", stream.Conn().RemotePeer().String(), err.Error())
-			stream.Reset()
-			return
-		}
-		closer := make(chan struct{}, 2)
-		go copyStream(closer, stream, c)
-		go copyStream(closer, c, stream)
-		<-closer
-
-		stream.Close()
-		c.Close()
-		fmt.Printf("(service %s) Handled correctly '%s'\n", dstaddress, stream.Conn().RemotePeer().String())
-	}
-}
-
 func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
 	// Set a function as stream handler.
 	// This function is called when a peer connects, and starts a stream with this protocol.
@@ -279,7 +249,7 @@ func CreateFederationHost(
 	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort))
 	// start tcp proxy
 	//fullHost := fmt.Sprintf("%s:%d", "localhost", 5432)
-	TCPReceivingPeer(context.Background(), h, CreateLocalTCPProxyHandler(":1984"))
+	// TCPReceivingPeer(context.Background(), h, CreateLocalTCPProxyHandler(":1984"), "")
 
 	federationHandler := &federation.FederationHandler{
 		Host:      h,
@@ -291,21 +261,41 @@ func CreateFederationHost(
 }
 
 func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
-	proxies := []database.Proxy{}
-	q := DB.Preload("Node").Where("active = ?", true).Find(&proxies)
+	egressProxies := []database.Proxy{}
+	q := DB.Preload("Node").Where("active = ? AND direction = ?", true, "egress").Find(&egressProxies)
 
 	if q.Error != nil {
 		log.Println("Couldn't find proxies", q.Error)
 		return
 	}
 
-	log.Println("Starting proxies for", len(proxies), "nodes")
-	for _, proxy := range proxies {
+	log.Println("Starting proxies for", len(egressProxies), "nodes")
+	for _, proxy := range egressProxies {
 		proxy.Node = database.Node{}
 		DB.Preload("Addresses").First(&proxy.Node, proxy.NodeID)
 		log.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port)
 		go func(proxy database.Proxy) {
 			http.ListenAndServe(fmt.Sprintf(":%s", proxy.Port), federation.CreateProxyHandlerHTTP(h, DB, proxy.Port, proxy.Node, proxy))
+		}(proxy)
+	}
+
+	// Now start ingress proxies
+	ingressProxies := []database.Proxy{}
+	q = DB.Preload("Node").Where("active = ? AND direction = ?", true, "ingress").Find(&ingressProxies)
+
+	if q.Error != nil {
+		log.Println("Couldn't find proxies", q.Error)
+		return
+	}
+
+	log.Println("Starting proxies for", len(ingressProxies), "nodes")
+	for _, proxy := range ingressProxies {
+		proxy.Node = database.Node{}
+		DB.Preload("Addresses").First(&proxy.Node, proxy.NodeID)
+		protocolID := fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", federation.HashTrafficTarget(proxy.TrafficTarget))
+		fmt.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port, "with protocol ID", protocolID)
+		go func(proxy database.Proxy) {
+			federation.TCPReceivingPeer(context.Background(), h.Host, federation.CreateLocalTCPProxyHandler(proxy.TrafficTarget), proxy.TrafficTarget)
 		}(proxy)
 	}
 }
