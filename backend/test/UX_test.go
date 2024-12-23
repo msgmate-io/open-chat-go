@@ -4,6 +4,7 @@ import (
 	"backend/api/chats"
 	"backend/api/contacts"
 	"backend/api/user"
+	wsapi "backend/api/websocket"
 	"backend/cmd"
 	"backend/database"
 	"backend/server"
@@ -519,8 +520,9 @@ func Test_UXFlow(t *testing.T) {
 	// Now send a message from user B to user A
 	time.Sleep(1 * time.Second)
 
+	messageText := "Hello from user B"
 	err = sendChatMessage(host, sessionIdB, chat.UUID, chats.SendMessage{
-		Text: "Hello from user B",
+		Text: messageText,
 	})
 
 	// Wait for a message or timeout
@@ -528,11 +530,35 @@ func Test_UXFlow(t *testing.T) {
 	case msg := <-resultCh:
 		pretty, _ = json.MarshalIndent(msg, "", "  ")
 		fmt.Println("Message from websocket:", string(pretty))
+
+		messageType := msg.(map[string]interface{})["type"].(string)
+		jsonData, err := json.Marshal(msg)
+
+		if err != nil {
+			t.Errorf("Error marshalling message: %v", err)
+		}
+
+		if messageType != "new_message" {
+			t.Errorf("Unexpected message type: %v", messageType)
+		}
+
+		var message wsapi.NewMessage
+		err = json.Unmarshal(jsonData, &message)
+
+		if err != nil {
+			t.Errorf("Error unmarshalling message: %v", err)
+		}
+
+		if message.Content.Text != messageText {
+			t.Errorf("Unexpected message text: %v", message.Content.Text)
+		}
+
 	case err := <-errorCh:
 		t.Errorf("Error reading message from websocket: %v", err)
 	case <-ctx2.Done():
 		t.Errorf("Timeout waiting for message from websocket")
 	}
 
+	cancel2()
 	cancel() // Stop the server
 }
