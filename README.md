@@ -6,6 +6,7 @@ Aim is portability and performance to enable planned p2p features.
 ### test
 
 ```bash
+cd backend
 go test -v ./...
 go test -v ./... -run "^SomeTest_Func$" 
 ```
@@ -16,7 +17,7 @@ go test -v ./... -run "^SomeTest_Func$"
 go build -ldflags "-s -w"
 ```
 
-### non standart lib packages
+### third party packages
 
 - `github.com/urfave/cli/v3` for cli
 - `github.com/rs/cors` for cors
