@@ -60,22 +60,72 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user database.User // TODO: sql injection?
-	q := DB.First(&user, "email = ?", data.Email)
-
-	if q.Error != nil {
-		fmt.Println(q.Error)
-		http.Error(w, defaultErrorMessage, http.StatusNotFound)
+	expiry := time.Now().Add(24 * time.Hour)
+	err, token := LoginUser(DB, data.Email, data.Password, expiry)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(data.Password))
-	if err != nil {
-		http.Error(w, defaultErrorMessage, http.StatusUnauthorized)
+	cookie := api.CreateSessionToken(w, token, expiry)
+	w.Header().Add("Set-Cookie", cookie.String())
+	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Login successful"))
+}
+
+func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
+	var data UserLogin
+
+	DB, ok := r.Context().Value("db").(*gorm.DB)
+	if !ok {
+		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		return
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	var networks []database.Network
+	DB.Where("network_name = ?", data.Email).Find(&networks)
+
+	if len(networks) == 0 {
+		http.Error(w, "User is not a member of any network", http.StatusBadRequest)
 		return
 	}
 
 	expiry := time.Now().Add(24 * time.Hour)
+	err, token := LoginUser(DB, data.Email, data.Password, expiry)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	cookie := api.CreateSessionToken(w, token, expiry)
+	w.Header().Add("Set-Cookie", cookie.String())
+	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Login successful"))
+}
+
+func LoginUser(DB *gorm.DB, email string, password string, expiry time.Time) (error, string) {
+	var user database.User // TODO: sql injection?
+	q := DB.First(&user, "email = ?", email)
+
+	if q.Error != nil {
+		fmt.Println(q.Error)
+		return q.Error, ""
+	}
+
+	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
+	if err != nil {
+		return err, ""
+	}
+
 	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!
 	// TODO: make sure sessions expire!
 	session := database.Session{
@@ -88,15 +138,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	q = DB.Create(&session)
 
 	if q.Error != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+		return q.Error, ""
 	}
-
-	cookie := api.CreateSessionToken(w, token, expiry)
-
-	w.Header().Add("Set-Cookie", cookie.String())
-	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Login successful"))
+	return nil, token
 }
