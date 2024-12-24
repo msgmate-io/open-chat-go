@@ -3,9 +3,6 @@ package federation
 import (
 	"backend/database"
 	"backend/server/util"
-	"context"
-	"fmt"
-	"gorm.io/gorm"
 	"net/http"
 	"time"
 )
@@ -47,10 +44,15 @@ func (h *FederationHandler) Ping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO: ping should compare node itendity hashes to accomadate for possible port or address changes
+	// ...
+
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Pong"))
 }
 
+/**
+TODO: depricated old node auto ping!
 func StartNodeAutoPing(DB *gorm.DB, nodeUUID string, h *FederationHandler, sleepTime time.Duration) (error, context.CancelFunc) {
 	fmt.Println("Starting node auto ping for node", nodeUUID)
 	ownPeerId := h.Host.ID().String()
@@ -76,10 +78,12 @@ func StartNodeAutoPing(DB *gorm.DB, nodeUUID string, h *FederationHandler, sleep
 				SendRequestToNode(h, node, RequestNode{
 					Method: "POST",
 					Path:   "/api/v1/federation/nodes/" + ownPeerId + "/ping",
-				})
+				}, "/t1m-http-request/0.0.1")
 			}
 		}
 	}()
 
 	return nil, cancel
 }
+
+**/
