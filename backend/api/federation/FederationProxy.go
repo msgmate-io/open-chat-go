@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
 	"io"
@@ -145,6 +146,7 @@ type CreateAndStartProxyRequest struct {
 	Direction     string `json:"direction"`
 	TrafficOrigin string `json:"traffic_origin"`
 	TrafficTarget string `json:"traffic_target"`
+	NetworkName   string `json:"network_name"`
 }
 
 func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.Request) {
@@ -167,20 +169,6 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	portS := req.Port
-	if portS == "" {
-		http.Error(w, "Invalid port", http.StatusBadRequest)
-		return
-	}
-
-	var node database.Node
-	q := DB.Preload("Addresses").Where("uuid = ?", req.NodeUUID).First(&node)
-	if q.Error != nil {
-		log.Println("Couldn't find node with that UUID", req.NodeUUID)
-		http.Error(w, "Couldn't find node with that UUID", http.StatusNotFound)
-		return
-	}
-
 	// set defaults for 'Kind' and 'TrafficOrigin'
 	if req.Direction == "" {
 		req.Direction = "egress"
@@ -190,130 +178,155 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		req.Kind = "http"
 	}
 
-	if req.TrafficOrigin == "" {
-		req.TrafficOrigin = "0.0.0.0"
-	}
-
-	if req.TrafficTarget == "" {
-		req.TrafficTarget = ":5432"
+	if req.NetworkName == "" {
+		req.NetworkName = "network"
 	}
 
 	proxy := database.Proxy{
-		NodeID:        node.ID,
-		Node:          node,
-		Port:          portS,
+		Port:          req.Port, // TODO: can be depricated! we only use Origin and Target now!
 		Active:        true,
 		UseTLS:        req.UseTLS,
 		Kind:          req.Kind,
 		Direction:     req.Direction,
+		NetworkName:   req.NetworkName,
 		TrafficOrigin: req.TrafficOrigin,
 		TrafficTarget: req.TrafficTarget,
 	}
 
-	var certPEM, keyPEM, issuerPEM database.Key
-	var certPEMBytes, keyPEMBytes []byte
-	if proxy.UseTLS {
-		// Now we try to load 3 keys from the database
-		q = DB.Where("key_type = ? AND key_name = ?", "cert", fmt.Sprintf("%s_cert.pem", req.KeyPrefix)).First(&certPEM)
-		if q.Error != nil {
-			log.Println("Couldn't find cert key for node", node.ID)
-			http.Error(w, "Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!", http.StatusInternalServerError)
-			return
-		}
-		q = DB.Where("key_type = ? AND key_name = ?", "key", fmt.Sprintf("%s_key.pem", req.KeyPrefix)).First(&keyPEM)
-		if q.Error != nil {
-			log.Println("Couldn't find key key for node", node.ID)
-			http.Error(w, "Couldn't find key key for node, if you want to use TLS for this proxy create the keys first!", http.StatusInternalServerError)
-			return
-		}
-		q = DB.Where("key_type = ? AND key_name = ?", "issuer", fmt.Sprintf("%s_issuer.pem", req.KeyPrefix)).First(&issuerPEM)
-		if q.Error != nil {
-			log.Println("Couldn't find issuer key for node", node.ID)
-			http.Error(w, "Couldn't find issuer key for node, if you want to use TLS for this proxy create the keys first!", http.StatusInternalServerError)
-			return
-		}
-
-		certPEMBytes = certPEM.KeyContent
-		keyPEMBytes = keyPEM.KeyContent
+	if proxy.TrafficOrigin == "" && proxy.Direction == "egress" {
+		proxy.TrafficOrigin = fmt.Sprintf("%s:%s", h.Host.ID().String(), proxy.Port)
 	}
 
-	// check if already exists
-	// TODO: improve the way this is checked
-	q = DB.First(&proxy, "node_id = ? AND port = ?", node.ID, portS)
+	if proxy.TrafficTarget == "" && proxy.Direction == "ingress" {
+		proxy.TrafficTarget = fmt.Sprintf("%s:%s", h.Host.ID().String(), proxy.Port)
+	}
+
+	q := DB.First(&proxy, "traffic_origin = ? AND traffic_target = ?", proxy.TrafficOrigin, proxy.TrafficTarget)
 	if q.Error == nil {
 		http.Error(w, "Proxy already exists and should be running!", http.StatusConflict)
 		return
 	}
+
 	DB.Create(&proxy)
 
+	originData := strings.Split(proxy.TrafficOrigin, ":")
+	originPort := originData[1]
+	originPeerId := originData[0]
+	targetData := strings.Split(proxy.TrafficTarget, ":")
+	targetPort := targetData[1]
+	targetPeerId := targetData[0]
+
+	trafficTargetNode := database.Node{}
+	DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&trafficTargetNode)
+
+	trafficOriginNode := database.Node{}
+	DB.Where("peer_id = ?", originPeerId).Preload("Addresses").First(&trafficOriginNode)
+
+	protocolID := CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId)
+
 	if proxy.Direction == "egress" {
-		go func() {
-			var server *http.Server
-			if proxy.Kind == "tcp" {
+		err = h.StartEgressProxy(DB, proxy, trafficTargetNode, trafficOriginNode, originPort, req.KeyPrefix, protocolID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else { // Ingress traffic to 'Traffice arriving at our own node!'
+		// ./backend client proxy --direction ingress --origin "<remote peer_id>:8084" (--target "<local peer_id>:1984") --port 1984
 
-				var handlerFunc func(listener net.Listener)
-				var listener net.Listener
-				var err error
-				if proxy.UseTLS {
-					cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
-					if err != nil {
-						log.Printf("Error loading certificates: %v", err)
-						return
-					}
-					tlsConfig := &tls.Config{
-						Certificates: []tls.Certificate{cert},
-					}
-					handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, portS, node, proxy, tlsConfig)
-				} else {
-					handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, portS, node, proxy, nil)
-				}
-
-				if err != nil {
-					log.Printf("Error creating TCP proxy: %v", err)
-					http.Error(w, "Error creating TCP proxy", http.StatusInternalServerError)
-					return
-				}
-				handlerFunc(listener)
-			} else {
-				mux := http.NewServeMux()
-				mux.Handle("/", CreateProxyHandlerHTTP(h, DB, portS, node, proxy))
-
-				server = &http.Server{
-					Addr:    ":" + portS,
-					Handler: mux,
-				}
-				if proxy.UseTLS {
-					cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
-					if err != nil {
-						log.Printf("Error loading certificates: %v", err)
-						return
-					}
-
-					server.TLSConfig = &tls.Config{
-						Certificates: []tls.Certificate{cert},
-					}
-
-					err = server.ListenAndServeTLS("", "")
-					if err != nil {
-						log.Printf("Error starting TLS server: %v", err)
-					}
-				} else {
-					err := server.ListenAndServe()
-					if err != nil {
-						log.Printf("Error starting server: %v", err)
-					}
-				}
-			}
-
-		}()
-	} else {
-		protocolID := fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", HashTrafficTarget(proxy.TrafficTarget))
-		fmt.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port, "with protocol ID", protocolID)
-		go func(proxy database.Proxy) {
-			TCPReceivingPeer(context.Background(), h.Host, CreateLocalTCPProxyHandler(proxy.TrafficTarget), proxy.TrafficTarget)
-		}(proxy)
+		fmt.Println("Starting proxy for node on port", proxy.Port, "with protocol ID", protocolID)
+		targetSem := fmt.Sprintf(":%s", targetPort)
+		h.Host.SetStreamHandler(protocolID, CreateLocalTCPProxyHandler(h, proxy.NetworkName, targetSem))
 	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Proxy created and started"))
 }
+
+func (h *FederationHandler) StartEgressProxy(
+	DB *gorm.DB,
+	proxy database.Proxy,
+	trafficTargetNode database.Node,
+	trafficOriginNode database.Node,
+	originPort string,
+	keyPrefix string,
+	protocolID protocol.ID,
+) error {
+	var certPEM, keyPEM, issuerPEM database.Key
+	var certPEMBytes, keyPEMBytes []byte
+	if proxy.UseTLS {
+		// Now we try to load 3 keys from the database
+		q := DB.Where("key_type = ? AND key_name = ?", "cert", fmt.Sprintf("%s_cert.pem", keyPrefix)).First(&certPEM)
+		if q.Error != nil {
+			return fmt.Errorf("Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!")
+		}
+		q = DB.Where("key_type = ? AND key_name = ?", "key", fmt.Sprintf("%s_key.pem", keyPrefix)).First(&keyPEM)
+		if q.Error != nil {
+			return fmt.Errorf("Couldn't find key key for node, if you want to use TLS for this proxy create the keys first!")
+		}
+		q = DB.Where("key_type = ? AND key_name = ?", "issuer", fmt.Sprintf("%s_issuer.pem", keyPrefix)).First(&issuerPEM)
+		if q.Error != nil {
+			return fmt.Errorf("Couldn't find issuer key for node, if you want to use TLS for this proxy create the keys first!")
+		}
+
+		certPEMBytes = certPEM.KeyContent
+		keyPEMBytes = keyPEM.KeyContent
+	}
+	go func() {
+		var handlerFunc func(listener net.Listener)
+		var listener net.Listener
+		var err error
+		if proxy.UseTLS {
+			cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+			if err != nil {
+				log.Printf("Error loading certificates: %v", err)
+				return
+			}
+			tlsConfig := &tls.Config{
+				Certificates: []tls.Certificate{cert},
+			}
+			handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, originPort, trafficTargetNode, protocolID, tlsConfig)
+		} else {
+			handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, originPort, trafficOriginNode, protocolID, nil)
+		}
+
+		if err != nil {
+			log.Printf("Error creating TCP proxy: %v", err)
+			return
+		}
+		handlerFunc(listener)
+	}()
+	return nil
+}
+
+/**
+// TODO: depricate this, the tcp handler can handle all traffic http too
+var server *http.Server
+mux := http.NewServeMux()
+mux.Handle("/", CreateProxyHandlerHTTP(h, DB, portS, node, proxy))
+
+server = &http.Server{
+	Addr:    ":" + portS,
+	Handler: mux,
+}
+if proxy.UseTLS {
+	cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+	if err != nil {
+		log.Printf("Error loading certificates: %v", err)
+		return
+	}
+
+	server.TLSConfig = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+
+	err = server.ListenAndServeTLS("", "")
+	if err != nil {
+		log.Printf("Error starting TLS server: %v", err)
+	}
+} else {
+	err := server.ListenAndServe()
+	if err != nil {
+		log.Printf("Error starting server: %v", err)
+	}
+}
+*/
