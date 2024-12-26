@@ -4,7 +4,7 @@ import (
 	"backend/api/chats"
 	"backend/api/federation"
 	"backend/api/tls"
-	"backend/api/user"
+	"backend/client/raw"
 	"backend/database"
 	"bytes"
 	"encoding/json"
@@ -12,7 +12,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 )
 
@@ -166,50 +165,13 @@ func (c *Client) GetFederationIdentity() (error, *federation.IdentityResponse) {
 
 	return nil, &identity
 }
-
 func (c *Client) LoginUser(username string, password string) (error, string) {
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(user.UserLogin{
-		Email:    username,
-		Password: password,
-	})
+	err, sessionId := raw.RawLoginUser(c.host, username, password)
 	if err != nil {
-		log.Printf("Erroror encoding data: %v", err)
 		return err, ""
 	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/user/login", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, ""
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), ""
-	}
-
-	cookieHeader := resp.Header.Get("Set-Cookie")
-	re := regexp.MustCompile(`session_id=([^;]+)`)
-
-	// Find the first match
-	// e.g.:  session_id=877a0b36a59391125d133ba73e9edeba; Path=/; Domain=localhost; Expires=Tue, 24 Dec 2024 14:54:51 GMT; Max-Age=86400; HttpOnly; Secure; SameSite=Strict
-	match := re.FindStringSubmatch(cookieHeader)
-	if match != nil && len(match) > 1 {
-		c.sessionId = match[1]
-		return nil, match[1]
-	}
-	return fmt.Errorf("No session id found"), ""
+	c.sessionId = sessionId
+	return nil, sessionId
 }
 
 type PaginatedChats struct {
@@ -221,11 +183,13 @@ func (c *Client) SetSessionId(sessionId string) {
 	c.sessionId = sessionId
 }
 
-func (c *Client) RegisterNode(name string, addresses []string) (error, *database.Node) {
+func (c *Client) RegisterNode(name string, addresses []string, requestRegistration bool, addToNetwork string) (error, *database.Node) {
 	body := new(bytes.Buffer)
 	err := json.NewEncoder(body).Encode(federation.RegisterNode{
-		Name:      name,
-		Addresses: addresses,
+		Name:                name,
+		Addresses:           addresses,
+		RequestRegistration: requestRegistration,
+		AddToNetwork:        addToNetwork,
 	})
 	if err != nil {
 		log.Printf("Error encoding data: %v", err)
@@ -257,7 +221,14 @@ func (c *Client) RegisterNode(name string, addresses []string) (error, *database
 		return fmt.Errorf("Error response: %v", resp.Status), nil
 	}
 
-	return nil, nil
+	var node database.Node
+	err = json.NewDecoder(resp.Body).Decode(&node)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, nil
+	}
+
+	return nil, &node
 }
 
 func (c *Client) GetNodes(index int64, limit int64) (error, federation.PaginatedNodes) {
@@ -367,6 +338,46 @@ func (c *Client) GetKeys(index int64, limit int64) (error, tls.PaginatedKeysResp
 	}
 
 	return nil, paginatedKeys
+}
+
+func (c *Client) CreateProxy(direction string, origin string, target string, port string) error {
+	body := new(bytes.Buffer)
+	err := json.NewEncoder(body).Encode(federation.CreateAndStartProxyRequest{
+		Direction:     direction,
+		TrafficOrigin: origin,
+		TrafficTarget: target,
+		Port:          port,
+	})
+	if err != nil {
+		log.Printf("Error encoding data: %v", err)
+		return err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/federation/nodes/proxy", c.host), body)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status)
+	}
+
+	fmt.Println("Proxy created!!")
+
+	return nil
 }
 
 func (c *Client) SolveACMEChallenge(hostname string, keyPrefix string) (error, string) {
