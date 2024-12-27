@@ -1,7 +1,6 @@
 "use client"
 
 import { ChatBase } from "@/components/chat/ChatBase";
-import Image from "next/image";
 import useSWR from 'swr'
 const fetcher = (...args) => fetch(...args).then(res => res.json())
 
