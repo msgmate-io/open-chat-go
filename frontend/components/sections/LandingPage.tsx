@@ -6,6 +6,7 @@ import { ModeToggle } from "@/components/ThemeToggle"
 import { Button } from "@/components/Button"
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
+import { LoginSection } from "@/components/sections/LoginSection"
 
 
 interface TabState {
@@ -140,7 +141,7 @@ export function LandingHero() {
                 </div>
                 <div className="flex flex-col items-center justify-center content-center w-full flex-grow">
                     {tab === "index" && <IndexTab/>}
-                    {tab === "login" && <LoginTab/>}
+                    {tab === "login" && <LoginSection/>}
                     {tab === "register" && <RegisterTab/>}
                 </div>
                 <DefaultFooter />
