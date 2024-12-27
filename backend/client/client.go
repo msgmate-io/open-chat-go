@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 )
 
@@ -414,4 +415,59 @@ func (c *Client) SolveACMEChallenge(hostname string, keyPrefix string) (error, s
 	}
 
 	return nil, ""
+}
+
+func (c *Client) RequestSessionOnRemoteNode(username string, password string, peerId string) (error, string) {
+	err, resp := c.RequestNodeByPeerId(peerId, federation.RequestNode{
+		Method:  "POST",
+		Path:    "/api/v1/user/login",
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    fmt.Sprintf(`{"email": "%s", "password": "%s"}`, username, password),
+	})
+	if err != nil {
+		return err, ""
+	}
+
+	cookieHeader := resp.Header.Get("Set-Cookie")
+	fmt.Println("Cookie header:", cookieHeader)
+	re := regexp.MustCompile(`session_id=([^;]+)`)
+
+	match := re.FindStringSubmatch(cookieHeader)
+	if match != nil && len(match) > 1 {
+		return nil, match[1]
+	}
+	return fmt.Errorf("No session id found"), ""
+}
+
+func (c *Client) RequestNodeByPeerId(peerId string, data federation.RequestNode) (error, *http.Response) {
+	body := new(bytes.Buffer)
+	err := json.NewEncoder(body).Encode(data)
+	if err != nil {
+		log.Printf("Error encoding data: %v", err)
+		return err, nil
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/federation/nodes/peer/%s/request", c.host, peerId), body)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, nil
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), nil
+	}
+
+	return nil, resp
 }
