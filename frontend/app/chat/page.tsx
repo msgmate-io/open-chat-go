@@ -1,5 +1,6 @@
 "use client"
 
+import { ChatBase } from "@/components/chat/ChatBase";
 import Image from "next/image";
 import useSWR from 'swr'
 const fetcher = (...args) => fetch(...args).then(res => res.json())
@@ -13,6 +14,7 @@ export default function ChatPage() {
   const { data: user, error, isLoading, mutate } = useSWR('/api/v1/user/self', fetcher)
   return (
     <div className="">
+      <ChatBase/>
       <main className="">
         Hello From Inside chat
         <div>{JSON.stringify(user)}</div>
