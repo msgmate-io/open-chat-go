@@ -228,14 +228,6 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 
 		var networkMemberNode database.Node
 		DB.Where("id = ?", networkMemberToSync.NodeID).Preload("Addresses").First(&networkMemberNode)
-		/**
-		prettyNodeJson, err := json.MarshalIndent(networkMemberNode, "", "  ")
-		if err != nil {
-			log.Println("Error marshalling network member node", err)
-			continue
-		}
-		log.Println("Pretty node json", string(prettyNodeJson))
-		*/
 
 		if networkMemberNode.PeerID == h.Host.ID().String() {
 			continue
