@@ -17,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -225,12 +226,29 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 	protocolID := CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId)
 
 	if proxy.Direction == "egress" {
-		err = h.StartEgressProxy(DB, proxy, trafficTargetNode, trafficOriginNode, originPort, req.KeyPrefix, protocolID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if proxy.Kind == "tcp" {
+			err = h.StartEgressProxy(DB, proxy, trafficTargetNode, trafficOriginNode, originPort, req.KeyPrefix, protocolID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else if proxy.Kind == "ssh" {
+			if proxy.Port == "" {
+				http.Error(w, "Port is required for SSH proxy", http.StatusBadRequest)
+				return
+			}
+			if originPeerId != "ssh" {
+				http.Error(w, "Origin peer ID must be 'ssh' for SSH proxy", http.StatusBadRequest)
+				return
+			}
+			portNum, err := strconv.Atoi(proxy.Port)
+			if err != nil {
+				http.Error(w, "Port must be a valid number for SSH proxy", http.StatusBadRequest)
+				return
+			}
+			h.StartSSHProxy(portNum, originPort)
 		}
-	} else { // Ingress traffic to 'Traffice arriving at our own node!'
+	} else { // Ingress traffic to 'Traffic arriving at our own node!'
 		// ./backend client proxy --direction ingress --origin "<remote peer_id>:8084" (--target "<local peer_id>:1984") --port 1984
 
 		fmt.Println("Starting proxy for node on port", proxy.Port, "with protocol ID", protocolID)
@@ -297,36 +315,3 @@ func (h *FederationHandler) StartEgressProxy(
 	}()
 	return nil
 }
-
-/**
-// TODO: depricate this, the tcp handler can handle all traffic http too
-var server *http.Server
-mux := http.NewServeMux()
-mux.Handle("/", CreateProxyHandlerHTTP(h, DB, portS, node, proxy))
-
-server = &http.Server{
-	Addr:    ":" + portS,
-	Handler: mux,
-}
-if proxy.UseTLS {
-	cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
-	if err != nil {
-		log.Printf("Error loading certificates: %v", err)
-		return
-	}
-
-	server.TLSConfig = &tls.Config{
-		Certificates: []tls.Certificate{cert},
-	}
-
-	err = server.ListenAndServeTLS("", "")
-	if err != nil {
-		log.Printf("Error starting TLS server: %v", err)
-	}
-} else {
-	err := server.ListenAndServe()
-	if err != nil {
-		log.Printf("Error starting server: %v", err)
-	}
-}
-*/
