@@ -1,4 +1,7 @@
-import React, { useState } from "react";
+"use client"
+
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 import { CinematicLogo } from "@/components/CinematicLogo"
 import { Typewriter } from "@/components/TypewriterEffect"
@@ -15,15 +18,15 @@ interface TabState {
 }
 
 export const useTabs = create<TabState>()(
-  devtools(
-      (set) => ({
-        tab: "index",
-        setTab: (tab) => {
-          set({ tab })
-        },
-      }),
+      devtools(
+          (set) => ({
+            tab: "index",
+            setTab: (tab) => {
+              set({ tab })
+            },
+          }),
+        )
     )
-)
 
 const TEXTS = [{
     model: "cognitivecomputations/dolphin-2.6-mixtral-8x7b",
@@ -65,6 +68,7 @@ function DefaultFooter() {
 }
 
 function IndexTab() {
+    const router = useRouter()
     const setTab = useTabs(state => state.setTab)
     return <>
         <CinematicLogo className={"mr-8"} size={420} />
@@ -76,17 +80,10 @@ function IndexTab() {
             </div>
             <div className="flex w-1/2 justify-start pl-4">
                 <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2" onClick={() => {
-                    setTab("login")
+                    router.push("/login")
                 }}>Log-in</Button>
             </div>
         </div>
-    </>
-}
-
-function LoginTab() {
-    const setTab = useTabs(state => state.setTab)
-    return <>
-        <div>TODO</div>
     </>
 }
 
@@ -109,6 +106,11 @@ export function LandingHero() {
     const tab = useTabs(state => state.tab)
     const setTab = useTabs(state => state.setTab)
     const [showVideoCard, setShowVideoCard] = useState(false)
+
+      useEffect(() => {
+        setTab("index")
+      }, [])
+
     return <>
         <div className="relative w-full z-40">
             <div className="absolute flex w-full p-4 font-bold text-2xl w-full">
