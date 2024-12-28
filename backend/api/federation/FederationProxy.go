@@ -204,7 +204,8 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 
 	q := DB.First(&proxy, "traffic_origin = ? AND traffic_target = ?", proxy.TrafficOrigin, proxy.TrafficTarget)
 	if q.Error == nil {
-		http.Error(w, "Proxy already exists and should be running!", http.StatusConflict)
+		// if it already exists we just return OK
+		http.Error(w, "Proxy already exists and should be running!", http.StatusOK)
 		return
 	}
 
@@ -304,7 +305,7 @@ func (h *FederationHandler) StartEgressProxy(
 			}
 			handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, originPort, trafficTargetNode, protocolID, tlsConfig)
 		} else {
-			handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, originPort, trafficOriginNode, protocolID, nil)
+			handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, originPort, trafficTargetNode, protocolID, nil)
 		}
 
 		if err != nil {
