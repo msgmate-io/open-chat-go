@@ -38,7 +38,7 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 		// Start SSH server
-		server, err := federation.NewSSHServer(2222)
+		server, err := federation.NewSSHServer(2222, "Test123!")
 		if err != nil {
 			log.Fatal(err)
 		}
