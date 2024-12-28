@@ -3,6 +3,6 @@ import { AuthGuard } from "@/components/AuthGuard";
 
 export default function ChatPage() {
   return (
-    <ChatBase/>
+    <ChatBase>Hi there</ChatBase>
   );
 }
