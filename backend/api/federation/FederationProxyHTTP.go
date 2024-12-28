@@ -66,9 +66,10 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, host
 
 		outreq.Header = req.Header
 		resp, err := http.DefaultTransport.RoundTrip(outreq)
+		// fmt.Println("Response:", resp, resp.Header)
 		if err != nil {
 			stream.Reset()
-			log.Println(err)
+			log.Println("Error: handling incoming request", err)
 			return
 		}
 
