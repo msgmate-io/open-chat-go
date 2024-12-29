@@ -212,7 +212,7 @@ func ServerCli() *cli.Command {
 					log.Println("Error registering own node", err)
 				}
 			}
-			server.InitializeNetworks(DB, federationHandler)
+			server.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")))
 			// Now we also have to register the bootstrap peers!
 			for _, peer := range c.StringSlice("network-bootstrap-peers") {
 				log.Println("Registering bootstrap peer", peer)
