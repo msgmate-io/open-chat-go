@@ -55,7 +55,7 @@ type Proxy struct {
 	Port   string `json:"port"`
 	Active bool   `json:"active"`
 	UseTLS bool   `json:"use_tls"`
-	// supported Kinds: tcp, http
+	// supported Kinds: tcp, http, ssh
 	Kind string `json:"kind"`
 	// supported Directions: 'egress' ( route traffic from a proxy to libp2p stream ), 'ingress' ( route traffic coming from a libp2p stream )
 	Direction     string `json:"direction"`

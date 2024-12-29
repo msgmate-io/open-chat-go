@@ -7,10 +7,13 @@ import (
 	"backend/client/raw"
 	"backend/database"
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -348,6 +351,7 @@ func (c *Client) CreateProxy(direction string, origin string, target string, por
 		TrafficOrigin: origin,
 		TrafficTarget: target,
 		Port:          port,
+		Kind:          "tcp",
 	})
 	if err != nil {
 		log.Printf("Error encoding data: %v", err)
@@ -418,11 +422,23 @@ func (c *Client) SolveACMEChallenge(hostname string, keyPrefix string) (error, s
 }
 
 func (c *Client) RequestSessionOnRemoteNode(username string, password string, peerId string) (error, string) {
+
+	body := new(bytes.Buffer)
+	loginData := map[string]string{
+		"email":    username,
+		"password": password,
+	}
+	err := json.NewEncoder(body).Encode(loginData)
+	if err != nil {
+		log.Printf("Erroror encoding data: %v", err)
+		return err, ""
+	}
+
 	err, resp := c.RequestNodeByPeerId(peerId, federation.RequestNode{
 		Method:  "POST",
 		Path:    "/api/v1/user/login",
-		Headers: map[string]string{"Content-Type": "application/json"},
-		Body:    fmt.Sprintf(`{"email": "%s", "password": "%s"}`, username, password),
+		Headers: map[string]string{},
+		Body:    string(body.Bytes()),
 	})
 	if err != nil {
 		return err, ""
@@ -466,8 +482,40 @@ func (c *Client) RequestNodeByPeerId(peerId string, data federation.RequestNode)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), nil
+		// parse the body as text and print it
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Error reading body: %v", err)
+			return fmt.Errorf("Error response: %v", resp.Status), nil
+		}
+		return fmt.Errorf("Error response: %v", string(bodyBytes)), nil
 	}
 
 	return nil, resp
+}
+
+func (c *Client) RandomPassword() string {
+	const passwordLength = 12
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+	password := make([]byte, passwordLength)
+	for i := range password {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			log.Printf("Error generating random number: %v", err)
+			return "password" // fallback in case of error
+		}
+		password[i] = charset[num.Int64()]
+	}
+
+	return string(password)
+}
+
+func (c *Client) RandomSSHPort() string {
+	num, err := rand.Int(rand.Reader, big.NewInt(65535-1024))
+	if err != nil {
+		log.Printf("Error generating random port: %v", err)
+		return "2222"
+	}
+	return strconv.Itoa(int(num.Int64()) + 1024)
 }
