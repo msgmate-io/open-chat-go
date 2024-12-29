@@ -1,28 +1,11 @@
 import { ChatItem, ChatItemCompact } from "@/components/chat/ChatItem"
 import { LoadingSpinner } from "@/components/LoadingSpinner"
+import { isToday, isYesterday, isWithinLast7Days } from "@/components/utils"
 import useSWR from 'swr'
+import { create } from 'zustand'
+import { devtools, persist } from 'zustand/middleware'
+
 const fetcher = (...args) => fetch(...args).then(res => res.json())
-
-function isToday(date: Date) {
-    const today = new Date();
-    return date.getDate() === today.getDate() &&
-        date.getMonth() === today.getMonth() &&
-        date.getFullYear() === today.getFullYear();
-}
-
-function isYesterday(date: Date) {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return date.getDate() === yesterday.getDate() &&
-        date.getMonth() === yesterday.getMonth() &&
-        date.getFullYear() === yesterday.getFullYear();
-}
-
-function isWithinLast7Days(date: Date) {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    return date >= sevenDaysAgo;
-}
 
 export const ExploreChatsIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" className="icon-md">
@@ -36,13 +19,14 @@ export const ExploreChatsIcon = () => (
 );
 
 export function ChatsList({
+    chatUUID,
     leftPannelCollapsed,
     onToggleCollapse
 }: {
+    chatUUID: string,
     leftPannelCollapsed: boolean;
     onToggleCollapse: () => void;    
 }) {
-    const chatId = "abc"
     const { data: chats, isLoading } = useSWR('/api/v1/chats/list', fetcher)
 
     const ChatItm = ChatItemCompact
@@ -81,7 +65,7 @@ export function ChatsList({
                 }
             }
 
-            return [divider, <ChatItm chat={chat} key={`chat_${chat.uuid}`} isSelected={chat.uuid === chatId} />].filter(Boolean);
+            return [divider, <ChatItm chat={chat} key={`chat_${chat.uuid}`} isSelected={chat.uuid === chatUUID} />].filter(Boolean);
         });
     };
 
