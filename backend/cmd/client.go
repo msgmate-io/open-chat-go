@@ -3,12 +3,20 @@ package cmd
 import (
 	"backend/api/federation"
 	"backend/client"
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
+	"log"
 	"os"
+	"strings"
+	"syscall"
+	"time"
 )
 
 var defaultFlags = []cli.Flag{
@@ -24,6 +32,58 @@ var defaultFlags = []cli.Flag{
 		Value:   "",
 		Sources: cli.EnvVars("OPEN_CHAT_SESSION_ID"),
 	},
+}
+
+func SSHSession(host string, port string, username string, password string) {
+	config := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	// Connect to the SSH server
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", host, port), config)
+	if err != nil {
+		log.Printf("Failed to dial: %v", err)
+		return
+	}
+	defer client.Close()
+
+	// Create a new session
+	session, err := client.NewSession()
+	if err != nil {
+		log.Printf("Failed to create session: %v", err)
+		return
+	}
+	defer session.Close()
+
+	// Set up standard input, output, and error
+	session.Stdin = os.Stdin
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	// Set terminal into raw mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		log.Printf("Failed to set terminal to raw mode: %v", err)
+		return
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Start an interactive shell
+	err = session.Shell()
+	if err != nil {
+		log.Printf("Failed to start shell: %v", err)
+		return
+	}
+
+	// Wait for the session to complete
+	err = session.Wait()
+	if err != nil {
+		log.Printf("Session ended with error: %v", err)
+	}
 }
 
 func GetClientCmd(action string) *cli.Command {
@@ -358,6 +418,11 @@ func GetClientCmd(action string) *cli.Command {
 					Usage: "The number of nodes to return",
 					Value: 10,
 				},
+				&cli.BoolFlag{
+					Name:  "ls",
+					Usage: "Pretty list all nodes",
+					Value: false,
+				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("List all nodes")
@@ -375,7 +440,142 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "shell" {
+		return &cli.Command{
+			Name:  "shell",
+			Usage: "Open a shell to a node",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "node",
+					Usage: "The node to open a shell to",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Attempting to establish ssh connection to node", c.String("node"))
+				// prompt the user to enter the 'nodes' admin password!
+				fmt.Println("Enter the 'nodes' admin login string 'username:password'")
+				username, password, err := promptForUsernameAndPassword()
+				if err != nil {
+					return fmt.Errorf("failed to read password: %w", err)
+				}
+				// fmt.Println("Login string entered:", username, password)
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				remotePeerId := c.String("node")
+
+				err, identity := ocClient.GetFederationIdentity()
+				if err != nil {
+					return fmt.Errorf("failed to get identity: %w", err)
+				}
+				ownPeerId := identity.ID
+				fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
+
+				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
+				if err != nil {
+					return fmt.Errorf("failed to request session on remote node: %w", err)
+				}
+				fmt.Println("Session ID:", sessionId)
+				randomPassword := ocClient.RandomPassword()
+
+				randomSSHPort := ocClient.RandomSSHPort()
+				// with the remote session id we can now setup the proies required!
+				// Trough the proxy on the remote peer we need to setup:
+				// 1 - ./backend client proxy --direction egress --target "server_username:SomeRandomPassword" --port 2222 --kind ssh
+				// 2 - ./backend client proxy --direction ingress --origin "<local_peer_id>:2222" --port 2222
+				// on the local peer using the existing client session we need to setup and ssh ingoing port:
+				// ./backend client proxy --direction egress --target "<remote_peer_id>:2222" --port 2222
+				// 3 - ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 server_username@localhost
+				// ... when (3) is killed all proxies should be deleted!
+				body := new(bytes.Buffer)
+				proxyData := federation.CreateAndStartProxyRequest{
+					UseTLS:        false,
+					KeyPrefix:     "",
+					NodeUUID:      "",
+					Port:          randomSSHPort,
+					Kind:          "ssh",
+					Direction:     "egress",
+					TrafficOrigin: "ssh:" + randomPassword,
+					TrafficTarget: "tim:" + randomPassword,
+					NetworkName:   "betwork",
+				}
+				json.NewEncoder(body).Encode(proxyData)
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "POST",
+					Path:   "/api/v1/federation/nodes/proxy",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+					Body: string(body.Bytes()),
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+				// setup the ingoing proxy on the local peer
+				body = new(bytes.Buffer)
+				proxyData = federation.CreateAndStartProxyRequest{
+					UseTLS:        false,
+					KeyPrefix:     "",
+					NodeUUID:      "",
+					Port:          randomSSHPort,
+					Kind:          "ssh",
+					Direction:     "ingress",
+					TrafficOrigin: ownPeerId + ":" + randomSSHPort,
+					TrafficTarget: "",
+					NetworkName:   "network",
+				}
+				json.NewEncoder(body).Encode(proxyData)
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "POST",
+					Path:   "/api/v1/federation/nodes/proxy",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+					Body: string(body.Bytes()),
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+
+				// now finally we can register the proxy on the local node!
+				err = ocClient.CreateProxy("egress", "", remotePeerId+":"+randomSSHPort, randomSSHPort)
+				if err != nil {
+					return fmt.Errorf("failed to create proxy: %w", err)
+				}
+
+				fmt.Println("Random password:", randomPassword)
+				fmt.Println("Random SSH port:", randomSSHPort)
+				// wait few seconds for the proxies to be created
+				fmt.Println("Connecting to ssh server...")
+				time.Sleep(1 * time.Second)
+
+				SSHSession("localhost", randomSSHPort, "tim", randomPassword)
+
+				return nil
+			},
+		}
 	} else {
 		return nil
 	}
+}
+
+func promptForUsernameAndPassword() (string, string, error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Print("Username: ")
+	username, err := reader.ReadString('\n')
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read username: %w", err)
+	}
+	username = strings.TrimSpace(username)
+
+	fmt.Print("Password: ")
+	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read password: %w", err)
+	}
+	password := string(bytePassword)
+	fmt.Println() // Move to the next line after password input
+
+	return username, password, nil
 }
