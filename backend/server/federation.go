@@ -9,17 +9,10 @@ package server
 import (
 	"backend/api/federation"
 	"backend/database"
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -29,6 +22,11 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"strings"
 )
 
 func CreateHost(
@@ -125,81 +123,6 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 	return nil
 }
 
-// CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
-func CreateIncomingRequestStreamHandler(host string, hostPort int, pathPrefixWhitelist []string) network.StreamHandler {
-	// empty whitelist means allow all
-	preprocessor := func(path string) bool {
-		return true
-	}
-	if len(pathPrefixWhitelist) > 0 {
-		preprocessor = func(path string) bool {
-			// check if the path is in the whitelist
-			for _, prefix := range pathPrefixWhitelist {
-				if strings.HasPrefix(path, prefix) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-	// check possible proxies
-	return func(stream network.Stream) {
-		defer stream.Close()
-
-		buf := bufio.NewReader(stream)
-		req, err := http.ReadRequest(buf)
-		if err != nil {
-			stream.Reset()
-			log.Println(err)
-			return
-		}
-
-		if !preprocessor(req.URL.Path) {
-			stream.Reset()
-			log.Println("Request not allowed", req.URL.Path)
-			return
-		}
-
-		// get the Referer header
-		// referer := req.Header.Get("Referer")
-		// fmt.Println("Received request from:", req.URL, req.URL.Path, req.Header, referer)
-		defer req.Body.Close()
-
-		fullHost := fmt.Sprintf("%s:%d", host, hostPort)
-		req.URL.Scheme = "http"
-		req.URL.Host = fullHost
-
-		outreq := new(http.Request)
-		*outreq = *req
-
-		// Preserve the original request headers
-		outreq.Header = req.Header
-
-		// fmt.Printf("[f-proxy] Making request to %s\n", req.URL)
-		resp, err := http.DefaultTransport.RoundTrip(outreq)
-		if err != nil {
-			stream.Reset()
-			log.Println(err)
-			return
-		}
-
-		// Create a response writer that will write to the stream
-		writer := bufio.NewWriter(stream)
-
-		// Instead of manually writing status and headers, use http.Response.Write
-		// which handles the entire response writing in the correct format
-		err = resp.Write(writer)
-		if err != nil {
-			stream.Reset()
-			log.Println("Error writing response:", err)
-			return
-		}
-
-		writer.Flush()
-		resp.Body.Close()
-	}
-}
-
 func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler, protocolID protocol.ID) {
 	h.SetStreamHandler(protocolID, streamHandler)
 
@@ -247,9 +170,6 @@ func CreateFederationHost(
 	// this the default protocol that is accessible to any outside node
 	// It only exposes network join apis
 	// Participating in any of the other protocols requires being a network member
-	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort, []string{
-		"/api/v1/federation/networks/",
-	}), federation.T1mNetworkJoinProtocolID)
 
 	federationHandler := &federation.FederationHandler{
 		Host:               h,
@@ -260,6 +180,10 @@ func CreateFederationHost(
 		NetworkSyncBlocker: make(map[string]bool),
 		NetworkPeerIds:     make(map[string]map[string]bool),
 	}
+
+	StartRequestReceivingPeer(context.Background(), h, federationHandler.CreateIncomingRequestStreamHandler(host, hostPort, []string{
+		"/api/v1/federation/networks/",
+	}, ""), federation.T1mNetworkJoinProtocolID)
 
 	return &h, federationHandler, nil
 }
@@ -281,11 +205,20 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 		targetData := strings.Split(proxy.TrafficTarget, ":")
 		targetPort := targetData[1]
 		targetPeerId := targetData[0]
-		node := database.Node{}
-		DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&node)
-		log.Println("Starting proxy for node", node.NodeName, "on port", proxy.Port)
-		protocolID := federation.CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId)
-		h.StartEgressProxy(DB, proxy, node, node, originPort, proxy.NetworkName, protocolID)
+		if proxy.Kind == "tcp" {
+			node := database.Node{}
+			DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&node)
+			log.Println("Starting proxy for node", node.NodeName, "on port", proxy.Port)
+			protocolID := federation.CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId)
+			h.StartEgressProxy(DB, proxy, node, node, originPort, proxy.NetworkName, protocolID)
+		} else if proxy.Kind == "ssh" {
+			portNum, err := strconv.Atoi(proxy.Port)
+			if err != nil {
+				log.Println("Cannot start SSH proxy, invalid port", proxy.Port, err)
+				continue
+			}
+			h.StartSSHProxy(portNum, originPort)
+		}
 	}
 
 	// Now start ingress proxies
@@ -348,7 +281,7 @@ func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
 	return nil
 }
 
-func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler) {
+func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host string, hostPort int) {
 	log.Println("Initializing networks")
 	networks := []database.Network{}
 	DB.Find(&networks)
@@ -363,6 +296,12 @@ func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler) {
 			h.AddNetworkPeerId(network.NetworkName, networkMember.Node.PeerID)
 		}
 		h.StartNetworkSyncProcess(DB, network.NetworkName)
+
+		// start the network request protocol that allows querying any local api to network members only!
+		StartRequestReceivingPeer(
+			context.Background(), h.Host, h.CreateIncomingRequestStreamHandler(host, hostPort, []string{}, network.NetworkName),
+			federation.T1mNetworkRequestProtocolID,
+		)
 	}
 
 	fmt.Println("Network peer ids:", h.NetworkPeerIds)
