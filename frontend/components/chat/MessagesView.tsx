@@ -232,7 +232,7 @@ export function MessagesScroll({
 
     return <div className="flex flex-col h-full w-full lg:max-w-[900px] relative">
         <div ref={scrollRef} className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto relative pb-4 pt-2">
-            {messages && messages.rows.map((message) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} />).reverse()}
+            {messages && messages.rows.map((message) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
         </div>
         {!hideInput && <MessageInput text={text} setText={setText} isLoading={false} isBotResponding={false} stopBotResponse={onStopBotResponse} onSendMessage={onSendMessage} ref={inputRef} />}
     </div>
@@ -240,11 +240,11 @@ export function MessagesScroll({
 
 
 export function MessagesView({ 
-        chatUUID, 
+        chatUUID = null, 
         leftPannelCollapsed = false, 
         onToggleCollapse = () => {}
     }: {
-        chatUUID: string,
+        chatUUID: string | null,
         leftPannelCollapsed: boolean,
         onToggleCollapse: () => void
     }) {
