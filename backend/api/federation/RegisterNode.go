@@ -11,11 +11,19 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
+	"time"
 )
 
 type NodeInfo struct {
 	Name      string   `json:"name"`
 	Addresses []string `json:"addresses"`
+}
+
+type NodeSyncInfo struct {
+	Name        string    `json:"name"`
+	PeerId      string    `json:"peer_id"`
+	Addresses   []string  `json:"addresses"`
+	LastUpdated time.Time `json:"last_updated"`
 }
 
 // TODO: allow directly assigning the node to a network in the future
@@ -98,9 +106,9 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode) (data
 	}
 
 	var existingNode database.Node
-	q := DB.Where("peer_id = ?", info.ID.String()).First(&existingNode)
+	q := DB.Where("peer_id = ?", info.ID.String()).Preload("Addresses").First(&existingNode)
 	if q.Error == nil {
-		return database.Node{}, fmt.Errorf("Peer ID already registered")
+		return existingNode, fmt.Errorf("Peer ID already registered")
 	}
 	peerInfo := h.Host.Peerstore().PeerInfo(info.ID)
 
@@ -128,9 +136,12 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode) (data
 			return database.Node{}, fmt.Errorf("Network not found")
 		}
 		h.AddNetworkPeerId(data.AddToNetwork, node.PeerID)
+		// give pass time so that node has to sync immediately
+		timeBefore5Minutes := time.Now().Add(-5 * time.Minute)
 		networkMembership := database.NetworkMember{
 			NetworkID: network.ID,
 			NodeID:    node.ID,
+			LastSync:  timeBefore5Minutes,
 			Status:    "accepted",
 		}
 		q = DB.Create(&networkMembership)
