@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/urfave/cli/v3"
 	"log"
+	"os"
 	"strings"
 	"time"
 )
@@ -113,7 +114,7 @@ func GetServerFlags() []cli.Flag {
 			Sources: cli.EnvVars("NET_BOOTSTRAP_PEERS"),
 			Name:    "network-bootstrap-peers",
 			Value: []string{
-				"eyJuYW1lIjoiUW1QaVlzQ0M4S1N2a0hUeXZaOUJNN2pZalNRczV3dzNCaWlWSGdSUTI2U29NVSIsImFkZHJlc3NlcyI6WyIvaXA0Lzg5LjU4LjI1LjE4OC90Y3AvODA4Mi9wMnAvUW1QaVlzQ0M4S1N2a0hUeXZaOUJNN2pZalNRczV3dzNCaWlWSGdSUTI2U29NVSIsIi9pcDQvMTI3LjAuMC4xL3RjcC84MDgyL3AycC9RbVBpWXNDQzhLU3ZrSFR5dlo5Qk03allqU1FzNXd3M0JpaVZIZ1JRMjZTb01VIl19",
+				"e25hbWU6Ym9vdHN0cmFwcGVyXzg5XzU4XzI1XzE4OCxhZGRyZXNzZXM6Wy9pcDQvODkuNTguMjUuMTg4L3RjcC84MDgyL3AycC9RbVBpWXNDQzhLU3ZrSFR5dlo5Qk03allqU1FzNXd3M0JpaVZIZ1JRMjZTb01VXX0K",
 			},
 			Usage: "List of bootstrap peers to connect to on startup",
 		},
@@ -198,11 +199,15 @@ func ServerCli() *cli.Command {
 			if ownNode.ID == 0 {
 				log.Println("Own node not found, creating it")
 				ownIdentity := federationHandler.GetIdentity()
-				_, err := federation.RegisterNodeRaw(
+				hostname, err := os.Hostname()
+				if err != nil {
+					fmt.Println("Error:", err)
+				}
+				_, err = federation.RegisterNodeRaw(
 					DB,
 					federationHandler,
 					federation.RegisterNode{
-						Name:                "self",
+						Name:                hostname,
 						Addresses:           ownIdentity.ConnectMultiadress,
 						RequestRegistration: false,
 						AddToNetwork:        usernameNetwork,
