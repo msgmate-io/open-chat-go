@@ -432,11 +432,26 @@ func GetClientCmd(action string) *cli.Command {
 				if err != nil {
 					return fmt.Errorf("failed to get nodes: %w", err)
 				}
-				prettyNodes, err := json.MarshalIndent(nodes, "", "  ")
-				if err != nil {
-					return fmt.Errorf("failed to marshal nodes: %w", err)
+
+				if c.Bool("ls") {
+					// Print headers
+					fmt.Printf("%-50s %-50s %-25s\n", "peer_id", "node_name", "latest_contact")
+					fmt.Println(strings.Repeat("-", 125))
+
+					// Print each node's information
+					for _, node := range nodes.Rows {
+						fmt.Printf("%-50s %-50s %-25s\n",
+							node.PeerID,
+							node.NodeName,
+							node.LatestContact)
+					}
+				} else {
+					prettyNodes, err := json.MarshalIndent(nodes, "", "  ")
+					if err != nil {
+						return fmt.Errorf("failed to marshal nodes: %w", err)
+					}
+					fmt.Println(string(prettyNodes))
 				}
-				fmt.Println(string(prettyNodes))
 				return nil
 			},
 		}
