@@ -54,10 +54,13 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var receiverId uint
+	//var receiver database.User
 	if chat.User1.ID == user.ID {
 		receiverId = chat.User2.ID
+		//receiver = chat.User2
 	} else {
 		receiverId = chat.User1.ID
+		//receiver = chat.User1
 	}
 
 	var message database.Message = database.Message{
@@ -72,6 +75,14 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	// Now publish websocket updates to online & subscribed users
 	websocket.MessageHandler.SendMessage(
 		receiverId,
+		websocket.MessageHandler.NewMessage(
+			chatUuid,
+			user.UUID,
+			data.Text,
+		),
+	)
+	websocket.MessageHandler.SendMessage(
+		user.ID,
 		websocket.MessageHandler.NewMessage(
 			chatUuid,
 			user.UUID,
