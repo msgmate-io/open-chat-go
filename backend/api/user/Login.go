@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
-	"net/mail"
 	"time"
 )
 
@@ -40,11 +39,13 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := mail.ParseAddress(data.Email)
-	if err != nil {
-		http.Error(w, defaultErrorMessage, http.StatusBadRequest)
-		return
-	}
+	// deliberately email requirements are only enforce on registration
+	// sucht that we may have admin / bot users with single user names
+	//_, err := mail.ParseAddress(data.Email)
+	//if err != nil {
+	//	http.Error(w, "Not a valid email", http.StatusBadRequest)
+	//	return
+	//}
 
 	if data.Password == "" {
 		http.Error(w, defaultErrorMessage, http.StatusBadRequest)
@@ -59,7 +60,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(data.Password))
+	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(data.Password))
 	if err != nil {
 		http.Error(w, defaultErrorMessage, http.StatusUnauthorized)
 		return
