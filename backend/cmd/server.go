@@ -114,7 +114,7 @@ func GetServerFlags() []cli.Flag {
 			Sources: cli.EnvVars("NET_BOOTSTRAP_PEERS"),
 			Name:    "network-bootstrap-peers",
 			Value: []string{
-				"e25hbWU6Ym9vdHN0cmFwcGVyXzg5XzU4XzI1XzE4OCxhZGRyZXNzZXM6Wy9pcDQvODkuNTguMjUuMTg4L3RjcC84MDgyL3AycC9RbVBpWXNDQzhLU3ZrSFR5dlo5Qk03allqU1FzNXd3M0JpaVZIZ1JRMjZTb01VXX0K",
+				"eyJuYW1lIjoiYm9vdHN0cmFwcGVyXzg5XzU4XzI1XzE4OCIsImFkZHJlc3NlcyI6WyIvaXA0Lzg5LjU4LjI1LjE4OC90Y3AvODA4Mi9wMnAvUW1QaVlzQ0M4S1N2a0hUeXZaOUJNN2pZalNRczV3dzNCaWlWSGdSUTI2U29NVSJdfQo=",
 			},
 			Usage: "List of bootstrap peers to connect to on startup",
 		},
@@ -203,6 +203,8 @@ func ServerCli() *cli.Command {
 				if err != nil {
 					fmt.Println("Error:", err)
 				}
+
+				now := time.Now()
 				_, err = federation.RegisterNodeRaw(
 					DB,
 					federationHandler,
@@ -212,6 +214,7 @@ func ServerCli() *cli.Command {
 						RequestRegistration: false,
 						AddToNetwork:        usernameNetwork,
 					},
+					&now,
 				)
 				if err != nil {
 					log.Println("Error registering own node", err)
@@ -235,10 +238,12 @@ func ServerCli() *cli.Command {
 				registerNode.Name = nodeInfo.Name
 				registerNode.Addresses = nodeInfo.Addresses
 				registerNode.AddToNetwork = usernameNetwork
+				begginningOfTime := time.Time{}
 				_, err = federation.RegisterNodeRaw(
 					DB,
 					federationHandler,
 					registerNode,
+					&begginningOfTime,
 				)
 				if err != nil {
 					log.Println("Error registering bootstrap peer", err)
