@@ -11,6 +11,7 @@ type Key struct {
 
 type Node struct {
 	Model
+	LastChanged  time.Time     `json:"last_changed"`
 	NodeName     string        `json:"node_name" gorm:"index"`
 	PeerID       string        `json:"peer_id"`
 	LatestPingId *uint         `json:"-" gorm:"index"`
