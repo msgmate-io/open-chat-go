@@ -254,10 +254,15 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 	for _, networkMember := range networkMembers {
 		peerIdNodeMap[networkMember.Node.PeerID] = networkMember.Node
 		networkMemberPeerIds = append(networkMemberPeerIds, networkMember.Node.PeerID)
+
+		adresses := make([]string, len(networkMember.Node.Addresses))
+		for i, addr := range networkMember.Node.Addresses {
+			adresses[i] = addr.Address
+		}
 		networkMemberInfo := NodeRepresentation{
 			Name:      networkMember.Node.NodeName,
 			PeerId:    networkMember.Node.PeerID,
-			Addresses: orderAdressesAlphabetically(ownIdentity.ConnectMultiadress),
+			Addresses: orderAdressesAlphabetically(adresses),
 		}
 		networkMemberInfoJson, err := json.Marshal(networkMemberInfo)
 		if err != nil {
