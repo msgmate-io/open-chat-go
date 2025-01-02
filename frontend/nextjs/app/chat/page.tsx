@@ -1,8 +1,12 @@
+"use client"
+
 import { ChatBase } from "@/components/chat/ChatBase";
-import { AuthGuard } from "@/components/AuthGuard";
+import { useRouter } from "next/navigation";
 
 export default function ChatPage() {
+  const router = useRouter();
+
   return (
-    <ChatBase chatUUID={null}>Hi there</ChatBase>
+    <ChatBase chatUUID={null} navigateTo={(to: string) => {router.push(to)}}>Hi there</ChatBase>
   );
 }
