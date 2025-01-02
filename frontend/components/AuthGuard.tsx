@@ -1,15 +1,33 @@
-import { ReactNode } from 'react'
-import { redirect } from 'next/navigation'
+"use client"
 
-const SERVER_ROUTE = "http://localhost:1984"
+import { ReactNode, useEffect } from 'react'
+import { create } from 'zustand'
+import { devtools, persist } from 'zustand/middleware'
+import { headers, cookies } from "next/headers";
 
-export async function AuthGuard({ children }: { children: ReactNode }) {
-    const res = await fetch(`${SERVER_ROUTE}/api/v1/user/self`, { method: "GET" })
-    
-    if(res.ok){
-        return children
-    }else{
-        redirect("/login")
-        return null
-    }
+interface AuthState {
+  isAuthenticated: boolean
+  setIsAuthenticated: (isAuthenticated: boolean) => void
+}
+
+
+export const useAuthStore = create<AuthState>()(
+  devtools(
+      (set) => ({
+        isAuthenticated: false,
+        setIsAuthenticated: (isAuthenticated: boolean) => {
+          set({ isAuthenticated })
+        },
+      }),
+  ),
+)
+
+export async function AuthGuard() {
+    const heads = await headers() 
+    const isAuthenticated = heads.get("x-user-authenticated") == "true"
+    const setIsAuthenticated = useAuthStore(state => state.setIsAuthenticated)
+    useEffect(() => {
+        setIsAuthenticated(isAuthenticated)
+    }, [])
+    return <></>
 }
