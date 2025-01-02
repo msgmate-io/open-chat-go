@@ -115,6 +115,32 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode, lastC
 	var existingNode database.Node
 	q := DB.Where("peer_id = ?", info.ID.String()).Preload("Addresses").First(&existingNode)
 	if q.Error == nil {
+		// we still need to assure that the network member ship exists already!
+		if data.AddToNetwork != "" {
+			networkMemberShip := database.NetworkMember{}
+			q = DB.Where("node_id = ?", existingNode.ID).Where("network_id = ?", h.Networks[data.AddToNetwork].ID).First(&networkMemberShip)
+			if q.Error != nil {
+				// then we need to still create that network membership
+
+				network, ok := h.Networks[data.AddToNetwork]
+				if !ok {
+					return database.Node{}, fmt.Errorf("Network not found")
+				}
+				h.AddNetworkPeerId(data.AddToNetwork, existingNode.PeerID)
+				// give pass time so that node has to sync immediately
+				timeBefore5Minutes := time.Now().Add(-5 * time.Minute)
+				networkMembership := database.NetworkMember{
+					NetworkID: network.ID,
+					NodeID:    existingNode.ID,
+					LastSync:  timeBefore5Minutes,
+					Status:    "accepted",
+				}
+				q = DB.Create(&networkMembership)
+				if q.Error != nil {
+					return database.Node{}, fmt.Errorf("Internal server error")
+				}
+			}
+		}
 		return existingNode, fmt.Errorf("Peer ID already registered")
 	}
 	peerInfo := h.Host.Peerstore().PeerInfo(info.ID)
