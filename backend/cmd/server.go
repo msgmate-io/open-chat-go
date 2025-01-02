@@ -107,7 +107,7 @@ func GetServerFlags() []cli.Flag {
 			Name:    "default-network-credentials",
 			Aliases: []string{"dnc"},
 			// If empty default network is disabled
-			Value: "network:password",
+			Value: "",
 			Usage: "default network credentials",
 		},
 		&cli.StringSliceFlag{
