@@ -51,7 +51,7 @@ export default function LoginHero() {
                 text => {
                     setError({non_field_errors: text})
                 }
-            ).catch(e => {
+            ).catch(() => {
                 setError({non_field_errors: "Error occurred while logging in."})
             })
         }
@@ -84,7 +84,6 @@ export default function LoginHero() {
     useEffect(() => {
         if (error) {
             Object.keys(error).forEach((key) => {
-                // @ts-ignore
                 form.setError(key, {
                     type: "server",
                     message: error[key],
