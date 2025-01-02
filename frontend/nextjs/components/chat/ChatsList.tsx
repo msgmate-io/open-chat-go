@@ -19,11 +19,13 @@ export const ExploreChatsIcon = () => (
 export function ChatsList({
     chatUUID,
     leftPannelCollapsed,
-    onToggleCollapse
+    onToggleCollapse,
+    navigateTo
 }: {
     chatUUID: string | null,
     leftPannelCollapsed: boolean;
     onToggleCollapse: () => void;    
+    navigateTo: (to: string) => void
 }) {
     const { data: chats, isLoading } = useSWR('/api/v1/chats/list', fetcher)
 
@@ -63,7 +65,7 @@ export function ChatsList({
                 }
             }
 
-            return [divider, <ChatItm chat={chat} key={`chat_${chat.uuid}`} isSelected={chat.uuid === chatUUID} />].filter(Boolean);
+            return [divider, <ChatItm chat={chat} key={`chat_${chat.uuid}`} isSelected={chat.uuid === chatUUID} navigateTo={navigateTo} />].filter(Boolean);
         });
     };
 
