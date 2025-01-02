@@ -66,6 +66,8 @@ func main() {
 		default:
 			runCmd = cmd.ServerCli()
 		}
+	} else {
+		runCmd = cmd.ServerCli()
 	}
 
 	if runCmd != nil {
