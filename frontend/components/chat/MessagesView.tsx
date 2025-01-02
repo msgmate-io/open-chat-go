@@ -1,5 +1,3 @@
-"use client"
-
 import useSWR, { mutate } from "swr"
 import { MessageItem } from "@/components/chat/MessageItem"
 import React, { useEffect, useState, useRef, forwardRef } from 'react';
@@ -255,8 +253,8 @@ export function MessagesView({
         onToggleCollapse = () => {}
     }: {
         chatUUID: string | null,
-        leftPannelCollapsed: boolean,
-        onToggleCollapse: () => void
+        leftPannelCollapsed?: boolean,
+        onToggleCollapse?: () => void
     }) {
 
     const { data: chat } = useSWR(`/api/v1/chats/${chatUUID}`, fetcher)
