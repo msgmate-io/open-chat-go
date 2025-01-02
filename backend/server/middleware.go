@@ -66,7 +66,7 @@ func UserFromContext(ctx context.Context) *database.User {
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("session_id")
-		log.Println(cookie)
+		// log.Println(cookie)
 		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
