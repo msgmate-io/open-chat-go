@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { useThemeStore } from "@/components/ThemeToggle";
-import { redirect } from 'next/navigation'
 import { Layout } from "@/next-components/Layout";
-import { headers, cookies } from "next/headers";
 
 const SERVER_ROUTE = "http://localhost:1984"
 
