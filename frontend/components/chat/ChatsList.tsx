@@ -1,11 +1,9 @@
-import { ChatItem, ChatItemCompact } from "@/components/chat/ChatItem"
+import { ChatItemCompact } from "@/components/chat/ChatItem"
 import { LoadingSpinner } from "@/components/LoadingSpinner"
 import { isToday, isYesterday, isWithinLast7Days } from "@/components/utils"
 import useSWR from 'swr'
-import { create } from 'zustand'
-import { devtools, persist } from 'zustand/middleware'
 
-const fetcher = (...args) => fetch(...args).then(res => res.json())
+const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
 export const ExploreChatsIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" className="icon-md">
@@ -23,7 +21,7 @@ export function ChatsList({
     leftPannelCollapsed,
     onToggleCollapse
 }: {
-    chatUUID: string,
+    chatUUID: string | null,
     leftPannelCollapsed: boolean;
     onToggleCollapse: () => void;    
 }) {
@@ -44,7 +42,7 @@ export function ChatsList({
 
         let lastDivider: string | null = null
 
-        return chats?.rows.flatMap((chat) => {
+        return chats?.rows.flatMap((chat: any) => {
             const chatDate = new Date(); // TODO: chat.newest_message.created use the tie of the newest message
             let divider = null;
 
