@@ -82,7 +82,7 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 }
 
 // CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
-func CreateIncomingRequestStreamHandler(host string, port int) network.StreamHandler {
+func CreateIncomingRequestStreamHandler(host string, hostPort int) network.StreamHandler {
 	return func(stream network.Stream) {
 		// Remember to close the stream when we are done.
 		defer stream.Close()
@@ -97,7 +97,7 @@ func CreateIncomingRequestStreamHandler(host string, port int) network.StreamHan
 		defer req.Body.Close()
 
 		// Configure request URL with provided host and port
-		fullHost := fmt.Sprintf("%s:%d", host, port)
+		fullHost := fmt.Sprintf("%s:%d", host, hostPort)
 		req.URL.Scheme = "http"
 		req.URL.Host = fullHost
 
@@ -141,17 +141,18 @@ func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler n
 // Starts a libp2p host for this server node that can be dialed from any other open-chat node
 func CreateFederationHost(
 	host string,
-	port int,
+	p2pPort int,
+	hostPort int,
 ) (*host.Host, error) {
 	var debug = true
 	var r io.Reader
 	if debug {
-		r = mrand.New(mrand.NewSource(int64(port)))
+		r = mrand.New(mrand.NewSource(int64(p2pPort)))
 	} else {
 		r = rand.Reader
 	}
 
-	h, err := CreateHost(port, r, "private.key")
+	h, err := CreateHost(p2pPort, r, "private.key")
 	fmt.Println("================", "Setting up Host Node", "================")
 	fmt.Println("Host Identity:", h.ID())
 	p2pAdress := fmt.Sprintf("%s/p2p/%s", h.Addrs()[0], h.ID())
@@ -162,6 +163,6 @@ func CreateFederationHost(
 	}
 
 	// Start the peer
-	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, port))
+	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort))
 	return &h, nil
 }
