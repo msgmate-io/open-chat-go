@@ -2,6 +2,7 @@ package federation
 
 import (
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -25,11 +26,10 @@ type RegisterNode struct {
 //	@Failure      403 {string} string "User is not an admin"
 //	@Router       /api/v1/federation/nodes/register [post]
 func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
 
-	user, ok := r.Context().Value("user").(*database.User)
-
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -61,7 +61,7 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 		Addresses: nodeAddresses,
 	}
 
-	q := database.DB.Create(&node)
+	q := DB.Create(&node)
 
 	if q.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
