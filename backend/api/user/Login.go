@@ -4,6 +4,7 @@ import (
 	"backend/api"
 	"backend/database"
 	"encoding/json"
+	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"net/http"
@@ -63,6 +64,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	q := DB.First(&user, "email = ?", data.Email)
 
 	if q.Error != nil {
+		fmt.Println(q.Error)
 		http.Error(w, defaultErrorMessage, http.StatusNotFound)
 		return
 	}
