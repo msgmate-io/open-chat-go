@@ -31,11 +31,59 @@ type NewPartialMessage struct {
 	} `json:"content"`
 }
 
+type StartPartialMessage struct {
+	Type    string `json:"type"`
+	Content struct {
+		ChatUUID   string `json:"chat_uuid"`
+		SenderUUID string `json:"sender_uuid"`
+	} `json:"content"`
+}
+
+type EndPartialMessage struct {
+	Type    string `json:"type"`
+	Content struct {
+		ChatUUID   string `json:"chat_uuid"`
+		SenderUUID string `json:"sender_uuid"`
+	} `json:"content"`
+}
+
 func (m *Messages) SendMessage(ch *WebSocketHandler, receiverUUID string, EncMessage []byte) {
 	ch.PublishInChannel(
 		EncMessage,
 		receiverUUID,
 	)
+}
+
+func (m *Messages) StartPartialMessage(ChatUUID, SenderUUID string) []byte {
+	msg := StartPartialMessage{
+		Type: "start_partial_message",
+		Content: struct {
+			ChatUUID   string `json:"chat_uuid"`
+			SenderUUID string `json:"sender_uuid"`
+		}{
+			ChatUUID:   ChatUUID,
+			SenderUUID: SenderUUID,
+		},
+	}
+
+	encMsg, _ := json.Marshal(msg)
+	return encMsg
+}
+
+func (m *Messages) EndPartialMessage(ChatUUID, SenderUUID string) []byte {
+	msg := EndPartialMessage{
+		Type: "end_partial_message",
+		Content: struct {
+			ChatUUID   string `json:"chat_uuid"`
+			SenderUUID string `json:"sender_uuid"`
+		}{
+			ChatUUID:   ChatUUID,
+			SenderUUID: SenderUUID,
+		},
+	}
+
+	encMsg, _ := json.Marshal(msg)
+	return encMsg
 }
 
 func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string) []byte {
