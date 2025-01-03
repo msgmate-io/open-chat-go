@@ -177,6 +177,14 @@ func processMessage(ch *wsapi.WebSocketHandler, rawMessage json.RawMessage, sess
 			})
 
 		var fullText strings.Builder
+		ch.MessageHandler.SendMessage(
+			ch,
+			message.Content.SenderUUID,
+			ch.MessageHandler.StartPartialMessage(
+				message.Content.ChatUUID,
+				message.Content.SenderUUID,
+			),
+		)
 		for {
 			select {
 			case chunk, ok := <-chunks:
@@ -209,6 +217,14 @@ func processMessage(ch *wsapi.WebSocketHandler, rawMessage json.RawMessage, sess
 				break
 			}
 		}
+		ch.MessageHandler.SendMessage(
+			ch,
+			message.Content.SenderUUID,
+			ch.MessageHandler.EndPartialMessage(
+				message.Content.ChatUUID,
+				message.Content.SenderUUID,
+			),
+		)
 
 		sendChatMessage("http://localhost:1984", sessionId, message.Content.ChatUUID, SendMessage{
 			Text: fullText.String(),
