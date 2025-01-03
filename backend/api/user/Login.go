@@ -5,6 +5,7 @@ import (
 	"backend/database"
 	"encoding/json"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"net/http"
 	"time"
 )
@@ -34,6 +35,12 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var data UserLogin
 	var defaultErrorMessage string = "Invalid email or password"
 
+	DB, ok := r.Context().Value("db").(*gorm.DB)
+	if !ok {
+		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		return
+	}
+
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -53,7 +60,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user database.User // TODO: sql injection?
-	q := database.DB.First(&user, "email = ?", data.Email)
+	q := DB.First(&user, "email = ?", data.Email)
 
 	if q.Error != nil {
 		http.Error(w, defaultErrorMessage, http.StatusNotFound)
@@ -76,7 +83,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		UserId: user.ID,
 	}
 
-	q = database.DB.Create(&session)
+	q = DB.Create(&session)
 
 	if q.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

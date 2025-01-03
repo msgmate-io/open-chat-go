@@ -65,6 +65,12 @@ func UserFromContext(ctx context.Context) *database.User {
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		DB, ok := r.Context().Value("db").(*gorm.DB)
+		if !ok {
+			http.Error(w, "Unable to get database", http.StatusBadRequest)
+			return
+		}
+
 		cookie, err := r.Cookie("session_id")
 		// log.Println(cookie)
 		if err != nil {
@@ -75,7 +81,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		token := strings.TrimSpace(cookie.Value)
 
 		var session database.Session
-		if err := database.DB.First(&session, "token = ?", token).Error; err != nil {
+		if err := DB.First(&session, "token = ?", token).Error; err != nil {
 
 			if err == gorm.ErrRecordNotFound {
 				http.Error(w, "Invalid token", http.StatusForbidden)
@@ -93,7 +99,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		var user database.User
-		if err := database.DB.First(&user, "id = ?", session.UserId).Error; err != nil {
+		if err := DB.First(&user, "id = ?", session.UserId).Error; err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}

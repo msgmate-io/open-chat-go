@@ -2,6 +2,7 @@ package database
 
 import (
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"net/mail"
 )
 
@@ -15,6 +16,7 @@ type User struct {
 }
 
 func (u *User) AddContact(
+	DB *gorm.DB,
 	user *User,
 ) (*Contact, error) {
 	contact := Contact{
@@ -32,6 +34,7 @@ func (u *User) AddContact(
 }
 
 func RegisterUser(
+	DB *gorm.DB,
 	name string,
 	email string,
 	password []byte,

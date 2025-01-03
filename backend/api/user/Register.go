@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"net/http"
 	"net/mail"
 )
@@ -36,6 +37,12 @@ type UserRegister struct {
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var data UserRegister
 
+	DB, ok := r.Context().Value("db").(*gorm.DB)
+	if !ok {
+		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		return
+	}
+
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -48,7 +55,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user database.User
-	q := database.DB.First(&user, "email = ?", data.Email)
+	q := DB.First(&user, "email = ?", data.Email)
 
 	if q.Error == nil {
 		http.Error(w, "Email already in use", http.StatusBadRequest)
@@ -76,7 +83,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		IsAdmin:      false,
 	}
 
-	q = database.DB.Create(&user)
+	q = DB.Create(&user)
 
 	if q.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

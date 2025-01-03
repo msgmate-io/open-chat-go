@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/api/websocket"
 	"backend/database"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 )
@@ -23,10 +24,10 @@ type SendMessage struct {
 //	@Param        chat_uuid path string true "Chat UUID"
 //	@Router       /api/v1/chats/{chat_uuid}/messages/send [post]
 func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
-	user, ok := r.Context().Value("user").(*database.User)
+	DB, user, err := util.GetDBAndUser(r)
 
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
 
@@ -44,7 +45,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 
 	// First find the chat by its id and user.ID
 	var chat database.Chat
-	result := database.DB.Preload("User1").
+	result := DB.Preload("User1").
 		Preload("User2").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
@@ -70,7 +71,10 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		Text:       &data.Text,
 	}
 
-	q := database.DB.Create(&message)
+	q := DB.Create(&message)
+
+	// update the 'latest_message' field in the chat
+	DB.Model(&chat).Update("latest_message_id", message.ID)
 
 	// Now publish websocket updates to online & subscribed users
 	websocket.MessageHandler.SendMessage(
