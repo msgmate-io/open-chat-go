@@ -12,23 +12,20 @@ import (
 	"time"
 )
 
-var ConnectionHandler = NewWebSocketHandler()
-var MessageHandler = &Messages{}
-
 type Subscriber struct {
 	msgs      chan []byte
-	UserId    uint
+	UserUUID  string
 	closeSlow func()
 }
 
 type WebSocketHandler struct {
 	subscriberMessageBuffer int
 	// publishLimiter *rate.Limiter
-
-	logf          func(f string, v ...interface{})
-	serveMux      http.ServeMux
-	subscribersMu sync.Mutex
-	subscribers   map[*Subscriber]struct{}
+	MessageHandler *Messages
+	logf           func(f string, v ...interface{})
+	serveMux       http.ServeMux
+	subscribersMu  sync.Mutex
+	subscribers    map[*Subscriber]struct{}
 }
 
 func (cs *WebSocketHandler) GetSubscribers() []Subscriber {
@@ -46,6 +43,7 @@ func NewWebSocketHandler() *WebSocketHandler {
 	return &WebSocketHandler{
 		subscriberMessageBuffer: 10,
 		// publishLimiter: rate.NewLimiter(rate.Limit(1), 1),
+		MessageHandler: &Messages{},
 		logf: func(f string, v ...interface{}) {
 			log.Printf(f, v...)
 		},
@@ -53,12 +51,12 @@ func NewWebSocketHandler() *WebSocketHandler {
 	}
 }
 
-func (cs *WebSocketHandler) PublishInChannel(msg []byte, userId uint) {
+func (cs *WebSocketHandler) PublishInChannel(msg []byte, receiverUUID string) {
 	cs.subscribersMu.Lock()
 	defer cs.subscribersMu.Unlock()
 
 	for s := range cs.subscribers {
-		if s.UserId == userId {
+		if s.UserUUID == receiverUUID {
 			select {
 			case s.msgs <- msg:
 			default:
@@ -102,14 +100,14 @@ func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn,
 	return c.Write(ctx, websocket.MessageText, msg)
 }
 
-func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Request, userId uint) error {
+func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Request, userUUID string) error {
 
 	var mu sync.Mutex
 	var c *websocket.Conn
 	var closed bool
 	s := &Subscriber{
-		UserId: userId,
-		msgs:   make(chan []byte, cs.subscriberMessageBuffer),
+		UserUUID: userUUID,
+		msgs:     make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
 			mu.Lock()
 			defer mu.Unlock()
