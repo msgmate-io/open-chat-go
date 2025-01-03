@@ -3,6 +3,7 @@ package client
 import (
 	"backend/api/chats"
 	"backend/api/federation"
+	"backend/api/metrics"
 	"backend/api/tls"
 	"backend/client/raw"
 	"backend/database"
@@ -522,4 +523,37 @@ func (c *Client) RandomSSHPort() string {
 		return "2222"
 	}
 	return strconv.Itoa(int(num.Int64()) + 1024)
+}
+
+func (c *Client) GetMetrics() (error, metrics.Metrics) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/metrics", c.host), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, metrics.Metrics{}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, metrics.Metrics{}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), metrics.Metrics{}
+	}
+
+	var out metrics.Metrics
+	err = json.NewDecoder(resp.Body).Decode(&out)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, metrics.Metrics{}
+	}
+
+	return nil, out
 }
