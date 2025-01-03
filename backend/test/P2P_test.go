@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"testing"
-	"time"
 )
 
 // 'go test -v ./... -run "^Test_P2P$"'
@@ -29,7 +28,6 @@ func Test_P2P(t *testing.T) {
 	log.Printf("Host2: %s", host2)
 
 	// Test 1: Login to both nodes
-	time.Sleep(4 * time.Second)
 
 	// login admin 1
 	err, admin1Session := loginUser(host1, user.UserLogin{
@@ -106,11 +104,17 @@ func Test_P2P(t *testing.T) {
 
 	log.Printf("Node1 UUID: %v", (*node1).UUID)
 
-	time.Sleep(5 * time.Second)
+	// start the real testing :)
+	err, self1 := getUserInfo(host2, admin2Session)
 
-	// start the real testing
-	// Test 2 request node1's identity trough node2
-	err, _ = requestNode(host1, admin1Session, (*node1).UUID, federation.RequestNode{
+	if err != nil {
+		t.Fatalf("Error getting user info: %v", err)
+	}
+
+	prettySelf1, _ := json.MarshalIndent(*self1, "", "  ")
+	log.Printf("Self1: %v", string(prettySelf1))
+
+	err, response1 := requestNode(host1, admin1Session, (*node1).UUID, federation.RequestNode{
 		Method: "GET",
 		Path:   "/api/v1/user/self",
 		Headers: map[string]string{
@@ -122,6 +126,14 @@ func Test_P2P(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("Error requesting node: %v", err)
+	}
+
+	prettyResponse1, _ := json.MarshalIndent(*response1, "", "  ")
+	log.Printf("Response1: %v", string(prettyResponse1))
+	//assert that the self1.uuid == response1.uuid
+	responseMap := (*response1).(map[string]interface{})
+	if (*self1).UUID != responseMap["uuid"] {
+		t.Fatalf("UUIDs do not match: %v != %v", (*self1).UUID, responseMap["uuid"])
 	}
 
 	// cancel the servers
