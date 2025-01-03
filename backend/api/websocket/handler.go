@@ -41,7 +41,7 @@ func (cs *WebSocketHandler) GetSubscribers() []Subscriber {
 
 func NewWebSocketHandler() *WebSocketHandler {
 	return &WebSocketHandler{
-		subscriberMessageBuffer: 10,
+		subscriberMessageBuffer: 100,
 		// publishLimiter: rate.NewLimiter(rate.Limit(1), 1),
 		MessageHandler: &Messages{},
 		logf: func(f string, v ...interface{}) {
@@ -113,7 +113,7 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 			defer mu.Unlock()
 			closed = true
 			if c != nil {
-				c.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
+				c.Close(websocket.StatusPolicyViolation, "connection too slow TBS to keep up with messages")
 			}
 		},
 	}
@@ -140,7 +140,7 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 	for {
 		select {
 		case msg := <-s.msgs:
-			err := writeTimeout(ctx, time.Second*5, c, msg)
+			err := writeTimeout(ctx, time.Second*200, c, msg)
 			if err != nil {
 				return err
 			}
