@@ -1,16 +1,12 @@
 package main
 
 import (
-	"backend/api/federation"
 	"backend/cmd"
 	"context"
 	"fmt"
+	ufcli "github.com/urfave/cli/v3"
 	"log"
 	"os"
-	"os/signal"
-	"syscall"
-
-	ufcli "github.com/urfave/cli/v3"
 )
 
 // make version a variable so the build system can inject it
