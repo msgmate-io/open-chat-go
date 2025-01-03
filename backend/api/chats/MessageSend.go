@@ -108,5 +108,10 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(message)
+	json.NewEncoder(w).Encode(ListedMessage{
+		UUID:       message.UUID,
+		SendAt:     message.CreatedAt.String(),
+		SenderUUID: user.UUID,
+		Text:       *message.Text,
+	})
 }

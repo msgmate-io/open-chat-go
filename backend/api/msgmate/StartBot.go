@@ -3,6 +3,7 @@ package msgmate
 import (
 	"backend/api/user"
 	wsapi "backend/api/websocket"
+	"backend/database"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -92,6 +93,41 @@ func sendChatMessage(host string, sessionId string, chatUUID string, data SendMe
 
 }
 
+func getUserInfo(host string, sessionId string) (error, *database.User) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/user/self", host), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, nil
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Error response: %v", resp.Status)
+		return err, nil
+	}
+
+	var user database.User
+
+	err = json.NewDecoder(resp.Body).Decode(&user)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, nil
+	}
+
+	return nil, &user
+}
+
 func StartBot(ch *wsapi.WebSocketHandler, username string, password string) error {
 	ctx := context.Background() // Persistent context for the WebSocket connection
 
@@ -102,6 +138,11 @@ func StartBot(ch *wsapi.WebSocketHandler, username string, password string) erro
 	})
 	if err != nil {
 		return fmt.Errorf("failed to login bot: %w", err)
+	}
+
+	err, botUser := getUserInfo("http://localhost:1984", sessionId)
+	if err != nil {
+		return fmt.Errorf("failed to get user info: %w", err)
 	}
 
 	for {
@@ -121,35 +162,37 @@ func StartBot(ch *wsapi.WebSocketHandler, username string, password string) erro
 		log.Println("Bot connected to WebSocket")
 
 		// Blocking call to continuously read messages
-		err = readWebSocketMessages(ch, ctx, c, sessionId)
+		err = readWebSocketMessages(ch, *botUser, ctx, c, sessionId)
 		if err != nil {
 			log.Printf("Error reading from WebSocket: %v", err)
 		}
 	}
 }
 
-func readWebSocketMessages(ch *wsapi.WebSocketHandler, ctx context.Context, conn *websocket.Conn, sessionId string) error {
-	var rawMessage json.RawMessage
-	err := wsjson.Read(ctx, conn, &rawMessage)
-	if err != nil {
-		// Differentiating between normal disconnection and error
-		if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
-			websocket.CloseStatus(err) == websocket.StatusGoingAway {
-			log.Println("WebSocket closed normally")
-			return nil // Or consider continuing to stay operational
+func readWebSocketMessages(ch *wsapi.WebSocketHandler, botUser database.User, ctx context.Context, conn *websocket.Conn, sessionId string) error {
+	for {
+		var rawMessage json.RawMessage
+		err := wsjson.Read(ctx, conn, &rawMessage)
+		if err != nil {
+			// Differentiating between normal disconnection and error
+			if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
+				websocket.CloseStatus(err) == websocket.StatusGoingAway {
+				log.Println("WebSocket closed normally")
+				return nil
+			}
+			return fmt.Errorf("read error: %w", err) // Signal upstream to reconnect
 		}
-		return fmt.Errorf("read error: %w", err) // Signal upstream to reconnect
-	}
 
-	// Process the message
-	if err := processMessage(ch, rawMessage, sessionId); err != nil {
-		log.Printf("Error processing message: %v", err)
+		// Process the message
+		if err := processMessage(ch, botUser, rawMessage, sessionId); err != nil {
+			log.Printf("Error processing message: %v", err)
+			// Continue reading messages even if processing one fails
+			continue
+		}
 	}
-
-	return nil
 }
 
-func processMessage(ch *wsapi.WebSocketHandler, rawMessage json.RawMessage, sessionId string) error {
+func processMessage(ch *wsapi.WebSocketHandler, botUser database.User, rawMessage json.RawMessage, sessionId string) error {
 
 	var messageMap map[string]interface{}
 	err := json.Unmarshal(rawMessage, &messageMap)
@@ -168,67 +211,69 @@ func processMessage(ch *wsapi.WebSocketHandler, rawMessage json.RawMessage, sess
 			return err
 		}
 
-		// send a message trough the websocket
-		chunks, errs := streamChatCompletion(
-			"http://localai:8080",
-			"meta-llama-3.1-8b-instruct",
-			[]map[string]string{
-				{"role": "user", "content": message.Content.Text},
-			})
+		if message.Content.SenderUUID != botUser.UUID {
 
-		var fullText strings.Builder
-		ch.MessageHandler.SendMessage(
-			ch,
-			message.Content.SenderUUID,
-			ch.MessageHandler.StartPartialMessage(
-				message.Content.ChatUUID,
+			// send a message trough the websocket
+			chunks, errs := streamChatCompletion(
+				"http://localai:8080",
+				"meta-llama-3.1-8b-instruct",
+				[]map[string]string{
+					{"role": "user", "content": message.Content.Text},
+				})
+
+			var fullText strings.Builder
+			ch.MessageHandler.SendMessage(
+				ch,
 				message.Content.SenderUUID,
-			),
-		)
-		for {
-			select {
-			case chunk, ok := <-chunks:
-				if !ok {
-					chunks = nil
-				} else {
-					// send partial message to the user
-
-					ch.MessageHandler.SendMessage(
-						ch,
-						message.Content.SenderUUID,
-						ch.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
+				ch.MessageHandler.StartPartialMessage(
+					message.Content.ChatUUID,
+					message.Content.SenderUUID,
+				),
+			)
+			for {
+				select {
+				case chunk, ok := <-chunks:
+					if !ok {
+						chunks = nil
+					} else {
+						// send partial message to the user
+						ch.MessageHandler.SendMessage(
+							ch,
 							message.Content.SenderUUID,
-							chunk,
-						),
-					)
-					fullText.WriteString(chunk)
+							ch.MessageHandler.NewPartialMessage(
+								message.Content.ChatUUID,
+								message.Content.SenderUUID,
+								chunk,
+							),
+						)
+						fullText.WriteString(chunk)
+					}
+				case err, ok := <-errs:
+					if ok && err != nil {
+						// Handle error
+						log.Fatalf("streamChatCompletion error: %v", err)
+					}
+					errs = nil
 				}
-			case err, ok := <-errs:
-				if ok && err != nil {
-					// Handle error
-					log.Fatalf("streamChatCompletion error: %v", err)
-				}
-				errs = nil
-			}
 
-			// End when both channels are nil or closed
-			if chunks == nil && errs == nil {
-				break
+				// End when both channels are nil or closed
+				if chunks == nil && errs == nil {
+					break
+				}
 			}
-		}
-		ch.MessageHandler.SendMessage(
-			ch,
-			message.Content.SenderUUID,
-			ch.MessageHandler.EndPartialMessage(
-				message.Content.ChatUUID,
+			ch.MessageHandler.SendMessage(
+				ch,
 				message.Content.SenderUUID,
-			),
-		)
+				ch.MessageHandler.EndPartialMessage(
+					message.Content.ChatUUID,
+					message.Content.SenderUUID,
+				),
+			)
 
-		sendChatMessage("http://localhost:1984", sessionId, message.Content.ChatUUID, SendMessage{
-			Text: fullText.String(),
-		})
+			sendChatMessage("http://localhost:1984", sessionId, message.Content.ChatUUID, SendMessage{
+				Text: fullText.String(),
+			})
+		}
 	}
 
 	return nil
