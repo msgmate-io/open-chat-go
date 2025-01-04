@@ -2,8 +2,11 @@ package database
 
 import "time"
 
+// KeyTypes: cert, key, issuer, login
+// TODO: Sealed keys should be encrypted and only be decrypted on demand!
 type Key struct {
 	Model
+	Sealed     bool   `json:"sealed"`
 	KeyType    string `json:"key_type" gorm:"index"`
 	KeyName    string `json:"key_name" gorm:"index"`
 	KeyContent []byte `json:"key_content"`
