@@ -154,8 +154,11 @@ func (s *SSHServer) handleChannel(channel ssh.Channel, requests <-chan *ssh.Requ
 		shell = "/bin/bash"
 	}
 
-	// Start the shell
-	cmd := exec.Command(shell)
+	// Start the shell in login mode
+	cmd := exec.Command(shell, "-l") // The '-l' flag starts the shell as a login shell
+
+	// Use the existing environment
+	cmd.Env = os.Environ()
 	cmd.Env = append(os.Environ(), "TERM=xterm")
 
 	// Create PTY

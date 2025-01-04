@@ -1,7 +1,9 @@
 package federation
 
 import (
+	"backend/database"
 	"backend/server/util"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,15 +14,9 @@ import (
 
 // wget --header="Cookie: session_id=YOUR_SESSION_ID" http://localhost:1984/api/v1/download/bin
 func (h *FederationHandler) DownloadBinary(w http.ResponseWriter, r *http.Request) {
-	_, user, err := util.GetDBAndUser(r)
+	_, err := util.GetDB(r)
 	if err != nil {
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
-		return
-	}
-
-	// Check if the user is an admin
-	if !user.IsAdmin {
-		http.Error(w, "User is not an admin", http.StatusForbidden)
 		return
 	}
 
@@ -35,6 +31,76 @@ func (h *FederationHandler) DownloadBinary(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Disposition", "attachment; filename=binary_name")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeFile(w, r, binaryPath)
+}
+
+type RequestSelfUpdate struct {
+	BinaryOwnerPeerId string `json:"binary_owner_peer_id"`
+	NetworkName       string `json:"network_name"`
+}
+
+func (h *FederationHandler) RequestSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return
+	}
+
+	var request RequestSelfUpdate
+	err = json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		http.Error(w, "Unable to decode request", http.StatusBadRequest)
+		return
+	}
+
+	var node database.Node
+	err = DB.Where("peer_id = ?", request.BinaryOwnerPeerId).First(&node).Error
+	if err != nil {
+		http.Error(w, "Unable to find node", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := SendRequestToNode(h, node, RequestNode{
+		Method:  "GET",
+		Path:    fmt.Sprintf("/api/v1/bin/download"),
+		Headers: map[string]string{},
+		Body:    "",
+	}, T1mHttpRequestProtocolID)
+
+	if err != nil {
+		http.Error(w, "Failed to send request to node", http.StatusInternalServerError)
+		return
+	}
+
+	if resp == nil {
+		http.Error(w, "Received nil response from node", http.StatusInternalServerError)
+		return
+	}
+
+	defer resp.Body.Close()
+
+	randomBinaryName := fmt.Sprintf("%d.bin", time.Now().UnixNano())
+	binaryPath := fmt.Sprintf("/tmp/%s", randomBinaryName)
+	binary, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Unable to save binary", http.StatusInternalServerError)
+		return
+	}
+	err = os.WriteFile(binaryPath, binary, 0644)
+	if err != nil {
+		http.Error(w, "Unable to save binary", http.StatusInternalServerError)
+		return
+	}
+
+	cmd := exec.Command(binaryPath, "install")
+	cmd.Run()
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Performed self update"))
 }
 
 func (h *FederationHandler) UploadBinary(w http.ResponseWriter, r *http.Request) {
