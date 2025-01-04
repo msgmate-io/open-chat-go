@@ -36,10 +36,12 @@ func getCPUInfo() (CPUInfo, error) {
 	// Get total CPU cores
 	out, err := exec.Command("nproc").Output()
 	if err != nil {
+		log.Printf("Error executing nproc: %v", err)
 		return cpuInfo, err
 	}
 	totalCores, err := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil {
+		log.Printf("Error parsing total cores: %v", err)
 		return cpuInfo, err
 	}
 	cpuInfo.TotalCores = totalCores
@@ -47,22 +49,24 @@ func getCPUInfo() (CPUInfo, error) {
 	// Get CPU usage per core
 	out, err = exec.Command("mpstat", "-P", "ALL", "1", "1").Output()
 	if err != nil {
+		log.Printf("Error executing mpstat: %v", err)
 		return cpuInfo, err
 	}
 
 	cpuInfo.Usage = make(map[string]float64)
 	lines := strings.Split(string(out), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, "Average:") {
-			fields := strings.Fields(line)
-			if len(fields) > 2 {
-				cpuID := fields[1]
-				idle, err := strconv.ParseFloat(fields[len(fields)-1], 64)
-				if err != nil {
-					return cpuInfo, err
-				}
-				cpuInfo.Usage[cpuID] = 100 - idle
+		fields := strings.Fields(line)
+		// Check if the line is a data line by ensuring it has more than 10 fields and the second field is a number
+		if len(fields) > 10 && fields[0] == "Average:" && fields[1] != "CPU" {
+			cpuID := fields[1]
+			idle, err := strconv.ParseFloat(fields[11], 64)
+			if err != nil {
+				log.Printf("Error parsing idle percentage for CPU %s: %v", cpuID, err)
+				return cpuInfo, err
 			}
+			// Calculate the usage as 100% minus the idle percentage
+			cpuInfo.Usage[cpuID] = 100.0 - idle
 		}
 	}
 
