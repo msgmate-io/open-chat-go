@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/network"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -66,13 +68,46 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, host
 
 		outreq.Header = req.Header
 		resp, err := http.DefaultTransport.RoundTrip(outreq)
-		// fmt.Println("Response:", resp, resp.Header)
 		if err != nil {
 			stream.Reset()
 			log.Println("Error: handling incoming request", err)
 			return
 		}
 
+		fmt.Println("Response:", resp, resp.Header)
+
+		// Check if the response is an octet stream
+		if false && resp.Header.Get("Content-Type") == "application/octet-stream" {
+			// Create a temporary file
+			tmpFile, err := os.CreateTemp("", "octet-stream-*")
+			if err != nil {
+				log.Println("Error creating temp file:", err)
+				stream.Reset()
+				return
+			}
+			defer tmpFile.Close()
+
+			// Save the response body to the temporary file
+			if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+				log.Println("Error saving octet stream to file:", err)
+				stream.Reset()
+				return
+			}
+
+			log.Println("Octet stream saved to:", tmpFile.Name())
+
+			// Reset the response body reader for further processing
+			tmpFile.Seek(0, io.SeekStart) // Reset file pointer to the beginning
+			resp.Body = io.NopCloser(tmpFile)
+
+			// Update Content-Length header
+			fileInfo, err := tmpFile.Stat()
+			if err == nil {
+				resp.Header.Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+			}
+		}
+
+		/**
 		writer := bufio.NewWriter(stream)
 		err = resp.Write(writer)
 		if err != nil {
@@ -81,7 +116,24 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, host
 			return
 		}
 
-		writer.Flush()
-		resp.Body.Close()
+		err = writer.Flush()
+		if err != nil {
+			stream.Reset()
+			log.Println("Error flushing writer:", err)
+			return
+		}
+
+		// Ensure the response is fully read and handled
+		if _, err := io.Copy(writer, resp.Body); err != nil {
+			log.Println("Error copying response:", err)
+		}
+
+		defer resp.Body.Close()
+		**/
+
+		// resp.Write writes whatever response we obtained for our
+		// request back to the stream.
+		resp.Write(stream)
+
 	}
 }
