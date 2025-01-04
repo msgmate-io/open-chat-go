@@ -474,7 +474,7 @@ func (c *Client) RequestNodeByPeerId(peerId string, data federation.RequestNode)
 		return err, nil
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	// req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", c.host)
 	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
 
@@ -484,10 +484,10 @@ func (c *Client) RequestNodeByPeerId(peerId string, data federation.RequestNode)
 		log.Printf("Error sending request: %v", err)
 		return err, nil
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// parse the body as text and print it
+		defer resp.Body.Close()
 		bodyBytes, err := io.ReadAll(resp.Body)
 		if err != nil {
 			log.Printf("Error reading body: %v", err)
