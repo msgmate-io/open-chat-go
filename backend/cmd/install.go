@@ -98,6 +98,14 @@ func InstallCli() *cli.Command {
 				servicePath = "/etc/systemd/system"
 			)
 
+			// Check if service already exists
+			serviceFilePath := filepath.Join(servicePath, serviceName+".service")
+			serviceExists := false
+			if _, err := os.Stat(serviceFilePath); err == nil {
+				serviceExists = true
+				fmt.Println("Existing service found, updating binary and restarting service...")
+			}
+
 			// Copy binary to install path
 			fmt.Printf("Installing binary to %s/%s...\n", installPath, binaryName)
 
@@ -120,35 +128,10 @@ func InstallCli() *cli.Command {
 				return fmt.Errorf("failed to copy binary: %w", err)
 			}
 
-			// Check if service already exists and remove it
-			serviceFilePath := filepath.Join(servicePath, serviceName+".service")
-			if _, err := os.Stat(serviceFilePath); err == nil {
-				fmt.Println("Existing service found, removing...")
-
-				// Stop and disable existing service
-				if exec.Command("systemctl", "is-active", "--quiet", serviceName).Run() == nil {
-					if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
-						return fmt.Errorf("failed to stop existing service: %w", err)
-					}
-				}
-				if err := exec.Command("systemctl", "disable", serviceName).Run(); err != nil {
-					return fmt.Errorf("failed to disable existing service: %w", err)
-				}
-
-				// Remove the service file
-				if err := os.Remove(serviceFilePath); err != nil {
-					return fmt.Errorf("failed to remove existing service file: %w", err)
-				}
-
-				// Reload systemd to recognize the removal
-				if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-					return fmt.Errorf("failed to reload systemd after removal: %w", err)
-				}
-			}
-
-			// Create service file
-			fmt.Println("Creating systemd service...")
-			serviceContent := fmt.Sprintf(`[Unit]
+			if !serviceExists {
+				// Create service file only if it doesn't exist
+				fmt.Println("Creating systemd service...")
+				serviceContent := fmt.Sprintf(`[Unit]
 Description=Open Chat Backend Server Service
 After=network.target
 
@@ -168,16 +151,17 @@ User=root
 [Install]
 WantedBy=multi-user.target
 `, c.String("db-backend"),
-				fmt.Sprintf("%s/data.db", installedDBPath),
-				strconv.Itoa(int(c.Int("p2pport"))),
-				c.String("host"),
-				strconv.Itoa(int(c.Int("port"))),
-				c.Bool("debug"),
-				installPath,
-				binaryName)
+					fmt.Sprintf("%s/data.db", installedDBPath),
+					strconv.Itoa(int(c.Int("p2pport"))),
+					c.String("host"),
+					strconv.Itoa(int(c.Int("port"))),
+					c.Bool("debug"),
+					installPath,
+					binaryName)
 
-			if err := os.WriteFile(serviceFilePath, []byte(serviceContent), 0644); err != nil {
-				return fmt.Errorf("failed to write service file: %w", err)
+				if err := os.WriteFile(serviceFilePath, []byte(serviceContent), 0644); err != nil {
+					return fmt.Errorf("failed to write service file: %w", err)
+				}
 			}
 
 			// Reload systemd daemon

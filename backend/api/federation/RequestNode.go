@@ -4,11 +4,13 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"fmt"
@@ -39,7 +41,7 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 	}
 
 	// (3) - Connect to all federation nodes
-	log.Println("Sending request to node:", node.PeerID, "at", data.Path)
+	log.Println("Sending request to node:", node.PeerID, "at", data.Path, "method", data.Method)
 
 	var info *peer.AddrInfo
 	for _, address := range node.Addresses {
@@ -64,9 +66,6 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 
 	defer stream.Close()
 
-	//log.Println("Sending request to node ( writing to stream now ):", node)
-
-	// r.Write() writes the HTTP request to the stream.
 	err = req.Write(stream)
 	if err != nil {
 		stream.Reset()
@@ -74,8 +73,7 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 		return nil, fmt.Errorf("Couldn't write request to stream")
 	}
 
-	// Now we read the response that was sent from the dest
-	// peer
+	// Now we read the response that was sent from the dest peer
 	buf := bufio.NewReader(stream)
 	resp, err := http.ReadResponse(buf, req)
 	if err != nil {
@@ -83,6 +81,21 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 		log.Println(err)
 		return nil, fmt.Errorf("Couldn't read response from stream")
 	}
+
+	// Ensure the response body is fully read
+	defer resp.Body.Close()
+
+	// Create a buffer to store the full response body
+	var fullBody []byte
+	fullBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		stream.Reset()
+		log.Println(err)
+		return nil, fmt.Errorf("Couldn't read full response body from stream")
+	}
+
+	// Create a new response with the full body
+	resp.Body = io.NopCloser(bytes.NewReader(fullBody))
 
 	return resp, nil
 }
@@ -136,6 +149,8 @@ func (h *FederationHandler) RequestNodeByPeerId(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	fmt.Println("Response ARRIVE HERE:", resp, resp.Header)
+
 	for k, v := range resp.Header {
 		for _, val := range v {
 			w.Header().Add(k, val)
@@ -144,8 +159,37 @@ func (h *FederationHandler) RequestNodeByPeerId(w http.ResponseWriter, r *http.R
 
 	w.WriteHeader(resp.StatusCode)
 
-	io.Copy(w, resp.Body)
-	resp.Body.Close()
+	// Check if the response is an octet stream
+	if false && resp.Header.Get("Content-Type") == "application/octet-stream" {
+		// Create a temporary file
+		tempFile, err := os.CreateTemp("", "response-*.tmp")
+		if err != nil {
+			log.Println("Error creating temporary file:", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		defer tempFile.Close()
+
+		// Copy the response body to the temporary file
+		if _, err := io.Copy(tempFile, resp.Body); err != nil {
+			log.Println("Error copying response body to file:", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Optionally, you can log the file path or perform further operations
+		log.Println("Response body written to temporary file:", tempFile.Name())
+	} else {
+		// Copy the response body to the client
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			log.Println("Error copying response body:", err)
+		}
+	}
+
+	// Ensure the response body is closed
+	if err := resp.Body.Close(); err != nil {
+		log.Println("Error closing response body:", err)
+	}
 }
 
 func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) {
