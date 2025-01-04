@@ -399,6 +399,7 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 			fmt.Println("Different node", differentNode.Name, differentNode.LastUpdated, "vs (my node)", peerIdNodeMap[differentNode.PeerId].LastChanged)
 			if differentNode.PeerId == ownIdentity.ID {
 				// nevery sync a change of the own node!
+				fmt.Println("Skipping own node change proposal in sync")
 				continue
 			}
 			// Normalize timestamps to UTC before comparison

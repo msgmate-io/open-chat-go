@@ -12,7 +12,9 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"syscall"
@@ -580,6 +582,68 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "update_node" {
+		return &cli.Command{
+			Name:  "update_node",
+			Usage: "Update a node",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "node",
+					Usage: "The node to update",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "network",
+					Usage: "The network to update the node on",
+					Value: "network",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Update a node")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				// First we open a tcl tunnel to the node
+				remotePeerId := c.String("node")
+
+				username, password, err := promptForUsernameAndPassword()
+				if err != nil {
+					return fmt.Errorf("failed to read password: %w", err)
+				}
+				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
+				if err != nil {
+					return fmt.Errorf("failed to request session on remote node: %w", err)
+				}
+				fmt.Println("Session ID:", sessionId)
+				// now we can setup a simple 2 way proxy to upload the binary
+				err, identity := ocClient.GetFederationIdentity()
+				if err != nil {
+					return fmt.Errorf("failed to get identity: %w", err)
+				}
+				ownPeerId := identity.ID
+				fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
+
+				body := new(bytes.Buffer)
+				json.NewEncoder(body).Encode(federation.RequestSelfUpdate{
+					BinaryOwnerPeerId: ownPeerId,
+					NetworkName:       c.String("network"),
+				})
+
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "POST",
+					Path:   "/api/v1/bin/request-self-update",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+					Body: string(body.Bytes()),
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+
+				return nil
+			},
+		}
 	} else if action == "metrics" {
 		return &cli.Command{
 			Name:  "metrics",
@@ -598,6 +662,124 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to marshal metrics: %w", err)
 				}
 				fmt.Println(string(prettyMetrics))
+				return nil
+			},
+		}
+	} else if action == "get-metrics" {
+		return &cli.Command{
+			Name:  "get-metrics",
+			Usage: "Get metrics",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "node",
+					Usage: "The node to get metrics from",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Update a node")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				// First we open a tcl tunnel to the node
+				remotePeerId := c.String("node")
+
+				username, password, err := promptForUsernameAndPassword()
+				if err != nil {
+					return fmt.Errorf("failed to read password: %w", err)
+				}
+				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
+				if err != nil {
+					return fmt.Errorf("failed to request session on remote node: %w", err)
+				}
+				fmt.Println("Session ID:", sessionId)
+				// now we can setup a simple 2 way proxy to upload the binary
+				err, identity := ocClient.GetFederationIdentity()
+				if err != nil {
+					return fmt.Errorf("failed to get identity: %w", err)
+				}
+				ownPeerId := identity.ID
+				fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
+
+				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "GET",
+					Path:   "/api/v1/metrics",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+
+				defer resp.Body.Close()
+
+				bodyBytes, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read response body: %w", err)
+				}
+
+				var data map[string]interface{}
+				err = json.Unmarshal(bodyBytes, &data)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal response body: %w", err)
+				}
+
+				prettyData, err := json.MarshalIndent(data, "", "  ")
+				if err != nil {
+					return fmt.Errorf("failed to marshal data: %w", err)
+				}
+				fmt.Println("Metrics:", string(prettyData))
+
+				return nil
+			},
+		}
+	} else if action == "download-binary" {
+		return &cli.Command{
+			Name:  "download-binary",
+			Usage: "Download a binary",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "node",
+					Usage: "The node to download the binary from",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				// downloads the binary of a federated node
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				remotePeerId := c.String("node")
+				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method:  "GET",
+					Path:    "/api/v1/bin/download",
+					Headers: map[string]string{},
+					Body:    "",
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+				defer resp.Body.Close()
+
+				// Check the status code
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+				}
+
+				// Log content length
+				fmt.Printf("Content-Length: %s\n", resp.Header.Get("Content-Length"))
+
+				// take the binary from the response and write it to a file
+				binary, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read response body: %w", err)
+				}
+				err = os.WriteFile("binary_downloaded", binary, 0644)
+				if err != nil {
+					return fmt.Errorf("failed to write binary to file: %w", err)
+				}
+				fmt.Println("Binary downloaded and saved to binary.tar.gz")
+
 				return nil
 			},
 		}
