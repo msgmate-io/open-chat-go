@@ -95,6 +95,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/peer/{peer_id}/request", federationHandler.RequestNodeByPeerId)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
 	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
+	v1PrivateApis.HandleFunc("GET /keys/names", tls.ListKeyNames)
+	v1PrivateApis.HandleFunc("GET /keys/{key_name}/get", tls.RetrieveKey)
+	v1PrivateApis.HandleFunc("POST /keys/create", tls.CreateKey)
 	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
