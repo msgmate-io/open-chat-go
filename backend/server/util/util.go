@@ -42,6 +42,44 @@ func GetWebsocket(r *http.Request) (*websocket.WebSocketHandler, error) {
 	return websocket, nil
 }
 
+func CreateUserPwPreHashed(
+	DB *gorm.DB,
+	username string,
+	hashedPassword string,
+	isAdminUser bool,
+) (error, *database.User) {
+
+	var user database.User
+	q := DB.First(&user, "email = ?", username)
+
+	if q.Error != nil {
+		if q.Error.Error() != "record not found" {
+			log.Fatal(q.Error)
+			return fmt.Errorf("Error reading user from db"), nil
+		}
+	} else {
+		log.Println("User already exists")
+		return nil, &user
+	}
+
+	user = database.User{
+		Name:         username,
+		Email:        username,
+		PasswordHash: hashedPassword,
+		ContactToken: uuid.New().String(),
+		IsAdmin:      isAdminUser,
+	}
+
+	q = DB.Create(&user)
+
+	if q.Error != nil {
+		log.Fatal(q.Error)
+		return fmt.Errorf("Error writing user to db"), nil
+	}
+
+	return nil, &user
+}
+
 func CreateUser(
 	DB *gorm.DB,
 	username string,
