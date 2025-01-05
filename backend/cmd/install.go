@@ -46,7 +46,14 @@ func InstallCli() *cli.Command {
 				rootCredentials := strings.Split(c.String("root-credentials"), ":")
 				username := rootCredentials[0]
 				password := rootCredentials[1]
-				err, _ = util.CreateUser(DB, username, password, true)
+
+				if strings.HasPrefix(password, "hashed_") {
+					hashedPassword := strings.TrimPrefix(password, "hashed_")
+					// instead of providing the plain text password one may also provide a pre-hashed password
+					err, _ = util.CreateUserPwPreHashed(DB, username, hashedPassword, true)
+				} else {
+					err, _ = util.CreateRootUser(DB, username, password)
+				}
 				if err != nil {
 					return fmt.Errorf("failed to create root user: %w", err)
 				}
