@@ -94,6 +94,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/peer/{peer_id}/request", federationHandler.RequestNodeByPeerId)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
+	v1PrivateApis.HandleFunc("GET /federation/proxies/list", federationHandler.ListProxies)
 	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
 	v1PrivateApis.HandleFunc("GET /keys/names", tls.ListKeyNames)
 	v1PrivateApis.HandleFunc("GET /keys/{key_name}/get", tls.RetrieveKey)
@@ -113,6 +114,7 @@ func BackendRouting(
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
 	// v1PrivateApis.HandleFunc("GET /bin/download", federationHandler.DownloadBinary)
 	mux.Handle("GET /api/v1/bin/download", providerMiddlewares(http.HandlerFunc(federationHandler.DownloadBinary)))
+	mux.Handle("GET /api/v1/bin/setup", providerMiddlewares(http.HandlerFunc(federationHandler.GetHiveSetupScript)))
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
 
 	mux.Handle("POST /api/v1/federation/networks/login", providerMiddlewares(http.HandlerFunc(userHandler.NetworkUserLogin)))
