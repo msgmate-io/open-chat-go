@@ -5,5 +5,5 @@ export default function ChatPage() {
 }
 
 export function generateStaticParams() {
-  return [{ chat_uuid: "123" }];
+  return [{ chat_uuid: "$chat_uuid" }, { chat_uuid: "index" }];
 }
