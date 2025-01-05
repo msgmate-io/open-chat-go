@@ -3,6 +3,7 @@ package cmd
 import (
 	"backend/api/federation"
 	"backend/client"
+	"backend/server/util"
 	"bufio"
 	"bytes"
 	"context"
@@ -95,20 +96,42 @@ func GetClientCmd(action string) *cli.Command {
 			Usage: "Login to the client",
 			Flags: append(defaultFlags, []cli.Flag{
 				&cli.StringFlag{
-					Name:  "username",
-					Usage: "The username to use",
-					Value: "admin",
+					Name:    "username",
+					Usage:   "The username to use",
+					Sources: cli.EnvVars("OPEN_CHAT_USERNAME"),
+					Value:   "",
 				},
 				&cli.StringFlag{
 					Name:  "password",
 					Usage: "The password to use",
-					Value: "password",
+					Value: "",
 				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Login to the client")
 				ocClient := client.NewClient(c.String("host"))
-				err, sessionId := ocClient.LoginUser(c.String("username"), c.String("password"))
+
+				var username string
+				var password string
+				var err error
+				username = c.String("username")
+				password = c.String("password")
+
+				if username == "" && password == "" {
+					// request input of both username & password
+					username, password, err = promptForUsernameAndPassword()
+					if err != nil {
+						return fmt.Errorf("failed to get username and password: %w", err)
+					}
+				} else if username != "" && password == "" {
+					fmt.Println("Using username: ", username, " please enter password")
+					password, err = promptForPassword()
+					if err != nil {
+						return fmt.Errorf("failed to get password: %w", err)
+					}
+				}
+
+				err, sessionId := ocClient.LoginUser(username, password)
 				if err != nil {
 					return fmt.Errorf("failed to login: %w", err)
 				}
@@ -122,14 +145,13 @@ func GetClientCmd(action string) *cli.Command {
 				env := os.Environ()
 				env = append(env, fmt.Sprintf("OPEN_CHAT_SESSION_ID=%s", sessionId))
 				env = append(env, fmt.Sprintf("OPEN_CHAT_HOST=%s", c.String("host")))
+				env = append(env, fmt.Sprintf("OPEN_CHAT_USERNAME=%s", c.String("username")))
 
 				fmt.Printf("Starting new shell with OPEN_CHAT_SESSION_ID set\n")
 				proc, err := os.StartProcess(shell, []string{shell}, &os.ProcAttr{
 					Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
 					Env:   env,
 				})
-
-				fmt.Printf("Session ID: %s\n", sessionId)
 
 				_, err = proc.Wait()
 				if err != nil {
@@ -462,6 +484,210 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "all-metrics" {
+		return &cli.Command{
+			Name:  "all-metrics",
+			Usage: "Get all metrics",
+			Flags: defaultFlags,
+			Action: func(_ context.Context, c *cli.Command) error {
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				// 0 - get own node info
+				err, ownNode := ocClient.GetFederationIdentity()
+				if err != nil {
+					return fmt.Errorf("failed to get own node: %w", err)
+				}
+				fmt.Println("Own node:", ownNode)
+
+				// 1 - get all nodes
+				err, nodes := ocClient.GetNodes(1, 1000)
+				if err != nil {
+					return fmt.Errorf("failed to get nodes: %w", err)
+				}
+
+				// 2 - get all key names to see if access creds for all nodes are present
+				err, keyNames := ocClient.GetKeyNames()
+				if err != nil {
+					return fmt.Errorf("failed to get key names: %w", err)
+				}
+				// fmt.Println("Key names:", keyNames)
+
+				// Prepare a slice to store the results
+				var results []struct {
+					PeerID           string
+					NodeName         string
+					NodeVersion      string
+					TotalCPUUsage    float64
+					TotalMemoryUsage float64
+				}
+
+				// 3 - get metrics for each node
+				for _, node := range nodes.Rows {
+					fmt.Println("Getting metrics for node:", node.PeerID)
+
+					if node.PeerID == ownNode.ID {
+						fmt.Println("Skipping own node:", node.PeerID)
+						err, metrics := ocClient.GetMetrics()
+						if err != nil {
+							fmt.Println("Failed to get metrics:", err)
+							continue
+						}
+						results = append(results, struct {
+							PeerID           string
+							NodeName         string
+							NodeVersion      string
+							TotalCPUUsage    float64
+							TotalMemoryUsage float64
+						}{
+							PeerID:           node.PeerID,
+							NodeName:         node.NodeName,
+							NodeVersion:      metrics.NodeVersion,
+							TotalCPUUsage:    metrics.CPUInfo.Usage["all"],
+							TotalMemoryUsage: metrics.MemoryInfo.UsedPercent,
+						})
+						continue
+					} else if !util.Contains(keyNames, fmt.Sprintf("user_%s", node.PeerID)) {
+						fmt.Println("No access credentials for node:", node.PeerID)
+					} else {
+						fmt.Println("Found access credentials for node:", node.PeerID)
+						err, key := ocClient.RetrieveKey(fmt.Sprintf("user_%s", node.PeerID))
+						if err != nil {
+							fmt.Println("Failed to retrieve key:", err)
+							continue
+						}
+						// fmt.Println("Key:", key, "using it to fetch metrics")
+						// read key content as string
+						keyContent := string(key.KeyContent)
+						splitKeyContent := strings.Split(keyContent, ":")
+						username := splitKeyContent[0]
+						password := splitKeyContent[1]
+						// get session id on that node
+						err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, node.PeerID)
+						if err != nil {
+							fmt.Println("Failed to request session on remote node:", err)
+							continue
+						}
+						// fmt.Println("Session ID:", sessionId)
+
+						// now use send request to peer ID to
+						err, resp := ocClient.RequestNodeByPeerId(node.PeerID, federation.RequestNode{
+							Method: "GET",
+							Path:   "/api/v1/metrics",
+							Headers: map[string]string{
+								"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+							},
+						})
+						if err != nil {
+							fmt.Println("Failed to request node by peer id:", err)
+							continue
+						}
+
+						defer resp.Body.Close()
+
+						bodyBytes, err := io.ReadAll(resp.Body)
+						if err != nil {
+							return fmt.Errorf("failed to read response body: %w", err)
+						}
+
+						var data map[string]interface{}
+						err = json.Unmarshal(bodyBytes, &data)
+						if err != nil {
+							return fmt.Errorf("failed to unmarshal response body: %w", err)
+						}
+
+						// Extract the required information
+						nodeVersion := data["node_version"].(string)
+						cpuInfo := data["cpu_info"].(map[string]interface{})
+						usage := cpuInfo["usage"].(map[string]interface{})
+						totalCPUUsage := usage["all"].(float64)
+
+						memoryInfo := data["memory_info"].(map[string]interface{})
+						totalMemoryUsage := memoryInfo["used_percent"].(float64)
+
+						// Append the result
+						results = append(results, struct {
+							PeerID           string
+							NodeName         string
+							NodeVersion      string
+							TotalCPUUsage    float64
+							TotalMemoryUsage float64
+						}{
+							PeerID:           node.PeerID,
+							NodeName:         node.NodeName,
+							NodeVersion:      nodeVersion,
+							TotalCPUUsage:    totalCPUUsage,
+							TotalMemoryUsage: totalMemoryUsage,
+						})
+					}
+				}
+
+				// Print the results in a table format
+				fmt.Printf("%-70s %-15s %-20s %-25s\n", "peer_id (node_name)", "node_version", "total cpu usage percent", "total memory usage percent")
+				fmt.Println(strings.Repeat("-", 130))
+				for _, result := range results {
+					fmt.Printf("%-70s %-15s %-20.2f %-25.2f\n", fmt.Sprintf("%s (%s)", result.PeerID, result.NodeName), result.NodeVersion, result.TotalCPUUsage, result.TotalMemoryUsage)
+				}
+
+				return nil
+			},
+		}
+	} else if action == "key-names" {
+		return &cli.Command{
+			Name:  "key-names",
+			Usage: "List all key names",
+			Flags: defaultFlags,
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("List all keys")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err, keys := ocClient.GetKeyNames()
+				if err != nil {
+					return fmt.Errorf("failed to get keys: %w", err)
+				}
+				fmt.Println("Keys:")
+				fmt.Println(keys)
+				return nil
+			},
+		}
+	} else if action == "create-key" {
+		return &cli.Command{
+			Name:  "create-key",
+			Usage: "Create a key",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "key-name",
+					Usage: "The name of the key",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "key-type",
+					Usage: "The type of the key",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "key-content",
+					Usage: "The content of the key",
+					Value: "",
+				},
+				&cli.BoolFlag{
+					Name:  "sealed",
+					Usage: "Is the key encrypted?",
+					Value: false,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Create a key")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err := ocClient.CreateKey(c.String("key-name"), c.String("key-type"), []byte(c.String("key-content")), c.Bool("sealed"))
+				if err != nil {
+					return fmt.Errorf("failed to create key: %w", err)
+				}
+				fmt.Println("Key created")
+				return nil
+			},
+		}
 	} else if action == "shell" {
 		return &cli.Command{
 			Name:  "shell",
@@ -473,23 +699,24 @@ func GetClientCmd(action string) *cli.Command {
 					Value: "",
 				},
 				&cli.StringFlag{
-					Name:  "network",
-					Usage: "The network to open a shell to",
-					Value: "network",
+					Name:    "network",
+					Usage:   "The network to open a shell to",
+					Value:   "network",
+					Sources: cli.EnvVars("OPEN_CHAT_DEFAULT_NETWORK"),
 				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Attempting to establish ssh connection to node", c.String("node"))
 				// prompt the user to enter the 'nodes' admin password!
-				fmt.Println("Enter the 'nodes' admin login string 'username:password'")
-				networkName := c.String("network")
-				username, password, err := promptForUsernameAndPassword()
-				if err != nil {
-					return fmt.Errorf("failed to read password: %w", err)
-				}
-				// fmt.Println("Login string entered:", username, password)
+
 				ocClient := client.NewClient(c.String("host"))
 				ocClient.SetSessionId(c.String("session-id"))
+				networkName := c.String("network")
+				username, password, err := retrieveOrPromptForCreds(ocClient, c.String("node"))
+				if err != nil {
+					return fmt.Errorf("failed to retrieve or prompt for credentials: %w", err)
+				}
+				// fmt.Println("Login string entered:", username, password)
 				remotePeerId := c.String("node")
 
 				err, identity := ocClient.GetFederationIdentity()
@@ -497,13 +724,12 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to get identity: %w", err)
 				}
 				ownPeerId := identity.ID
-				fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
+				//fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
 
 				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
 				if err != nil {
 					return fmt.Errorf("failed to request session on remote node: %w", err)
 				}
-				fmt.Println("Session ID:", sessionId)
 				randomPassword := ocClient.RandomPassword()
 
 				randomSSHPort := ocClient.RandomSSHPort()
@@ -582,7 +808,7 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
-	} else if action == "update_node" {
+	} else if action == "update-node" {
 		return &cli.Command{
 			Name:  "update_node",
 			Usage: "Update a node",
@@ -807,4 +1033,39 @@ func promptForUsernameAndPassword() (string, string, error) {
 	fmt.Println() // Move to the next line after password input
 
 	return username, password, nil
+}
+
+func retrieveOrPromptForCreds(ocClient *client.Client, peerId string) (string, string, error) {
+	// first get all key names
+	err, keyNames := ocClient.GetKeyNames()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get key names: %w", err)
+	}
+
+	// if the key names contain the own peer id, then we can use the key
+	if util.Contains(keyNames, fmt.Sprintf("user_%s", peerId)) {
+		// retrieve the key
+		err, key := ocClient.RetrieveKey(fmt.Sprintf("user_%s", peerId))
+		if err != nil {
+			return "", "", fmt.Errorf("failed to retrieve key: %w", err)
+		}
+		split := strings.Split(string(key.KeyContent), ":")
+		return split[0], split[1], nil
+	}
+
+	// otherwise we prompt for the username and password
+	username, password, err := promptForUsernameAndPassword()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to prompt for username and password: %w", err)
+	}
+	return username, password, nil
+}
+
+func promptForPassword() (string, error) {
+	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return "", fmt.Errorf("failed to read password: %w", err)
+	}
+	password := string(bytePassword)
+	return password, nil
 }

@@ -104,3 +104,12 @@ func Hash(data string) string {
 	hash.Write([]byte(data))
 	return fmt.Sprintf("%x", hash.Sum(nil))
 }
+
+func Contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
