@@ -155,7 +155,15 @@ func ServerCli() *cli.Command {
 			rootCredentials := strings.Split(c.String("root-credentials"), ":")
 			username := rootCredentials[0]
 			password := rootCredentials[1]
-			err, adminUser := util.CreateRootUser(DB, username, password)
+			var adminUser *database.User
+
+			if strings.HasPrefix(password, "hashed_") {
+				hashedPassword := strings.TrimPrefix(password, "hashed_")
+				// instead of providing the plain text password one may also provide a pre-hashed password
+				err, adminUser = util.CreateUserPwPreHashed(DB, username, hashedPassword, true)
+			} else {
+				err, adminUser = util.CreateRootUser(DB, username, password)
+			}
 
 			if err != nil {
 				return err
