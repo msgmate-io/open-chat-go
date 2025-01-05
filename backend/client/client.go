@@ -557,3 +557,107 @@ func (c *Client) GetMetrics() (error, metrics.Metrics) {
 
 	return nil, out
 }
+
+func (c *Client) GetKeyNames() (error, []string) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/keys/names", c.host), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, []string{}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, []string{}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), []string{}
+	}
+
+	var keys []string
+	err = json.NewDecoder(resp.Body).Decode(&keys)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, []string{}
+	}
+
+	return nil, keys
+}
+
+func (c *Client) CreateKey(keyName string, keyType string, keyContent []byte, sealed bool) error {
+	body := new(bytes.Buffer)
+	err := json.NewEncoder(body).Encode(tls.CreateKeyRequest{
+		KeyName:    keyName,
+		KeyType:    keyType,
+		KeyContent: keyContent,
+		Sealed:     sealed,
+	})
+	if err != nil {
+		log.Printf("Error encoding data: %v", err)
+		return err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/keys/create", c.host), body)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("Error response: %v", resp.Status)
+	}
+
+	return nil
+}
+
+func (c *Client) RetrieveKey(keyName string) (error, *database.Key) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/keys/%s/get", c.host, keyName), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, nil
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), nil
+	}
+
+	var key database.Key
+	err = json.NewDecoder(resp.Body).Decode(&key)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, nil
+	}
+
+	return nil, &key
+}
