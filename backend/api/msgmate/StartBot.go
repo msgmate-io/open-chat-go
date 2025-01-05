@@ -13,7 +13,9 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -145,6 +147,10 @@ func StartBot(ch *wsapi.WebSocketHandler, username string, password string) erro
 		return fmt.Errorf("failed to get user info: %w", err)
 	}
 
+	chatCaneler := ChatCanceler{
+		cancels: make(map[string]context.CancelFunc),
+	}
+
 	for {
 		c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/ws/connect", "localhost:1984"), &websocket.DialOptions{
 			HTTPHeader: http.Header{
@@ -162,14 +168,74 @@ func StartBot(ch *wsapi.WebSocketHandler, username string, password string) erro
 		log.Println("Bot connected to WebSocket")
 
 		// Blocking call to continuously read messages
-		err = readWebSocketMessages(ch, *botUser, ctx, c, sessionId)
+		err = readWebSocketMessages(ch, *botUser, ctx, c, sessionId, &chatCaneler)
 		if err != nil {
 			log.Printf("Error reading from WebSocket: %v", err)
 		}
 	}
 }
 
-func readWebSocketMessages(ch *wsapi.WebSocketHandler, botUser database.User, ctx context.Context, conn *websocket.Conn, sessionId string) error {
+func parseMessage(messageType string, rawMessage json.RawMessage) (error, *wsapi.NewMessage) {
+	if messageType == "new_message" {
+		var message wsapi.NewMessage
+		err := json.Unmarshal(rawMessage, &message)
+
+		if err != nil {
+			return err, nil
+		}
+
+		return nil, &message
+	}
+
+	return fmt.Errorf("Unsupported message type '%s'", messageType), nil
+}
+
+type ChatCanceler struct {
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
+}
+
+func NewChatCanceler() *ChatCanceler {
+	return &ChatCanceler{
+		cancels: make(map[string]context.CancelFunc),
+	}
+}
+
+func (cc *ChatCanceler) Store(chatUUID string, cancel context.CancelFunc) {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	cc.cancels[chatUUID] = cancel
+}
+
+func (cc *ChatCanceler) Load(chatUUID string) (context.CancelFunc, bool) {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	cf, ok := cc.cancels[chatUUID]
+	return cf, ok
+}
+
+func (cc *ChatCanceler) Delete(chatUUID string) {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	delete(cc.cancels, chatUUID)
+}
+
+func cancelChatResponse(chatCanceler *ChatCanceler, chatUUID string) {
+	if cancel, found := chatCanceler.Load(chatUUID); found {
+		cancel()
+		chatCanceler.Delete(chatUUID)
+	}
+}
+
+func readWebSocketMessages(
+	ch *wsapi.WebSocketHandler,
+	botUser database.User,
+	ctx context.Context,
+	conn *websocket.Conn,
+	sessionId string,
+	chatCanceler *ChatCanceler, // pass your ChatCanceler in here
+) error {
+	// TODO: handle chats in separate goroutines
 	for {
 		var rawMessage json.RawMessage
 		err := wsjson.Read(ctx, conn, &rawMessage)
@@ -184,14 +250,137 @@ func readWebSocketMessages(ch *wsapi.WebSocketHandler, botUser database.User, ct
 		}
 
 		// Process the message
-		if err := processMessage(ch, botUser, rawMessage, sessionId); err != nil {
+		err, messageType, chatUUID, senderUUID := preProcessMessage(ch, botUser, rawMessage, sessionId)
+
+		if err != nil {
 			log.Printf("Error processing message: %v", err)
-			// Continue reading messages even if processing one fails
-			continue
+			continue // Continue reading messages even if processing one fails
+		}
+
+		if senderUUID != botUser.UUID {
+
+			if _, found := chatCanceler.Load(chatUUID); found {
+				// We’re already responding to this chat.
+				// You can decide what to do: skip, or maybe cancel the old one and start a new one, etc.
+				log.Printf("Already responding to chat %s. Skipping or handle logic here.", chatUUID)
+				continue
+			}
+
+			err, message := parseMessage(messageType, rawMessage)
+
+			if err != nil {
+				log.Printf("Error processing message: %v", err)
+				continue // Continue reading messages even if processing one fails
+			}
+
+			// We may only process this message if there is not yet a context for that chat
+			// that way we also avoid responding twich in one chat
+
+			chatCtx, cancel := context.WithCancel(context.Background())
+
+			chatCanceler.Store(chatUUID, cancel)
+
+			go func() {
+
+				defer chatCanceler.Delete(chatUUID)
+				if err := respondMsgmate(chatCtx, ch, sessionId, *message); err != nil {
+					log.Println("Error while respondMsgmate:", err)
+				}
+			}()
 		}
 	}
 }
 
+func respondMsgmate(ctx context.Context, ch *wsapi.WebSocketHandler, sessionId string, message wsapi.NewMessage) error {
+	// send a message trough the websocket
+	chunks, errs := streamChatCompletion(
+		"http://localai:8080",
+		"meta-llama-3.1-8b-instruct",
+		[]map[string]string{
+			{"role": "user", "content": message.Content.Text},
+		})
+
+	var fullText strings.Builder
+	ch.MessageHandler.SendMessage(
+		ch,
+		message.Content.SenderUUID,
+		ch.MessageHandler.StartPartialMessage(
+			message.Content.ChatUUID,
+			message.Content.SenderUUID,
+		),
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
+			return ctx.Err()
+		case chunk, ok := <-chunks:
+			if !ok {
+				chunks = nil
+			} else {
+				// send partial message to the user
+				ch.MessageHandler.SendMessage(
+					ch,
+					message.Content.SenderUUID,
+					ch.MessageHandler.NewPartialMessage(
+						message.Content.ChatUUID,
+						message.Content.SenderUUID,
+						chunk,
+					),
+				)
+				fullText.WriteString(chunk)
+			}
+		case err, ok := <-errs:
+			if ok && err != nil {
+				// Handle error
+				log.Printf("streamChatCompletion error: %v", err)
+				return err
+			}
+			errs = nil
+		}
+
+		// End when both channels are nil or closed
+		if chunks == nil && errs == nil {
+			break
+		}
+	}
+	ch.MessageHandler.SendMessage(
+		ch,
+		message.Content.SenderUUID,
+		ch.MessageHandler.EndPartialMessage(
+			message.Content.ChatUUID,
+			message.Content.SenderUUID,
+		),
+	)
+
+	sendChatMessage("http://localhost:1984", sessionId, message.Content.ChatUUID, SendMessage{
+		Text: fullText.String(),
+	})
+
+	return nil
+}
+
+func preProcessMessage(ch *wsapi.WebSocketHandler, botUser database.User, rawMessage json.RawMessage, sessionId string) (error, string, string, string) {
+	var chatMessageTypes = []string{"new_message"}
+	var messageMap map[string]interface{}
+	err := json.Unmarshal(rawMessage, &messageMap)
+	if err != nil {
+		return err, "", "", ""
+	}
+
+	messageType := messageMap["type"].(string)
+
+	if slices.Contains(chatMessageTypes, messageType) {
+		chatUUID := (messageMap["content"].(map[string]interface{}))["chat_uuid"].(string)
+		senderUUID := (messageMap["content"].(map[string]interface{}))["sender_uuid"].(string)
+		return nil, messageType, chatUUID, senderUUID
+	}
+
+	return fmt.Errorf("Cannot process category"), "", "", ""
+
+}
+
+/**
 func processMessage(ch *wsapi.WebSocketHandler, botUser database.User, rawMessage json.RawMessage, sessionId string) error {
 
 	var messageMap map[string]interface{}
@@ -201,6 +390,7 @@ func processMessage(ch *wsapi.WebSocketHandler, botUser database.User, rawMessag
 	}
 
 	messageType := messageMap["type"].(string)
+	chatUUID := (messageMap["content"].(map[string]interface{}))["chat_uuid"].(string)
 	fmt.Printf("RAW MESSAGE TYPE: %s\n", messageType)
 
 	if messageType == "new_message" {
@@ -212,69 +402,16 @@ func processMessage(ch *wsapi.WebSocketHandler, botUser database.User, rawMessag
 		}
 
 		if message.Content.SenderUUID != botUser.UUID {
+			ctx, cancel := context.WithCancel(context.Background())
 
-			// send a message trough the websocket
-			chunks, errs := streamChatCompletion(
-				"http://localai:8080",
-				"meta-llama-3.1-8b-instruct",
-				[]map[string]string{
-					{"role": "user", "content": message.Content.Text},
-				})
-
-			var fullText strings.Builder
-			ch.MessageHandler.SendMessage(
-				ch,
-				message.Content.SenderUUID,
-				ch.MessageHandler.StartPartialMessage(
-					message.Content.ChatUUID,
-					message.Content.SenderUUID,
-				),
-			)
-			for {
-				select {
-				case chunk, ok := <-chunks:
-					if !ok {
-						chunks = nil
-					} else {
-						// send partial message to the user
-						ch.MessageHandler.SendMessage(
-							ch,
-							message.Content.SenderUUID,
-							ch.MessageHandler.NewPartialMessage(
-								message.Content.ChatUUID,
-								message.Content.SenderUUID,
-								chunk,
-							),
-						)
-						fullText.WriteString(chunk)
-					}
-				case err, ok := <-errs:
-					if ok && err != nil {
-						// Handle error
-						log.Fatalf("streamChatCompletion error: %v", err)
-					}
-					errs = nil
+			go func() {
+				if err := respondMsgmate(ctx, ch, sessionId, message); err != nil {
+					log.Println("Error:", err)
 				}
-
-				// End when both channels are nil or closed
-				if chunks == nil && errs == nil {
-					break
-				}
-			}
-			ch.MessageHandler.SendMessage(
-				ch,
-				message.Content.SenderUUID,
-				ch.MessageHandler.EndPartialMessage(
-					message.Content.ChatUUID,
-					message.Content.SenderUUID,
-				),
-			)
-
-			sendChatMessage("http://localhost:1984", sessionId, message.Content.ChatUUID, SendMessage{
-				Text: fullText.String(),
-			})
+			}()
 		}
 	}
 
 	return nil
 }
+*/
