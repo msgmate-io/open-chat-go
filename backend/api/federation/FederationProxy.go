@@ -171,7 +171,6 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// set defaults for 'Kind' and 'TrafficOrigin'
 	if req.Direction == "" {
 		req.Direction = "egress"
 	}
@@ -253,9 +252,7 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 			}
 			h.StartSSHProxy(portNum, originPort)
 		}
-	} else { // Ingress traffic to 'Traffic arriving at our own node!'
-		// ./backend client proxy --direction ingress --origin "<remote peer_id>:8084" (--target "<local peer_id>:1984") --port 1984
-
+	} else {
 		fmt.Println("Starting proxy for node on port", proxy.Port, "with protocol ID", protocolID)
 		targetSem := fmt.Sprintf(":%s", targetPort)
 		h.Host.SetStreamHandler(protocolID, CreateLocalTCPProxyHandler(h, proxy.NetworkName, targetSem))
@@ -344,4 +341,49 @@ func (h *FederationHandler) StartEgressProxy(
 		handlerFunc(listener)
 	}()
 	return nil
+}
+
+type PaginatedProxies struct {
+	database.Pagination
+	Rows []database.Proxy `json:"rows"`
+}
+
+func (h *FederationHandler) ListProxies(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return
+	}
+
+	pagination := database.Pagination{Page: 1, Limit: 10}
+	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
+		if page, err := strconv.Atoi(pageParam); err == nil && page > 0 {
+			pagination.Page = page
+		}
+	}
+
+	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+		if limit, err := strconv.Atoi(limitParam); err == nil && limit > 0 {
+			pagination.Limit = limit
+		}
+	}
+
+	var proxies []database.Proxy
+	q := DB.Scopes(database.Paginate(&proxies, &pagination, DB)).
+		Find(&proxies)
+
+	if q.Error != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	pagination.Rows = proxies
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(pagination)
 }
