@@ -1,24 +1,26 @@
 package federation
 
 import (
+	"backend/api/user"
 	"backend/database"
 	"backend/server/util"
 	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
 )
 
 type RequestNode struct {
@@ -28,7 +30,7 @@ type RequestNode struct {
 	Body    string            `json:"body"`
 }
 
-func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNode, protocolName string) (*http.Response, error) {
+func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, data RequestNode, protocolName string) (*http.Response, error) {
 	// now we build a new request based on the data
 	req, err := http.NewRequest(data.Method, data.Path, strings.NewReader(data.Body))
 	if err != nil {
@@ -59,9 +61,95 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 	}
 
 	stream, err := h.Host.NewStream(context.Background(), info.ID, protocol.ID(protocolName))
-	if err != nil {
+	if err != nil && DB == nil {
+		return nil, fmt.Errorf("Error opening stream to node: %s", err)
+	} else if err != nil && DB != nil {
+		// TODO: introduce bether way to determine if optional relayed connections are ok!
+		// Attempt to reqest a relayed connection
 		log.Println("Error opening stream to node:", err)
-		return nil, fmt.Errorf("Couldn't open stream to node")
+		log.Println("Attempting to use relayed connection instead")
+
+		// attempt using a relayed connection instead
+		// we need to ask one of our know relay peers to ask the other node to make a reservation with the relay!
+		// TODO: a peer should be dynamicly choosen based on a flag that is propagated trough network sync!
+		// TODO: maybe actully the reservation part is only relevant for TCP procies maybe we can actually allow nodes to forward requests in general!
+		defaultRelayPeerId := "QmUQE8cu5zrNCWd9RqzzVAriCrdyHMqFDAU2Fhh8T4LBfx"
+		var relayNode database.Node
+		DB.Preload("Addresses").Where("peer_id = ?", defaultRelayPeerId).First(&relayNode)
+
+		// TODO; implement a way to dynamicly choose the correct network
+		var network database.Network
+		DB.Where("name = ?", "hive").First(&network)
+		networkUser := user.UserLogin{
+			Email:    network.NetworkName,
+			Password: network.NetworkPassword,
+		}
+		networkUserJson, err := json.Marshal(networkUser)
+		if err != nil {
+			return nil, fmt.Errorf("Error marshalling network user")
+		}
+
+		// DB = nil intentially network syncs shouldn't attempt to use relayed connections!
+		resp, err := SendRequestToNode(nil, h, relayNode, RequestNode{
+			Method: "POST",
+			Path:   "/api/v1/federation/networks/login",
+			Body:   string(networkUserJson),
+		}, T1mNetworkJoinProtocolID)
+
+		// print status code
+		fmt.Println("Status code:", resp.StatusCode)
+
+		// Otherwise we can parse the session id from that respons header
+		cookieHeader := resp.Header.Get("Set-Cookie")
+		re := regexp.MustCompile(`session_id=([^;]+)`)
+
+		var sessionId string
+		match := re.FindStringSubmatch(cookieHeader)
+		if match != nil && len(match) > 1 {
+			sessionId = match[1]
+		} else {
+			log.Println("No session id found in unable to authenticate with peer!", resp)
+			return nil, fmt.Errorf("No session id found in unable to authenticate with peer!")
+		}
+
+		var relayForwardRequest = NetworkRequestRelayReservation{
+			PeerId: info.ID.String(),
+		}
+		relayForwardRequestJson, err := json.Marshal(relayForwardRequest)
+		if err != nil {
+			return nil, fmt.Errorf("Error marshalling relay forward request")
+		}
+
+		// send a request to the default relay peer to ask it to make a reservation with the other node!
+		_, err = SendRequestToNode(DB, h, relayNode, RequestNode{
+			Method: "POST",
+			Path:   "/api/v1/federation/networks/forward-request",
+			Body:   string(relayForwardRequestJson),
+			Headers: map[string]string{
+				"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+			},
+		}, T1mNetworkRequestProtocolID)
+
+		if err != nil {
+			return nil, fmt.Errorf("Error sending request to relay node")
+		}
+		relayaddr, err := multiaddr.NewMultiaddr("/p2p/" + relayNode.PeerID + "/p2p-circuit/p2p/" + info.ID.String())
+		if err != nil {
+			return nil, fmt.Errorf("Error creating relayed address")
+		}
+		info, err = peer.AddrInfoFromP2pAddr(relayaddr)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating relayed address info")
+		}
+		// we have to reset the stream backoff to try again if this succeded!
+		h.Host.Network().(*swarm.Swarm).Backoff().Clear(info.ID)
+
+		// now we can attempt to open a relayed stream
+		stream, err = h.Host.NewStream(context.Background(), info.ID, protocol.ID(protocolName))
+		if err != nil {
+			return nil, fmt.Errorf("Error opening relayed stream to node: %s", err)
+		}
+
 	}
 
 	defer stream.Close()
@@ -109,7 +197,7 @@ func SendNodeRequest(DB *gorm.DB, h *FederationHandler, nodeUUID string, data Re
 		return nil, fmt.Errorf("Couldn't find node with that UUID")
 	}
 
-	return SendRequestToNode(h, node, data, T1mNetworkJoinProtocolID)
+	return SendRequestToNode(DB, h, node, data, T1mNetworkJoinProtocolID)
 }
 
 func (h *FederationHandler) RequestNodeByPeerId(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +231,7 @@ func (h *FederationHandler) RequestNodeByPeerId(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	resp, err := SendRequestToNode(h, node, data, T1mNetworkRequestProtocolID)
+	resp, err := SendRequestToNode(DB, h, node, data, T1mNetworkRequestProtocolID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
