@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
 	"log"
 	"net/http"
@@ -298,7 +301,8 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 			continue
 		}
 
-		resp, err := SendRequestToNode(h, networkMemberNode, RequestNode{
+		// DB = nil intentially network syncs shouldn't attempt to use relayed connections!
+		resp, err := SendRequestToNode(nil, h, networkMemberNode, RequestNode{
 			Method: "POST",
 			Path:   "/api/v1/federation/networks/login",
 			Body:   string(networkUserJson),
@@ -343,7 +347,7 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 			log.Println("Error marshalling sync get request", err)
 			continue
 		}
-		resp, err = SendRequestToNode(h, networkMemberNode, RequestNode{
+		resp, err = SendRequestToNode(nil, h, networkMemberNode, RequestNode{
 			Method: "GET",
 			Path:   fmt.Sprintf("/api/v1/federation/networks/sync/%s/get", networkName),
 			Headers: map[string]string{
@@ -444,5 +448,166 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 		DB.Save(&networkMemberToSync)
 	}
 	h.NetworkSyncBlocker[networkName] = false
+
+}
+
+type NetworkRequestRelayReservation struct {
+	PeerId string `json:"peer_id"`
+}
+
+func (h *FederationHandler) NetworkRequestRelayReservation(w http.ResponseWriter, r *http.Request) {
+	// TODO: ensure that this cannot be used to route traffic stupidly!!
+	// TODO: Also authorize this based on a token created in the forwarder request!
+	DB, user, err := util.GetDBAndUser(r)
+
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	var data NetworkRequestRelayReservation
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	networkName := r.PathValue("network_name")
+	if networkName == "" {
+		http.Error(w, "Invalid network name", http.StatusBadRequest)
+		return
+	}
+
+	// TODO the ownership check shoul be improved!
+	// TODO: also it must somehow be strictly enforced that network names cannot be registed by users!!!
+	if !user.IsAdmin && (networkName != "" && h.Networks[networkName].NetworkName != user.Email) {
+		http.Error(w, "User is not an admin or the network owner", http.StatusForbidden)
+		return
+	}
+
+	// 1 - we retrieve the relay from our peer store
+	var node database.Node
+	DB.Preload("Addresses").Where("peer_id = ?", data.PeerId).First(&node)
+	var addresses []multiaddr.Multiaddr = make([]multiaddr.Multiaddr, len(node.Addresses))
+	for i, addr := range node.Addresses {
+		addresses[i] = multiaddr.StringCast(addr.Address)
+	}
+	// 2 - we reserve a slot in the relay
+	reservation, err := client.Reserve(context.Background(), h.Host, peer.AddrInfo{
+		ID:    peer.ID(data.PeerId),
+		Addrs: addresses,
+	})
+
+	if err != nil {
+		log.Printf("Error reserving relay slot: %v", err)
+		return
+	}
+
+	// return the reservation
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(reservation)
+}
+
+type NetworkForwardRelayReservation struct {
+	ForwardToPeerId string `json:"forward_to_peer_id"`
+}
+
+func (h *FederationHandler) NetworkForwardRelayReservation(w http.ResponseWriter, r *http.Request) {
+	// TODO: authroize this over network only privileges somehow!
+	// A relayed connection may only work with a reservation and that reservation can only be made via forward of the relay itself!
+	DB, user, err := util.GetDBAndUser(r)
+
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	networkName := r.PathValue("network_name")
+	if networkName == "" {
+		http.Error(w, "Invalid network name", http.StatusBadRequest)
+		return
+	}
+
+	// TODO: improve network authorization check
+	if !user.IsAdmin && (networkName != "" && h.Networks[networkName].NetworkName != user.Email) {
+		http.Error(w, "User is not an admin or the network owner", http.StatusForbidden)
+		return
+	}
+
+	var network database.Network
+	DB.Where("network_name = ?", networkName).First(&network)
+
+	var data NetworkForwardRelayReservation
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	var forwardToNode database.Node
+	DB.Where("peer_id = ?", data.ForwardToPeerId).First(&forwardToNode)
+
+	networkUserJson, err := json.Marshal(map[string]string{
+		"email":    network.NetworkName,
+		"password": network.NetworkPassword,
+	})
+	if err != nil {
+		http.Error(w, "Error marshalling network user", http.StatusInternalServerError)
+		return
+	}
+
+	// DB = nil intentially network syncs shouldn't attempt to use relayed connections!
+	resp, err := SendRequestToNode(nil, h, forwardToNode, RequestNode{
+		Method: "POST",
+		Path:   "/api/v1/federation/networks/login",
+		Body:   string(networkUserJson),
+	}, T1mNetworkJoinProtocolID)
+
+	if err != nil {
+		http.Error(w, "Error sending request to node", http.StatusInternalServerError)
+		return
+	}
+
+	// Otherwise we can parse the session id from that respons header
+	cookieHeader := resp.Header.Get("Set-Cookie")
+	re := regexp.MustCompile(`session_id=([^;]+)`)
+
+	var sessionId string
+	match := re.FindStringSubmatch(cookieHeader)
+	if match != nil && len(match) > 1 {
+		sessionId = match[1]
+	} else {
+		log.Println("No session id found in unable to authenticate with peer!", resp)
+		http.Error(w, "No session id found in unable to authenticate with peer!", http.StatusInternalServerError)
+		return
+	}
+
+	var requestData NetworkRequestRelayReservation
+	requestData.PeerId = h.Host.ID().String() // we tell the node to reserve a slot with us!
+	requestDataJson, err := json.Marshal(requestData)
+	if err != nil {
+		http.Error(w, "Error marshalling request data", http.StatusInternalServerError)
+		return
+	}
+
+	// make request to node
+	resp, err = SendRequestToNode(DB, h, forwardToNode, RequestNode{
+		Method: "POST",
+		Path:   "/api/v1/federation/networks/request-relay-reservation",
+		Body:   string(requestDataJson),
+		Headers: map[string]string{
+			"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+		},
+	}, T1mNetworkRequestProtocolID)
+
+	if err != nil {
+		http.Error(w, "Error sending request to node", http.StatusInternalServerError)
+		return
+	}
+
+	var reservation client.Reservation
+	json.NewDecoder(resp.Body).Decode(&reservation)
+
+	// return the reservation
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(reservation)
 
 }

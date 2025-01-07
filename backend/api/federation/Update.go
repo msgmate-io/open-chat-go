@@ -65,7 +65,7 @@ func (h *FederationHandler) RequestSelfUpdate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	resp, err := SendRequestToNode(h, node, RequestNode{
+	resp, err := SendRequestToNode(DB, h, node, RequestNode{
 		Method:  "GET",
 		Path:    fmt.Sprintf("/api/v1/bin/download"),
 		Headers: map[string]string{},
@@ -218,8 +218,7 @@ func (h *FederationHandler) GetHiveSetupScript(w http.ResponseWriter, r *http.Re
 SERVER_HOST="http://89.58.25.188:39670"
 wget $SERVER_HOST/api/v1/bin/download -O backend
 sudo chmod +x backend
-sudo ./backend install -p 39670 --host 0.0.0.0 -pp2p 39672 --dnc hive:4FmM0QDokhnLATe8DR -rc 'controller:hashed_$2a$10$p7X/uGcPT8phfqHaNgJIRuzPsCXyuh.lDEpX1PdolXbgK6s/VkaWy'
-backend client register -b64 eyJuYW1lIjoiYm9vdHN0cmFwcGVyXzg5XzU4XzI1XzE4OCIsImFkZHJlc3NlcyI6WyIvaXA0Lzg5LjU4LjI1LjE4OC90Y3AvMzk2NzIvcDJwL1FtVVFFOGN1NXpyTkNXZDlScXp6VkFyaUNyZHlITXFGREFVMkZoaDhUNExCZngiXX0K --network hive
+sudo ./backend install -p 39670 --host 0.0.0.0 -pp2p 39672 --dnc hive:4FmM0QDokhnLATe8DR -rc 'controller:hashed_$2a$10$p7X/uGcPT8phfqHaNgJIRuzPsCXyuh.lDEpX1PdolXbgK6s/VkaWy' -bs eyJuYW1lIjoiYm9vdHN0cmFwcGVyXzg5XzU4XzI1XzE4OCIsImFkZHJlc3NlcyI6WyIvaXA0Lzg5LjU4LjI1LjE4OC90Y3AvMzk2NzIvcDJwL1FtVVFFOGN1NXpyTkNXZDlScXp6VkFyaUNyZHlITXFGREFVMkZoaDhUNExCZngiXX0K
 # wget http://89.58.25.188:39670/api/v1/bin/setup?key=ShowMe -O - | bash`
 
 	w.WriteHeader(http.StatusOK)
