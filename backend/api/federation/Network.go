@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -487,13 +488,35 @@ func (h *FederationHandler) NetworkRequestRelayReservation(w http.ResponseWriter
 	// 1 - we retrieve the relay from our peer store
 	var node database.Node
 	DB.Preload("Addresses").Where("peer_id = ?", data.PeerId).First(&node)
+
+	// Log the addresses for debugging
+	log.Printf("Node addresses for peer ID %s: %v", data.PeerId, node.Addresses)
+
 	var addresses []multiaddr.Multiaddr = make([]multiaddr.Multiaddr, len(node.Addresses))
 	for i, addr := range node.Addresses {
-		addresses[i] = multiaddr.StringCast(addr.Address)
+		// Remove the /p2p/<peer_id> part if present
+		baseAddress := addr.Address
+		if idx := strings.LastIndex(baseAddress, "/p2p/"); idx != -1 {
+			baseAddress = baseAddress[:idx]
+		}
+		addresses[i] = multiaddr.StringCast(baseAddress)
+		// Log each converted address
+		log.Printf("Converted address %d: %s", i, addresses[i].String())
 	}
+
+	// Log the peer ID conversion
+	peerID, err := peer.Decode(data.PeerId)
+	if err != nil {
+		log.Printf("Error decoding peer ID: %v", err)
+		http.Error(w, "Invalid peer ID", http.StatusBadRequest)
+		return
+	}
+	log.Printf("Original peer ID: %s", data.PeerId)
+	log.Printf("Converted peer ID: %s", peerID.String())
+
 	// 2 - we reserve a slot in the relay
 	reservation, err := client.Reserve(context.Background(), h.Host, peer.AddrInfo{
-		ID:    peer.ID(data.PeerId),
+		ID:    peerID,
 		Addrs: addresses,
 	})
 
@@ -543,7 +566,7 @@ func (h *FederationHandler) NetworkForwardRelayReservation(w http.ResponseWriter
 	}
 
 	var forwardToNode database.Node
-	DB.Where("peer_id = ?", data.ForwardToPeerId).First(&forwardToNode)
+	DB.Preload("Addresses").Where("peer_id = ?", data.ForwardToPeerId).First(&forwardToNode)
 
 	networkUserJson, err := json.Marshal(map[string]string{
 		"email":    network.NetworkName,
@@ -580,8 +603,9 @@ func (h *FederationHandler) NetworkForwardRelayReservation(w http.ResponseWriter
 		return
 	}
 
-	var requestData NetworkRequestRelayReservation
-	requestData.PeerId = h.Host.ID().String() // we tell the node to reserve a slot with us!
+	var requestData = NetworkRequestRelayReservation{
+		PeerId: h.Host.ID().String(),
+	}
 	requestDataJson, err := json.Marshal(requestData)
 	if err != nil {
 		http.Error(w, "Error marshalling request data", http.StatusInternalServerError)
@@ -591,7 +615,7 @@ func (h *FederationHandler) NetworkForwardRelayReservation(w http.ResponseWriter
 	// make request to node
 	resp, err = SendRequestToNode(DB, h, forwardToNode, RequestNode{
 		Method: "POST",
-		Path:   "/api/v1/federation/networks/request-relay-reservation",
+		Path:   fmt.Sprintf("/api/v1/federation/networks/%s/request-relay-reservation", network.NetworkName),
 		Body:   string(requestDataJson),
 		Headers: map[string]string{
 			"Cookie": fmt.Sprintf("session_id=%s", sessionId),
