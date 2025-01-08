@@ -1,18 +1,23 @@
 package cmd
 
 import (
+	"backend/api/federation"
 	"backend/database"
 	"backend/server"
 	"backend/server/util"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v3"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func InstallCli() *cli.Command {
@@ -85,6 +90,36 @@ func InstallCli() *cli.Command {
 					err = federationHandler.NetworkCreateRAW(DB, usernameNetwork, passwordNetwork)
 					if err != nil {
 						return err
+					}
+				}
+
+				// noe we also setup bootstrap peers
+				for _, peer := range c.StringSlice("network-bootstrap-peers") {
+					log.Println("Registering bootstrap peer", peer)
+					decoded, err := base64.StdEncoding.DecodeString(peer)
+					if err != nil {
+						return fmt.Errorf("failed to decode bootstrap peer b64: %w", err)
+					}
+					var nodeInfo federation.NodeInfo
+					err = json.Unmarshal(decoded, &nodeInfo)
+					if err != nil {
+						return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
+					}
+
+					begginningOfTime := time.Time{}
+					var registerNode federation.RegisterNode
+					registerNode.Name = nodeInfo.Name
+					registerNode.Addresses = nodeInfo.Addresses
+					registerNode.AddToNetwork = usernameNetwork
+					registerNode.LastChanged = &begginningOfTime
+					_, err = federation.RegisterNodeRaw(
+						DB,
+						federationHandler,
+						registerNode,
+						&begginningOfTime,
+					)
+					if err != nil {
+						log.Println("Error registering bootstrap peer", err)
 					}
 				}
 
