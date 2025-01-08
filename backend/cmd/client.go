@@ -34,6 +34,12 @@ var defaultFlags = []cli.Flag{
 		Value:   "",
 		Sources: cli.EnvVars("OPEN_CHAT_SESSION_ID"),
 	},
+	&cli.StringFlag{
+		Name:    "seal-key",
+		Usage:   "The seal key to use",
+		Value:   "",
+		Sources: cli.EnvVars("OPEN_CHAT_SEAL_KEY"),
+	},
 }
 
 func GetClientCmd(action string) *cli.Command {
@@ -93,6 +99,7 @@ func GetClientCmd(action string) *cli.Command {
 				env = append(env, fmt.Sprintf("OPEN_CHAT_SESSION_ID=%s", sessionId))
 				env = append(env, fmt.Sprintf("OPEN_CHAT_HOST=%s", c.String("host")))
 				env = append(env, fmt.Sprintf("OPEN_CHAT_USERNAME=%s", c.String("username")))
+				env = append(env, fmt.Sprintf("OPEN_CHAT_SEAL_KEY=%s", password))
 
 				fmt.Printf("Starting new shell with OPEN_CHAT_SESSION_ID set\n")
 				proc, err := os.StartProcess(shell, []string{shell}, &os.ProcAttr{
@@ -404,6 +411,10 @@ func GetClientCmd(action string) *cli.Command {
 				fmt.Println("List all nodes")
 				ocClient := client.NewClient(c.String("host"))
 				ocClient.SetSessionId(c.String("session-id"))
+				err, ownIdentity := ocClient.GetFederationIdentity()
+				if err != nil {
+					return fmt.Errorf("failed to get own identity: %w", err)
+				}
 				err, nodes := ocClient.GetNodes(c.Int("page"), c.Int("limit"))
 				if err != nil {
 					return fmt.Errorf("failed to get nodes: %w", err)
@@ -416,10 +427,24 @@ func GetClientCmd(action string) *cli.Command {
 
 					// Print each node's information
 					for _, node := range nodes.Rows {
+						latestContactTime, err := time.Parse(time.RFC3339, node.LatestContact.Format(time.RFC3339))
+						if err != nil {
+							return fmt.Errorf("failed to parse latest contact time: %w", err)
+						}
+
+						status := "(offline)"
+						if time.Since(latestContactTime) <= 3*time.Minute {
+							status = "(online)"
+						}
+
+						if node.PeerID == ownIdentity.ID {
+							status = "(self)"
+						}
+
 						fmt.Printf("%-50s %-50s %-25s\n",
 							node.PeerID,
 							node.NodeName,
-							node.LatestContact)
+							fmt.Sprintf("%s %s", status, node.LatestContact))
 					}
 				} else {
 					prettyNodes, err := json.MarshalIndent(nodes, "", "  ")
@@ -674,9 +699,10 @@ func GetClientCmd(action string) *cli.Command {
 					Sources: cli.EnvVars("OPEN_CHAT_DEFAULT_NETWORK"),
 				},
 				&cli.BoolFlag{
-					Name:  "no-connect",
-					Usage: "Do not connect to the ssh server, just create the proxies",
-					Value: false,
+					Name:    "no-connect",
+					Usage:   "Do not connect to the ssh server, just create the proxies",
+					Aliases: []string{"nc"},
+					Value:   false,
 				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
@@ -812,7 +838,7 @@ func GetClientCmd(action string) *cli.Command {
 				// First we open a tcl tunnel to the node
 				remotePeerId := c.String("node")
 
-				username, password, err := promptForUsernameAndPassword()
+				username, password, err := retrieveOrPromptForCreds(ocClient, remotePeerId)
 				if err != nil {
 					return fmt.Errorf("failed to read password: %w", err)
 				}
@@ -1025,6 +1051,28 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to hash password: %w", err)
 				}
 				fmt.Println("Hashed password:", string(hashedPassword))
+				return nil
+			},
+		}
+	} else if action == "delete-key" {
+		return &cli.Command{
+			Name:  "delete-key",
+			Usage: "Delete a key",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "key-name",
+					Usage: "The key to delete",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Delete key")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err := ocClient.DeleteKey(c.String("key-name"))
+				if err != nil {
+					return fmt.Errorf("failed to delete key: %w", err)
+				}
 				return nil
 			},
 		}

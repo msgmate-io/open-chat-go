@@ -88,6 +88,12 @@ func CreateHost(
 		libp2p.Identity(prvKey),
 		// libp2p.EnableRelay(),
 		libp2p.EnableRelay(),
+		/*libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{
+			{
+				ID:    peer.ID("QmUQE8cu5zrNCWd9RqzzVAriCrdyHMqFDAU2Fhh8T4LBfx"),
+				Addrs: []multiaddr.Multiaddr{multiaddr.StringCast("/ip4/89.58.25.188/tcp/39672/p2p/QmUQE8cu5zrNCWd9RqzzVAriCrdyHMqFDAU2Fhh8T4LBfx")},
+			}, TODO!
+		}),*/
 		libp2p.EnableNATService(),
 		libp2p.NATPortMap(),
 		libp2p.EnableAutoNATv2(),
