@@ -1,8 +1,13 @@
 #!/bin/bash
 
-echo "// Generated mux routes"
-echo 'import "net/http"'
-echo ""
+# Routes to exclude
+exclude_routes=("/404/" "/")
+
+# Initialize JSON array
+echo '[' > routes.json
+
+# First entry flag to handle commas
+first=true
 
 find dist/client -name "*.html" | while read -r file; do
     # Strip dist/client prefix and index.html suffix
@@ -13,11 +18,23 @@ find dist/client -name "*.html" | while read -r file; do
         route="${route%/}/"
     fi
     
-    # Skip 404 route as it's typically handled differently
-    if [[ "$route" == "/404" ]]; then
+    # Skip excluded routes
+    skip=false
+    for excluded in "${exclude_routes[@]}"; do
+        if [[ "$route" == "$excluded" ]]; then
+            skip=true
+            break
+        fi
+    done
+    
+    if [ "$skip" = true ]; then
         continue
     fi
 
-    # Generate the mux.Handle line
-    echo "mux.Handle(\"$route\", providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(FrontendHandler))))"
+    # Write route to JSON file with comma for all entries
+    echo "  \"$route\"," >> routes.json
 done
+
+# Remove trailing comma from the last entry and close JSON array
+sed -i '$ s/,$//' routes.json
+echo ']' >> routes.json

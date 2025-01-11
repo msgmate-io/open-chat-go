@@ -16,4 +16,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, '.')
     },
   },
+  server: {
+    allowedHosts: ["frontend", "localhost", "127.0.0.1", "0.0.0.0"],
+    host: "0.0.0.0",
+  },
 });
