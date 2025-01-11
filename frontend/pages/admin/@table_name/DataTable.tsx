@@ -15,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { navigate } from "vike/client/router"
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
@@ -30,6 +31,13 @@ export function DataTable<TData, TValue>({
     columns,
     getCoreRowModel: getCoreRowModel(),
   })
+
+  const handleRowClick = (row: any) => {
+    if (row.id) {
+      const currentPath = window.location.pathname
+      navigate(`${currentPath}/${row.id}`)
+    }
+  }
 
   return (
     <div className="rounded-md border">
@@ -58,6 +66,8 @@ export function DataTable<TData, TValue>({
               <TableRow
                 key={row.id}
                 data-state={row.getIsSelected() && "selected"}
+                onClick={() => handleRowClick(row.original)}
+                className="cursor-pointer hover:bg-accent"
               >
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id}>
