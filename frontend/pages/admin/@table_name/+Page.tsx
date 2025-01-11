@@ -5,15 +5,33 @@ import { usePageContext } from "vike-react/usePageContext";
 import { DataTable } from "./DataTable";
 import { Button } from "@/components/Button";
 import { Settings, ChevronLeft } from "lucide-react";
+import { navigate } from "vike/client/router";
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
 export default function Page() {
   const pageContext = usePageContext()
-  const [page, setPage] = React.useState(1)
-  const [limit, setLimit] = React.useState(10)
+  
+  // Get initial values from URL search params
+  const searchParams = new URLSearchParams(window.location.search);
+  const initialPage = parseInt(searchParams.get('page') || '1');
+  const initialLimit = parseInt(searchParams.get('limit') || '10');
+  
+  const [page, setPage] = React.useState(initialPage)
+  const [limit, setLimit] = React.useState(initialLimit)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   
+  // Update URL when page/limit changes
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('page', page.toString());
+    params.set('limit', limit.toString());
+    navigate(`${window.location.pathname}?${params.toString()}`, {
+      keepScrollPosition: true,
+      overwriteLastHistoryEntry: true
+    });
+  }, [page, limit]);
+
   const { data: table } = useSWR(`/api/v1/admin/table/${pageContext.routeParams.table_name}`, fetcher)
   const { data: tableData } = useSWR(
     `/api/v1/admin/table/${pageContext.routeParams.table_name}/data?page=${page}&limit=${limit}`,
