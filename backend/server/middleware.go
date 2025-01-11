@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -106,5 +107,44 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		ctx := context.WithValue(r.Context(), UserContextKey, &user)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+var PublicRoutes = []string{"/"}
+
+func FrontendAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		return
+
+		accept := r.Header.Get("Accept")
+		if !strings.Contains(accept, "text/html") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		cookie, err := r.Cookie("session_id")
+		if err != nil {
+			w.Header().Set("X-Authorized", "false")
+			if slices.Contains(PublicRoutes, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if r.URL.Path == "/login" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+
+		if cookie.Expires.Before(time.Now()) {
+			w.Header().Set("X-Authorized", "false")
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		w.Header().Set("X-Authorized", "true")
+		next.ServeHTTP(w, r)
 	})
 }
