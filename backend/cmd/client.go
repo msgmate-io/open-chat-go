@@ -3,6 +3,7 @@ package cmd
 import (
 	"backend/api/federation"
 	"backend/client"
+	"backend/database"
 	"backend/server/util"
 	"bufio"
 	"bytes"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -485,7 +487,155 @@ func GetClientCmd(action string) *cli.Command {
 				}
 				// fmt.Println("Key names:", keyNames)
 
-				// Prepare a slice to store the results
+				// Helper struct to store node access info
+				type nodeAccess struct {
+					node     database.Node
+					username string
+					password string
+				}
+
+				// Helper struct for collecting results
+				type metricsResult struct {
+					node    database.Node
+					metrics map[string]interface{}
+					err     error
+				}
+
+				// First determine which nodes we can access
+				var accessibleNodes []nodeAccess
+				fmt.Println("Checking node accessibility...")
+
+				// Check own node first
+				if ownNode != nil {
+					accessibleNodes = append(accessibleNodes, nodeAccess{
+						node: database.Node{
+							PeerID:   ownNode.ID,
+							NodeName: "self",
+						},
+					})
+				}
+
+				// Check other nodes
+				for _, node := range nodes.Rows {
+					if node.PeerID == ownNode.ID {
+						continue // Skip own node as it's already added
+					}
+
+					if !util.Contains(keyNames, fmt.Sprintf("user_%s", node.PeerID)) {
+						fmt.Printf("No access credentials for node: %s\n", node.PeerID)
+						continue
+					}
+
+					err, key := ocClient.RetrieveKey(fmt.Sprintf("user_%s", node.PeerID))
+					if err != nil {
+						fmt.Printf("Failed to retrieve key for node %s: %v\n", node.PeerID, err)
+						continue
+					}
+
+					keyContent := string(key.KeyContent)
+					splitKeyContent := strings.Split(keyContent, ":")
+					if len(splitKeyContent) != 2 {
+						fmt.Printf("Invalid key content format for node %s\n", node.PeerID)
+						continue
+					}
+
+					accessibleNodes = append(accessibleNodes, nodeAccess{
+						node: database.Node{
+							PeerID:   node.PeerID,
+							NodeName: node.NodeName,
+						},
+						username: splitKeyContent[0],
+						password: splitKeyContent[1],
+					})
+				}
+
+				fmt.Printf("Found %d accessible nodes\n", len(accessibleNodes))
+
+				// Create a channel for results
+				resultsChan := make(chan metricsResult, len(accessibleNodes))
+
+				// Create a semaphore to limit concurrent requests
+				sem := make(chan struct{}, 5) // Limit to 5 concurrent requests
+
+				// Launch goroutines to fetch metrics
+				var wg sync.WaitGroup
+				for _, access := range accessibleNodes {
+					wg.Add(1)
+					go func(access nodeAccess) {
+						defer wg.Done()
+
+						// Acquire semaphore
+						sem <- struct{}{}
+						defer func() { <-sem }()
+
+						if access.node.PeerID == ownNode.ID {
+							// Handle own node
+							err, metrics := ocClient.GetMetrics()
+							if err != nil {
+								resultsChan <- metricsResult{node: access.node, err: err}
+								return
+							}
+
+							// Convert metrics to map[string]interface{} format
+							metricsBytes, err := json.Marshal(metrics)
+							if err != nil {
+								resultsChan <- metricsResult{node: access.node, err: err}
+								return
+							}
+
+							var metricsMap map[string]interface{}
+							if err := json.Unmarshal(metricsBytes, &metricsMap); err != nil {
+								resultsChan <- metricsResult{node: access.node, err: err}
+								return
+							}
+
+							resultsChan <- metricsResult{node: access.node, metrics: metricsMap}
+							return
+						}
+
+						// Handle remote node
+						err, sessionId := ocClient.RequestSessionOnRemoteNode(access.username, access.password, access.node.PeerID)
+						if err != nil {
+							resultsChan <- metricsResult{node: access.node, err: fmt.Errorf("session request failed: %w", err)}
+							return
+						}
+
+						err, resp := ocClient.RequestNodeByPeerId(access.node.PeerID, federation.RequestNode{
+							Method: "GET",
+							Path:   "/api/v1/metrics",
+							Headers: map[string]string{
+								"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+							},
+						})
+						if err != nil {
+							resultsChan <- metricsResult{node: access.node, err: fmt.Errorf("metrics request failed: %w", err)}
+							return
+						}
+						defer resp.Body.Close()
+
+						bodyBytes, err := io.ReadAll(resp.Body)
+						if err != nil {
+							resultsChan <- metricsResult{node: access.node, err: fmt.Errorf("reading response failed: %w", err)}
+							return
+						}
+
+						var metricsMap map[string]interface{}
+						if err := json.Unmarshal(bodyBytes, &metricsMap); err != nil {
+							resultsChan <- metricsResult{node: access.node, err: fmt.Errorf("unmarshaling failed: %w", err)}
+							return
+						}
+
+						resultsChan <- metricsResult{node: access.node, metrics: metricsMap}
+					}(access)
+				}
+
+				// Wait for all goroutines to complete
+				go func() {
+					wg.Wait()
+					close(resultsChan)
+				}()
+
+				// Collect results
 				var results []struct {
 					PeerID           string
 					NodeName         string
@@ -494,126 +644,35 @@ func GetClientCmd(action string) *cli.Command {
 					TotalMemoryUsage float64
 				}
 
-				// 3 - get metrics for each node
-				for _, node := range nodes.Rows {
-					fmt.Println("Getting metrics for node:", node.PeerID)
-
-					if node.PeerID == ownNode.ID {
-						fmt.Println("Skipping own node:", node.PeerID)
-						err, metrics := ocClient.GetMetrics()
-						if err != nil {
-							fmt.Println("Failed to get metrics:", err)
-							continue
-						}
-						results = append(results, struct {
-							PeerID           string
-							NodeName         string
-							NodeVersion      string
-							TotalCPUUsage    float64
-							TotalMemoryUsage float64
-						}{
-							PeerID:           node.PeerID,
-							NodeName:         node.NodeName,
-							NodeVersion:      metrics.NodeVersion,
-							TotalCPUUsage:    metrics.CPUInfo.Usage["all"],
-							TotalMemoryUsage: metrics.MemoryInfo.UsedPercent,
-						})
+				for result := range resultsChan {
+					if result.err != nil {
+						fmt.Printf("Error fetching metrics for node %s: %v\n", result.node.PeerID, result.err)
 						continue
-					} else if !util.Contains(keyNames, fmt.Sprintf("user_%s", node.PeerID)) {
-						fmt.Println("No access credentials for node:", node.PeerID)
-					} else {
-						fmt.Println("Found access credentials for node:", node.PeerID)
-						err, key := ocClient.RetrieveKey(fmt.Sprintf("user_%s", node.PeerID))
-						if err != nil {
-							fmt.Println("Failed to retrieve key:", err)
-							continue
-						}
-						// fmt.Println("Key:", key, "using it to fetch metrics")
-						// read key content as string
-						keyContent := string(key.KeyContent)
-						splitKeyContent := strings.Split(keyContent, ":")
-						username := splitKeyContent[0]
-						password := splitKeyContent[1]
-						// get session id on that node
-						err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, node.PeerID)
-						if err != nil {
-							fmt.Println("Failed to request session on remote node:", err)
-							continue
-						}
-						// fmt.Println("Session ID:", sessionId)
-
-						// now use send request to peer ID to
-						err, resp := ocClient.RequestNodeByPeerId(node.PeerID, federation.RequestNode{
-							Method: "GET",
-							Path:   "/api/v1/metrics",
-							Headers: map[string]string{
-								"Cookie": fmt.Sprintf("session_id=%s", sessionId),
-							},
-						})
-						if err != nil {
-							fmt.Println("Failed to request node by peer id:", err)
-							continue
-						}
-
-						defer resp.Body.Close()
-
-						bodyBytes, err := io.ReadAll(resp.Body)
-						if err != nil {
-							return fmt.Errorf("failed to read response body: %w", err)
-						}
-
-						var data map[string]interface{}
-						err = json.Unmarshal(bodyBytes, &data)
-						if err != nil {
-							return fmt.Errorf("failed to unmarshal response body: %w", err)
-						}
-
-						// Extract the required information with error handling
-						nodeVersion, ok := data["node_version"].(string)
-						if !ok {
-							nodeVersion = "unknown"
-						}
-
-						cpuInfo, ok := data["cpu_info"].(map[string]interface{})
-						if !ok {
-							cpuInfo = make(map[string]interface{})
-						}
-
-						usage, ok := cpuInfo["usage"].(map[string]interface{})
-						if !ok {
-							usage = make(map[string]interface{})
-						}
-
-						totalCPUUsage, ok := usage["all"].(float64)
-						if !ok {
-							totalCPUUsage = 0.0
-						}
-
-						memoryInfo, ok := data["memory_info"].(map[string]interface{})
-						if !ok {
-							memoryInfo = make(map[string]interface{})
-						}
-
-						totalMemoryUsage, ok := memoryInfo["used_percent"].(float64)
-						if !ok {
-							totalMemoryUsage = 0.0
-						}
-
-						// Append the result
-						results = append(results, struct {
-							PeerID           string
-							NodeName         string
-							NodeVersion      string
-							TotalCPUUsage    float64
-							TotalMemoryUsage float64
-						}{
-							PeerID:           node.PeerID,
-							NodeName:         node.NodeName,
-							NodeVersion:      nodeVersion,
-							TotalCPUUsage:    totalCPUUsage,
-							TotalMemoryUsage: totalMemoryUsage,
-						})
 					}
+
+					// Extract metrics with error handling
+					nodeVersion, _ := result.metrics["node_version"].(string)
+
+					cpuInfo, _ := result.metrics["cpu_info"].(map[string]interface{})
+					usage, _ := cpuInfo["usage"].(map[string]interface{})
+					totalCPUUsage, _ := usage["all"].(float64)
+
+					memoryInfo, _ := result.metrics["memory_info"].(map[string]interface{})
+					totalMemoryUsage, _ := memoryInfo["used_percent"].(float64)
+
+					results = append(results, struct {
+						PeerID           string
+						NodeName         string
+						NodeVersion      string
+						TotalCPUUsage    float64
+						TotalMemoryUsage float64
+					}{
+						PeerID:           result.node.PeerID,
+						NodeName:         result.node.NodeName,
+						NodeVersion:      nodeVersion,
+						TotalCPUUsage:    totalCPUUsage,
+						TotalMemoryUsage: totalMemoryUsage,
+					})
 				}
 
 				// Print the results in a table format
