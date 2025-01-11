@@ -183,6 +183,7 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		req.NetworkName = "network"
 	}
 
+	// TODO: allow configuring this trough the request
 	in5min := time.Now().Add(5 * time.Minute)
 	proxy := database.Proxy{
 		Port:          req.Port,
@@ -251,8 +252,17 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 				return
 			}
 			h.StartSSHProxy(portNum, originPort)
+		} else if proxy.Kind == "video" {
+			/**
+			portNum, err := strconv.Atoi(proxy.Port)
+			if err != nil {
+				http.Error(w, "Port must be a valid number for video proxy", http.StatusBadRequest)
+				return
+			}
+			LinuxStartVideoServer(portNum, originPeerId)
+			**/
 		}
-	} else {
+	} else { // Ingress!
 		fmt.Println("Starting proxy for node on port", proxy.Port, "with protocol ID", protocolID)
 		targetSem := fmt.Sprintf(":%s", targetPort)
 		h.Host.SetStreamHandler(protocolID, CreateLocalTCPProxyHandler(h, proxy.NetworkName, targetSem))
@@ -299,7 +309,7 @@ func (h *FederationHandler) StartEgressProxy(
 	var certPEM, keyPEM, issuerPEM database.Key
 	var certPEMBytes, keyPEMBytes []byte
 	if proxy.UseTLS {
-		// Now we try to load 3 keys from the database
+		// for tls proviving keyPrefix is required!
 		q := DB.Where("key_type = ? AND key_name = ?", "cert", fmt.Sprintf("%s_cert.pem", keyPrefix)).First(&certPEM)
 		if q.Error != nil {
 			return fmt.Errorf("Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!")
@@ -316,10 +326,19 @@ func (h *FederationHandler) StartEgressProxy(
 		certPEMBytes = certPEM.KeyContent
 		keyPEMBytes = keyPEM.KeyContent
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.ActiveProxies[proxy.UUID] = cancel
+
 	go func() {
+		defer func() {
+			delete(h.ActiveProxies, proxy.UUID)
+		}()
+
 		var handlerFunc func(listener net.Listener)
 		var listener net.Listener
 		var err error
+
 		if proxy.UseTLS {
 			cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
 			if err != nil {
@@ -338,8 +357,21 @@ func (h *FederationHandler) StartEgressProxy(
 			log.Printf("Error creating TCP proxy: %v", err)
 			return
 		}
-		handlerFunc(listener)
+
+		done := make(chan struct{})
+
+		go func() {
+			handlerFunc(listener)
+			close(done)
+		}()
+
+		select {
+		case <-ctx.Done():
+			listener.Close()
+		case <-done:
+		}
 	}()
+
 	return nil
 }
 
