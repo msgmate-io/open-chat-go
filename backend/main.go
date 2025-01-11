@@ -45,6 +45,25 @@ func main() {
 				fmt.Println("invalid client command")
 				return
 			}
+		case "video":
+			/**
+			if len(os.Args) < 3 {
+				fmt.Println("video command requires a video device")
+				return
+			}
+			ws, err := federation.NewVideoServer(os.Args[2])
+			if err != nil {
+				log.Fatal(err)
+			}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/video", ws.ServeHTTP)
+
+			fmt.Println("Starting video server at http://localhost:8080/video")
+			if err := http.ListenAndServe(":8080", mux); err != nil {
+				log.Fatal(err)
+			}
+			*/
+			return
 		case "install":
 			runCmd = cmd.InstallCli()
 		case "uninstall":

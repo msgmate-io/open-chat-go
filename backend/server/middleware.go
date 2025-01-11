@@ -114,9 +114,6 @@ var PublicRoutes = []string{"/"}
 
 func FrontendAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-		return
-
 		accept := r.Header.Get("Accept")
 		if !strings.Contains(accept, "text/html") {
 			next.ServeHTTP(w, r)
