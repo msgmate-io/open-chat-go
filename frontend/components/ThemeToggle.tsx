@@ -41,7 +41,8 @@ export const useThemeStore = create<ThemeState>()(
       (set) => ({
         theme: "dark",
         changeTheme: (theme) => {
-          document.documentElement.setAttribute('data-theme', theme);
+          // document.documentElement.setAttribute('data-theme', theme);
+          document.getElementById('theme-root')?.setAttribute('data-theme', theme);
           set({ theme })
         },
       }),
@@ -55,6 +56,11 @@ export const useThemeStore = create<ThemeState>()(
 
 export function ModeToggle() {
   const changeTheme = useThemeStore(state => state.changeTheme)
+  const theme = useThemeStore(state => state.theme)
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme])
 
   return (
     <DropdownMenu>
@@ -72,6 +78,7 @@ export function ModeToggle() {
       <DropdownMenuContent align="end">
         {Object.values(THEMES).map((theme) => (
           <DropdownMenuItem key={theme} onClick={() => {
+            console.log("theme", theme)
             changeTheme(theme)
           }}>
             {theme}
