@@ -17,9 +17,11 @@ export const ExploreChatsIcon = () => (
 );
 
 export function DefaultChats({
-    navigateTo
+    navigateTo,
+    defaultBotContact
 }: {
-    navigateTo: (to: string) => void
+    navigateTo: (to: string) => void,
+    defaultBotContact: any
 }) {
 
     return <>
@@ -41,7 +43,9 @@ export function DefaultChats({
         <Card className={cn(
             "bg-base-200 hover:bg-base-300 p-2 border-0")}
             onClick={() => {
-                // TODO navigate(null, { chat: "create", userName: "hal" })
+                if (defaultBotContact) {
+                    navigateTo(`/chat/new/${defaultBotContact.contact_token}`)
+                }
             }}
         >
             <div className="p-0">
@@ -57,6 +61,7 @@ export function DefaultChats({
             "bg-base-200 hover:bg-base-300 p-2 border-0")}
             onClick={() => {
                 // TODO navigate(null, { chat: "new" })
+                navigateTo(`/chat/new`)
             }}
         >
             <div className="p-0">
