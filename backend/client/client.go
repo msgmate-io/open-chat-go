@@ -197,13 +197,12 @@ func (c *Client) SetSessionId(sessionId string) {
 	c.sessionId = sessionId
 }
 
-func (c *Client) RegisterNode(name string, addresses []string, requestRegistration bool, addToNetwork string) (error, *database.Node) {
+func (c *Client) RegisterNode(name string, addresses []string, addToNetwork string) (error, *database.Node) {
 	body := new(bytes.Buffer)
 	err := json.NewEncoder(body).Encode(federation.RegisterNode{
-		Name:                name,
-		Addresses:           addresses,
-		RequestRegistration: requestRegistration,
-		AddToNetwork:        addToNetwork,
+		Name:         name,
+		Addresses:    addresses,
+		AddToNetwork: addToNetwork,
 	})
 	if err != nil {
 		log.Printf("Error encoding data: %v", err)

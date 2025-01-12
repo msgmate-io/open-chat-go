@@ -32,7 +32,7 @@ var frontendFS embed.FS
 
 func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("[ TinyRP ] Request received at %s at %s\n", r.URL, time.Now().UTC())
+		// fmt.Printf("[ TinyRP ] Request received at %s at %s\n", r.URL, time.Now().UTC())
 		// Update the headers to allow for SSL redirection
 		r.URL.Host = url.Host
 		r.URL.Scheme = url.Scheme
@@ -42,7 +42,7 @@ func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint st
 		path := r.URL.Path
 		r.URL.Path = strings.TrimLeft(path, endpoint)
 		// Note that ServeHttp is non blocking and uses a go routine under the hood
-		fmt.Printf("[ TinyRP ] Redirecting request to %s at %s\n", r.URL, time.Now().UTC())
+		// fmt.Printf("[ TinyRP ] Redirecting request to %s at %s\n", r.URL, time.Now().UTC())
 		proxy.ServeHTTP(w, r)
 	}
 }
@@ -211,6 +211,8 @@ func BackendRouting(
 	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
 
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
+	mux.Handle("POST /api/v1/user/logout", providerMiddlewares(http.HandlerFunc(userHandler.Logout)))
+
 	mux.Handle("GET /api/v1/bin/download", providerMiddlewares(http.HandlerFunc(federationHandler.DownloadBinary)))
 	mux.Handle("GET /api/v1/bin/setup", providerMiddlewares(http.HandlerFunc(federationHandler.GetHiveSetupScript)))
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
