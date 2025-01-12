@@ -9,7 +9,7 @@ export default function Page() {
   const { data: tables } = useSWR(`/api/v1/admin/tables`, fetcher)
   
   return (
-    <div className="container mx-auto p-8">
+    <div className="container mx-auto p-8 min-h-screen">
       <Card>
         <CardHeader>
           <CardTitle className="text-3xl">Admin Dashboard</CardTitle>
