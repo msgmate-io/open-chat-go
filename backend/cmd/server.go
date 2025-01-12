@@ -216,11 +216,10 @@ func ServerCli() *cli.Command {
 					DB,
 					federationHandler,
 					federation.RegisterNode{
-						Name:                hostname,
-						Addresses:           ownIdentity.ConnectMultiadress,
-						RequestRegistration: false,
-						AddToNetwork:        usernameNetwork,
-						LastChanged:         &now,
+						Name:         hostname,
+						Addresses:    ownIdentity.ConnectMultiadress,
+						AddToNetwork: usernameNetwork,
+						LastChanged:  &now,
 					},
 					&now,
 				)

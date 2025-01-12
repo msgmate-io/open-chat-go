@@ -34,11 +34,10 @@ type NodeSyncInfo struct {
 
 // TODO: allow directly assigning the node to a network in the future
 type RegisterNode struct {
-	Name                string     `json:"name"`
-	Addresses           []string   `json:"addresses"`
-	RequestRegistration bool       `json:"request_registration"`
-	AddToNetwork        string     `json:"add_to_network"`
-	LastChanged         *time.Time `json:"last_changed"`
+	Name         string     `json:"name"`
+	Addresses    []string   `json:"addresses"`
+	AddToNetwork string     `json:"add_to_network"`
+	LastChanged  *time.Time `json:"last_changed"`
 }
 
 // Registers a Peer to Peer Node
@@ -187,104 +186,5 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode, lastC
 		}
 	}
 
-	if data.AddToNetwork != "" {
-		// h.StartNetworkSyncProcess(DB, data.AddToNetwork)
-	} else {
-		// in non networking mode we instate an auto-ping to the node
-		ownPeerId := h.Host.ID()
-		SendNodeRequest(DB, h, node.UUID, RequestNode{
-			Method:  "GET",
-			Path:    "/api/v1/federation/nodes/" + ownPeerId.String() + "/ping",
-			Headers: map[string]string{},
-			Body:    "",
-		})
-
-		// start node auto ping
-		// StartNodeAutoPing(DB, node.UUID, h, 60*time.Second)
-	}
-
-	// TODO: allow automaticly requestion registration at that node
-	if data.RequestRegistration {
-		log.Println("Requesting registration at node")
-		identity := h.GetIdentity()
-		var registerNodeRequest RegisterNode
-		registerNodeRequest.Name = data.Name
-		registerNodeRequest.Addresses = identity.ConnectMultiadress
-		registerNodeRequest.RequestRegistration = false
-
-		registerNodeRequestJson, err := json.Marshal(registerNodeRequest)
-		if err != nil {
-			return database.Node{}, fmt.Errorf("Internal server error")
-		}
-
-		SendNodeRequest(DB, h, node.UUID, RequestNode{
-			Method:  "POST",
-			Path:    "/api/v1/federation/nodes/register/request",
-			Headers: map[string]string{},
-			Body:    string(registerNodeRequestJson),
-		})
-	}
-
 	return node, nil
-}
-
-// TODO: depricate
-// RequestNodeRegistration requests a node registration from a node
-//
-//	@Summary      Request node registration
-//	@Description  Request node registration
-//	@Tags         federation
-//	@Accept       json
-//	@Produce      json
-//	@Router       /api/v1/federation/nodes/register/request [post]
-func (h *FederationHandler) RequestNodeRegistration(w http.ResponseWriter, r *http.Request) {
-	DB, err := util.GetDB(r)
-	if err != nil {
-		return
-	}
-
-	var data RegisterNode
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	var nodeAddresses []string
-	var info *peer.AddrInfo
-	var prevPeerId string = ""
-	for _, address := range data.Addresses {
-		maddr, err := multiaddr.NewMultiaddr(address)
-		if err != nil {
-			http.Error(w, "Invalid address", http.StatusBadRequest)
-			return
-		}
-		info, err = peer.AddrInfoFromP2pAddr(maddr)
-		if err != nil {
-			http.Error(w, "Invalid address", http.StatusBadRequest)
-			return
-		}
-		nodeAddresses = append(nodeAddresses, address)
-		if prevPeerId != "" && prevPeerId != info.ID.String() {
-			http.Error(w, "Trying to register node with multiple peer ids", http.StatusBadRequest)
-			return
-		}
-		prevPeerId = info.ID.String()
-	}
-
-	contactRequest := database.ContactRequest{
-		NodeName:  data.Name,
-		Addresses: nodeAddresses,
-		Status:    "pending",
-	}
-	prettyContactRequest, err := json.MarshalIndent(contactRequest, "", "  ")
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	log.Println("Contact Request: ", string(prettyContactRequest))
-	DB.Create(&contactRequest)
-
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
 }
