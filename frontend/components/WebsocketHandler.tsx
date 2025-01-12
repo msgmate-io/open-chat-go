@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useState } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import { mutate } from "swr";
@@ -32,6 +34,18 @@ export function WebsocketHandler(){
                         }, ...data.rows]
                     }
                 })
+            }else if(parsedMessage.type === "new_message"){
+                mutate(`/api/v1/chats/${parsedMessage?.content?.chat_uuid}/messages/list`, async (data: any) => {
+                    return {
+                        ...data,
+                        rows: [{
+                            text: parsedMessage?.content?.text,
+                            sender_uuid: parsedMessage?.content?.sender_uuid,
+                            chat_uuid: parsedMessage?.content?.chat_uuid,
+                            uuid: parsedMessage?.content?.uuid
+                        }, ...data.rows]
+                    }
+                })
             }
           }
         }, [lastMessage]);
@@ -43,7 +57,7 @@ export function WebsocketHandler(){
           [ReadyState.CLOSED]: 'Closed',
           [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
         }[readyState];
-    
+        
         return <div className="absolute top0 left0 z50 bgbase200 p2">
             <div className="flex flexcol">
                 <div className="flex flexcol">
