@@ -147,13 +147,9 @@ func SetupBaseConnections(
 		return r.Error
 	}
 
-	// ok lets create another chat
-	chat = database.Chat{
-		User1Id: contact.OwningUserId,
-		User2Id: contact.ContactUserId,
-	}
-
-	r = DB.Create(&chat)
+	// Now we update the chat again with the latest chat id
+	chat.LatestMessageId = &message.ID
+	r = DB.Save(&chat)
 
 	if r.Error != nil {
 		return r.Error
