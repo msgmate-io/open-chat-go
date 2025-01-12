@@ -192,6 +192,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}", admin.GetTableInfo)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/data", admin.GetTableDataPaginated)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/{id}", admin.GetTableItemById)
+	v1PrivateApis.HandleFunc("DELETE /admin/table/{table_name}/{id}", admin.DeleteTableItemById)
 	v1PrivateApis.HandleFunc("GET /admin/tables", admin.GetAllTables)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
