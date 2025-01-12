@@ -13,6 +13,11 @@ import { navigate } from "vike/client/router";
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
+const routeBase = "/admin/{table_name}"
+export async function onBeforePrerenderStart() {
+  return [`${routeBase}/{id}`]
+}
+
 export default function Page() {
   const pageContext = usePageContext();
   const { table_name, id } = pageContext.routeParams;
