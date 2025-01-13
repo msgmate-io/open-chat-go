@@ -125,3 +125,52 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pagination)
 }
+
+// GetContactByToken
+// @Summary      Get contact by token
+// @Description  Retrieve a single contact by their contact token
+// @Tags         contacts
+// @Accept       json
+// @Produce      json
+// @Param        token path string true "Contact Token"
+// @Success      200 {object} contacts.ListedContact
+// @Failure      400 {string} string "Invalid request"
+// @Failure      404 {string} string "Contact not found"
+// @Failure      500 {string} string "Internal server error"
+// @Router       /api/v1/contacts/{contact_token} [get]
+func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Request) {
+	DB, _, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		return
+	}
+
+	ch, err := util.GetWebsocket(r)
+	if err != nil {
+		http.Error(w, "Unable to get websocket", http.StatusBadRequest)
+		return
+	}
+
+	token := r.PathValue("token")
+	if token == "" {
+		http.Error(w, "Contact token is required", http.StatusBadRequest)
+		return
+	}
+
+	var user database.User
+	if err := DB.Where("contact_token = ?", token).First(&user).Error; err != nil {
+		http.Error(w, "Contact not found", http.StatusNotFound)
+		return
+	}
+
+	subscribers := ch.GetSubscribers()
+	listedContact := ListedContact{
+		ContactToken: user.ContactToken,
+		Name:         user.Name,
+		UserUUID:     user.UUID,
+		IsOnline:     isSubscriber(subscribers, user.UUID),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(listedContact)
+}
