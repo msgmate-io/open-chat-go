@@ -4,6 +4,7 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 )
@@ -12,6 +13,7 @@ type ListedChat struct {
 	UUID          string            `json:"uuid"`
 	Partner       database.User     `json:"partner"`
 	LatestMessage *database.Message `json:"latest_message"`
+	Config        interface{}       `json:"config"`
 }
 
 func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat {
@@ -22,10 +24,19 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 		partner = chat.User1
 	}
 
+	var config interface{}
+	if chat.SharedConfig != nil {
+		// The ConfigData is already JSON, just unmarshal it
+		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
+			log.Printf("Error unmarshaling config data: %v", err)
+		}
+	}
+
 	return ListedChat{
 		UUID:          chat.UUID,
 		Partner:       partner,
 		LatestMessage: chat.LatestMessage,
+		Config:        config,
 	}
 }
 
@@ -53,7 +64,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination := database.Pagination{Page: 1, Limit: 10}
+	pagination := database.Pagination{Page: 1, Limit: 40}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, err := strconv.Atoi(pageParam); err == nil && page > 0 {
 			pagination.Page = page
@@ -70,6 +81,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Where("user1_id = ? OR user2_id = ?", user.ID, user.ID).
 		Preload("User1").
 		Preload("User2").
+		Preload("SharedConfig").
 		Preload("LatestMessage").
 		Find(&chats)
 

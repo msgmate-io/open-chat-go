@@ -9,7 +9,9 @@ import (
 
 // TODO: should also supply user Id
 type CreateChat struct {
-	ContactToken string `json:"contact_token"`
+	ContactToken string          `json:"contact_token"`
+	FirstMessage string          `json:"first_message"`
+	SharedConfig json.RawMessage `json:"shared_config"`
 }
 
 // Create a chat
@@ -28,6 +30,12 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	ch, err := util.GetWebsocket(r)
+	if err != nil {
+		http.Error(w, "Unable to get websocket", http.StatusBadRequest)
 		return
 	}
 
@@ -62,7 +70,38 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB.Create(&chat)
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 
+	if data.FirstMessage != "" {
+		message := database.Message{
+			ChatId:     chat.ID,
+			SenderId:   user.ID,
+			ReceiverId: otherUser.ID,
+			Text:       &data.FirstMessage,
+		}
+		DB.Create(&message)
+		chat.LatestMessageId = &message.ID
+		DB.Save(&chat)
+	}
+
+	if data.SharedConfig != nil {
+		sharedConfig := database.SharedChatConfig{
+			ChatId:     chat.ID,
+			ConfigData: data.SharedConfig,
+		}
+		DB.Create(&sharedConfig)
+		chat.SharedConfigId = &sharedConfig.ID
+		DB.Save(&chat)
+	}
+
+	if data.FirstMessage != "" {
+		SendWebsocketMessage(ch, otherUser.UUID, chat.UUID, *user, SendMessage{
+			Text: data.FirstMessage,
+		})
+	}
+
+	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
+	listedChat := convertChatToListedChat(user, chat)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(chat)
+	json.NewEncoder(w).Encode(listedChat)
 
 }

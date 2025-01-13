@@ -14,4 +14,5 @@ var Tabels []interface{} = []interface{}{
 	&ContactRequest{},
 	&Network{},
 	&NetworkMember{},
+	&SharedChatConfig{},
 }

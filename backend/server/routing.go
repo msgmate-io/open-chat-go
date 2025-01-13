@@ -170,6 +170,7 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
+	v1PrivateApis.HandleFunc("GET /contacts/{contact_token}", contactsHandler.GetContactByToken)
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
