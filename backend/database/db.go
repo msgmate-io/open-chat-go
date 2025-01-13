@@ -39,11 +39,13 @@ func SetupDatabase(
 	for i, table := range Tabels {
 		stmt.Parse(table)
 		tableName := stmt.Schema.Table
-		log.Println(fmt.Sprintf("Migrating table (%v/%v): %v", i+1, len(Tabels), tableName))
+		log.Printf("Attempting to migrate table (%v/%v): %v (type: %T)", i+1, len(Tabels), tableName, table)
 		err = db.AutoMigrate(table)
 		if err != nil {
-			panic(fmt.Sprintf("Failed to migrate table: %v", err))
+			log.Printf("Migration failed for table %s. Table structure: %+v", tableName, table)
+			panic(fmt.Sprintf("Failed to migrate table %s: %v", tableName, err))
 		}
+		log.Printf("Successfully migrated table: %s", tableName)
 	}
 
 	return db
