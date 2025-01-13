@@ -12,7 +12,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"io"
 	"log"
 	"math/big"
@@ -20,6 +19,8 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 type SendMessage struct {
@@ -30,6 +31,7 @@ type Client struct {
 	host      string
 	sessionId string
 	sealKey   []byte
+	User      database.User
 }
 
 func NewClient(host string) *Client {
@@ -185,6 +187,11 @@ func (c *Client) LoginUser(username string, password string) (error, string) {
 	}
 	c.sessionId = sessionId
 	c.sealKey = []byte(password)
+	err, user := c.GetUserInfo()
+	if err != nil {
+		return err, ""
+	}
+	c.User = *user
 	return nil, sessionId
 }
 
@@ -750,4 +757,75 @@ func (c *Client) DeleteKey(keyName string) error {
 	}
 
 	return nil
+}
+
+type PaginatedMessages struct {
+	database.Pagination
+	Rows []chats.ListedMessage `json:"rows"`
+}
+
+func (c *Client) GetMessages(chatUUID string, index int64, limit int64) (error, PaginatedMessages) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/chats/%s/messages/list?page=%d&limit=%d", c.host, chatUUID, index, limit), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, PaginatedMessages{}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, PaginatedMessages{}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), PaginatedMessages{}
+	}
+
+	var paginatedMessages PaginatedMessages
+	err = json.NewDecoder(resp.Body).Decode(&paginatedMessages)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, PaginatedMessages{}
+	}
+
+	return nil, paginatedMessages
+}
+
+func (c *Client) GetChat(chatUUID string) (error, chats.ListedChat) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/chats/%s", c.host, chatUUID), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, chats.ListedChat{}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, chats.ListedChat{}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), chats.ListedChat{}
+	}
+
+	var chat chats.ListedChat
+	err = json.NewDecoder(resp.Body).Decode(&chat)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, chats.ListedChat{}
+	}
+
+	return nil, chat
 }
