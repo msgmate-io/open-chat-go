@@ -1,6 +1,9 @@
 package database
 
-import "gorm.io/gorm"
+import (
+	"gorm.io/gorm"
+	"time"
+)
 
 // Some inspiration from: https://github.com/omept/go-chat/
 type Message struct {
@@ -41,10 +44,20 @@ type Contact struct {
 	ContactUser   User   `json:"contact_user" gorm:"foreignKey:ContactUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 }
 
+type Key struct {
+	Model
+	KeyType    string `json:"key_type" gorm:"index"`
+	KeyName    string `json:"key_name" gorm:"index"`
+	KeyContent []byte `json:"key_content"`
+}
+
 type Node struct {
 	Model
-	NodeName  string        `json:"node_name" gorm:"index"`
-	Addresses []NodeAddress `json:"addresses" gorm:"foreignKey:NodeID;references:ID"`
+	NodeName     string        `json:"node_name" gorm:"index"`
+	PeerID       string        `json:"peer_id"`
+	LatestPingId *uint         `json:"-" gorm:"index"`
+	LatestPing   *Ping         `json:"latest_ping" gorm:"foreignKey:LatestPingId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Addresses    []NodeAddress `json:"addresses" gorm:"foreignKey:NodeID;references:ID"`
 }
 
 type NodeAddress struct {
@@ -52,6 +65,21 @@ type NodeAddress struct {
 	NodeID      uint   `gorm:"index" json:"-"`
 	PartnetNode Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	Address     string `json:"address"`
+}
+
+type Proxy struct {
+	Model
+	NodeID uint   `json:"-"`
+	Node   Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Port   string `json:"port"`
+	Active bool   `json:"active"`
+}
+
+type Ping struct {
+	Model
+	NodeID   uint      `json:"-"`
+	Node     Node      `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	PingedAt time.Time `json:"pinged_at"`
 }
 
 func (node *Node) List(DB *gorm.DB) []Node {
