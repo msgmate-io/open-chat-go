@@ -149,6 +149,12 @@ func readWebSocketMessages(
 
 		if senderUUID != botUser.UUID {
 
+			if messageType == "stop_response" {
+				log.Printf("Stopping response for chat %s", chatUUID)
+				cancelChatResponse(chatCanceler, chatUUID)
+				continue
+			}
+
 			if _, found := chatCanceler.Load(chatUUID); found {
 				// We're already responding to this chat.
 				// You can decide what to do: skip, or maybe cancel the old one and start a new one, etc.
@@ -226,19 +232,35 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		}
 		fmt.Println("paginatedMessages", paginatedMessages)
 		openAiMessages := []map[string]string{}
-		for _, message := range paginatedMessages.Rows {
-			if message.SenderUUID == ocClient.User.UUID {
-				openAiMessages = append(openAiMessages, map[string]string{"role": "assistant", "content": message.Text})
+		currentMessageIncluded := false
+
+		for i := len(paginatedMessages.Rows) - 1; i >= 0; i-- {
+			msg := paginatedMessages.Rows[i]
+			if msg.SenderUUID == ocClient.User.UUID {
+				openAiMessages = append(openAiMessages, map[string]string{"role": "assistant", "content": msg.Text})
 			} else {
-				openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Text})
+				openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": msg.Text})
+			}
+			if msg.Text == message.Content.Text {
+				currentMessageIncluded = true
 			}
 		}
+
+		if !currentMessageIncluded {
+			openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Content.Text})
+		}
+		/*
+			prettyOpenAiMessages, err := json.MarshalIndent(openAiMessages, "", "  ")
+			if err != nil {
+				return err
+			}
+			log.Println("prettyOpenAiMessages", string(prettyOpenAiMessages)) */
 		// send a message trough the websocket
 		chunks, errs := streamChatCompletion(
 			endpoint,
 			model,
 			openAiMessages,
-			"YOUR_API_KEY_HERE",
+			ocClient.GetApiKey("deepinfra"),
 		)
 
 		var fullText strings.Builder
@@ -303,7 +325,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 }
 
 func preProcessMessage(rawMessage json.RawMessage) (error, string, string, string) {
-	var chatMessageTypes = []string{"new_message"}
+	var chatMessageTypes = []string{"new_message", "stop_response"}
 	var messageMap map[string]interface{}
 	err := json.Unmarshal(rawMessage, &messageMap)
 	if err != nil {
