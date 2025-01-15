@@ -9,6 +9,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "@/components/DropdownMenu";
+import { Button } from "@/components/Button";
 import imgSrc from "@/assets/logo.png"
 
 export const ToggleInputModeButton = () => {
@@ -42,6 +43,14 @@ interface MessageViewInputProps {
     minHeight?: number
 }
 
+export const CancelResponseButton = ({ onClick }: { onClick: () => void }) => {
+    return <Button
+        onClick={onClick}
+        className="ml-2 bg-base-300 text-white p-2 rounded-full flex items-center justify-center"
+    >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+    </Button>
+}
 
 export const MessageInput = forwardRef<
     HTMLTextAreaElement,
@@ -119,7 +128,7 @@ export const MessageInput = forwardRef<
                 }}
                 ref={ref}
             />
-            <SendMessageButton onClick={handleSendMessage} isLoading={isLoading} />
+            {!isBotResponding ? <SendMessageButton onClick={handleSendMessage} isLoading={isLoading} /> : <CancelResponseButton onClick={stopBotResponse} />}
         </Card>
         <div className='flex grow items-center content-center justify-center text-sm hidden md:flex'>
             msgmate.io uses magic, be sceptical and verify information!

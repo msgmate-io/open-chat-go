@@ -25,7 +25,7 @@ export function StartChat({
 
     // Bot config
     const [botConfig, setBotConfig] = useState({
-        model: "llama3-70b-8192",
+        model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         endpoint: "https://api.deepinfra.com/v1/openai",
         context: 5,
         systemPrompt: "Your are the advanced AI Agent, Hal. Here to fulfill any of the users requests.",
