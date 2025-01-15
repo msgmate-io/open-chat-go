@@ -9,7 +9,6 @@ import (
 	"backend/api/websocket"
 	"context"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/host"
 	"gorm.io/gorm"
 	"log"
 	"net/http"
@@ -56,7 +55,7 @@ func websocketMiddleware(ch *websocket.WebSocketHandler) func(next http.Handler)
 
 func BackendRouting(
 	DB *gorm.DB,
-	federationHost *host.Host,
+	federationHandler *federation.FederationHandler,
 	debug bool,
 	frontendProxy string,
 ) (*http.ServeMux, *websocket.WebSocketHandler) {
@@ -67,9 +66,6 @@ func BackendRouting(
 	userHandler := &user.UserHandler{}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
-	federationHandler := &federation.FederationHandler{
-		Host: *federationHost,
-	}
 	websocketHandler := websocket.NewWebSocketHandler()
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
@@ -84,7 +80,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
+	v1PrivateApis.HandleFunc("GET /federation/nodes/list", federationHandler.ListNodes)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
+	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy/{node_uuid}/{local_port}/", federationHandler.CreateAndStartProxy)
 
 	providerMiddlewares := CreateStack(
 		dbMiddleware(DB),
@@ -93,7 +91,9 @@ func BackendRouting(
 
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
+	mux.Handle("POST /api/v1/federation/nodes/{peer_id}/ping", providerMiddlewares(http.HandlerFunc(federationHandler.Ping)))
 	mux.HandleFunc("GET /_health", func(w http.ResponseWriter, r *http.Request) {
+		// TODO: need some better way to check if server is running
 		if ServerStatus != "running" {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte(fmt.Sprintf("Server is not running, status: %s", ServerStatus)))
@@ -108,6 +108,7 @@ func BackendRouting(
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
 	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
 
+	// server frontend or proxy to dev-frontend
 	fs := http.FileServer(http.Dir("./frontend"))
 	if frontendProxy == "" {
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
