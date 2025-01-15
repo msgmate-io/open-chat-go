@@ -40,7 +40,7 @@ export function BotMessageItem({
 }) {
 
     if(selfIsSender){
-        return <div key={message.uuid} className="flex flex-row px-4 w-full relativ max-w-full">
+        return <div key={message.uuid} className="flex flex-row w-full relativ max-w-full">
             <div className="flex grow content-center items-end justify-end">
                 <div className="article prose w-95 overflow-x-auto p-2 px-4 rounded-2xl bg-base-200">
                     <Markdown>{message.text}</Markdown>
@@ -48,12 +48,12 @@ export function BotMessageItem({
             </div>
         </div>
     }else{
-        return <div key={message.uuid} className="flex flex-row px-4 w-full relativ max-w-full">
+        return <div key={message.uuid} className="flex flex-row w-full relativ max-w-full">
             <div className="flex p-2 hidden md:flex">
-                <img alt="logo" className="h-9 w-9 m-3 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
+                <img alt="logo" className="h-9 w-9 m-2 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
             </div>
             <div className="w-full flex flex-col flex-grow relative">
-                <div className="article prose w-95 pt-3 pl-1 overflow-x-auto">
+                <div className="article prose w-[90%] pt-3 pl-1 overflow-x-auto">
                     <Markdown>{message.text}</Markdown>
                 </div>
             </div>
