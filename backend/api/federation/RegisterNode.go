@@ -108,6 +108,8 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	h.Gater.AddAllowedPeer(info.ID)
+
 	// directly try to 'ping' the node once!
 	ownPeerId := h.Host.ID()
 	SendNodeRequest(DB, h, node.UUID, RequestNode{
