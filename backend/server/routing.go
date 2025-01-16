@@ -81,6 +81,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
 	v1PrivateApis.HandleFunc("GET /federation/nodes/list", federationHandler.ListNodes)
+	v1PrivateApis.HandleFunc("GET /federation/nodes/whitelisted", federationHandler.WhitelistedPeers)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy/{node_uuid}/{local_port}/", federationHandler.CreateAndStartProxy)
 
