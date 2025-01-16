@@ -70,7 +70,6 @@ func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, nod
 			req.Header.Add(k, strings.Join(v, ","))
 		}
 
-		req.Header.Add("X-Proxy-Route", node.Addresses[0].Address)
 		req.Header.Add("X-Proxy-Local-Port", localPort)
 		req.Header.Add("X-Proxy-Node-UUID", node.UUID)
 
