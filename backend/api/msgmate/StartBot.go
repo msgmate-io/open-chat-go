@@ -179,10 +179,12 @@ func readWebSocketMessages(
 			go func() {
 				defer chatCanceler.Delete(chatUUID)
 				if err := respondMsgmate(ocClient, chatCtx, ch, *message); err != nil {
-					log.Println("Error while respondMsgmate:", err)
-					ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
-						Text: "An error occured while generating the response, please try again later",
-					})
+					if err != context.Canceled {
+						log.Println("Error while respondMsgmate:", err)
+						ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
+							Text: "An error occurred while generating the response, please try again later",
+						})
+					}
 				}
 			}()
 		}
@@ -272,16 +274,37 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				message.Content.SenderUUID,
 			),
 		)
+
+		// Helper function to send final message and cleanup
+		sendFinalMessage := func(isCancelled bool) {
+			ch.MessageHandler.SendMessage(
+				ch,
+				message.Content.SenderUUID,
+				ch.MessageHandler.EndPartialMessage(
+					message.Content.ChatUUID,
+					message.Content.SenderUUID,
+				),
+			)
+
+			text := fullText.String()
+			if isCancelled {
+				text += "\n[cancelled]"
+			}
+			ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
+				Text: text,
+			})
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
 				log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
+				sendFinalMessage(true)
 				return ctx.Err()
 			case chunk, ok := <-chunks:
 				if !ok {
 					chunks = nil
 				} else {
-					// send partial message to the user
 					ch.MessageHandler.SendMessage(
 						ch,
 						message.Content.SenderUUID,
@@ -295,31 +318,19 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				}
 			case err, ok := <-errs:
 				if ok && err != nil {
-					// Handle error
 					log.Printf("streamChatCompletion error: %v", err)
+					sendFinalMessage(true)
 					return err
 				}
 				errs = nil
 			}
 
-			// End when both channels are nil or closed
 			if chunks == nil && errs == nil {
 				break
 			}
 		}
-		ch.MessageHandler.SendMessage(
-			ch,
-			message.Content.SenderUUID,
-			ch.MessageHandler.EndPartialMessage(
-				message.Content.ChatUUID,
-				message.Content.SenderUUID,
-			),
-		)
 
-		ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
-			Text: fullText.String(),
-		})
-
+		sendFinalMessage(false)
 		return nil
 	}
 }

@@ -47,6 +47,14 @@ type EndPartialMessage struct {
 	} `json:"content"`
 }
 
+type InterruptSignal struct {
+	Type    string `json:"type"`
+	Content struct {
+		ChatUUID   string `json:"chat_uuid"`
+		SenderUUID string `json:"sender_uuid"`
+	} `json:"content"`
+}
+
 func (m *Messages) SendMessage(ch *WebSocketHandler, receiverUUID string, EncMessage []byte) {
 	ch.PublishInChannel(
 		EncMessage,
@@ -115,6 +123,22 @@ func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string) []byte {
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
+		},
+	}
+
+	encMsg, _ := json.Marshal(msg)
+	return encMsg
+}
+
+func (m *Messages) InterruptSignal(ChatUUID string, SenderUUID string) []byte {
+	msg := InterruptSignal{
+		Type: "interrupt_signal",
+		Content: struct {
+			ChatUUID   string `json:"chat_uuid"`
+			SenderUUID string `json:"sender_uuid"`
+		}{
+			ChatUUID:   ChatUUID,
+			SenderUUID: SenderUUID,
 		},
 	}
 
