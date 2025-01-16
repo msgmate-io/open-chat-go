@@ -5,9 +5,11 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/multiformats/go-multiaddr"
 	"log"
 	"net/http"
+	"time"
 )
 
 type RegisterNode struct {
@@ -49,6 +51,7 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 	var nodeAddresses []database.NodeAddress
 
 	var info *peer.AddrInfo
+	var prevPeerId string = ""
 	for _, address := range data.Addresses {
 		log.Println("Register Address: ", address)
 		maddr, err := multiaddr.NewMultiaddr(address)
@@ -64,17 +67,41 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 		nodeAddresses = append(nodeAddresses, database.NodeAddress{
 			Address: address,
 		})
+		if prevPeerId != "" && prevPeerId != info.ID.String() {
+			http.Error(w, "Trying to register node with multiple peer ids", http.StatusBadRequest)
+			return
+		}
+		prevPeerId = info.ID.String()
+
 	}
 
-	// TODO: query all existing node adresses to make sure a NodeAdress is NEVER registered to multiple nodes
-	// If a NodeAddress is registered twice this should almost always mean that the host nodes-peer-id has changed!
-	var node = database.Node{
+	if info.ID.String() == h.Host.ID().String() {
+		http.Error(w, "Peer ID matches own identity", http.StatusBadRequest)
+		return
+	}
+
+	var existingNode database.Node
+	q := DB.Where("peer_id = ?", info.ID.String()).First(&existingNode)
+	if q.Error == nil {
+		http.Error(w, "Peer ID already registered", http.StatusBadRequest)
+		return
+	}
+	peerInfo := h.Host.Peerstore().PeerInfo(info.ID)
+
+	if peerInfo.ID == "" {
+		h.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+		log.Println("Peer not present in peerstore")
+	} else {
+		log.Println("Peer already present in peerstore")
+	}
+
+	node := database.Node{
 		NodeName:  data.Name,
 		PeerID:    info.ID.String(),
 		Addresses: nodeAddresses,
 	}
 
-	q := DB.Create(&node)
+	q = DB.Create(&node)
 
 	if q.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -84,13 +111,14 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 	// directly try to 'ping' the node once!
 	ownPeerId := h.Host.ID()
 	SendNodeRequest(DB, h, node.UUID, RequestNode{
-		Method: "GET",
-		Path:   "/api/v1/federation/nodes/" + ownPeerId.String() + "/ping",
-		Headers: map[string]string{
-			"X-Proxy-Route": node.Addresses[0].Address,
-		},
-		Body: "",
+		Method:  "GET",
+		Path:    "/api/v1/federation/nodes/" + ownPeerId.String() + "/ping",
+		Headers: map[string]string{},
+		Body:    "",
 	})
+
+	// start node auto ping
+	StartNodeAutoPing(DB, node.UUID, h, 60*time.Second)
 
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
