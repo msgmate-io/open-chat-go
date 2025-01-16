@@ -1,10 +1,9 @@
 package msgmate
 
 import (
-	"backend/api/user"
 	wsapi "backend/api/websocket"
+	"backend/client"
 	"backend/database"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,123 +11,11 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"log"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 )
-
-func loginUser(host string, data user.UserLogin) (error, string) {
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(data)
-	if err != nil {
-		log.Printf("Erroror encoding data: %v", err)
-		return err, ""
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/user/login", host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, ""
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", host)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error response: %v", resp.Status)
-		return err, ""
-	}
-
-	cookieHeader := resp.Header.Get("Set-Cookie")
-	re := regexp.MustCompile(`session_id=([^;]+)`)
-
-	// Find the first match
-	// e.g.:  session_id=877a0b36a59391125d133ba73e9edeba; Path=/; Domain=localhost; Expires=Tue, 24 Dec 2024 14:54:51 GMT; Max-Age=86400; HttpOnly; Secure; SameSite=Strict
-	match := re.FindStringSubmatch(cookieHeader)
-	if match != nil && len(match) > 1 {
-		return nil, match[1]
-	}
-	return nil, match[0]
-}
-
-type SendMessage struct {
-	Text string `json:"text"`
-}
-
-func sendChatMessage(host string, sessionId string, chatUUID string, data SendMessage) error {
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(data)
-	if err != nil {
-		log.Printf("Erroror encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/chats/%s/messages/send", host, chatUUID), body)
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status)
-	}
-
-	return nil
-
-}
-
-func getUserInfo(host string, sessionId string) (error, *database.User) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/user/self", host), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, nil
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Error response: %v", resp.Status)
-		return err, nil
-	}
-
-	var user database.User
-
-	err = json.NewDecoder(resp.Body).Decode(&user)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, nil
-	}
-
-	return nil, &user
-}
 
 func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password string) error {
 	// 'host' e.g.: 'http://localhost:1984'
@@ -137,15 +24,14 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 	ctx := context.Background() // Persistent context for the WebSocket connection
 
 	// Login the bot
-	err, sessionId := loginUser(host, user.UserLogin{
-		Email:    username,
-		Password: password,
-	})
+	ocClient := client.NewClient(host)
+	err, _ := ocClient.LoginUser(username, password)
+
 	if err != nil {
 		return fmt.Errorf("failed to login bot: %w", err)
 	}
 
-	err, botUser := getUserInfo(host, sessionId)
+	err, botUser := ocClient.GetUserInfo()
 	if err != nil {
 		return fmt.Errorf("failed to get user info: %w", err)
 	}
@@ -158,7 +44,7 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 		// TODO: allow also connecting to the websocket via ssl
 		c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/ws/connect", hostNoProto), &websocket.DialOptions{
 			HTTPHeader: http.Header{
-				"Cookie": []string{fmt.Sprintf("session_id=%s", sessionId)},
+				"Cookie": []string{fmt.Sprintf("session_id=%s", ocClient.GetSessionId())},
 			},
 		})
 		if err != nil {
@@ -172,7 +58,7 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 		log.Println("Bot connected to WebSocket")
 
 		// Blocking call to continuously read messages
-		err = readWebSocketMessages(host, ch, *botUser, ctx, c, sessionId, &chatCaneler)
+		err = readWebSocketMessages(ocClient, ch, *botUser, ctx, c, &chatCaneler)
 		if err != nil {
 			log.Printf("Error reading from WebSocket: %v", err)
 		}
@@ -232,12 +118,11 @@ func cancelChatResponse(chatCanceler *ChatCanceler, chatUUID string) {
 }
 
 func readWebSocketMessages(
-	host string,
+	ocClient *client.Client,
 	ch *wsapi.WebSocketHandler,
 	botUser database.User,
 	ctx context.Context,
 	conn *websocket.Conn,
-	sessionId string,
 	chatCanceler *ChatCanceler, // pass your ChatCanceler in here
 ) error {
 	// TODO: handle chats in separate goroutines
@@ -287,9 +172,9 @@ func readWebSocketMessages(
 
 			go func() {
 				defer chatCanceler.Delete(chatUUID)
-				if err := respondMsgmate(host, chatCtx, ch, sessionId, *message); err != nil {
+				if err := respondMsgmate(ocClient, chatCtx, ch, *message); err != nil {
 					log.Println("Error while respondMsgmate:", err)
-					sendChatMessage(host, sessionId, chatUUID, SendMessage{
+					ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 						Text: "An error occured while generating the response, please try again later",
 					})
 				}
@@ -298,19 +183,19 @@ func readWebSocketMessages(
 	}
 }
 
-func respondMsgmate(host string, ctx context.Context, ch *wsapi.WebSocketHandler, sessionId string, message wsapi.NewMessage) error {
+func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebSocketHandler, message wsapi.NewMessage) error {
 	// 1 - first check if its a command or a plain text message
 	if strings.HasPrefix(message.Content.Text, "/") {
 		command := strings.Replace(message.Content.Text, "/", "", 1)
 		if strings.HasPrefix(command, "pong") {
-			sendChatMessage(host, sessionId, message.Content.ChatUUID, SendMessage{
+			ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 				Text: fmt.Sprintf("PONG '%s' ", command),
 			})
 			return nil
 		} else if strings.HasPrefix(command, "loop") {
 			var timeSlept float32 = 0.0
 			for {
-				sendChatMessage(host, sessionId, message.Content.ChatUUID, SendMessage{
+				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 					Text: fmt.Sprintf("LOOP '%f' ", timeSlept),
 				})
 				time.Sleep(1 * time.Second)
@@ -385,7 +270,7 @@ func respondMsgmate(host string, ctx context.Context, ch *wsapi.WebSocketHandler
 			),
 		)
 
-		sendChatMessage(host, sessionId, message.Content.ChatUUID, SendMessage{
+		ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 			Text: fullText.String(),
 		})
 
