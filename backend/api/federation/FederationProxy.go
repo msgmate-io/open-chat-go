@@ -6,15 +6,16 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"io"
-	"log"
-	"net/http"
-	"strings"
-
+	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"strings"
 )
 
 func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node) http.HandlerFunc {
@@ -50,70 +51,91 @@ func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, nod
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// here we try to proxy the request to a specific node
+		// Create a pipe to stream the request body
+		pr, pw := io.Pipe()
 
-		// Replace this line:
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Error reading request body", http.StatusInternalServerError)
-			return
-		}
-		req, err := http.NewRequest(r.Method, r.URL.Path, strings.NewReader(string(body)))
+		// Copy the request body to the pipe writer in a goroutine
+		go func() {
+			defer pw.Close()
+			io.Copy(pw, r.Body)
+		}()
 
+		// Create new request with the pipe reader as the body
+		req, err := http.NewRequest(r.Method, r.URL.Path, pr)
 		if err != nil {
 			http.Error(w, "Couldn't create request", http.StatusInternalServerError)
 			return
 		}
 
-		// Fill the request with headers
+		// Copy original headers
 		for k, v := range r.Header {
-			req.Header.Add(k, strings.Join(v, ","))
+			req.Header[k] = v
 		}
 
 		req.Header.Add("X-Proxy-Local-Port", localPort)
 		req.Header.Add("X-Proxy-Node-UUID", node.UUID)
 
+		// Open libp2p stream
 		stream, err := h.Host.NewStream(context.Background(), info.ID, "/t1m-http-request/0.0.1")
 		if err != nil {
 			log.Println("Error opening stream to node:", err)
-			log.Println("Peerstore:", h.Host.Peerstore().Peers().String())
-			for _, p := range h.Host.Peerstore().Peers() {
-				// log all peers addresses
-				log.Println("--> Peers adresses:", h.Host.Peerstore().Addrs(p))
-			}
 			http.Error(w, "Couldn't open stream to node", http.StatusInternalServerError)
 			return
 		}
-
 		defer stream.Close()
 
-		log.Println("Sending request to node ( writing to stream now ):", node)
-
-		// r.Write() writes the HTTP request to the stream.
-		err = req.Write(stream)
-		if err != nil {
+		// Write request to stream
+		if err := req.Write(stream); err != nil {
 			stream.Reset()
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 
-		// Now we read the response that was sent from the dest
-		buf := bufio.NewReader(stream)
-		resp, err := http.ReadResponse(buf, r)
+		// Read response
+		resp, err := http.ReadResponse(bufio.NewReader(stream), req)
 		if err != nil {
 			stream.Reset()
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		defer resp.Body.Close()
 
-		// Write response status and headers
+		fmt.Println("PROXY ===> RESPONSE HEADERS:", resp.Header)
+		// Copy response headers
+		for k, v := range resp.Header {
+			if k == "Set-Cookie" {
+				// Rewrite cookie domain to requesting host
+				for _, cookie := range v {
+					c, err := http.ParseSetCookie(cookie)
+					if err == nil {
+						// For IP addresses, don't set the domain at all
+						host := r.Host
+						if i := strings.Index(host, ":"); i != -1 {
+							host = host[:i]
+						}
+						if net.ParseIP(host) != nil {
+							c.Domain = ""
+						} else {
+							c.Domain = host
+						}
+						// Convert back to header string
+						w.Header().Add(k, c.String())
+					} else {
+						fmt.Println("PROXY ===> COOKIE ERROR:", err)
+					}
+				}
+			} else {
+				w.Header()[k] = v
+			}
+		}
 		w.WriteHeader(resp.StatusCode)
 
-		// Finally copy the body
-		io.Copy(w, resp.Body)
-		resp.Body.Close()
+		// Stream the response body
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			log.Println("Error copying response:", err)
+		}
 	}
 }
 
