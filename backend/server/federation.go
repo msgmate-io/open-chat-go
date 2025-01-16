@@ -27,6 +27,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
+	"time"
 )
 
 func CreateHost(
@@ -185,7 +186,8 @@ func CreateFederationHost(
 	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort))
 
 	federationHandler := &federation.FederationHandler{
-		Host: h,
+		Host:      h,
+		AutoPings: make(map[string]context.CancelFunc),
 	}
 
 	return &h, federationHandler, nil
@@ -238,6 +240,21 @@ func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
 			fmt.Println("Preloading peerstore for address", info.ID, info.Addrs)
 			h.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 		}
+		// Also send a generic ping to each node
+		fmt.Println("Sending 'start-up' ping to node", node.UUID)
+		ownPeerId := h.Host.ID().String()
+		federation.SendNodeRequest(DB, h, node.UUID, federation.RequestNode{
+			Path: "/api/v1/federation/nodes/" + ownPeerId + "/ping",
+		})
+
+		// TODO: make Ping time configurable an starting auto-ping optional
+		err, cancel := federation.StartNodeAutoPing(DB, node.UUID, h, 60*time.Second)
+		if err != nil {
+			log.Println("Couldn't start node auto ping", err)
+			return err
+		}
+
+		h.AutoPings[node.UUID] = cancel
 	}
 
 	return nil
