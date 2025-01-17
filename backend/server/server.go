@@ -70,7 +70,15 @@ func CreateUser(
 }
 
 func CreateRootUser(DB *gorm.DB, username string, password string) (error, *database.User) {
-	return CreateUser(DB, username, password, true)
+	// First check if one IsAdmin user already exists
+	var user database.User
+	q := DB.First(&user, "is_admin = ?", true)
+
+	if q.Error != nil {
+		return CreateUser(DB, username, password, true)
+	}
+
+	return nil, &user
 }
 
 func GenerateToken(email string) string {
