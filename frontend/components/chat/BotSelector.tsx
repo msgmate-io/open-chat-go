@@ -87,10 +87,10 @@ export function BotSelector({
     setSelectedModel: (model: string) => void
 }) {
     return (
-        <NavigationMenu>
-            <NavigationMenuList>
-                <NavigationMenuItem className="focus:bg-base-200">
-                    <NavigationMenuTrigger className="hover:bg-base-100 focus:bg-base-200">{selectedModel}</NavigationMenuTrigger>
+        <NavigationMenu className="bg-base-2    00">
+            <NavigationMenuList className="bg-base-200">
+                <NavigationMenuItem className="bg-base-200 focus:bg-base-200">
+                    <NavigationMenuTrigger className="hover:bg-base-200 focus:bg-base-200">{selectedModel}</NavigationMenuTrigger>
                     <NavigationMenuContent>
                         <ul className="grid w-[400px] gap-3 p-4 md:w-[500px] md:grid-cols-2 lg:w-[600px] ">
                             {models.map((model) => (
@@ -124,7 +124,7 @@ export const ListItem = React.forwardRef<
                 <div
                     ref={ref}
                     className={cn(
-                        "block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground",
+                        "block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-base-200 focus:text-accent-foreground",
                         className
                     )}
                     {...props}

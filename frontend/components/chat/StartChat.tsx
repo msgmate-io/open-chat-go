@@ -7,18 +7,18 @@ import useSWR, { mutate } from "swr"
 import { CollapseIndicator } from "@/components/CollapseIndicator";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { cn } from "@/components/utils";
+import { useSidePanelCollapse } from "@/components/chat/ChatBase";
 
 export function StartChat({
     contactToken,
-    leftPannelCollapsed,
     onToggleCollapse,
     navigateTo
 }: {
     contactToken: string,
-    leftPannelCollapsed: boolean,
     onToggleCollapse: () => void,
     navigateTo: (path: string) => void
 }) {
+    const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
     const [advancedOpen, setAdvancedOpen] = useState(false)
 
     const [text, setText] = useState("");
