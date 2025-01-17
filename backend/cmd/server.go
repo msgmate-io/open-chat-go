@@ -12,103 +12,107 @@ import (
 	"time"
 )
 
+func GetServerFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{
+			Sources: cli.EnvVars("DB_BACKEND"),
+			Name:    "db-backend",
+			Aliases: []string{"db"},
+			Value:   "sqlite",
+			Usage:   "database driver to use",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("DB_PATH"),
+			Name:    "db-path",
+			Aliases: []string{"dp"},
+			Value:   "data.db",
+			Usage:   "For sqlite the path to the database file",
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("DEBUG"),
+			Name:    "debug",
+			Aliases: []string{"d"},
+			Value:   true, // TODO default to false
+			Usage:   "enable debug mode",
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("SETUP_TEST_USERS"),
+			Name:    "setup-test-users",
+			Aliases: []string{"stu"},
+			Value:   false,
+			Usage:   "setup test users",
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("RESET_DB"),
+			Name:    "reset-db",
+			Aliases: []string{"rdb"},
+			Value:   false,
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("HOST"),
+			Name:    "host",
+			Aliases: []string{"b"},
+			Value:   "127.0.0.1",
+			Usage:   "server bind address",
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("SSL"),
+			Name:    "ssl",
+			Aliases: []string{"s"},
+			Value:   false,
+			Usage:   "enable ssl",
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("PORT"),
+			Name:    "port",
+			Aliases: []string{"p"},
+			Value:   1984,
+			Usage:   "server port",
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("PORT"),
+			Name:    "p2pport",
+			Aliases: []string{"pp2p"},
+			Value:   1985,
+			Usage:   "server port",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("ROOT_CREDENTIALS"),
+			Name:    "root-credentials",
+			Aliases: []string{"rc"},
+			Usage:   "root credentials",
+			Value:   "admin:password",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
+			Name:    "default-bot",
+			Aliases: []string{"botc"},
+			Usage:   "bot login credentials",
+			Value:   "bot:password",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("FRONTEND_PROXY"),
+			Name:    "frontend-proxy",
+			Aliases: []string{"fpx"},
+			Usage:   "Path '' for no proxy, e.g.: 'http://localhost:5173/' for remix",
+			Value:   "",
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("START_BOT"),
+			Name:    "start-bot",
+			Aliases: []string{"sb"},
+			Value:   true,
+			Usage:   "If the in-build msgmate bot should be started",
+		},
+	}
+}
+
 func ServerCli() *cli.Command {
 	log.Println("Hello from server cli")
 	cmd := &cli.Command{
 		Name:  "boom",
 		Usage: "make an explosive entrance",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Sources: cli.EnvVars("DB_BACKEND"),
-				Name:    "db-backend",
-				Aliases: []string{"db"},
-				Value:   "sqlite",
-				Usage:   "database driver to use",
-			},
-			&cli.StringFlag{
-				Sources: cli.EnvVars("DB_PATH"),
-				Name:    "db-path",
-				Aliases: []string{"dp"},
-				Value:   "data.db",
-				Usage:   "For sqlite the path to the database file",
-			},
-			&cli.BoolFlag{
-				Sources: cli.EnvVars("DEBUG"),
-				Name:    "debug",
-				Aliases: []string{"d"},
-				Value:   true, // TODO default to false
-				Usage:   "enable debug mode",
-			},
-			&cli.BoolFlag{
-				Sources: cli.EnvVars("SETUP_TEST_USERS"),
-				Name:    "setup-test-users",
-				Aliases: []string{"stu"},
-				Value:   false,
-				Usage:   "setup test users",
-			},
-			&cli.BoolFlag{
-				Sources: cli.EnvVars("RESET_DB"),
-				Name:    "reset-db",
-				Aliases: []string{"rdb"},
-				Value:   false,
-			},
-			&cli.StringFlag{
-				Sources: cli.EnvVars("HOST"),
-				Name:    "host",
-				Aliases: []string{"b"},
-				Value:   "127.0.0.1",
-				Usage:   "server bind address",
-			},
-			&cli.BoolFlag{
-				Sources: cli.EnvVars("SSL"),
-				Name:    "ssl",
-				Aliases: []string{"s"},
-				Value:   false,
-				Usage:   "enable ssl",
-			},
-			&cli.IntFlag{
-				Sources: cli.EnvVars("PORT"),
-				Name:    "port",
-				Aliases: []string{"p"},
-				Value:   1984,
-				Usage:   "server port",
-			},
-			&cli.IntFlag{
-				Sources: cli.EnvVars("PORT"),
-				Name:    "p2pport",
-				Aliases: []string{"pp2p"},
-				Value:   1985,
-				Usage:   "server port",
-			},
-			&cli.StringFlag{
-				Sources: cli.EnvVars("ROOT_CREDENTIALS"),
-				Name:    "root-credentials",
-				Aliases: []string{"rc"},
-				Usage:   "root credentials",
-				Value:   "admin:password",
-			},
-			&cli.StringFlag{
-				Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
-				Name:    "default-bot",
-				Aliases: []string{"botc"},
-				Usage:   "bot login credentials",
-				Value:   "bot:password",
-			},
-			&cli.StringFlag{
-				Sources: cli.EnvVars("FRONTEND_PROXY"),
-				Name:    "frontend-proxy",
-				Aliases: []string{"fpx"},
-				Usage:   "Path '' for no proxy, e.g.: 'http://localhost:5173/' for remix",
-				Value:   "",
-			},
-			&cli.BoolFlag{
-				Sources: cli.EnvVars("START_BOT"),
-				Name:    "start-bot",
-				Aliases: []string{"sb"},
-				Value:   true,
-				Usage:   "If the in-build msgmate bot should be started",
-			},
-		},
+		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
 			server.ServerStatus = "starting"
 			DB := database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"), c.Bool("reset-db"))

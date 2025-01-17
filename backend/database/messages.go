@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Some inspiration from: https://github.com/omept/go-chat/
 type Message struct {
 	Model
 	SenderId   uint    `json:"-" gorm:"index"`
@@ -69,10 +68,14 @@ type NodeAddress struct {
 
 type Proxy struct {
 	Model
-	NodeID uint   `json:"-"`
-	Node   Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	Port   string `json:"port"`
-	Active bool   `json:"active"`
+	NodeID        uint   `json:"-"`
+	Node          Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Port          string `json:"port"`
+	Active        bool   `json:"active"`
+	UseTLS        bool   `json:"use_tls"`
+	Kind          string `json:"kind"`
+	TrafficOrigin string `json:"traffic_origin"`
+	// If we have UseTLS=true, we assume there are 3 keys with names <proxy_id>_cert.pem, <proxy_id>_key.pem, <proxy_id>_issuer.pem
 }
 
 type Ping struct {
