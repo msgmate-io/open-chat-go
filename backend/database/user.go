@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"net/mail"
@@ -13,6 +14,13 @@ type User struct {
 	PasswordHash string `json:"-"`
 	ContactToken string `json:"contact_token"`
 	IsAdmin      bool   `json:"is_admin"`
+}
+
+type PublicProfile struct {
+	Model
+	UserId      uint            `json:"user_id" gorm:"index"`
+	User        User            `json:"user" gorm:"foreignKey:UserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	ProfileData json.RawMessage `json:"profile_data" gorm:"type:jsonb"`
 }
 
 type Contact struct {
