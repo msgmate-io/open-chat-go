@@ -178,6 +178,12 @@ func ServerCli() *cli.Command {
 			if err != nil {
 				return err
 			}
+			DB.Save(&botUser)
+
+			err = msgmate.CreateOrUpdateBotProfile(DB, *botUser)
+			if err != nil {
+				return err
+			}
 
 			var usernameNetwork string
 			var passwordNetwork string
