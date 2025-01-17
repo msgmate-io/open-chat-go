@@ -224,6 +224,66 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "tls" {
+		return &cli.Command{
+			Name:  "tls",
+			Usage: "Solve an ACME challenge",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "hostname",
+					Usage: "The hostname to solve the ACME challenge for",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "key-prefix",
+					Usage: "The prefix for the keys to solve the ACME challenge for",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Solve an ACME challenge")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err, _ := ocClient.SolveACMEChallenge(c.String("hostname"), c.String("key-prefix"))
+				if err != nil {
+					return fmt.Errorf("failed to solve ACME challenge: %w", err)
+				}
+				fmt.Println("ACME challenge solved")
+				return nil
+			},
+		}
+	} else if action == "keys" {
+		return &cli.Command{
+			Name:  "keys",
+			Usage: "List all keys",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.IntFlag{
+					Name:  "page",
+					Usage: "The page number to return",
+					Value: 1,
+				},
+				&cli.IntFlag{
+					Name:  "limit",
+					Usage: "The number of keys to return",
+					Value: 10,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("List all keys")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err, keys := ocClient.GetKeys(c.Int("page"), c.Int("limit"))
+				if err != nil {
+					return fmt.Errorf("failed to get keys: %w", err)
+				}
+				prettyKeys, err := json.MarshalIndent(keys, "", "  ")
+				if err != nil {
+					return fmt.Errorf("failed to marshal keys: %w", err)
+				}
+				fmt.Println(string(prettyKeys))
+				return nil
+			},
+		}
 	} else if action == "nodes" {
 		return &cli.Command{
 			Name:  "nodes",

@@ -28,7 +28,11 @@ func SetupDatabase(
 			stmt.Parse(table)
 			tableName := stmt.Schema.Table
 			log.Println(fmt.Sprintf("Dropping tables (%v/%v): %v", i+1, len(Tabels), tableName))
-			db.Migrator().DropTable(table)
+			if tableName == "keys" {
+				fmt.Println("NOT dropping keys table")
+			} else {
+				db.Migrator().DropTable(table)
+			}
 		}
 	}
 
