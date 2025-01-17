@@ -14,25 +14,12 @@ import {
 
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
+import { cookiesStorage } from '@/lib/utils'
 export const THEMES = ["dark", "light", "cupcake", "retro"]
 
 interface ThemeState {
   theme: string
   changeTheme: (theme: string) => void
-}
-
-
-const cookiesStorage: PersistStorage<ThemeState> = {
-  getItem: (name: string) => {
-    const value = getCookie(name);
-    return value ? JSON.parse(value) : null;
-  },
-  setItem: (name: string, value: StorageValue<ThemeState>) => {
-    setCookie(name, JSON.stringify(value), { expires: 1 });
-  },
-  removeItem: (name: string) => {
-    removeCookie(name);
-  }
 }
 
 export const useThemeStore = create<ThemeState>()(
@@ -48,7 +35,7 @@ export const useThemeStore = create<ThemeState>()(
       }),
       {
         name: 'theme-store',
-        storage: cookiesStorage,
+        storage: cookiesStorage<ThemeState>(),
       },
     ),
   ),
