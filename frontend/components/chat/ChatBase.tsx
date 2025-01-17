@@ -9,7 +9,11 @@ import {
     ResizablePanel,
     ResizablePanelGroup
 } from "@/components/chat/Resizable";
-  
+import { create } from "zustand";
+import { devtools } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { cookiesStorage } from "@/lib/utils";
+
 function useMobileConfig(chatId: any, defaultLeftSize = null, defaultRightSize = null) {
     return {
         left: {
@@ -142,6 +146,52 @@ export const ResizableChatLayout = forwardRef(({
     );
 });
 
+interface SidePanelState {
+  isCollapsed: boolean
+  panelRef: React.MutableRefObject<any> | null
+  setCollapsed: (collapsed: boolean) => void
+  setPanelRef: (ref: React.MutableRefObject<any>) => void
+  toggle: () => void
+}
+
+export const useSidePanelCollapse = create<SidePanelState>()(
+  devtools(
+    persist(
+      (set, get) => ({
+        isCollapsed: false,
+        panelRef: null,
+        setPanelRef: (ref) => set({ panelRef: ref }),
+        setCollapsed: (collapsed) => {
+          const { panelRef } = get();
+          if (panelRef?.current) {
+            if (collapsed) {
+              panelRef.current.collapse();
+            } else {
+              panelRef.current.expand();
+            }
+          }
+          set({ isCollapsed: collapsed });
+        },
+        toggle: () => {
+          const { isCollapsed, panelRef } = get();
+          if (panelRef?.current) {
+            if (isCollapsed) {
+              panelRef.current.expand();
+            } else {
+              panelRef.current.collapse();
+            }
+          }
+          set({ isCollapsed: !isCollapsed });
+        },
+      }),
+      {
+        name: 'side-panel-store',
+        storage: cookiesStorage<{ isCollapsed: boolean }>(),
+        partialize: (state) => ({ isCollapsed: state.isCollapsed }), // Only persist isCollapsed state
+      },
+    ),
+  ),
+)
 
 //                   Hello there
 //                   {/*(chatId && !(chatMessageViews.indexOf(chatId) !== -1)) && <MessagesView
@@ -160,20 +210,17 @@ export function ChatBase({
     chatUUID: string | null,
     navigateTo: (to: string) => void
 }) {
-    const [leftPannelCollapsed, setLeftCollapsed] = useState(false);
+    const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
+    const setLeftCollapsed = useSidePanelCollapse(state => state.setCollapsed);
     const leftPannelRef = useRef<any>(null);
     const rightPannelRef = useRef<any>(null);
+    const setPanelRef = useSidePanelCollapse(state => state.setPanelRef);
 
-    const onToggleCollapse = () => {
-        const isCollapsed = leftPannelRef.current.isCollapsed();
-        if (isCollapsed) {
-            leftPannelRef.current.expand();
-        } else {
-            leftPannelRef.current.collapse();
-        }
-        setLeftCollapsed(!isCollapsed);
-    };
+    const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
 
+    useEffect(() => {
+        setPanelRef(leftPannelRef);
+    }, [leftPannelRef]);
 
     return <>
         <div className="flex h-screen">
