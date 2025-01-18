@@ -5,7 +5,6 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
-	"fmt"
 	"gorm.io/gorm"
 	"net/http"
 	"strconv"
@@ -44,10 +43,10 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 		}
 
 		// try to retrieve possible partner profile data
+		// TODO: properly handle errors
 		profileData := make(map[string]interface{})
 		DB.Model(&database.PublicProfile{}).Where("user_id = ?", partner.ID).First(&profileData)
-
-		fmt.Println("profileData", profileData)
+		// fmt.Println("profileData", profileData)
 
 		if isSubscriber(subscribers, partner.UUID) {
 			listedContacts[i] = ListedContact{
@@ -178,7 +177,7 @@ func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Reques
 	// Now parse the profile data
 	var profileData map[string]interface{}
 	json.Unmarshal(publicProfile.ProfileData, &profileData)
-	fmt.Println("profileData", profileData)
+	// fmt.Println("profileData", profileData)
 
 	subscribers := ch.GetSubscribers()
 	listedContact := ListedContact{
