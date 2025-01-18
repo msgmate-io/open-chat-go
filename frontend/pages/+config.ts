@@ -20,6 +20,6 @@ export default {
     lang: "en",
     // "data-theme": "light",
   },
-  ssr: false,
+  // ssr: false,
   prerender: true,
 } satisfies Config;
