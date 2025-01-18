@@ -222,7 +222,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		if err != nil {
 			return err
 		}
-		fmt.Println("chat", chat.Config)
+		// fmt.Println("chat", chat.Config)
 
 		var configMap map[string]interface{}
 		if chat.Config != nil {
@@ -240,7 +240,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		if err != nil {
 			return err
 		}
-		fmt.Println("paginatedMessages", paginatedMessages)
+		// fmt.Println("paginatedMessages", paginatedMessages)
 		openAiMessages := []map[string]string{}
 		currentMessageIncluded := false
 
