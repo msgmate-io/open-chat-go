@@ -1,4 +1,6 @@
 [
+  "/chat/new",
+  "/chat/new/{contact_token}",
   "/chat",
   "/chat/{chat_uuid}",
   "/login",
