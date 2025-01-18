@@ -6,6 +6,9 @@ import { mutate } from "swr";
 import { usePartialMessageStore } from "@/components/chat/PartialMessages";
 
 export function WebsocketHandler(){
+    if (typeof window === 'undefined') {
+        return null
+    }
     const [socketUrl, setSocketUrl] = useState('ws://localhost:1984/ws/connect');
     const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
     return <WebsocketHandlerBase sendMessage={sendMessage} lastMessage={lastMessage} readyState={readyState} />
