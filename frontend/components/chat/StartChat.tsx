@@ -3,22 +3,24 @@ import { Button } from '@/components/Button';
 import { BotSelector } from './BotSelector';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { NewBotChatCard } from './NewBotChat';
-import useSWR, { mutate } from "swr"
 import { CollapseIndicator } from "@/components/CollapseIndicator";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { cn } from "@/components/utils";
 import { useSidePanelCollapse } from "@/components/chat/ChatBase";
+import useSWR from "swr";
+import { fetcher } from "@/lib/utils";
 
 export function StartChat({
     contactToken,
-    onToggleCollapse,
     navigateTo
 }: {
     contactToken: string,
-    onToggleCollapse: () => void,
     navigateTo: (path: string) => void
 }) {
+
+    const { data: contact } = useSWR(`/api/v1/contacts/${contactToken}`, fetcher)
     const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
+    const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
     const [advancedOpen, setAdvancedOpen] = useState(false)
 
     const [text, setText] = useState("");
@@ -61,33 +63,19 @@ export function StartChat({
             <div className="absolute left-0 p-2 flex items-center content-center justify-left z-30">
                 {leftPannelCollapsed && <>
                     <CollapseIndicator leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />
-                    <BotSelector selectedModel={botConfig?.model} setSelectedModel={setSelectedModel} />
+                    <BotSelector contact={contact} selectedModel={botConfig?.model} setSelectedModel={setSelectedModel} />
                 </>}
                 {!leftPannelCollapsed && <>
-                    <BotSelector selectedModel={botConfig?.model} setSelectedModel={setSelectedModel} />
+                    <BotSelector contact={contact} selectedModel={botConfig?.model} setSelectedModel={setSelectedModel} />
                 </>}
             </div>
             <div className="absolute right-0 p-2 flex items-center content-center justify-left z-10">
-                <div>
-                    <Button variant={'outline'} className={cn('hover:bg-base-100 hover:text-base-content rounded-3xl', {
-                        'bg-base-content text-base-100': advancedOpen,
-                    })} onClick={() => {
-                        console.log('clicked')
-                        setAdvancedOpen(!advancedOpen)
-                    }}>Advanced</Button>
-                </div>
+                    {/**TODO advanced settings */}
             </div>
             <div className="flex flex-col h-full w-full lg:max-w-[900px] relativ">
                 <div className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto justify-center">
-                    {contactToken}
                     {/*{isLoading && <LoadingSpinner size={48} className="text-content" />}*/}
-                    {true && <>
-                        {/*false && <UserChatCard onChangePassword={onChangePassword} userId={userId} isLoading={isLoading} profile={profile} />*/}
-                        {true && <>
-                            {!advancedOpen && <NewBotChatCard />}
-                            {/*advancedOpen && <AdvancedChatSettings botConfig={botConfig} setBotConfig={setBotConfig} />*/}
-                        </>}
-                    </>}
+                    <NewBotChatCard />
                 </div>
                 <MessageInput ref={inputRef} onSendMessage={() => {
                     onCreateChat(text)
