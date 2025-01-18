@@ -135,7 +135,12 @@ func ServerCli() *cli.Command {
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
 			server.ServerStatus = "starting"
-			DB := database.SetupDatabase(c.String("db-backend"), c.String("db-path"), c.Bool("debug"), c.Bool("reset-db"))
+			DB := database.SetupDatabase(database.DBConfig{
+				Backend:  c.String("db-backend"),
+				FilePath: c.String("db-path"),
+				Debug:    c.Bool("debug"),
+				ResetDB:  c.Bool("reset-db"),
+			})
 
 			if c.Bool("setup-test-users") {
 				database.SetupTestUsers(DB)
