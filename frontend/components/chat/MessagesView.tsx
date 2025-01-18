@@ -5,6 +5,7 @@ import { CollapseIndicator } from "@/components/CollapseIndicator";
 import { usePartialMessageStore } from "@/components/chat/PartialMessages";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { useSidePanelCollapse } from "./ChatBase";
+import { BotDisplay } from "./BotSelector";
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
 export function MessagesScroll({ 
@@ -93,16 +94,22 @@ export function MessagesView({
     const { data: chat } = useSWR(`/api/v1/chats/${chatUUID}`, fetcher)
     const { data: messages, mutate: mutateMessages } = useSWR(`/api/v1/chats/${chatUUID}/messages/list`, fetcher)
     const { data: user } = useSWR(`/api/v1/user/self`, fetcher)
+    const { data: contact } = useSWR(`/api/v1/chats/${chatUUID}/contact`, fetcher)
+
     const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
+    
+    console.log("contact", contact)
+    console.log("chat", chat)
 
     return <>
         <div className="flex flex-col h-full w-full content-center items-center">
-            {leftPannelCollapsed && <div className="w-full flex items-center content-center justify-left">
+            <div className="w-full flex items-center content-center justify-left">
                 <div className="absolute top-0 mt-2 ml-2 z-40">
-                    <CollapseIndicator leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />
+                    {leftPannelCollapsed && <CollapseIndicator leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />}
+                    <BotDisplay selectedModel={chat?.config?.model} />
                 </div>
-            </div>}
+            </div>
             <div className="absolute left-0 p-2 flex items-center content-center justify-left z-30"></div>
             <MessagesScroll chatUUID={chatUUID} user={user} hideInput={false} messages={messages} chat={chat} />
         </div>
