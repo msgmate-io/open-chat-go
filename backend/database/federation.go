@@ -14,12 +14,10 @@ type Key struct {
 
 type Node struct {
 	Model
-	LastChanged  time.Time     `json:"last_changed"`
-	NodeName     string        `json:"node_name" gorm:"index"`
-	PeerID       string        `json:"peer_id"`
-	LatestPingId *uint         `json:"-" gorm:"index"`
-	LatestPing   *Ping         `json:"latest_ping" gorm:"foreignKey:LatestPingId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	Addresses    []NodeAddress `json:"addresses" gorm:"foreignKey:NodeID;references:ID"`
+	LastChanged time.Time     `json:"last_changed"`
+	NodeName    string        `json:"node_name" gorm:"index"`
+	PeerID      string        `json:"peer_id"`
+	Addresses   []NodeAddress `json:"addresses" gorm:"foreignKey:NodeID;references:ID"`
 }
 
 // networks can be created and joined by anybody but the password must be provided on join!
@@ -68,11 +66,4 @@ type Proxy struct {
 	TrafficOrigin string     `json:"traffic_origin"`
 	TrafficTarget string     `json:"traffic_target"`
 	ExpiresAt     *time.Time `json:"expires_at"`
-}
-
-type Ping struct {
-	Model
-	NodeID   uint      `json:"-"`
-	Node     Node      `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	PingedAt time.Time `json:"pinged_at"`
 }
