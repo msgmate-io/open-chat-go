@@ -9,7 +9,10 @@ export function WebsocketHandler(){
     if (typeof window === 'undefined') {
         return null
     }
-    const [socketUrl, setSocketUrl] = useState('ws://localhost:1984/ws/connect');
+    const [socketUrl, setSocketUrl] = useState(() => {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}/ws/connect`;
+    });
     const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
     return <WebsocketHandlerBase sendMessage={sendMessage} lastMessage={lastMessage} readyState={readyState} />
 }
