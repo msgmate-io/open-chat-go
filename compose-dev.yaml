@@ -10,6 +10,8 @@ services:
     volumes:
       - ./backend:/backend
     environment:
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
       HOST: "0.0.0.0"
       PORT: 1984
       PP2P: 1985
