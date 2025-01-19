@@ -83,7 +83,7 @@ export function BotDisplay({
     selectedModel: string
 }) {
     return (
-        <div className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-secondary">
+        <div className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-secondary text-secondary-foreground font-bold">
             {selectedModel}
         </div>
     )
