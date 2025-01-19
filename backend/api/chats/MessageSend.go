@@ -13,6 +13,11 @@ type SendMessage struct {
 	Text string `json:"text"`
 }
 
+type SendMessageWithReasoning struct {
+	Text      string   `json:"text"`
+	Reasoning []string `json:"reasoning"`
+}
+
 // Send a message to a chat
 //
 //	@Summary      Send a message
@@ -159,7 +164,7 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data SendMessage) {
+func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data SendMessageWithReasoning) {
 	ch.MessageHandler.SendMessage(
 		ch,
 		receiverId,
@@ -167,6 +172,7 @@ func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, cha
 			chatUuid,
 			user.UUID,
 			data.Text,
+			data.Reasoning,
 		),
 	)
 }
