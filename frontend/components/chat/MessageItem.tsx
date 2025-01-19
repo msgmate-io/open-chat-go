@@ -63,14 +63,24 @@ const CodeBlock = ({className, children}: {className?: string, children: any}) =
         {children}
       </code>
       </pre> :
-    <code data-language={language}>
+    <code data-language={language} className="text-foreground">
       {children}
     </code>
   )
 }
 
-export function noPre({children}: {children: any}){
-    return <>{children}</>
+export function MessageLink({children, props}: {children: any, props: any}) {
+    return <a className="text-foreground" {...props}>{children}</a>
+}
+
+export function MessageMarkdown({children}: {children: any}) {
+    return <Markdown components={{
+        strong: ({children, ...props}) => <strong className="text-foreground" {...props}>{children}</strong>,
+        a: ({children, ...props}) => <MessageLink props={props}>{children}</MessageLink>,
+        p: ({children, ...props}) => <>{children}</>,
+        code: ({children, ...props}) => <CodeBlock {...props}>{children}</CodeBlock>,
+        pre: ({children, ...props}) => <CodeWrapper {...props}>{children}</CodeWrapper>
+    }}>{children}</Markdown>
 }
 
 export function UserMessageItem({
@@ -94,15 +104,9 @@ export function UserMessageItem({
                 {selfIsSender ? "You" : `${chat?.partner?.name}`}
             </div>
             <div className="article prose w-95 overflow-x-auto">
-                <Markdown components={{
-                    // Remove the pre override
-                    p: noPre,
-                    code: CodeBlock,
-                    // Add a wrapper for code blocks
-                    pre: CodeWrapper
-                }}>
+                <MessageMarkdown>
                     {message.text}
-                </Markdown>
+                </MessageMarkdown>
             </div>
         </div>
     </div>
@@ -120,14 +124,10 @@ export function BotMessageItem({
     if(selfIsSender){
         return <div key={message.uuid} className="flex flex-row w-full relativ max-w-full">
             <div className="flex grow content-center items-end justify-end">
-                <div className="article prose w-95 overflow-x-auto p-2 px-4 rounded-2xl bg-secondary">
-                    <Markdown components={{
-                        p: noPre,
-                        code: CodeBlock,
-                        pre: CodeWrapper
-                    }}>
+                <div className="article prose w-95 overflow-x-auto p-2 px-4 rounded-2xl bg-background text-foreground">
+                    <MessageMarkdown>
                         {message.text}
-                    </Markdown>
+                    </MessageMarkdown>
                 </div>
             </div>
         </div>
@@ -137,14 +137,10 @@ export function BotMessageItem({
                 <img alt="logo" className="h-9 w-9 m-2 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
             </div>
             <div className="w-full flex flex-col flex-grow relative">
-                <div className="article prose w-[90%] pt-3 pl-1 overflow-x-auto">
-                    <Markdown components={{
-                        p: noPre, 
-                        code: CodeBlock,
-                        pre: CodeWrapper
-                    }}>
+                <div className="article prose w-[90%] pt-3 pl-1 overflow-x-auto text-foreground">
+                    <MessageMarkdown>
                         {message.text}
-                    </Markdown>
+                    </MessageMarkdown>
                 </div>
             </div>
         </div>
