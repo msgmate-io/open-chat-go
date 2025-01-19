@@ -151,12 +151,16 @@ func BackendRouting(
 	federationHandler *federation.FederationHandler,
 	debug bool,
 	frontendProxy string,
+	cookieDomain string,
 ) (*http.ServeMux, *websocket.WebSocketHandler) {
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
 	websocketMux := http.NewServeMux()
 
-	userHandler := &user.UserHandler{}
+	userHandler := &user.UserHandler{
+		DB:           DB,
+		CookieDomain: cookieDomain,
+	}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
 	metricsHandler := &metrics.MetricsHandler{}
@@ -224,13 +228,10 @@ func BackendRouting(
 	mux.HandleFunc("/reference", reference.ScalarReference)
 	mux.HandleFunc("/api/reference", reference.ScalarReference)
 
-	// server frontend or proxy to dev-frontend
 	if frontendProxy == "" {
-		// in production all frontend routes are staticly prebuild
 		routes, err := getFrontendRoutes()
 		if err != nil {
 			log.Printf("Warning: Failed to load routes from routes.json: %v", err)
-			// Fallback to empty routes list
 			routes = []string{}
 		}
 
