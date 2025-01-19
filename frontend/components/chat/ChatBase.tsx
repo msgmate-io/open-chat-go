@@ -120,7 +120,7 @@ export const ResizableChatLayout = forwardRef(({
                 {...(biggerThanSm ? desktopConfig.left : mobileConfig.left)}
                 order={1}
             >
-                <div className="flex flex-col h-full bg-secondary relative">
+                <div className="flex flex-col h-full bg-background relative">
                     {left}
                 </div>
             </ResizablePanel>
@@ -132,7 +132,7 @@ export const ResizableChatLayout = forwardRef(({
                 {...(biggerThanSm ? desktopConfig.right : mobileConfig.right)}
                 order={2}
             >
-                <div className="flex h-full items-center justify-center content-center relative">
+                <div className="flex h-full items-center justify-center content-center relative bg-secondary">
                     {right}
                 </div>
             </ResizablePanel>
