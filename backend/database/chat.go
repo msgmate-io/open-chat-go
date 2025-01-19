@@ -17,6 +17,7 @@ type Message struct {
 	Chat       Chat       `json:"-" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	Content    *[]byte    `json:"-"`
 	Text       *string    `json:"text"`
+	Reasoning  *[]string  `json:"reasoning"`
 }
 
 type SharedChatConfig struct {
