@@ -233,6 +233,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 
 		endpoint := mapGetOrDefault[string](configMap, "endpoint", "http://localai:8080")
 		model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
+		reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
 		context := mapGetOrDefault[int64](configMap, "context", 10)
 
 		// Load the past messages
@@ -383,7 +384,9 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	var botProfile database.PublicProfile
 	DB.Where("user_id = ?", botUser.ID).First(&botProfile)
 	if botProfile.ID != 0 {
-		return nil
+		// Delete the old profile
+		DB.Delete(&botProfile)
+		// and overwrite it with the new one
 	}
 
 	botProfileInfo := map[string]interface{}{
@@ -436,6 +439,33 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 					"temperature":   0.7,
 					"max_tokens":    4096,
 					"model":         "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "deepseek-ai/DeepSeek-V3",
+				"description": "DeepSeek's DeepSeek V3, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"model":         "deepseek-ai/DeepSeek-V3",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "deepseek-ai/DeepSeek-R1",
+				"description": "DeepSeek's DeepSeek Coder, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"reasoning":     true,
+					"model":         "deepseek-ai/DeepSeek-R1",
 					"endpoint":      "https://api.deepinfra.com/v1/openai",
 					"backend":       "deepinfra",
 					"context":       10,

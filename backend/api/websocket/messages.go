@@ -16,9 +16,10 @@ type UserWentOnline struct {
 type NewMessage struct {
 	Type    string `json:"type"`
 	Content struct {
-		ChatUUID   string `json:"chat_uuid"`
-		SenderUUID string `json:"sender_uuid"`
-		Text       string `json:"text"`
+		ChatUUID   string   `json:"chat_uuid"`
+		SenderUUID string   `json:"sender_uuid"`
+		Text       string   `json:"text"`
+		Reasoning  []string `json:"reasoning"`
 	} `json:"content"`
 }
 
@@ -112,17 +113,19 @@ func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string) []byte {
 	return encMsg
 }
 
-func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string) []byte {
+func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string) []byte {
 	msg := NewMessage{
 		Type: "new_message",
 		Content: struct {
-			ChatUUID   string `json:"chat_uuid"`
-			SenderUUID string `json:"sender_uuid"`
-			Text       string `json:"text"`
+			ChatUUID   string   `json:"chat_uuid"`
+			SenderUUID string   `json:"sender_uuid"`
+			Text       string   `json:"text"`
+			Reasoning  []string `json:"reasoning"`
 		}{
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
+			Reasoning:  Reasoning,
 		},
 	}
 
