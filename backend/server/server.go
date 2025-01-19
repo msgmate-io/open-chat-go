@@ -5,6 +5,7 @@ import (
 	"backend/api/websocket"
 	"backend/database"
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -18,7 +19,6 @@ import (
 )
 
 var Config *cli.Command
-var ServerStatus string = "unknown"
 
 func makeHost(port int, randomness io.Reader) (host.Host, error) {
 	// Creates a new RSA key pair for this host.
@@ -67,32 +67,67 @@ func writeData(rw *bufio.ReadWriter, message string) error {
 }
 
 func BackendServer(
-	db *gorm.DB,
+	DB *gorm.DB,
 	federationHandler *federation.FederationHandler,
 	host string,
 	port int64,
 	debug bool,
 	ssl bool,
+	sslKeyPrefix string,
 	frontendProxy string,
-) (*http.Server, *websocket.WebSocketHandler, string) {
+) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	var protocol string
 	var fullHost string
 
-	router, websocketHandler := BackendRouting(db, federationHandler, debug, frontendProxy)
+	router, websocketHandler := BackendRouting(DB, federationHandler, debug, frontendProxy)
+	var server *http.Server
 	if ssl {
 		protocol = "https"
+
+		var certPEM, keyPEM, issuerPEM database.Key
+		var certPEMBytes, keyPEMBytes []byte
+		// for tls proviving keyPrefix is required!
+		q := DB.Where("key_type = ? AND key_name = ?", "cert", fmt.Sprintf("%s_cert.pem", sslKeyPrefix)).First(&certPEM)
+		if q.Error != nil {
+			return nil, nil, "", fmt.Errorf("Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!")
+		}
+		q = DB.Where("key_type = ? AND key_name = ?", "key", fmt.Sprintf("%s_key.pem", sslKeyPrefix)).First(&keyPEM)
+		if q.Error != nil {
+			return nil, nil, "", fmt.Errorf("Couldn't find key key for node, if you want to use TLS for this proxy create the keys first!")
+		}
+		q = DB.Where("key_type = ? AND key_name = ?", "issuer", fmt.Sprintf("%s_issuer.pem", sslKeyPrefix)).First(&issuerPEM)
+		if q.Error != nil {
+			return nil, nil, "", fmt.Errorf("Couldn't find issuer key for node, if you want to use TLS for this proxy create the keys first!")
+		}
+
+		certPEMBytes = certPEM.KeyContent
+		keyPEMBytes = keyPEM.KeyContent
+		cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+		if err != nil {
+			log.Printf("Error loading certificates: %v", err)
+			return nil, nil, "", fmt.Errorf("Error loading certificates: %v", err)
+		}
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+
+		server = &http.Server{
+			Addr:      fmt.Sprintf("%s:%d", host, port),
+			Handler:   router,
+			TLSConfig: tlsConfig,
+		}
+		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 	} else {
 		protocol = "http"
+		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
+
+		server = &http.Server{
+			Addr:    fmt.Sprintf("%s:%d", host, port),
+			Handler: router,
+		}
 	}
 
-	fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
-
-	server := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", host, port),
-		Handler: router,
-	}
-
-	return server, websocketHandler, fullHost
+	return server, websocketHandler, fullHost, nil
 }
 
 func SetupBaseConnections(
