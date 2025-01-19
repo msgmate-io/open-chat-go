@@ -6,6 +6,7 @@ import { usePartialMessageStore } from "@/components/chat/PartialMessages";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { useSidePanelCollapse } from "./ChatBase";
 import { BotDisplay } from "./BotSelector";
+import { PendingMessageItem } from "./PendingMessageItem";
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
 export function MessagesScroll({ 
@@ -79,6 +80,7 @@ export function MessagesScroll({
         <div ref={scrollRef} className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto relative pb-4 pt-2">
             {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
             {chatUUID && partialMessages?.[chatUUID] && <MessageItem key={`msg_${chatUUID}`} message={{text: partialMessages[chatUUID]}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
+            <PendingMessageItem />
         </div>
         {!hideInput && <MessageInput text={text} setText={setText} isLoading={isSendingMessage} isBotResponding={isBotResponding} stopBotResponse={onStopBotResponse} onSendMessage={onSendMessage} ref={inputRef} />}
     </div>
