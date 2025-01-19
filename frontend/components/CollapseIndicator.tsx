@@ -16,10 +16,7 @@ export const CollapseIndicator = ({
         }
     }
 
-    return <div className={cn("flex p-2 rounded-xl hover:bg-accent", {
-        "hover:bg-base-100": !leftPannelCollapsed,
-        "hover:bg-base-300": leftPannelCollapsed
-    })} onClick={onClick}>
+    return <div className={cn("flex p-2 rounded-xl hover:bg-secondary")} onClick={onClick}>
         <CollapseSvgIcon />
     </div>
 }
