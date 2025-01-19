@@ -67,6 +67,13 @@ func GetServerFlags() []cli.Flag {
 			Value:   false,
 			Usage:   "enable ssl",
 		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("TLS_KEY_PREFIX"),
+			Name:    "tls-key-prefix",
+			Aliases: []string{"tkp"},
+			Value:   "",
+			Usage:   "prefix for the TLS certificates",
+		},
 		&cli.IntFlag{
 			Sources: cli.EnvVars("PORT"),
 			Name:    "port",
@@ -134,7 +141,6 @@ func ServerCli() *cli.Command {
 		Usage: "make an explosive entrance",
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
-			server.ServerStatus = "starting"
 			DB := database.SetupDatabase(database.DBConfig{
 				Backend:  c.String("db-backend"),
 				FilePath: c.String("db-path"),
@@ -153,7 +159,10 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			s, ch, fullHost := server.BackendServer(DB, federationHandler, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("frontend-proxy"))
+			s, ch, fullHost, err := server.BackendServer(DB, federationHandler, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("tls-key-prefix"), c.String("frontend-proxy"))
+			if err != nil {
+				return err
+			}
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
@@ -302,10 +311,13 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			server.ServerStatus = "running"
 			server.StartProxies(DB, federationHandler)
 
-			err = s.ListenAndServe()
+			if c.Bool("ssl") {
+				err = s.ListenAndServeTLS("", "")
+			} else {
+				err = s.ListenAndServe()
+			}
 
 			if err != nil {
 				return err
