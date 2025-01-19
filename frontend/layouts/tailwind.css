@@ -7,6 +7,8 @@
 @plugin "tailwindcss-animate";
 
 @tailwind components;
+@plugin "tailwindcss-animate";
+
 @tailwind utilities;
 
 @keyframes breatheAnimation {
@@ -255,7 +257,7 @@
 
 .dark {
   --background: #191e24;
-  --foreground: hsl(0 0% 98%);
+  --foreground: #a6adbb;;
   --card: hsl(0, 46%, 47%);
   --card-foreground: hsl(0 0% 98%);
   --popover: #191e24;
@@ -263,7 +265,7 @@
   --primary: hsl(0 0% 98%);
   --primary-foreground: hsl(0, 92%, 19%);
   --secondary: #1d232a;
-  --secondary-foreground: hsl(0 0% 98%);
+  --secondary-foreground: #a6adbb;
   --muted: hsl(0 0% 14.9%);
   --muted-foreground: hsl(0 0% 63.9%);
   --accent: hsl(321, 53%, 34%);
@@ -273,7 +275,7 @@
   --border: hsl(0 0% 14.9%);
   --input: hsl(0 0% 14.9%);
   --ring: hsl(0 0% 83.1%);
-  --chart-1: hsl(220 70% 50%);
+  --chart-1: hsl(220, 60%, 62%);
   --chart-2: hsl(160 60% 45%);
   --chart-3: hsl(30 80% 55%);
   --chart-4: hsl(280 65% 60%);
