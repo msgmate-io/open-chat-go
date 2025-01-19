@@ -52,7 +52,6 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO check for blocked users
-
 	// Small optimization, try to always ensure User1Id < User2Id
 	var chat database.Chat
 	if user.ID < otherUser.ID {
