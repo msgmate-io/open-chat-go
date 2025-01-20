@@ -9,11 +9,11 @@ import (
 )
 
 type ListedMessage struct {
-	UUID       string   `json:"uuid"`
-	SendAt     string   `json:"send_at"`
-	SenderUUID string   `json:"sender_uuid"`
-	Text       string   `json:"text"`
-	Reasoning  []string `json:"reasoning"`
+	UUID       string    `json:"uuid"`
+	SendAt     string    `json:"send_at"`
+	SenderUUID string    `json:"sender_uuid"`
+	Text       string    `json:"text"`
+	Reasoning  *[]string `json:"reasoning"`
 }
 
 func convertMessageToListedMessage(message database.Message) ListedMessage {
@@ -22,7 +22,7 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 		SendAt:     message.CreatedAt.String(),
 		SenderUUID: message.Sender.UUID,
 		Text:       *message.Text,
-		Reasoning:  *message.Reasoning,
+		Reasoning:  message.Reasoning,
 	}
 }
 

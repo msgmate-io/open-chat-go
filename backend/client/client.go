@@ -24,7 +24,8 @@ import (
 )
 
 type SendMessage struct {
-	Text string `json:"text"`
+	Text      string   `json:"text"`
+	Reasoning []string `json:"reasoning"`
 }
 
 type Client struct {
