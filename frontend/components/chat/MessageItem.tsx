@@ -12,6 +12,13 @@ import 'prismjs/components/prism-typescript'
 import 'prismjs/components/prism-bash'
 import 'prismjs/components/prism-json'
 import React from 'react'
+import { PendingMessageItem, ShinyText } from "./PendingMessageItem"
+import {
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
+  } from "@/components/ui/collapsible"
+  
 
 // Add this custom wrapper component for code blocks
 const CodeWrapper = ({children}: {children: any}) => {
@@ -73,14 +80,47 @@ export function MessageLink({children, props}: {children: any, props: any}) {
     return <a className="text-foreground" {...props}>{children}</a>
 }
 
+class MessageMarkdownErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(_: Error) {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div className="text-foreground">couldn't render</div>;
+    }
+
+    return this.props.children;
+  }
+}
+
 export function MessageMarkdown({children}: {children: any}) {
-    return <Markdown components={{
-        strong: ({children, ...props}) => <strong className="text-foreground" {...props}>{children}</strong>,
-        a: ({children, ...props}) => <MessageLink props={props}>{children}</MessageLink>,
-        p: ({children, ...props}) => <>{children}</>,
-        code: ({children, ...props}) => <CodeBlock {...props}>{children}</CodeBlock>,
-        pre: ({children, ...props}) => <CodeWrapper {...props}>{children}</CodeWrapper>
-    }}>{children}</Markdown>
+    return (
+      <MessageMarkdownErrorBoundary>
+        <Markdown components={{
+            blockquote: ({children, ...props}) => <blockquote className="text-foreground" {...props}>{children}</blockquote>,
+            h1: ({children, ...props}) => <h1 className="text-foreground" {...props}>{children}</h1>,
+            h2: ({children, ...props}) => <h2 className="text-foreground" {...props}>{children}</h2>,
+            h3: ({children, ...props}) => <h3 className="text-foreground" {...props}>{children}</h3>,
+            h4: ({children, ...props}) => <h4 className="text-foreground" {...props}>{children}</h4>,
+            h5: ({children, ...props}) => <h5 className="text-foreground" {...props}>{children}</h5>,
+            h6: ({children, ...props}) => <h6 className="text-foreground" {...props}>{children}</h6>,
+            strong: ({children, ...props}) => <strong className="text-foreground" {...props}>{children}</strong>,
+            a: ({children, ...props}) => <MessageLink props={props}>{children}</MessageLink>,
+            p: ({children, ...props}) => <>{children}</>,
+            code: ({children, ...props}) => <CodeBlock {...props}>{children}</CodeBlock>,
+            pre: ({children, ...props}) => <CodeWrapper {...props}>{children}</CodeWrapper>
+        }}>{children}</Markdown>
+      </MessageMarkdownErrorBoundary>
+    );
 }
 
 export function UserMessageItem({
@@ -112,6 +152,10 @@ export function UserMessageItem({
     </div>
 }
 
+function wrapInBlockquote(children: any) {
+    return <blockquote className="text-foreground text-sm">{children}</blockquote>
+}
+
 export function BotMessageItem({
     message,
     chat,
@@ -132,12 +176,30 @@ export function BotMessageItem({
             </div>
         </div>
     }else{
+        console.log("message thoughts", message?.thoughts)
         return <div key={message.uuid} className="flex flex-row w-full relativ max-w-full">
             <div className="flex p-2 hidden md:flex">
                 <img alt="logo" className="h-9 w-9 m-2 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
             </div>
             <div className="w-full flex flex-col flex-grow relative">
                 <div className="article prose w-[90%] pt-3 pl-1 overflow-x-auto text-foreground">
+                    {message?.text === "" && message.thoughts.length === 0 && <ShinyText>Booting AI...</ShinyText>}
+                    {message?.text === "" && message.thoughts.length > 0 && <Collapsible open={true} id="thoughts">
+                        <CollapsibleTrigger><ShinyText>Thinking...</ShinyText></CollapsibleTrigger>
+                        <CollapsibleContent>
+                            {message?.thoughts?.map((thought: any, index: number) => (
+                                <div key={index}>{wrapInBlockquote(thought)}</div>
+                            ))}
+                        </CollapsibleContent>
+                    </Collapsible>}
+                    {message?.text !== "" && message?.thoughts?.length > 0 && <Collapsible id="thoughts">
+                      <CollapsibleTrigger>Show thoughts</CollapsibleTrigger>
+                      <CollapsibleContent>
+                        {message?.thoughts?.map((thought: any, index: number) => (
+                            <div key={index}>{wrapInBlockquote(thought)}</div>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>}
                     <MessageMarkdown>
                         {message.text}
                     </MessageMarkdown>
