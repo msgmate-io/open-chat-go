@@ -52,9 +52,12 @@ export function StartChat({
     }
 
     const setSelectedModel = (model: string) => {
+        const contactConfig = contact?.profile_data?.models?.find(m => m.title === model)
+        console.log("contactConfig", contactConfig)
         setBotConfig((prev) => ({
             ...prev,
-            model
+            model,
+            ...contactConfig?.configuration
         }))
     }
 
