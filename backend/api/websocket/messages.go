@@ -26,9 +26,10 @@ type NewMessage struct {
 type NewPartialMessage struct {
 	Type    string `json:"type"`
 	Content struct {
-		ChatUUID   string `json:"chat_uuid"`
-		SenderUUID string `json:"sender_uuid"`
-		Text       string `json:"text"`
+		ChatUUID   string   `json:"chat_uuid"`
+		SenderUUID string   `json:"sender_uuid"`
+		Text       string   `json:"text"`
+		Reasoning  []string `json:"reasoning"`
 	} `json:"content"`
 }
 
@@ -95,17 +96,19 @@ func (m *Messages) EndPartialMessage(ChatUUID, SenderUUID string) []byte {
 	return encMsg
 }
 
-func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string) []byte {
+func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasoning []string) []byte {
 	msg := NewPartialMessage{
 		Type: "new_partial_message",
 		Content: struct {
-			ChatUUID   string `json:"chat_uuid"`
-			SenderUUID string `json:"sender_uuid"`
-			Text       string `json:"text"`
+			ChatUUID   string   `json:"chat_uuid"`
+			SenderUUID string   `json:"sender_uuid"`
+			Text       string   `json:"text"`
+			Reasoning  []string `json:"reasoning"`
 		}{
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
+			Reasoning:  Reasoning,
 		},
 	}
 
