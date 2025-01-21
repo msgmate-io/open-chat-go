@@ -68,13 +68,17 @@ type NodeAddress struct {
 
 type Proxy struct {
 	Model
-	NodeID        uint   `json:"-"`
-	Node          Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	Port          string `json:"port"`
-	Active        bool   `json:"active"`
-	UseTLS        bool   `json:"use_tls"`
-	Kind          string `json:"kind"`
+	NodeID uint   `json:"-"`
+	Node   Node   `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	Port   string `json:"port"`
+	Active bool   `json:"active"`
+	UseTLS bool   `json:"use_tls"`
+	// supported Kinds: tcp, http
+	Kind string `json:"kind"`
+	// supported Directions: 'egress' ( route traffic from a proxy to libp2p stream ), 'ingress' ( route traffic coming from a libp2p stream )
+	Direction     string `json:"direction"`
 	TrafficOrigin string `json:"traffic_origin"`
+	TrafficTarget string `json:"traffic_target"`
 	// If we have UseTLS=true, we assume there are 3 keys with names <proxy_id>_cert.pem, <proxy_id>_key.pem, <proxy_id>_issuer.pem
 }
 
