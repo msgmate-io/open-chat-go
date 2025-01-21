@@ -156,6 +156,22 @@ function wrapInBlockquote(children: any) {
     return <blockquote className="text-foreground text-sm">{children}</blockquote>
 }
 
+import { ThumbsUp, ThumbsDown, Volume2, Clipboard, Pen, RefreshCcw } from "lucide-react";
+
+const BotMessageToolbar = ({message}: {message: any}) => {
+  return (
+    <div className="flex items-center gap-3 p-2 rounded-lg text-foreground">
+      <Clipboard className="cursor-pointer hover:text-foreground" size={20} />
+      {/*   <ThumbsUp className="cursor-pointer hover:text-foreground" size={20} />
+      <ThumbsDown className="cursor-pointer hover:text-foreground" size={20} />
+      <Volume2 className="cursor-pointer hover:text-foreground" size={20} />*/}
+      {/*<Pen className="cursor-pointer hover:text-white" size={20} />*/}
+      <RefreshCcw className="cursor-pointer hover:text-foreground" size={20} />
+      <span className="text-foreground text-sm">Generated in {message?.meta_data?.total_time}</span>
+    </div>
+  );
+};
+
 export function BotMessageItem({
     message,
     chat,
@@ -185,7 +201,7 @@ export function BotMessageItem({
                 <div className="article prose w-[90%] pt-3 pl-1 overflow-x-auto text-foreground">
                     {message?.text === "" && message.thoughts.length === 0 && <ShinyText>Booting AI...</ShinyText>}
                     {message?.text === "" && message.thoughts.length > 0 && <Collapsible open={true} id="thoughts">
-                        <CollapsibleTrigger><ShinyText>Thinking...</ShinyText></CollapsibleTrigger>
+                        <CollapsibleTrigger><ShinyText>Thinking... ({message?.meta_data?.thinking_time})</ShinyText></CollapsibleTrigger>
                         <CollapsibleContent>
                             {message?.thoughts?.map((thought: any, index: number) => (
                                 <div key={index}>{wrapInBlockquote(thought)}</div>
@@ -193,7 +209,7 @@ export function BotMessageItem({
                         </CollapsibleContent>
                     </Collapsible>}
                     {message?.text !== "" && message?.thoughts?.length > 0 && <Collapsible id="thoughts">
-                      <CollapsibleTrigger>Show thoughts</CollapsibleTrigger>
+                      <CollapsibleTrigger>Thoughts for {message?.meta_data?.thinking_time}</CollapsibleTrigger>
                       <CollapsibleContent>
                         {message?.thoughts?.map((thought: any, index: number) => (
                             <div key={index}>{wrapInBlockquote(thought)}</div>
@@ -203,6 +219,7 @@ export function BotMessageItem({
                     <MessageMarkdown>
                         {message.text}
                     </MessageMarkdown>
+                    <BotMessageToolbar message={message} />
                 </div>
             </div>
         </div>
