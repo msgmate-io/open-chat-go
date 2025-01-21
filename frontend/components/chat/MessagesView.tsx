@@ -23,10 +23,10 @@ export function MessagesScroll({
     hideInput: boolean;
 }) {
     const [text, setText] = useState("");
-    const [stickScroll, setStickScroll] = useState(false)                                                                                                                                                            
-    const { partialMessages, addPartialMessage, removePartialMessage } = usePartialMessageStore()                                                                                                                    
+    const [stickScroll, setStickScroll] = useState(true);  // Start with sticky scroll enabled
+    const [showScrollButton, setShowScrollButton] = useState(false);
+    const { partialMessages, addPartialMessage, removePartialMessage } = usePartialMessageStore()
     const [isSendingMessage, setIsSendingMessage] = useState(false)
-    console.log("partialMessages", partialMessages)
 
     const scrollRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -36,7 +36,31 @@ export function MessagesScroll({
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight
         }
     }
-                                                                                                                                                                                                                      
+
+    // New function to check if scrolled to bottom
+    const isScrolledToBottom = () => {
+        if (scrollRef.current) {
+            const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+            return Math.abs(scrollHeight - clientHeight - scrollTop) < 10;
+        }
+        return false;
+    }
+
+    // New scroll event handler
+    const handleScroll = () => {
+        const scrolledToBottom = isScrolledToBottom();
+        setStickScroll(scrolledToBottom);
+        setShowScrollButton(!scrolledToBottom);
+    }
+
+    useEffect(() => {
+        const scrollElement = scrollRef.current;
+        if (scrollElement) {
+            scrollElement.addEventListener('scroll', handleScroll);
+            return () => scrollElement.removeEventListener('scroll', handleScroll);
+        }
+    }, []);
+
     useEffect(() => {
         if(chatUUID && partialMessages?.[chatUUID] && stickScroll){
             scrollToBottom()
@@ -44,7 +68,9 @@ export function MessagesScroll({
     }, [partialMessages])
 
     useEffect(() => {
-        scrollToBottom()
+        if (stickScroll) {
+            scrollToBottom()
+        }
     }, [messages])
 
     const onSendMessage = async () => {
@@ -82,6 +108,16 @@ export function MessagesScroll({
             {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={{text: message.text, thoughts: message.reasoning}} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
             {chatUUID && partialMessages?.[chatUUID] && <MessageItem key={`msg_${chatUUID}`} message={{text: partialMessages[chatUUID]?.text, thoughts: partialMessages[chatUUID]?.thoughts}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
         </div>
+        {showScrollButton && (
+            <button 
+                onClick={scrollToBottom}
+                className="fixed bottom-24 right-8 bg-gray-800 hover:bg-gray-700 text-white rounded-full p-3 shadow-lg transition-all"
+            >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                </svg>
+            </button>
+        )}
         {!hideInput && <MessageInput text={text} setText={setText} isLoading={isSendingMessage} isBotResponding={isBotResponding} stopBotResponse={onStopBotResponse} onSendMessage={onSendMessage} ref={inputRef} />}
     </div>
 }
