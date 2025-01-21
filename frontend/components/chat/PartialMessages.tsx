@@ -4,6 +4,7 @@ import { devtools } from "zustand/middleware";
 export interface PartialMessage {
     text: string;
     thoughts: string[];
+    meta_data: any;
 }
 
 export interface PartialMessageState {
@@ -19,10 +20,10 @@ export const usePartialMessageStore = create<PartialMessageState>()(
         (set) => ({
             partialMessages: {},
             addPartialMessage: (uuid: string, message: PartialMessage) => set((state) => ({ 
-                partialMessages: { ...state.partialMessages, [uuid]: message } 
+                partialMessages: { ...state.partialMessages, [uuid]: { ...message, thoughts: [], meta_data: {} } } 
             })),
             appendPartialMessage: (uuid: string, message: Partial<PartialMessage>) => set((state) => {
-                const currentMessage = state.partialMessages[uuid] || { text: "", thoughts: [] };
+                const currentMessage = state.partialMessages[uuid] || { text: "", thoughts: [], meta_data: {} };
                 return { 
                     partialMessages: { 
                         ...state.partialMessages, 
@@ -34,7 +35,8 @@ export const usePartialMessageStore = create<PartialMessageState>()(
                                         ? thought + (message.thoughts?.[index] || '')
                                         : thought
                                   ).concat(message.thoughts?.slice(currentMessage.thoughts.length) || [])
-                                : currentMessage.thoughts
+                                : currentMessage.thoughts,
+                            meta_data: message.meta_data || currentMessage.meta_data
                         }
                     } 
                 }
