@@ -10,19 +10,22 @@ import (
 
 // TODO: allow different message types
 type SendMessage struct {
-	Text      string    `json:"text"`
-	Reasoning *[]string `json:"reasoning,omitempty"`
+	Text      string                  `json:"text"`
+	Reasoning *[]string               `json:"reasoning,omitempty"`
+	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
-	Text      string   `json:"text"`
-	Reasoning []string `json:"reasoning"`
+	Text      string                  `json:"text"`
+	Reasoning []string                `json:"reasoning"`
+	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
 }
 
 // MessageData interface for different message types
 type MessageData interface {
 	GetText() string
 	GetReasoning() []string
+	GetMetaData() *map[string]interface{}
 }
 
 // Add GetText and GetReasoning methods to both types
@@ -37,12 +40,20 @@ func (m SendMessage) GetReasoning() []string {
 	return *m.Reasoning
 }
 
+func (m SendMessage) GetMetaData() *map[string]interface{} {
+	return m.MetaData
+}
+
 func (m SendMessageWithReasoning) GetText() string {
 	return m.Text
 }
 
 func (m SendMessageWithReasoning) GetReasoning() []string {
 	return m.Reasoning
+}
+
+func (m SendMessageWithReasoning) GetMetaData() *map[string]interface{} {
+	return m.MetaData
 }
 
 // Send a message to a chat
@@ -113,6 +124,14 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	// Only set Reasoning if it's not nil
 	if data.Reasoning != nil {
 		message.Reasoning = data.Reasoning
+	}
+
+	// Only set MetaData if it's not nil
+	if data.MetaData != nil {
+		metadataBytes, err := json.Marshal(data.MetaData)
+		if err == nil {
+			message.MetaData = metadataBytes
+		}
 	}
 
 	q := DB.Create(&message)
@@ -205,6 +224,7 @@ func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, cha
 			user.UUID,
 			data.GetText(),
 			data.GetReasoning(),
+			data.GetMetaData(),
 		),
 	)
 }

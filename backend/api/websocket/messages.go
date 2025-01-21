@@ -16,20 +16,22 @@ type UserWentOnline struct {
 type NewMessage struct {
 	Type    string `json:"type"`
 	Content struct {
-		ChatUUID   string   `json:"chat_uuid"`
-		SenderUUID string   `json:"sender_uuid"`
-		Text       string   `json:"text"`
-		Reasoning  []string `json:"reasoning"`
+		ChatUUID   string                  `json:"chat_uuid"`
+		SenderUUID string                  `json:"sender_uuid"`
+		Text       string                  `json:"text"`
+		Reasoning  []string                `json:"reasoning"`
+		MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
 	} `json:"content"`
 }
 
 type NewPartialMessage struct {
 	Type    string `json:"type"`
 	Content struct {
-		ChatUUID   string   `json:"chat_uuid"`
-		SenderUUID string   `json:"sender_uuid"`
-		Text       string   `json:"text"`
-		Reasoning  []string `json:"reasoning"`
+		ChatUUID   string                  `json:"chat_uuid"`
+		SenderUUID string                  `json:"sender_uuid"`
+		Text       string                  `json:"text"`
+		Reasoning  []string                `json:"reasoning"`
+		MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
 	} `json:"content"`
 }
 
@@ -96,19 +98,21 @@ func (m *Messages) EndPartialMessage(ChatUUID, SenderUUID string) []byte {
 	return encMsg
 }
 
-func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasoning []string) []byte {
+func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}) []byte {
 	msg := NewPartialMessage{
 		Type: "new_partial_message",
 		Content: struct {
-			ChatUUID   string   `json:"chat_uuid"`
-			SenderUUID string   `json:"sender_uuid"`
-			Text       string   `json:"text"`
-			Reasoning  []string `json:"reasoning"`
+			ChatUUID   string                  `json:"chat_uuid"`
+			SenderUUID string                  `json:"sender_uuid"`
+			Text       string                  `json:"text"`
+			Reasoning  []string                `json:"reasoning"`
+			MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
 		}{
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
 			Reasoning:  Reasoning,
+			MetaData:   MetaData,
 		},
 	}
 
@@ -116,19 +120,21 @@ func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasonin
 	return encMsg
 }
 
-func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string) []byte {
+func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}) []byte {
 	msg := NewMessage{
 		Type: "new_message",
 		Content: struct {
-			ChatUUID   string   `json:"chat_uuid"`
-			SenderUUID string   `json:"sender_uuid"`
-			Text       string   `json:"text"`
-			Reasoning  []string `json:"reasoning"`
+			ChatUUID   string                  `json:"chat_uuid"`
+			SenderUUID string                  `json:"sender_uuid"`
+			Text       string                  `json:"text"`
+			Reasoning  []string                `json:"reasoning"`
+			MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
 		}{
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
 			Reasoning:  Reasoning,
+			MetaData:   MetaData,
 		},
 	}
 
