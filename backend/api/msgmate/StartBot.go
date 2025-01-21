@@ -193,6 +193,10 @@ func readWebSocketMessages(
 }
 
 func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebSocketHandler, message wsapi.NewMessage) error {
+	startTime := time.Now()
+	var thinkingTime time.Duration
+	var thinkingStart time.Time
+
 	// 1 - first check if its a command or a plain text message
 	if strings.HasPrefix(message.Content.Text, "/") {
 		command := strings.Replace(message.Content.Text, "/", "", 1)
@@ -260,13 +264,6 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		if !currentMessageIncluded {
 			openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Content.Text})
 		}
-		/*
-			prettyOpenAiMessages, err := json.MarshalIndent(openAiMessages, "", "  ")
-			if err != nil {
-				return err
-			}
-			log.Println("prettyOpenAiMessages", string(prettyOpenAiMessages)) */
-		// send a message trough the websocket
 		chunks, errs := streamChatCompletion(
 			endpoint,
 			model,
@@ -289,6 +286,9 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 
 		// Helper function to send final message and cleanup
 		sendFinalMessage := func(isCancelled bool) {
+			// If we're still thinking when finishing, add the final thinking time
+			totalTime := time.Since(startTime)
+
 			ch.MessageHandler.SendMessage(
 				ch,
 				message.Content.SenderUUID,
@@ -311,10 +311,17 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 					Text:      text,
 					Reasoning: []string{thoughtText.String()},
+					MetaData: &map[string]interface{}{
+						"thinking_time": thinkingTime.Round(time.Millisecond).String(),
+						"total_time":    totalTime.Round(time.Millisecond).String(),
+					},
 				})
 			} else {
 				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 					Text: text,
+					MetaData: &map[string]interface{}{
+						"total_time": totalTime.Round(time.Millisecond).String(),
+					},
 				})
 			}
 		}
@@ -327,14 +334,17 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				// Check for thinking tags
 				if strings.Contains(bufferStr, "<think>") && !isThinking {
 					isThinking = true
+					thinkingStart = time.Now()
 					currentBuffer.Reset()
 				} else if strings.Contains(bufferStr, "</think>") && isThinking {
 					isThinking = false
+					thinkingTime = time.Since(thinkingStart)
 					// Extract thought content (everything before </think>)
 					thought := bufferStr[:strings.Index(bufferStr, "</think>")]
 					thoughtText.WriteString(thought)
 					currentBuffer.Reset()
 				} else {
+					totalTime := time.Since(startTime)
 					if !isThinking {
 						fullText.WriteString(chunk)
 						ch.MessageHandler.SendMessage(
@@ -345,9 +355,14 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 								message.Content.SenderUUID,
 								chunk,
 								[]string{""},
+								&map[string]interface{}{
+									"thinking_time": thinkingTime.Round(time.Millisecond).String(),
+									"total_time":    totalTime.Round(time.Millisecond).String(),
+								},
 							),
 						)
 					} else {
+						thinkingTime = time.Since(thinkingStart)
 						thoughtBuffer.WriteString(chunk)
 						ch.MessageHandler.SendMessage(
 							ch,
@@ -357,12 +372,17 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 								message.Content.SenderUUID,
 								"",
 								[]string{chunk},
+								&map[string]interface{}{
+									"thinking_time": thinkingTime.Round(time.Millisecond).String(),
+									"total_time":    totalTime.Round(time.Millisecond).String(),
+								},
 							),
 						)
 					}
 				}
 			} else {
 				fullText.WriteString(chunk)
+				totalTime := time.Since(startTime)
 				ch.MessageHandler.SendMessage(
 					ch,
 					message.Content.SenderUUID,
@@ -371,6 +391,9 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 						message.Content.SenderUUID,
 						chunk,
 						[]string{},
+						&map[string]interface{}{
+							"total_time": totalTime.Round(time.Millisecond).String(),
+						},
 					),
 				)
 			}
