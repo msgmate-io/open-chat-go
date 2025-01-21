@@ -19,7 +19,7 @@ import (
 	"strings"
 )
 
-func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, proxy database.Proxy) http.HandlerFunc {
+func CreateProxyHandlerHTTP(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, proxy database.Proxy) http.HandlerFunc {
 	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
 	if err != nil {
 		log.Println("Couldn't marshal node", err)
@@ -75,7 +75,7 @@ func CreateProxyHandler(h *FederationHandler, DB *gorm.DB, localPort string, nod
 
 		req.Header.Add("X-Proxy-Local-Port", localPort)
 		req.Header.Add("X-Proxy-Node-UUID", node.UUID)
-
+		req.Header.Add("X-Proxy-Destination", fmt.Sprintf("%s://%s", "http", "localhost:5432"))
 		// Open libp2p stream
 		stream, err := h.Host.NewStream(context.Background(), info.ID, "/t1m-http-request/0.0.1")
 		if err != nil {
@@ -181,7 +181,7 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 
 	// set defaults for 'Kind' and 'TrafficOrigin'
 	if req.Kind == "" {
-		req.Kind = "p2p"
+		req.Kind = "http"
 	}
 	if req.TrafficOrigin == "" {
 		req.TrafficOrigin = "0.0.0.0"
@@ -233,35 +233,64 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 	DB.Create(&proxy)
 
 	go func() {
-		mux := http.NewServeMux()
-		mux.Handle("/", CreateProxyHandler(h, DB, portS, node, proxy))
 
-		server := &http.Server{
-			Addr:    ":" + portS,
-			Handler: mux,
-		}
+		var server *http.Server
+		if proxy.Kind == "tcp" {
 
-		if proxy.UseTLS {
-			cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+			var handlerFunc func(listener net.Listener)
+			var listener net.Listener
+			var err error
+			if proxy.UseTLS {
+				cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+				if err != nil {
+					log.Printf("Error loading certificates: %v", err)
+					return
+				}
+				tlsConfig := &tls.Config{
+					Certificates: []tls.Certificate{cert},
+				}
+				handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, portS, node, proxy, tlsConfig)
+			} else {
+				handlerFunc, listener, err = CreateProxyHandlerTCP(h, DB, portS, node, proxy, nil)
+			}
+
 			if err != nil {
-				log.Printf("Error loading certificates: %v", err)
+				log.Printf("Error creating TCP proxy: %v", err)
+				http.Error(w, "Error creating TCP proxy", http.StatusInternalServerError)
 				return
 			}
-
-			server.TLSConfig = &tls.Config{
-				Certificates: []tls.Certificate{cert},
-			}
-
-			err = server.ListenAndServeTLS("", "")
-			if err != nil {
-				log.Printf("Error starting TLS server: %v", err)
-			}
+			handlerFunc(listener)
 		} else {
-			err := server.ListenAndServe()
-			if err != nil {
-				log.Printf("Error starting server: %v", err)
+			mux := http.NewServeMux()
+			mux.Handle("/", CreateProxyHandlerHTTP(h, DB, portS, node, proxy))
+
+			server = &http.Server{
+				Addr:    ":" + portS,
+				Handler: mux,
+			}
+			if proxy.UseTLS {
+				cert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
+				if err != nil {
+					log.Printf("Error loading certificates: %v", err)
+					return
+				}
+
+				server.TLSConfig = &tls.Config{
+					Certificates: []tls.Certificate{cert},
+				}
+
+				err = server.ListenAndServeTLS("", "")
+				if err != nil {
+					log.Printf("Error starting TLS server: %v", err)
+				}
+			} else {
+				err := server.ListenAndServe()
+				if err != nil {
+					log.Printf("Error starting server: %v", err)
+				}
 			}
 		}
+
 	}()
 
 	w.WriteHeader(http.StatusOK)
