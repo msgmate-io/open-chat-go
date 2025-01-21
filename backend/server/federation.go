@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -125,6 +127,7 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 
 // CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
 func CreateIncomingRequestStreamHandler(host string, hostPort int) network.StreamHandler {
+	// check possible proxies
 	return func(stream network.Stream) {
 		defer stream.Close()
 
@@ -140,10 +143,21 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 		fmt.Println("Received request from:", req.URL, req.URL.Path, req.Header, referer)
 		defer req.Body.Close()
 
-		// Configure request URL with provided host and port
-		fullHost := fmt.Sprintf("%s:%d", host, hostPort)
-		req.URL.Scheme = "http"
-		req.URL.Host = fullHost
+		// check if it has the `X-Proxy-Destination`
+		proxyDestination := req.Header.Get("X-Proxy-Destination")
+		if proxyDestination == "" {
+			// Configure request URL with provided host and port
+			fullHost := fmt.Sprintf("%s:%d", host, hostPort)
+			req.URL.Scheme = "http"
+			req.URL.Host = fullHost
+		} else {
+			fmt.Println("Proxy destination found, using it", proxyDestination)
+			// Configure request URL with provided host and port
+			proxyDestinationScheme := strings.Split(proxyDestination, "://")[0]
+			proxyDestinationHost := strings.Split(proxyDestination, "://")[1]
+			req.URL.Scheme = proxyDestinationScheme
+			req.URL.Host = proxyDestinationHost
+		}
 
 		outreq := new(http.Request)
 		*outreq = *req
@@ -185,6 +199,35 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 	}
 }
 
+func TCPReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
+	h.SetStreamHandler("/t1m-tcp-proxy/0.0.1", streamHandler)
+}
+
+func copyStream(closer chan struct{}, dst io.Writer, src io.Reader) {
+	defer func() { closer <- struct{}{} }() // connection is closed, send signal to stop proxy
+	io.Copy(dst, src)
+}
+
+func CreateLocalTCPProxyHandler(dstaddress string) network.StreamHandler {
+	return func(stream network.Stream) {
+		fmt.Printf("Connecting to '%s'\n", dstaddress)
+		c, err := net.Dial("tcp", dstaddress)
+		if err != nil {
+			fmt.Printf("Reset %s: %s\n", stream.Conn().RemotePeer().String(), err.Error())
+			stream.Reset()
+			return
+		}
+		closer := make(chan struct{}, 2)
+		go copyStream(closer, stream, c)
+		go copyStream(closer, c, stream)
+		<-closer
+
+		stream.Close()
+		c.Close()
+		fmt.Printf("(service %s) Handled correctly '%s'\n", dstaddress, stream.Conn().RemotePeer().String())
+	}
+}
+
 func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
 	// Set a function as stream handler.
 	// This function is called when a peer connects, and starts a stream with this protocol.
@@ -192,6 +235,7 @@ func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler n
 	h.SetStreamHandler("/t1m-http-request/0.0.1", streamHandler)
 
 	// Let's get the actual TCP port from our listen multiaddr, in case we're using 0 (default; random available port).
+	// TODO: waht is the following usefull for again?
 	var port string
 	for _, la := range h.Network().ListenAddresses() {
 		fmt.Println("Listen Address:", la)
@@ -233,6 +277,9 @@ func CreateFederationHost(
 
 	// Start the peer
 	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort))
+	// start tcp proxy
+	//fullHost := fmt.Sprintf("%s:%d", "localhost", 5432)
+	TCPReceivingPeer(context.Background(), h, CreateLocalTCPProxyHandler(":1984"))
 
 	federationHandler := &federation.FederationHandler{
 		Host:      h,
@@ -258,7 +305,7 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 		DB.Preload("Addresses").First(&proxy.Node, proxy.NodeID)
 		log.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port)
 		go func(proxy database.Proxy) {
-			http.ListenAndServe(fmt.Sprintf(":%s", proxy.Port), federation.CreateProxyHandler(h, DB, proxy.Port, proxy.Node, proxy))
+			http.ListenAndServe(fmt.Sprintf(":%s", proxy.Port), federation.CreateProxyHandlerHTTP(h, DB, proxy.Port, proxy.Node, proxy))
 		}(proxy)
 	}
 }
