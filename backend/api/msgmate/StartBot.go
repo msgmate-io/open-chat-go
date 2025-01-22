@@ -236,6 +236,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		}
 
 		endpoint := mapGetOrDefault[string](configMap, "endpoint", "http://localai:8080")
+		backend := mapGetOrDefault[string](configMap, "backend", "deepinfra")
 		model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 		reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
 		context := mapGetOrDefault[int64](configMap, "context", 10)
@@ -264,16 +265,22 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		if !currentMessageIncluded {
 			openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Content.Text})
 		}
-		chunks, errs := streamChatCompletion(
+		chunks, usage, errs := streamChatCompletion(
 			endpoint,
 			model,
+			backend,
 			openAiMessages,
-			ocClient.GetApiKey("deepinfra"),
+			ocClient.GetApiKey(backend),
 		)
 
 		var fullText, thoughtText, thoughtBuffer strings.Builder
 		var isThinking bool
 		var currentBuffer strings.Builder
+		var tokenUsage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		}
 
 		ch.MessageHandler.SendMessage(
 			ch,
@@ -307,21 +314,27 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				}
 			}
 
+			metadata := map[string]interface{}{
+				"total_time": totalTime.Round(time.Millisecond).String(),
+				"cancelled":  isCancelled,
+			}
+			if tokenUsage != nil {
+				metadata["token_usage"] = tokenUsage
+			}
+			if reasoning {
+				metadata["thinking_time"] = thinkingTime.Round(time.Millisecond).String()
+			}
+
 			if reasoning {
 				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 					Text:      text,
 					Reasoning: []string{thoughtText.String()},
-					MetaData: &map[string]interface{}{
-						"thinking_time": thinkingTime.Round(time.Millisecond).String(),
-						"total_time":    totalTime.Round(time.Millisecond).String(),
-					},
+					MetaData:  &metadata,
 				})
 			} else {
 				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
-					Text: text,
-					MetaData: &map[string]interface{}{
-						"total_time": totalTime.Round(time.Millisecond).String(),
-					},
+					Text:     text,
+					MetaData: &metadata,
 				})
 			}
 		}
@@ -411,6 +424,12 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				} else {
 					processChunk(chunk)
 				}
+			case usageInfo, ok := <-usage:
+				if !ok {
+					usage = nil
+				} else {
+					tokenUsage = usageInfo
+				}
 			case err, ok := <-errs:
 				if ok && err != nil {
 					log.Printf("streamChatCompletion error: %v", err)
@@ -420,7 +439,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				errs = nil
 			}
 
-			if chunks == nil && errs == nil {
+			if chunks == nil && usage == nil && errs == nil {
 				break
 			}
 		}
@@ -485,6 +504,7 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 				"configuration": map[string]interface{}{
 					"temperature":   0.7,
 					"max_tokens":    4096,
+					"tools":         []string{"WeatherTool"},
 					"model":         "gpt-4o",
 					"endpoint":      "https://api.openai.com/v1/",
 					"backend":       "openai",
