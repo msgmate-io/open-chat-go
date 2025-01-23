@@ -240,6 +240,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 		reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
 		context := mapGetOrDefault[int64](configMap, "context", 10)
+		tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
 
 		// Load the past messages
 		err, paginatedMessages := ocClient.GetMessages(message.Content.ChatUUID, 1, context)
@@ -265,11 +266,23 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		if !currentMessageIncluded {
 			openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Content.Text})
 		}
-		chunks, usage, errs := streamChatCompletion(
+
+		fmt.Println("TOOOLS openAiMessages", tools)
+
+		var toolsData []interface{}
+		if len(tools) > 0 {
+			toolsInterface := []Tool{NewWeatherTool()} // TODO: load tools dynamically
+			for _, tool := range toolsInterface {
+				toolsData = append(toolsData, tool.ConstructTool())
+			}
+		}
+
+		chunks, usage, toolCalls, errs := streamChatCompletion(
 			endpoint,
 			model,
 			backend,
 			openAiMessages,
+			toolsData,
 			ocClient.GetApiKey(backend),
 		)
 
@@ -430,6 +443,36 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				} else {
 					tokenUsage = usageInfo
 				}
+			case toolCall, ok := <-toolCalls:
+				if !ok {
+					toolCalls = nil
+				} else {
+					fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
+					// Now run the tool
+					tool := NewWeatherTool()
+					res, err := tool.RunTool(toolCall.ToolInput.(WeatherToolInput))
+					if err != nil {
+						fmt.Println("error running tool", err)
+					}
+					fmt.Println("res", res)
+					newText := fmt.Sprintf("I'll use the %s to help answer your question.", toolCall.ToolName)
+					newText += res
+					fullText.WriteString(newText)
+					totalTime := time.Since(startTime)
+					ch.MessageHandler.SendMessage(
+						ch,
+						message.Content.SenderUUID,
+						ch.MessageHandler.NewPartialMessage(
+							message.Content.ChatUUID,
+							message.Content.SenderUUID,
+							newText,
+							[]string{},
+							&map[string]interface{}{
+								"total_time": totalTime.Round(time.Millisecond).String(),
+							},
+						),
+					)
+				}
 			case err, ok := <-errs:
 				if ok && err != nil {
 					log.Printf("streamChatCompletion error: %v", err)
@@ -439,7 +482,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				errs = nil
 			}
 
-			if chunks == nil && usage == nil && errs == nil {
+			if chunks == nil && usage == nil && toolCalls == nil && errs == nil {
 				break
 			}
 		}
@@ -475,9 +518,22 @@ func mapGetOrDefault[T any](m map[string]interface{}, key string, defaultValue T
 	}
 
 	if val, exists := m[key]; exists {
-		// Try to convert the value to the desired type
+		// Try direct type conversion first
 		if converted, ok := val.(T); ok {
 			return converted
+		}
+		// Special handling for slices/arrays
+		switch any(defaultValue).(type) {
+		case []string:
+			if slice, ok := val.([]interface{}); ok {
+				result := make([]string, len(slice))
+				for i, item := range slice {
+					if str, ok := item.(string); ok {
+						result[i] = str
+					}
+				}
+				return any(result).(T)
+			}
 		}
 	}
 
@@ -594,4 +650,78 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		return q.Error
 	}
 	return nil
+}
+
+func performToolProcessing(
+	ocClient *client.Client,
+	endpoint string,
+	model string,
+	backend string,
+	openAiMessages []map[string]string,
+	tools []string,
+	apiKey string,
+) ([]map[string]string, error) {
+	// first we have to retrieve the tools
+	var toolsInterface []Tool
+	toolsInterface = append(toolsInterface, NewWeatherTool()) // TODO: load tools dynamically based on tool name
+	var toolData []interface{}
+	for _, tool := range toolsInterface {
+		toolData = append(toolData, tool.ConstructTool())
+	}
+	fmt.Println("toolData", toolData)
+	toolCallsChan, usageChan, errChan := toolRequest(endpoint, model, backend, openAiMessages, toolData, apiKey)
+
+	// Process all channels
+	for {
+		select {
+		case toolCallsResult, ok := <-toolCallsChan:
+			if !ok {
+				toolCallsChan = nil
+			} else {
+				// Process tool calls and append results to messages
+				fmt.Println("toolCallsResult", toolCallsResult)
+				for _, toolCall := range toolCallsResult.ToolCalls {
+					// Find the corresponding tool
+					var tool Tool
+					for _, t := range tools {
+						if t == toolCall.ToolName {
+							tool = NewWeatherTool() // TODO: Make this dynamic based on tool name
+							break
+						}
+					}
+
+					if tool != nil {
+						// Execute the tool
+						result, err := tool.RunTool(toolCall.ToolInput)
+						if err != nil {
+							return nil, fmt.Errorf("error executing tool %s: %w", toolCall.ToolName, err)
+						}
+
+						// Append the tool call and result to messages
+						openAiMessages = append(openAiMessages,
+							map[string]string{"role": "assistant", "content": fmt.Sprintf("I'll use the %s to help answer your question.", toolCall.ToolName)},
+							map[string]string{"role": "function", "name": toolCall.ToolName, "content": result},
+						)
+						fmt.Println("openAiMessages", openAiMessages)
+					}
+				}
+			}
+		case _, ok := <-usageChan:
+			if !ok {
+				fmt.Println("usageChan", usageChan)
+				usageChan = nil
+			}
+		case err, ok := <-errChan:
+			if ok && err != nil {
+				return nil, fmt.Errorf("tool processing error: %w", err)
+			}
+			errChan = nil
+		}
+
+		if toolCallsChan == nil && usageChan == nil && errChan == nil {
+			break
+		}
+	}
+
+	return openAiMessages, nil
 }
