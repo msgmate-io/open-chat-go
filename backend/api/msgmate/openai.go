@@ -163,7 +163,7 @@ func streamChatCompletion(
 	host string,
 	model string,
 	backend string,
-	messages []map[string]string,
+	messages []map[string]interface{},
 	tools []interface{},
 	apiKey string,
 ) (<-chan string, <-chan *struct {
@@ -171,17 +171,13 @@ func streamChatCompletion(
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }, <-chan ToolCall, <-chan error) {
-	// We'll send our partial text over this channel:
 	chunkChan := make(chan string)
-	// We'll send usage info over this channel:
 	usageChan := make(chan *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	})
-	// We'll send tool calls over this channel:
 	toolChan := make(chan ToolCall)
-	// We'll send any errors over this channel:
 	errChan := make(chan error, 1)
 
 	go func() {
@@ -190,201 +186,229 @@ func streamChatCompletion(
 		defer close(toolChan)
 		defer close(errChan)
 
-		requestBody := map[string]interface{}{
-			"model":    model,
-			"messages": messages,
-			"stream":   true,
-		}
-
-		if len(tools) > 0 {
-			requestBody["tools"] = tools
-		}
-
-		if backend == "openai" {
-			requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
-		}
-
-		// Convert the request body to JSON.
-		jsonData, err := json.Marshal(requestBody)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to marshal request body: %w", err)
-			return
-		}
-
-		// Create the HTTP request.
-		req, err := http.NewRequest(
-			"POST",
-			fmt.Sprintf("%s/chat/completions", host),
-			bytes.NewBuffer(jsonData),
-		)
-		if err != nil {
-			errChan <- fmt.Errorf("failed to create request: %w", err)
-			return
-		}
-
-		// Set headers.
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
-
-		// Construct an HTTP client with a timeout (for safety).
-		client := &http.Client{Timeout: 300 * time.Second}
-
-		// Perform the request.
-		resp, err := client.Do(req)
-		if err != nil {
-			errChan <- fmt.Errorf("request failed: %w", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			errChan <- fmt.Errorf("non-200 response: %d %s",
-				resp.StatusCode, string(bodyBytes))
-			return
-		}
-
-		// Pretty print response body for debugging
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		var prettyJSON bytes.Buffer
-		if err := json.Indent(&prettyJSON, bodyBytes, "", "    "); err == nil {
-			fmt.Printf("Response body:\n%s\n", prettyJSON.String())
-		}
-
-		// Create new reader from the body bytes for further processing
-		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-		// Read the response stream line by line.
-		reader := bufio.NewReader(resp.Body)
-		var arguments string
-		var toolName string
-		var usedTool bool
-		usedTool = false
-
+		currentMessages := messages
 		for {
-			line, err := reader.ReadString('\n')
-			if err == io.EOF {
-				break
-			}
+			// Make initial request
+			toolCallResult, err := processStreamingRequest(
+				host, model, backend, currentMessages, tools, apiKey,
+				chunkChan, usageChan, toolChan, errChan,
+			)
 			if err != nil {
-				errChan <- fmt.Errorf("failed reading response: %w", err)
+				errChan <- err
 				return
 			}
 
-			// Each streamed line starts with "data: ".
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
+			fmt.Println("Called tool: ", toolCallResult.toolName, "with result: ", toolCallResult.result)
 
-			// Remove the "data: " prefix.
-			data := strings.TrimPrefix(line, "data: ")
-			data = strings.TrimSpace(data)
-
-			// Check for [DONE] sentinel
-			if data == "[DONE]" {
-				// Stream is finished
+			// If no tool was used or we encountered an error, we're done
+			if !toolCallResult.usedTool || toolCallResult.err != nil {
 				return
 			}
 
-			// Unmarshal the JSON chunk.
-			var chunk struct {
-				ID      string `json:"id"`
-				Object  string `json:"object"`
-				Created int64  `json:"created"`
-				Model   string `json:"model"`
-				Choices []struct {
-					Delta struct {
-						Role      string        `json:"role"`
-						Content   string        `json:"content"`
-						ToolCalls []interface{} `json:"tool_calls"`
-					} `json:"delta"`
-					FinishReason interface{} `json:"finish_reason"`
-					Index        int         `json:"index"`
-				} `json:"choices"`
-				Usage *struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-					TotalTokens      int `json:"total_tokens"`
-				} `json:"usage"`
+			toolsCallMessage := map[string]interface{}{
+				"role":         "assistant",
+				"tool_call_id": toolCallResult.id,
+				"content":      "",
+				"tool_calls": []map[string]interface{}{
+					{
+						"type": "function",
+						"id":   toolCallResult.id,
+						"function": map[string]interface{}{
+							"arguments": toolCallResult.result,
+							"name":      toolCallResult.toolName,
+						},
+					},
+				},
 			}
-
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				errChan <- fmt.Errorf("failed to unmarshal chunk: %w", err)
-				return
+			currentMessages = append(currentMessages, toolsCallMessage)
+			// Add tool result to messages and continue conversation
+			toolResultMsg := map[string]interface{}{
+				"role":         "tool",
+				"tool_call_id": toolCallResult.id,
+				"content":      toolCallResult.result,
 			}
+			currentMessages = append(currentMessages, toolResultMsg)
 
-			// Log usage information if present (usually in the last chunk)
-			if chunk.Usage != nil {
-				log.Printf("Token usage - Prompt: %d, Completion: %d, Total: %d",
-					chunk.Usage.PromptTokens,
-					chunk.Usage.CompletionTokens,
-					chunk.Usage.TotalTokens)
-				usageChan <- chunk.Usage
-			}
-			// Extract the content if available.
-
-			var toolsTmp Tool = NewWeatherTool()
-			type StreamedToolCall struct {
-				Id       string
-				Function struct {
-					Arguments string
-				}
-			}
-			if len(chunk.Choices) > 0 {
-				if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
-					for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
-						// First the tool name is passed in one or multiple tokens, then the arguments are streamed in chunks
-						callId := mapGetOrDefault(toolCall.(map[string]interface{}), "id", "")
-
-						prettyJSON, err := json.MarshalIndent(toolCall, "", "    ")
-						if err == nil {
-							fmt.Printf("Tool Call:\n%s\n", string(prettyJSON))
-						}
-						if callId != "" {
-							fmt.Println("callId", callId)
-
-							if toolCallMap, ok := toolCall.(map[string]interface{}); ok {
-								if function, exists := toolCallMap["function"].(map[string]interface{}); exists {
-									if newArgs, exists := function["name"].(string); exists {
-										toolName = newArgs
-									}
-								}
-							}
-						} else {
-
-							// Handle the tool call data which comes as a map[string]interface{}
-							if toolCallMap, ok := toolCall.(map[string]interface{}); ok {
-								if function, exists := toolCallMap["function"].(map[string]interface{}); exists {
-									if newArgs, exists := function["arguments"].(string); exists {
-										arguments += newArgs
-									}
-								}
-							}
-
-							fmt.Println("arguments", arguments)
-
-							toolInput, err := toolsTmp.ParseArguments(arguments)
-							if err != nil {
-								fmt.Println("Error parsing arguments:", err)
-							} else {
-								fmt.Println("Successfully parsed streamed tool input", toolInput)
-								toolChan <- ToolCall{
-									ToolName:  toolName,
-									ToolInput: toolInput,
-								}
-							}
-						}
-
-					}
-				}
-				content := chunk.Choices[0].Delta.Content
-				if content != "" {
-					// Send this chunk to the caller via the channel.
-					chunkChan <- content
-				}
-			}
+			currentMessagesIndented, _ := json.MarshalIndent(currentMessages, "", "    ")
+			fmt.Println("Current messages: ", string(currentMessagesIndented))
 		}
 	}()
 
 	return chunkChan, usageChan, toolChan, errChan
+}
+
+type toolCallResult struct {
+	usedTool        bool
+	id              string
+	toolName        string
+	toolCallMessage map[string]string
+	result          string
+	err             error
+}
+
+func processStreamingRequest(
+	host, model, backend string,
+	messages []map[string]interface{},
+	tools []interface{},
+	apiKey string,
+	chunkChan chan<- string,
+	usageChan chan<- *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	},
+	toolChan chan<- ToolCall,
+	errChan chan<- error,
+) (*toolCallResult, error) {
+	requestBody := map[string]interface{}{
+		"model":    model,
+		"messages": messages,
+		"stream":   true,
+	}
+	if len(tools) > 0 {
+		requestBody["tools"] = tools
+	}
+	if backend == "openai" {
+		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
+
+	// Setup request
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
+
+	client := &http.Client{Timeout: 300 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("non-200 response: %d %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	result := &toolCallResult{}
+	reader := bufio.NewReader(resp.Body)
+
+	// Track the current tool call being built
+	// fullMessage := ""
+	var currentToolCall struct {
+		id        string
+		name      string
+		arguments string
+	}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed reading response: %w", err)
+		}
+
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+		data = strings.TrimSpace(data)
+
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string        `json:"content"`
+					ToolCalls []interface{} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+			} `json:"usage"`
+		}
+
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal chunk: %w", err)
+		}
+
+		if chunk.Usage != nil {
+			usageChan <- chunk.Usage
+		}
+
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta
+
+			// Handle regular content
+			if delta.Content != "" {
+				chunkChan <- delta.Content
+			}
+
+			// Handle tool calls
+			if len(delta.ToolCalls) > 0 {
+				result.usedTool = true
+				for _, tc := range delta.ToolCalls {
+					toolCall, ok := tc.(map[string]interface{})
+					if !ok {
+						continue
+					}
+
+					// Get tool call ID
+					if id, ok := toolCall["id"].(string); ok && id != "" {
+						if id != currentToolCall.id {
+							// New tool call - reset tracking
+							result.id = id
+							currentToolCall = struct {
+								id        string
+								name      string
+								arguments string
+							}{id: id}
+						}
+					}
+
+					// Extract function details
+					if function, ok := toolCall["function"].(map[string]interface{}); ok {
+						// Get tool name
+						if name, ok := function["name"].(string); ok && name != "" {
+							currentToolCall.name = name
+							result.toolName = name
+						}
+						// Accumulate arguments
+						if args, ok := function["arguments"].(string); ok {
+							currentToolCall.arguments += args
+						}
+					}
+
+					// Try to parse complete tool call
+					if currentToolCall.name != "" && currentToolCall.arguments != "" {
+						var toolsTmp Tool = NewWeatherTool()
+						if toolInput, err := toolsTmp.ParseArguments(currentToolCall.arguments); err == nil {
+							toolChan <- ToolCall{
+								ToolName:  currentToolCall.name,
+								ToolInput: toolInput,
+							}
+							result.result = "The weather in Paris is sunny" // TODO call the actual tool
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
 }
