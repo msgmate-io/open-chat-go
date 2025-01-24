@@ -11,4 +11,7 @@ var Tabels []interface{} = []interface{}{
 	&Contact{},
 	&Node{},
 	&NodeAddress{},
+	&ContactRequest{},
+	&Network{},
+	&NetworkMember{},
 }
