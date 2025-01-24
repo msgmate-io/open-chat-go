@@ -33,8 +33,13 @@ func (h *FederationHandler) Identity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Host.ID()
+	response := h.GetIdentity()
 
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (h *FederationHandler) GetIdentity() IdentityResponse {
 	var addresses []string
 	var connectAddresses []string
 
@@ -44,12 +49,9 @@ func (h *FederationHandler) Identity(w http.ResponseWriter, r *http.Request) {
 		connectAddresses = append(connectAddresses, connectAddr)
 	}
 
-	response := IdentityResponse{
+	return IdentityResponse{
 		ID:                 h.Host.ID().String(),
 		Addresses:          addresses,
 		ConnectMultiadress: connectAddresses,
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
 }
