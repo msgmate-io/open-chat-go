@@ -26,9 +26,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
-	"time"
 )
 
 func CreateHost(
@@ -88,7 +88,8 @@ func CreateHost(
 	h, err := libp2p.New(
 		libp2p.ListenAddrs(sourceMultiAddr),
 		libp2p.Identity(prvKey),
-		libp2p.ConnectionGater(gater),
+		// libp2p.ConnectionGater(gater), TODO: peer gating should be disabled for all bootstrap peers
+		// TODO introduce option to toggle ConnectionGater
 		// Enable stuff for hole punching etc...
 	)
 
@@ -125,7 +126,22 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 }
 
 // CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
-func CreateIncomingRequestStreamHandler(host string, hostPort int) network.StreamHandler {
+func CreateIncomingRequestStreamHandler(host string, hostPort int, pathPrefixWhitelist []string) network.StreamHandler {
+	// empty whitelist means allow all
+	preprocessor := func(path string) bool {
+		return true
+	}
+	if len(pathPrefixWhitelist) > 0 {
+		preprocessor = func(path string) bool {
+			// check if the path is in the whitelist
+			for _, prefix := range pathPrefixWhitelist {
+				if strings.HasPrefix(path, prefix) {
+					return true
+				}
+			}
+			return false
+		}
+	}
 	// check possible proxies
 	return func(stream network.Stream) {
 		defer stream.Close()
@@ -137,26 +153,21 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 			log.Println(err)
 			return
 		}
+
+		if !preprocessor(req.URL.Path) {
+			stream.Reset()
+			log.Println("Request not allowed", req.URL.Path)
+			return
+		}
+
 		// get the Referer header
-		referer := req.Header.Get("Referer")
-		fmt.Println("Received request from:", req.URL, req.URL.Path, req.Header, referer)
+		// referer := req.Header.Get("Referer")
+		// fmt.Println("Received request from:", req.URL, req.URL.Path, req.Header, referer)
 		defer req.Body.Close()
 
-		// check if it has the `X-Proxy-Destination`
-		proxyDestination := req.Header.Get("X-Proxy-Destination")
-		if proxyDestination == "" {
-			// Configure request URL with provided host and port
-			fullHost := fmt.Sprintf("%s:%d", host, hostPort)
-			req.URL.Scheme = "http"
-			req.URL.Host = fullHost
-		} else {
-			fmt.Println("Proxy destination found, using it", proxyDestination)
-			// Configure request URL with provided host and port
-			proxyDestinationScheme := strings.Split(proxyDestination, "://")[0]
-			proxyDestinationHost := strings.Split(proxyDestination, "://")[1]
-			req.URL.Scheme = proxyDestinationScheme
-			req.URL.Host = proxyDestinationHost
-		}
+		fullHost := fmt.Sprintf("%s:%d", host, hostPort)
+		req.URL.Scheme = "http"
+		req.URL.Host = fullHost
 
 		outreq := new(http.Request)
 		*outreq = *req
@@ -164,7 +175,7 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 		// Preserve the original request headers
 		outreq.Header = req.Header
 
-		fmt.Printf("[f-proxy] Making request to %s\n", req.URL)
+		// fmt.Printf("[f-proxy] Making request to %s\n", req.URL)
 		resp, err := http.DefaultTransport.RoundTrip(outreq)
 		if err != nil {
 			stream.Reset()
@@ -198,11 +209,8 @@ func CreateIncomingRequestStreamHandler(host string, hostPort int) network.Strea
 	}
 }
 
-func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler) {
-	// Set a function as stream handler.
-	// This function is called when a peer connects, and starts a stream with this protocol.
-	// Only applies on the receiving side.
-	h.SetStreamHandler("/t1m-http-request/0.0.1", streamHandler)
+func StartRequestReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler, protocolID protocol.ID) {
+	h.SetStreamHandler(protocolID, streamHandler)
 
 	// Let's get the actual TCP port from our listen multiaddr, in case we're using 0 (default; random available port).
 	// TODO: waht is the following usefull for again?
@@ -245,16 +253,21 @@ func CreateFederationHost(
 		fmt.Println("Host P2P Address(es):", addr)
 	}
 
-	// Start the peer
-	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort))
-	// start tcp proxy
-	//fullHost := fmt.Sprintf("%s:%d", "localhost", 5432)
-	// TCPReceivingPeer(context.Background(), h, CreateLocalTCPProxyHandler(":1984"), "")
+	// this the default protocol that is accessible to any outside node
+	// It only exposes network join apis
+	// Participating in any of the other protocols requires being a network member
+	StartRequestReceivingPeer(context.Background(), h, CreateIncomingRequestStreamHandler(host, hostPort, []string{
+		"/api/v1/federation/networks/",
+	}), federation.T1mNetworkJoinProtocolID)
 
 	federationHandler := &federation.FederationHandler{
-		Host:      h,
-		AutoPings: make(map[string]context.CancelFunc),
-		Gater:     gater,
+		Host:               h,
+		Gater:              gater,
+		AutoPings:          make(map[string]context.CancelFunc),
+		Networks:           make(map[string]database.Network),
+		NetworkSyncs:       make(map[string]context.CancelFunc),
+		NetworkSyncBlocker: make(map[string]bool),
+		NetworkPeerIds:     make(map[string]map[string]bool),
 	}
 
 	return &h, federationHandler, nil
@@ -262,41 +275,53 @@ func CreateFederationHost(
 
 func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 	egressProxies := []database.Proxy{}
-	q := DB.Preload("Node").Where("active = ? AND direction = ?", true, "egress").Find(&egressProxies)
+	q := DB.Where("active = ? AND direction = ?", true, "egress").Find(&egressProxies)
 
 	if q.Error != nil {
 		log.Println("Couldn't find proxies", q.Error)
 		return
 	}
 
-	log.Println("Starting proxies for", len(egressProxies), "nodes")
+	log.Println("Starting 'egress' proxies for", len(egressProxies), "nodes")
 	for _, proxy := range egressProxies {
-		proxy.Node = database.Node{}
-		DB.Preload("Addresses").First(&proxy.Node, proxy.NodeID)
-		log.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port)
-		go func(proxy database.Proxy) {
-			http.ListenAndServe(fmt.Sprintf(":%s", proxy.Port), federation.CreateProxyHandlerHTTP(h, DB, proxy.Port, proxy.Node, proxy))
-		}(proxy)
+		originData := strings.Split(proxy.TrafficOrigin, ":")
+		originPort := originData[1]
+		originPeerId := originData[0]
+		targetData := strings.Split(proxy.TrafficTarget, ":")
+		targetPort := targetData[1]
+		targetPeerId := targetData[0]
+		node := database.Node{}
+		DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&node)
+		log.Println("Starting proxy for node", node.NodeName, "on port", proxy.Port)
+		protocolID := federation.CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId)
+		h.StartEgressProxy(DB, proxy, node, node, originPort, proxy.NetworkName, protocolID)
 	}
 
 	// Now start ingress proxies
 	ingressProxies := []database.Proxy{}
-	q = DB.Preload("Node").Where("active = ? AND direction = ?", true, "ingress").Find(&ingressProxies)
+	q = DB.Where("active = ? AND direction = ?", true, "ingress").Find(&ingressProxies)
 
 	if q.Error != nil {
 		log.Println("Couldn't find proxies", q.Error)
 		return
 	}
 
-	log.Println("Starting proxies for", len(ingressProxies), "nodes")
+	log.Println("Starting 'ingress' proxies for", len(ingressProxies), "nodes")
 	for _, proxy := range ingressProxies {
-		proxy.Node = database.Node{}
-		DB.Preload("Addresses").First(&proxy.Node, proxy.NodeID)
-		protocolID := fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", federation.HashTrafficTarget(proxy.TrafficTarget))
-		fmt.Println("Starting proxy for node", proxy.Node.NodeName, "on port", proxy.Port, "with protocol ID", protocolID)
-		go func(proxy database.Proxy) {
-			federation.TCPReceivingPeer(context.Background(), h.Host, federation.CreateLocalTCPProxyHandler(proxy.TrafficTarget), proxy.TrafficTarget)
-		}(proxy)
+
+		originData := strings.Split(proxy.TrafficOrigin, ":")
+		originPort := originData[1]
+		originPeerId := originData[0]
+		targetData := strings.Split(proxy.TrafficTarget, ":")
+		targetPort := targetData[1]
+		targetPeerId := targetData[0]
+
+		node := database.Node{}
+		DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&node)
+		protocolID := federation.CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId) // in this case 'network_name', 'traffic_target'
+		fmt.Println("Starting proxy for node", node.NodeName, "on port", proxy.Port, "with protocol ID", protocolID)
+		trafficTarget := fmt.Sprintf(":%s", targetPort)
+		h.Host.SetStreamHandler(protocolID, federation.CreateLocalTCPProxyHandler(h, proxy.NetworkName, trafficTarget))
 	}
 }
 
@@ -313,7 +338,7 @@ func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
 	for _, node := range nodes {
 		fmt.Println("Preloading peerstore for node", node.NodeName)
 		for _, address := range node.Addresses {
-			fmt.Println("Preloading peerstore for address", address.Address)
+			// fmt.Println("Preloading peerstore for address", address.Address)
 			maddr, err := multiaddr.NewMultiaddr(address.Address)
 			if err != nil {
 				log.Println("Couldn't parse address", address.Address, err)
@@ -327,22 +352,27 @@ func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
 			fmt.Println("Preloading peerstore for address", info.ID, info.Addrs)
 			h.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 		}
-		// Also send a generic ping to each node
-		fmt.Println("Sending 'start-up' ping to node", node.UUID)
-		ownPeerId := h.Host.ID().String()
-		federation.SendNodeRequest(DB, h, node.UUID, federation.RequestNode{
-			Path: "/api/v1/federation/nodes/" + ownPeerId + "/ping",
-		})
-
-		// TODO: make Ping time configurable an starting auto-ping optional
-		err, cancel := federation.StartNodeAutoPing(DB, node.UUID, h, 60*time.Second)
-		if err != nil {
-			log.Println("Couldn't start node auto ping", err)
-			return err
-		}
-
-		h.AutoPings[node.UUID] = cancel
 	}
 
 	return nil
+}
+
+func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler) {
+	log.Println("Initializing networks")
+	networks := []database.Network{}
+	DB.Find(&networks)
+	for _, network := range networks {
+		log.Println("Initializing network", network.NetworkName)
+		h.Networks[network.NetworkName] = network
+		h.NetworkPeerIds[network.NetworkName] = map[string]bool{}
+		networkMembers := []database.NetworkMember{}
+		DB.Where("network_id = ?", network.ID).Preload("Node").Find(&networkMembers)
+		for _, networkMember := range networkMembers {
+			log.Println("Adding peer", networkMember.Node.PeerID, "to network: '", network.NetworkName, "'")
+			h.AddNetworkPeerId(network.NetworkName, networkMember.Node.PeerID)
+		}
+		h.StartNetworkSyncProcess(DB, network.NetworkName)
+	}
+
+	fmt.Println("Network peer ids:", h.NetworkPeerIds)
 }
