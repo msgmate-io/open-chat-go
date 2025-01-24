@@ -13,12 +13,14 @@ type SendMessage struct {
 	Text      string                  `json:"text"`
 	Reasoning *[]string               `json:"reasoning,omitempty"`
 	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolCalls *[]interface{}          `json:"tool_calls,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
 	Text      string                  `json:"text"`
 	Reasoning []string                `json:"reasoning"`
 	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolCalls *[]interface{}          `json:"tool_calls,omitempty"`
 }
 
 // MessageData interface for different message types
@@ -26,11 +28,16 @@ type MessageData interface {
 	GetText() string
 	GetReasoning() []string
 	GetMetaData() *map[string]interface{}
+	GetToolCalls() *[]interface{}
 }
 
 // Add GetText and GetReasoning methods to both types
 func (m SendMessage) GetText() string {
 	return m.Text
+}
+
+func (m SendMessage) GetToolCalls() *[]interface{} {
+	return m.ToolCalls
 }
 
 func (m SendMessage) GetReasoning() []string {
@@ -54,6 +61,10 @@ func (m SendMessageWithReasoning) GetReasoning() []string {
 
 func (m SendMessageWithReasoning) GetMetaData() *map[string]interface{} {
 	return m.MetaData
+}
+
+func (m SendMessageWithReasoning) GetToolCalls() *[]interface{} {
+	return m.ToolCalls
 }
 
 // Send a message to a chat
@@ -132,6 +143,17 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			message.MetaData = metadataBytes
 		}
+	}
+
+	if data.ToolCalls != nil {
+		toolCalls := []json.RawMessage{}
+		for _, toolCall := range *data.ToolCalls {
+			toolCallBytes, err := json.Marshal(toolCall)
+			if err == nil {
+				toolCalls = append(toolCalls, toolCallBytes)
+			}
+		}
+		message.ToolCalls = &toolCalls
 	}
 
 	q := DB.Create(&message)
@@ -225,6 +247,7 @@ func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, cha
 			data.GetText(),
 			data.GetReasoning(),
 			data.GetMetaData(),
+			data.GetToolCalls(),
 		),
 	)
 }
