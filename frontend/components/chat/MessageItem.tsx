@@ -37,10 +37,15 @@ const CodeWrapper = ({children}: {children: any}) => {
 // Add this custom code block component
 const CodeBlock = ({className, children}: {className?: string, children: any}) => {
   const language = className?.replace('language-', '') || 'text'
+  const codeRef = React.useRef<HTMLElement>(null)
   
   useEffect(() => {
-    if (typeof children === 'string' && children.includes('\n')) {
-      Prism.highlightElement(document.querySelector(`code.language-${language}`))
+    if (typeof children === 'string' && children.includes('\n') && codeRef.current) {
+      try {
+        Prism.highlightElement(codeRef.current)
+      } catch (error) {
+        console.error('Prism highlighting error:', error)
+      }
     }
   }, [children, language])
 
@@ -59,17 +64,21 @@ const CodeBlock = ({className, children}: {className?: string, children: any}) =
         onClick={handleCopy}
         className="absolute top-2 right-2 p-1 rounded hover:bg-secondary text-xs"
         title="Copy code"
-        >
-          📋
-        </button>
-      <code className={cn(
-        className,
-        "block",
-        isMultiLine && "whitespace-pre"
-      )} data-language={language}>
+      >
+        📋
+      </button>
+      <code 
+        ref={codeRef}
+        className={cn(
+          className,
+          "block",
+          isMultiLine && "whitespace-pre"
+        )} 
+        data-language={language}
+      >
         {children}
       </code>
-      </pre> :
+    </pre> :
     <code data-language={language} className="text-foreground">
       {children}
     </code>
@@ -82,20 +91,27 @@ export function MessageLink({children, props}: {children: any, props: any}) {
 
 class MessageMarkdownErrorBoundary extends React.Component<
   { children: React.ReactNode },
-  { hasError: boolean }
+  { hasError: boolean, error?: Error }
 > {
   constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(_: Error) {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Markdown rendering error:', error);
+    console.error('Error info:', errorInfo);
   }
 
   render() {
     if (this.state.hasError) {
-      return <div className="text-foreground">couldn't render</div>;
+      return <div className="text-foreground">
+        couldn't render: {this.state.error?.message}
+      </div>;
     }
 
     return this.props.children;
@@ -115,7 +131,7 @@ export function MessageMarkdown({children}: {children: any}) {
             h6: ({children, ...props}) => <h6 className="text-foreground" {...props}>{children}</h6>,
             strong: ({children, ...props}) => <strong className="text-foreground" {...props}>{children}</strong>,
             a: ({children, ...props}) => <MessageLink props={props}>{children}</MessageLink>,
-            p: ({children, ...props}) => <>{children}</>,
+            p: ({children, ...props}) => <p className="text-foreground">{children}</p>,
             code: ({children, ...props}) => <CodeBlock {...props}>{children}</CodeBlock>,
             pre: ({children, ...props}) => <CodeWrapper {...props}>{children}</CodeWrapper>
         }}>{children}</Markdown>
@@ -153,7 +169,7 @@ export function UserMessageItem({
 }
 
 function wrapInBlockquote(children: any) {
-    return <blockquote className="text-foreground text-sm">{children}</blockquote>
+    return <blockquote className="text-foreground text-sm margin-0">{children}</blockquote>
 }
 
 import { ThumbsUp, ThumbsDown, Volume2, Clipboard, Pen, RefreshCcw } from "lucide-react";
@@ -209,18 +225,42 @@ export function BotMessageItem({
                 <div className="article prose w-[90%] pt-3 pl-1 overflow-x-auto text-foreground">
                     {message?.text === "" && message.thoughts.length === 0 && <ShinyText>Booting AI...</ShinyText>}
                     {message?.text === "" && message.thoughts.length > 0 && <Collapsible open={true} id="thoughts">
-                        <CollapsibleTrigger><ShinyText>Thinking... ({message?.meta_data?.thinking_time})</ShinyText></CollapsibleTrigger>
-                        <CollapsibleContent>
+                        <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
+                            <ShinyText>Thinking... ({message?.meta_data?.thinking_time})</ShinyText>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="CollapsibleContent transition-all duration-300">
                             {message?.thoughts?.map((thought: any, index: number) => (
                                 <div key={index}>{wrapInBlockquote(thought)}</div>
                             ))}
                         </CollapsibleContent>
                     </Collapsible>}
+                    {message?.text === "" && message?.tool_calls?.length > 0 && <Collapsible open={true} id="tool_calls">
+                      <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
+                        <ShinyText>Calling tools ({(message?.tool_calls?.length || 0) > 1 ? message?.tool_calls?.length + " tools" : `'${message?.tool_calls?.[0]?.name}'`})</ShinyText>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+                        {message?.tool_calls?.map((toolCall: any, index: number) => (
+                            <div key={index}>{wrapInBlockquote(toolCall.name + "(" + JSON.stringify(toolCall.arguments)+ ")")}</div>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>}
                     {message?.text !== "" && message?.thoughts?.length > 0 && <Collapsible id="thoughts">
-                      <CollapsibleTrigger>Thoughts for {message?.meta_data?.thinking_time}</CollapsibleTrigger>
-                      <CollapsibleContent>
+                      <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
+                        Thoughts for {message?.meta_data?.thinking_time}
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="CollapsibleContent transition-all duration-300">
                         {message?.thoughts?.map((thought: any, index: number) => (
                             <div key={index}>{wrapInBlockquote(thought)}</div>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>}
+                    {message?.text !== "" && message?.tool_calls && message?.tool_calls?.length > 0 && <Collapsible id="tool_calls">
+                      <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
+                        Tool calls
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+                        {message?.tool_calls?.map((toolCall: any, index: number) => (
+                            <div key={index}>{wrapInBlockquote(toolCall.name + "(" + JSON.stringify(toolCall.arguments)+ ")")}</div>
                         ))}
                       </CollapsibleContent>
                     </Collapsible>}

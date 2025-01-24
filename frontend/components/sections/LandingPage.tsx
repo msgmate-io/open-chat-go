@@ -77,12 +77,12 @@ function IndexTab({
         <CinematicLogo className={"mr-8"} size={420} />
         <div className="flex flex-row items-center justify-center content-center w-full relative">
             <div className="flex w-1/2 justify-end pr-4">
-                <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2" onClick={() => {
+                <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2 text-foreground bg-background" onClick={() => {
                     setTab("register")
                 }}>Sign-up</Button>
             </div>
             <div className="flex w-1/2 justify-start pl-4">
-                <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2" onClick={() => {
+                <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2 text-foreground bg-background" onClick={() => {
                     // check if the user has a current session cookie
                     const isAuthorized = Cookies.get("is_authorized")
                     // check if the cookies is not expired
