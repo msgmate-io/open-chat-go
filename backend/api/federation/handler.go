@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	T1mHttpRequestProtocolID  = "/t1m-http-request/0.0.1"
-	T1mNetworkTCPProxyProtoID = "/t1m-tcp-tunnel/0.0.1"
-	T1mNetworkJoinProtocolID  = "/t1m-network-join/0.0.1"
+	T1mHttpRequestProtocolID    = "/t1m-http-request/0.0.1"
+	T1mNetworkTCPProxyProtoID   = "/t1m-tcp-tunnel/0.0.1"
+	T1mNetworkJoinProtocolID    = "/t1m-network-join/0.0.1"
+	T1mNetworkRequestProtocolID = "/t1m-network-request/0.0.1"
 )
 
 func HashPeerId(peerId string) string {
