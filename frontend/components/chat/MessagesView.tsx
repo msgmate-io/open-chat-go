@@ -105,8 +105,8 @@ export function MessagesScroll({
 
     return <div className="flex flex-col h-full w-full lg:max-w-[900px] relative">
         <div ref={scrollRef} className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto relative pb-4 pt-2">
-            {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={{text: message.text, thoughts: message.reasoning, meta_data: message?.meta_data}} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
-            {chatUUID && partialMessages?.[chatUUID] && <MessageItem key={`msg_${chatUUID}`} message={{text: partialMessages[chatUUID]?.text, thoughts: partialMessages[chatUUID]?.thoughts, meta_data: partialMessages[chatUUID]?.meta_data, is_genating: true}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
+            {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={{text: message.text, thoughts: message.reasoning, meta_data: message?.meta_data, tool_calls: message?.tool_calls}} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
+            {chatUUID && partialMessages?.[chatUUID] && <MessageItem key={`msg_${chatUUID}`} message={{text: partialMessages[chatUUID]?.text, thoughts: partialMessages[chatUUID]?.thoughts, meta_data: partialMessages[chatUUID]?.meta_data, tool_calls: partialMessages[chatUUID]?.tool_calls, is_generating: true}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
         </div>
         {showScrollButton && (
             <button 
