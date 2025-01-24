@@ -14,18 +14,30 @@ type ListedMessage struct {
 	SenderUUID string                  `json:"sender_uuid"`
 	Text       string                  `json:"text"`
 	Reasoning  *[]string               `json:"reasoning"`
+	ToolCalls  *[]interface{}          `json:"tool_calls"`
 	MetaData   *map[string]interface{} `json:"meta_data"`
 }
 
 func convertMessageToListedMessage(message database.Message) ListedMessage {
 	messageMetaData := map[string]interface{}{}
 	json.Unmarshal(message.MetaData, &messageMetaData)
+
+	toolCalls := []interface{}{}
+	if message.ToolCalls != nil {
+		for _, toolCall := range *message.ToolCalls {
+			var toolCallData map[string]interface{}
+			json.Unmarshal(toolCall, &toolCallData)
+			toolCalls = append(toolCalls, toolCallData)
+		}
+	}
+
 	return ListedMessage{
 		UUID:       message.UUID,
 		SendAt:     message.CreatedAt.String(),
 		SenderUUID: message.Sender.UUID,
 		Text:       *message.Text,
 		Reasoning:  message.Reasoning,
+		ToolCalls:  &toolCalls,
 		MetaData:   &messageMetaData,
 	}
 }
