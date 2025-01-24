@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
 )
@@ -25,7 +26,7 @@ type RequestNode struct {
 	Body    string            `json:"body"`
 }
 
-func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNode) (*http.Response, error) {
+func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNode, protocolName string) (*http.Response, error) {
 	// now we build a new request based on the data
 	req, err := http.NewRequest(data.Method, data.Path, strings.NewReader(data.Body))
 	if err != nil {
@@ -38,8 +39,7 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 	}
 
 	// (3) - Connect to all federation nodes
-	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
-	log.Println("Connecting to Federation Node:", string(prettyFederationNode))
+	log.Println("Sending request to node:", node.PeerID, "at", data.Path)
 
 	var info *peer.AddrInfo
 	for _, address := range node.Addresses {
@@ -53,20 +53,10 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 			return nil, fmt.Errorf("Invalid address")
 		}
 
-		log.Println("Starting Federation Peer ID:", info.ID, info.Addrs, "HOST", h.Host)
-
-		// Register address in peerstore TODO: first check if that peer is already present in the peerstore
-		peerInfo := h.Host.Peerstore().PeerInfo(info.ID)
 		h.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
-
-		if peerInfo.ID == "" {
-			log.Println("Peer not present in peerstore")
-		} else {
-			log.Println("Peer already present in peerstore")
-		}
 	}
 
-	stream, err := h.Host.NewStream(context.Background(), info.ID, "/t1m-http-request/0.0.1")
+	stream, err := h.Host.NewStream(context.Background(), info.ID, protocol.ID(protocolName))
 	if err != nil {
 		log.Println("Error opening stream to node:", err)
 		return nil, fmt.Errorf("Couldn't open stream to node")
@@ -74,7 +64,7 @@ func SendRequestToNode(h *FederationHandler, node database.Node, data RequestNod
 
 	defer stream.Close()
 
-	log.Println("Sending request to node ( writing to stream now ):", node)
+	//log.Println("Sending request to node ( writing to stream now ):", node)
 
 	// r.Write() writes the HTTP request to the stream.
 	err = req.Write(stream)
@@ -106,7 +96,7 @@ func SendNodeRequest(DB *gorm.DB, h *FederationHandler, nodeUUID string, data Re
 		return nil, fmt.Errorf("Couldn't find node with that UUID")
 	}
 
-	return SendRequestToNode(h, node, data)
+	return SendRequestToNode(h, node, data, T1mNetworkJoinProtocolID)
 }
 
 func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) {

@@ -4,11 +4,9 @@ import (
 	"backend/database"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
@@ -32,7 +30,7 @@ func (c *connWrapper) Read(b []byte) (int, error) {
 	return c.reader.Read(b)
 }
 
-func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, proxy database.Proxy, tlsConfig *tls.Config) (func(listener net.Listener), net.Listener, error) {
+func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, protocolID protocol.ID, tlsConfig *tls.Config) (func(listener net.Listener), net.Listener, error) {
 	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
 	if err != nil {
 		log.Println("Couldn't marshal node", err)
@@ -40,6 +38,7 @@ func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, 
 	}
 
 	log.Println("Creating TCP proxy to federated node:", string(prettyFederationNode))
+	// TODO: restrict to network memebers
 
 	var info *peer.AddrInfo
 	for _, address := range node.Addresses {
@@ -75,19 +74,12 @@ func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, 
 				continue
 			}
 
-			go handleTCPConnection(h, conn, info.ID, tlsConfig, proxy.TrafficTarget)
+			go handleTCPConnection(h, conn, info.ID, tlsConfig, protocolID)
 		}
 	}, listenerNew, nil
 }
 
-func HashTrafficTarget(trafficTarget string) string {
-	// should create a hash of the traffic target
-	hash := sha256.New()
-	hash.Write([]byte(trafficTarget))
-	return fmt.Sprintf("%x", hash.Sum(nil))
-}
-
-func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.ID, tlsConfig *tls.Config, trafficTarget string) {
+func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.ID, tlsConfig *tls.Config, protocolID protocol.ID) {
 	defer clientConn.Close()
 
 	log.Printf("Received connection from %s", clientConn.RemoteAddr())
@@ -164,12 +156,8 @@ func handleTCPConnection(h *FederationHandler, clientConn net.Conn, peerID peer.
 	// Open libp2p stream
 	var stream network.Stream
 	var err error
-	if trafficTarget == "" {
-		stream, err = h.Host.NewStream(context.Background(), peerID, "/t1m-tcp-proxy/0.0.1")
-	} else {
-		protocolID := protocol.ID(fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", HashTrafficTarget(trafficTarget)))
-		stream, err = h.Host.NewStream(context.Background(), peerID, protocolID)
-	}
+	fmt.Println("Opening stream to peer:", peerID, "with protocol:", protocolID)
+	stream, err = h.Host.NewStream(context.Background(), peerID, protocolID)
 	if err != nil {
 		log.Printf("Error opening stream to peer: %v", err)
 		return
@@ -210,19 +198,24 @@ func isPostgreSQLSSLRequest(data []byte) bool {
 		data[4] == 0x04 && data[5] == 0xd2 && data[6] == 0x16 && data[7] == 0x2f
 }
 
-func TCPReceivingPeer(ctx context.Context, h host.Host, streamHandler network.StreamHandler, trafficTarget string) {
-	h.SetStreamHandler(protocol.ID(fmt.Sprintf("/t1m-tcp-proxy-%s/0.0.1", HashTrafficTarget(trafficTarget))), streamHandler)
-}
-
 func copyStream(closer chan struct{}, dst io.Writer, src io.Reader) {
 	defer func() { closer <- struct{}{} }() // connection is closed, send signal to stop proxy
 	io.Copy(dst, src)
 }
 
-func CreateLocalTCPProxyHandler(dstaddress string) network.StreamHandler {
+func CreateLocalTCPProxyHandler(h *FederationHandler, networkName string, trafficTarget string) network.StreamHandler {
 	return func(stream network.Stream) {
-		fmt.Printf("Connecting to '%s'\n", dstaddress)
-		c, err := net.Dial("tcp", dstaddress)
+		// The requesting peer *MUST* be registered in the network
+		// remotePeerID := stream.Conn().RemotePeer()
+		// fmt.Println("Network name:", networkName, "Peer ID:", stream.Conn().RemotePeer().String(), "Network peer ids:", h.NetworkPeerIds[networkName])
+		if !h.NetworkPeerIds[networkName][stream.Conn().RemotePeer().String()] {
+			log.Println("Peer not in network!", stream.Conn().RemotePeer().String(), h.NetworkPeerIds[networkName])
+			stream.Reset()
+			return
+		}
+
+		fmt.Printf("Connecting to '%s'\n", trafficTarget)
+		c, err := net.Dial("tcp", trafficTarget)
 		if err != nil {
 			fmt.Printf("Reset %s: %s\n", stream.Conn().RemotePeer().String(), err.Error())
 			stream.Reset()
@@ -235,6 +228,6 @@ func CreateLocalTCPProxyHandler(dstaddress string) network.StreamHandler {
 
 		stream.Close()
 		c.Close()
-		fmt.Printf("(service %s) Handled correctly '%s'\n", dstaddress, stream.Conn().RemotePeer().String())
+		fmt.Printf("(service %s) Handled correctly '%s'\n", trafficTarget, stream.Conn().RemotePeer().String())
 	}
 }
