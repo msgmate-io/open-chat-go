@@ -76,15 +76,54 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
-	} else if action == "identity" {
+	} else if action == "proxy" {
+		return &cli.Command{
+			Name:  "proxy",
+			Usage: "Proxy traffic to a node",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "direction",
+					Usage: "The direction of the proxy",
+					Value: "egress",
+				},
+				&cli.StringFlag{
+					Name:  "origin",
+					Usage: "The origin of the proxy",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "target",
+					Usage: "The target of the proxy",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "port",
+					Usage: "The port of the proxy",
+					Value: "1984",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Proxy traffic to a node")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err := ocClient.CreateProxy(c.String("direction"), c.String("origin"), c.String("target"), c.String("port"))
+				if err != nil {
+					return fmt.Errorf("failed to proxy traffic: %w", err)
+				}
+				fmt.Println("Proxy created")
+				return nil
+			},
+		}
+	} else if action == "identity" || action == "id" {
 		return &cli.Command{
 			Name:  "identity",
 			Usage: "Get the identity of the current node",
 			Flags: append(defaultFlags, []cli.Flag{
 				&cli.BoolFlag{
-					Name:  "base64",
-					Usage: "Base64 encode the identity",
-					Value: false,
+					Name:    "base64",
+					Aliases: []string{"b64"},
+					Usage:   "Base64 encode the identity",
+					Value:   false,
 				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
@@ -97,7 +136,7 @@ func GetClientCmd(action string) *cli.Command {
 				}
 				if c.Bool("base64") {
 					// we have to tranfor this into a federation.RegisterNode
-					registerNode := federation.RegisterNode{
+					registerNode := federation.NodeInfo{
 						Name:      identity.ID,
 						Addresses: identity.ConnectMultiadress,
 					}
@@ -117,7 +156,7 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
-	} else if action == "register_node" {
+	} else if action == "register_node" || action == "register" {
 		return &cli.Command{
 			Name:  "register",
 			Usage: "Register a node",
@@ -137,6 +176,16 @@ func GetClientCmd(action string) *cli.Command {
 					Usage: "Base64 encoded node registration data",
 					Value: "",
 				},
+				&cli.BoolFlag{
+					Name:  "request",
+					Usage: "Request registration from the server",
+					Value: false,
+				},
+				&cli.StringFlag{
+					Name:  "network",
+					Usage: "The network to register the node in",
+					Value: "",
+				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Register a node")
@@ -147,13 +196,23 @@ func GetClientCmd(action string) *cli.Command {
 					if err != nil {
 						return fmt.Errorf("failed to decode b64: %w", err)
 					}
-					// now parse the json
-					var registerNode federation.RegisterNode
-					err = json.Unmarshal(decoded, &registerNode)
+					var nodeInfo federation.NodeInfo
+
+					err = json.Unmarshal(decoded, &nodeInfo)
 					if err != nil {
 						return fmt.Errorf("failed to unmarshal node: %w", err)
 					}
-					err, node := ocClient.RegisterNode(registerNode.Name, registerNode.Addresses)
+
+					var registerNode federation.RegisterNode
+					registerNode.Name = nodeInfo.Name
+					registerNode.Addresses = nodeInfo.Addresses
+					if c.String("network") != "" {
+						registerNode.AddToNetwork = c.String("network")
+					}
+					if c.Bool("request") {
+						registerNode.RequestRegistration = true
+					}
+					err, node := ocClient.RegisterNode(registerNode.Name, registerNode.Addresses, registerNode.RequestRegistration, registerNode.AddToNetwork)
 					if err != nil {
 						return fmt.Errorf("failed to register node: %w", err)
 					}
