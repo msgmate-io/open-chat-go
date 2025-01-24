@@ -255,6 +255,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			msg := paginatedMessages.Rows[i]
 			if msg.SenderUUID == ocClient.User.UUID {
 				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
+				// also check for possible past tool calls
 			} else {
 				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": msg.Text})
 			}
@@ -270,10 +271,13 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		fmt.Println("TOOOLS openAiMessages", tools)
 
 		var toolsData []interface{}
+		toolMap := map[string]Tool{}
 		if len(tools) > 0 {
-			toolsInterface := []Tool{NewWeatherTool()} // TODO: load tools dynamically
-			for _, tool := range toolsInterface {
-				toolsData = append(toolsData, tool.ConstructTool())
+			for _, tool := range AllTools {
+				if slices.Contains(tools, tool.GetToolName()) {
+					toolsData = append(toolsData, tool.ConstructTool())
+					toolMap[tool.GetToolName()] = tool
+				}
 			}
 		}
 
@@ -283,9 +287,11 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			backend,
 			openAiMessages,
 			toolsData,
+			toolMap,
 			ocClient.GetApiKey(backend),
 		)
 
+		var allToolCalls []interface{}
 		var fullText, thoughtText, thoughtBuffer strings.Builder
 		var isThinking bool
 		var currentBuffer strings.Builder
@@ -343,11 +349,13 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 					Text:      text,
 					Reasoning: []string{thoughtText.String()},
 					MetaData:  &metadata,
+					ToolCalls: &allToolCalls,
 				})
 			} else {
 				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
-					Text:     text,
-					MetaData: &metadata,
+					Text:      text,
+					MetaData:  &metadata,
+					ToolCalls: &allToolCalls,
 				})
 			}
 		}
@@ -385,6 +393,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 									"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 									"total_time":    totalTime.Round(time.Millisecond).String(),
 								},
+								nil,
 							),
 						)
 					} else {
@@ -402,6 +411,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 									"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 									"total_time":    totalTime.Round(time.Millisecond).String(),
 								},
+								nil,
 							),
 						)
 					}
@@ -420,6 +430,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 						&map[string]interface{}{
 							"total_time": totalTime.Round(time.Millisecond).String(),
 						},
+						nil,
 					),
 				)
 			}
@@ -448,7 +459,42 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 					toolCalls = nil
 				} else {
 					fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
-					// Now run the tool
+					toolCallRepr := map[string]interface{}{
+						"id":        toolCall.Id,
+						"name":      toolCall.ToolName,
+						"arguments": toolCall.ToolInput,
+						"result":    toolCall.Result,
+					}
+					// first check if the tool call is already in the list
+					alreadyInList := false
+					for _, registeredToolCall := range allToolCalls {
+						if registeredToolCall.(map[string]interface{})["id"] == toolCall.Id {
+							alreadyInList = true
+							// then update the result
+							registeredToolCall.(map[string]interface{})["result"] = toolCall.Result
+							break
+						}
+					}
+					if !alreadyInList {
+						allToolCalls = append(allToolCalls, toolCallRepr)
+					}
+
+					totalTime := time.Since(startTime)
+					ch.MessageHandler.SendMessage(
+						ch,
+						message.Content.SenderUUID,
+						ch.MessageHandler.NewPartialMessage(
+							message.Content.ChatUUID,
+							message.Content.SenderUUID,
+							"",
+							[]string{""},
+							&map[string]interface{}{
+								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
+								"total_time":    totalTime.Round(time.Millisecond).String(),
+							},
+							&allToolCalls,
+						),
+					)
 				}
 			case err, ok := <-errs:
 				if ok && err != nil {
@@ -537,7 +583,7 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 				"configuration": map[string]interface{}{
 					"temperature":   0.7,
 					"max_tokens":    4096,
-					"tools":         []string{"WeatherTool"},
+					"tools":         []string{"get_weather", "get_current_time"},
 					"model":         "gpt-4o",
 					"endpoint":      "https://api.openai.com/v1/",
 					"backend":       "openai",
@@ -605,6 +651,21 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 					"max_tokens":    4096,
 					"reasoning":     true,
 					"model":         "deepseek-ai/DeepSeek-R1",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "meta-llama/Meta-Llama-3.1-405B-Instruct",
+				"description": "Meta's Llama 3.1, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"reasoning":     false,
+					"tools":         []string{"get_current_time", "get_weather"},
+					"model":         "meta-llama/Meta-Llama-3.1-405B-Instruct",
 					"endpoint":      "https://api.deepinfra.com/v1/openai",
 					"backend":       "deepinfra",
 					"context":       10,

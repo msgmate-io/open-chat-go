@@ -21,6 +21,7 @@ type NewMessage struct {
 		Text       string                  `json:"text"`
 		Reasoning  []string                `json:"reasoning"`
 		MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
+		ToolCalls  *[]interface{}          `json:"tool_calls,omitempty"`
 	} `json:"content"`
 }
 
@@ -32,6 +33,7 @@ type NewPartialMessage struct {
 		Text       string                  `json:"text"`
 		Reasoning  []string                `json:"reasoning"`
 		MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
+		ToolCalls  *[]interface{}          `json:"tool_calls,omitempty"`
 	} `json:"content"`
 }
 
@@ -98,7 +100,7 @@ func (m *Messages) EndPartialMessage(ChatUUID, SenderUUID string) []byte {
 	return encMsg
 }
 
-func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}) []byte {
+func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}, ToolCalls *[]interface{}) []byte {
 	msg := NewPartialMessage{
 		Type: "new_partial_message",
 		Content: struct {
@@ -107,12 +109,14 @@ func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasonin
 			Text       string                  `json:"text"`
 			Reasoning  []string                `json:"reasoning"`
 			MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
+			ToolCalls  *[]interface{}          `json:"tool_calls,omitempty"`
 		}{
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
 			Reasoning:  Reasoning,
 			MetaData:   MetaData,
+			ToolCalls:  ToolCalls,
 		},
 	}
 
@@ -120,7 +124,7 @@ func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, Text string, Reasonin
 	return encMsg
 }
 
-func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}) []byte {
+func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}, ToolCalls *[]interface{}) []byte {
 	msg := NewMessage{
 		Type: "new_message",
 		Content: struct {
@@ -129,12 +133,14 @@ func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []str
 			Text       string                  `json:"text"`
 			Reasoning  []string                `json:"reasoning"`
 			MetaData   *map[string]interface{} `json:"meta_data,omitempty"`
+			ToolCalls  *[]interface{}          `json:"tool_calls,omitempty"`
 		}{
 			ChatUUID:   ChatUUID,
 			SenderUUID: SenderUUID,
 			Text:       Text,
 			Reasoning:  Reasoning,
 			MetaData:   MetaData,
+			ToolCalls:  ToolCalls,
 		},
 	}
 
