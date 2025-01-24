@@ -101,7 +101,16 @@ func BackendRouting(
 
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
+
+	mux.Handle("POST /api/v1/federation/networks/login", providerMiddlewares(http.HandlerFunc(userHandler.NetworkUserLogin)))
+	v1PrivateApis.HandleFunc("POST /federation/networks/addnode", federationHandler.RegisterNode)
+	v1PrivateApis.HandleFunc("GET /federation/networks/sync/{network_name}/get", federationHandler.SyncGet)
+
 	mux.Handle("POST /api/v1/federation/nodes/{peer_id}/ping", providerMiddlewares(http.HandlerFunc(federationHandler.Ping)))
+
+	// TODO deprivate again? Now basicly handeled trough networks
+	mux.Handle("POST /api/v1/federation/nodes/register/request", providerMiddlewares(http.HandlerFunc(federationHandler.RequestNodeRegistration)))
+
 	mux.HandleFunc("GET /_health", func(w http.ResponseWriter, r *http.Request) {
 		// TODO: need some better way to check if server is running
 		if ServerStatus != "running" {
