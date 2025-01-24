@@ -27,6 +27,7 @@ type SendMessage struct {
 	Text      string                  `json:"text"`
 	Reasoning []string                `json:"reasoning"`
 	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolCalls *[]interface{}          `json:"tool_calls,omitempty"`
 }
 
 type Client struct {
