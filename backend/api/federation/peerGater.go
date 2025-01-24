@@ -56,6 +56,8 @@ func (g *WhitelistGater) InterceptPeerDial(p peer.ID) (allow bool) {
 // InterceptSecured implements connmgr.ConnectionGater.
 func (g *WhitelistGater) InterceptSecured(direction network.Direction, p peer.ID, addrs network.ConnMultiaddrs) (allow bool) {
 	// Allow secured connections with whitelisted peers
+	protocols := addrs.RemoteMultiaddr().Protocols()
+	fmt.Println("InterceptSecured: Protocols:", protocols)
 	return g.CheckLimit(context.Background(), p)
 }
 
@@ -73,10 +75,10 @@ func NewWhitelistGater(allowedPeers []peer.ID) *WhitelistGater {
 }
 
 func (g *WhitelistGater) CheckLimit(ctx context.Context, p peer.ID) bool {
-	fmt.Println("Checking if peer is allowed:", p, "Allowed peers:", g.allowedPeers)
+	// fmt.Println("Checking if peer is allowed:", p, "Allowed peers:", g.allowedPeers)
 	for _, allowedPeer := range g.allowedPeers {
 		if allowedPeer == p {
-			fmt.Println("===> Peer is allowed")
+			// fmt.Println("===> Peer is allowed")
 			return true
 		}
 	}
