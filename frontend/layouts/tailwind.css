@@ -289,3 +289,24 @@
     @apply bg-background text-foreground;
   }
 }
+
+.CollapsibleContent[data-state="open"] {
+  animation: slideDown 400ms ease-out;
+}
+.CollapsibleContent[data-state="closed"] {
+  animation: slideUp 400ms ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 10%;
+    transform: translateY(-1rem);
+  }
+}
+
+@keyframes slideUp {
+  to {
+    opacity: 10%;
+    transform: translateY(-1rem);
+  }
+}
