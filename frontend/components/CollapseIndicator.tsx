@@ -16,7 +16,7 @@ export const CollapseIndicator = ({
         }
     }
 
-    return <div className={cn("flex p-2 rounded-xl hover:bg-secondary")} onClick={onClick}>
+    return <div className={cn("flex p-2 rounded-xl hover:bg-secondary text-foreground hover:text-primary")} onClick={onClick}>
         <CollapseSvgIcon />
     </div>
 }
