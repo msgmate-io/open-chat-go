@@ -99,6 +99,55 @@ func SendNodeRequest(DB *gorm.DB, h *FederationHandler, nodeUUID string, data Re
 	return SendRequestToNode(h, node, data, T1mNetworkJoinProtocolID)
 }
 
+func (h *FederationHandler) RequestNodeByPeerId(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return
+	}
+
+	peerId := r.PathValue("peer_id")
+	if peerId == "" {
+		http.Error(w, "Invalid peer ID", http.StatusBadRequest)
+		return
+	}
+
+	var data RequestNode
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	var node database.Node
+	q := DB.Preload("Addresses").Where("peer_id = ?", peerId).First(&node)
+	if q.Error != nil {
+		http.Error(w, "Couldn't find node with that peer ID", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := SendRequestToNode(h, node, data, T1mNetworkRequestProtocolID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for k, v := range resp.Header {
+		for _, val := range v {
+			w.Header().Add(k, val)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	io.Copy(w, resp.Body)
+	resp.Body.Close()
+}
+
 func (h *FederationHandler) RequestNode(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 
