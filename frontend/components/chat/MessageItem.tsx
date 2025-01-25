@@ -216,7 +216,6 @@ export function BotMessageItem({
             </div>
         </div>
     }else{
-        console.log("message thoughts", message?.thoughts)
         return <div key={message.uuid} className="flex flex-row w-full relativ max-w-full">
             <div className="flex p-2 hidden md:flex">
                 <img alt="logo" className="h-9 w-9 m-2 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
