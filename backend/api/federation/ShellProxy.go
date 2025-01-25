@@ -22,6 +22,24 @@ type SSHServer struct {
 	done     chan struct{}
 }
 
+func (h *FederationHandler) StartSSHProxy(port int, password string) error {
+	// Start SSH server
+	server, err := NewSSHServer(port, password)
+	if err != nil {
+		return fmt.Errorf("failed to create SSH server: %w", err)
+	}
+
+	// Start server in goroutine
+	go func() {
+		err := server.Start()
+		if err != nil {
+			log.Printf("SSH server error: %v", err)
+		}
+	}()
+
+	return nil
+}
+
 func generateRandomPassword(length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
@@ -30,9 +48,7 @@ func generateRandomPassword(length int) (string, error) {
 	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
 }
 
-// ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 tim@localhost
-func NewSSHServer(port int) (*SSHServer, error) {
-	password := "Test123!"
+func NewSSHServer(port int, password string) (*SSHServer, error) {
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
