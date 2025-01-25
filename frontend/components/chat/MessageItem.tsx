@@ -216,6 +216,7 @@ export function BotMessageItem({
             </div>
         </div>
     }else{
+        console.log("Update tool calls", message?.tool_calls)
         return <div key={message.uuid} className="flex flex-row w-full relativ max-w-full">
             <div className="flex p-2 hidden md:flex">
                 <img alt="logo" className="h-9 w-9 m-2 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
@@ -259,7 +260,7 @@ export function BotMessageItem({
                       </CollapsibleTrigger>
                       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
                         {message?.tool_calls?.map((toolCall: any, index: number) => (
-                            <div key={index}>{wrapInBlockquote(toolCall.name + "(" + JSON.stringify(toolCall.arguments)+ ")")}</div>
+                            <div key={index}>{wrapInBlockquote(toolCall.name + "(" + JSON.stringify(toolCall.arguments)+ ")" + " = " + toolCall?.result)}</div>
                         ))}
                       </CollapsibleContent>
                     </Collapsible>}
