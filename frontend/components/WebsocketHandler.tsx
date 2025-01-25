@@ -70,6 +70,12 @@ export function WebsocketHandlerBase({
                         }, ...newRows]
                     }
                 })
+                mutate(`/api/v1/chats/list`, async (data: any) => {
+                    return {
+                        ...data,
+                        rows: data.rows.map((row: any) => row.uuid === parsedMessage?.content?.chat_uuid ? { ...row, latest_message: parsedMessage?.content } : row)
+                    }
+                })
             }
           }
         }, [lastMessage]);
