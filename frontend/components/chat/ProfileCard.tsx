@@ -15,6 +15,8 @@ import {
 import image from "@/assets/logo.png"
 import { Cookies } from 'typescript-cookie';
 import { useThemeStore } from '../ThemeToggle';
+import { fetcher } from '@/lib/utils';
+import useSWR from 'swr';
 
 function ProfileCardButton() {
     const profile = {
@@ -38,6 +40,8 @@ function ProfileCardButton() {
 }
 
 export function ProfileCard({ navigateTo }: { navigateTo: (path: string) => void }) {
+
+    const { data: user } = useSWR(`/api/v1/user/self`, fetcher)
     const theme = useThemeStore(state => state.theme)
     const onLogout = () => {
         // TODO: logout
@@ -68,7 +72,9 @@ export function ProfileCard({ navigateTo }: { navigateTo: (path: string) => void
                 }}>Chat</DropdownMenuItem>
                 <DropdownMenuItem>Docs</DropdownMenuItem>
                 <DropdownMenuLabel><ThemeSelector /></DropdownMenuLabel>
-                <DropdownMenuItem disabled>API</DropdownMenuItem>
+                {user?.is_admin && <DropdownMenuItem onClick={() => {
+                    navigateTo('/admin')
+                }}>Admin</DropdownMenuItem>}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onLogout}>
                     Log out
