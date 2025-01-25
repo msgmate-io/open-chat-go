@@ -57,8 +57,8 @@ const data = {
       isActive: true,
       items: [
         {
-          title: "Settings",
-          url: "#",
+          title: "Self",
+          url: "/nodes/self",
         },
       ],
     },
