@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -31,14 +30,7 @@ func (c *connWrapper) Read(b []byte) (int, error) {
 }
 
 func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, protocolID protocol.ID, tlsConfig *tls.Config) (func(listener net.Listener), net.Listener, error) {
-	prettyFederationNode, err := json.MarshalIndent(node, "", "  ")
-	if err != nil {
-		log.Println("Couldn't marshal node", err)
-		return nil, nil, err
-	}
-
-	log.Println("Creating TCP proxy to federated node:", string(prettyFederationNode))
-	// TODO: restrict to network memebers
+	log.Println(fmt.Sprintf("Creating TCP proxy to federated node: %s", node.PeerID))
 
 	var info *peer.AddrInfo
 	for _, address := range node.Addresses {
@@ -60,7 +52,7 @@ func CreateProxyHandlerTCP(h *FederationHandler, DB *gorm.DB, localPort string, 
 
 	var listenerNew net.Listener
 	// Always create a non-TLS listener first
-	listenerNew, err = net.Listen("tcp", fmt.Sprintf(":%s", localPort))
+	listenerNew, err := net.Listen("tcp", fmt.Sprintf(":%s", localPort))
 	if err != nil {
 		log.Printf("Failed to start TCP listener on port %s: %v", localPort, err)
 		return nil, nil, err
