@@ -163,6 +163,8 @@ func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, da
 		if err != nil {
 			return nil, fmt.Errorf("Error opening relayed stream to node: %s", err)
 		}
+		// now add the the relay address to the peerstore for later use
+		h.Host.Peerstore().AddAddrs(info.ID, []multiaddr.Multiaddr{relayaddr}, peerstore.PermanentAddrTTL)
 
 	}
 
