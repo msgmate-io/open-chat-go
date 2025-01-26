@@ -164,7 +164,8 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 					addresses[i] = addr.Address
 				}
 				differentNodes = append(differentNodes, NodeSyncInfo{
-					Name:        networkMember.Node.PeerID,
+					Name:        networkMember.Node.NodeName,
+					PeerId:      networkMember.Node.PeerID,
 					Addresses:   addresses,
 					LastUpdated: networkMember.Node.UpdatedAt,
 				})
