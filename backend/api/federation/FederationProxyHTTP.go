@@ -15,6 +15,7 @@ import (
 // CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
 func (h *FederationHandler) CreateIncomingRequestStreamHandler(scheme string, host string, domain string, hostPort int, pathPrefixWhitelist []string, restrictToNetworkName string) network.StreamHandler {
 	// empty whitelist means allow all
+	useSsl := scheme == "https"
 	preprocessor := func(path string) bool {
 		return true
 	}
@@ -29,10 +30,10 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(scheme string, ho
 			return false
 		}
 	}
-	// Create a custom transport that skips certificate verification
+	// TODO: only skip if self is not served with https
 	customTransport := &http.Transport{
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: !useSsl,
 		},
 	}
 	// check possible proxies
@@ -73,6 +74,8 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(scheme string, ho
 			req.URL.Host = fmt.Sprintf("%s:%d", domain, hostPort)
 		}
 
+		fmt.Println("Request URL:", req.URL.String(), "PORT", hostPort)
+
 		// Set the Host header to match the URL
 		outreq := new(http.Request)
 		*outreq = *req
@@ -80,11 +83,21 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(scheme string, ho
 		outreq.Header = req.Header
 
 		// Use custom transport instead of default
-		resp, err := customTransport.RoundTrip(outreq)
-		if err != nil {
-			stream.Reset()
-			log.Println("Error: handling incoming request", err)
-			return
+		var resp *http.Response
+		if useSsl {
+			resp, err = customTransport.RoundTrip(outreq)
+			if err != nil {
+				stream.Reset()
+				log.Println("Error: handling incoming request", err)
+				return
+			}
+		} else {
+			resp, err = http.DefaultTransport.RoundTrip(outreq)
+			if err != nil {
+				stream.Reset()
+				log.Println("Error: handling incoming request", err)
+				return
+			}
 		}
 
 		// fmt.Println("Response:", resp, resp.Header)
