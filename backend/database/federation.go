@@ -50,19 +50,20 @@ type NodeAddress struct {
 	Address     string `json:"address"`
 }
 
+// supported Kinds: tcp, http, ssh
+// supported Directions: 'egress' ( route traffic from a proxy to libp2p stream ), 'ingress' ( route traffic coming from a libp2p stream )
+// If we have UseTLS=true, we assume there are 3 keys with names <proxy_id>_cert.pem, <proxy_id>_key.pem, <proxy_id>_issuer.pem
 type Proxy struct {
 	Model
-	Port   string `json:"port"`
-	Active bool   `json:"active"`
-	UseTLS bool   `json:"use_tls"`
-	// supported Kinds: tcp, http, ssh
-	Kind string `json:"kind"`
-	// supported Directions: 'egress' ( route traffic from a proxy to libp2p stream ), 'ingress' ( route traffic coming from a libp2p stream )
-	Direction     string `json:"direction"`
-	NetworkName   string `json:"network_name"`
-	TrafficOrigin string `json:"traffic_origin"`
-	TrafficTarget string `json:"traffic_target"`
-	// If we have UseTLS=true, we assume there are 3 keys with names <proxy_id>_cert.pem, <proxy_id>_key.pem, <proxy_id>_issuer.pem
+	Port          string     `json:"port"`
+	Active        bool       `json:"active"`
+	UseTLS        bool       `json:"use_tls"`
+	Kind          string     `json:"kind"`
+	Direction     string     `json:"direction"`
+	NetworkName   string     `json:"network_name"`
+	TrafficOrigin string     `json:"traffic_origin"`
+	TrafficTarget string     `json:"traffic_target"`
+	ExpiresAt     *time.Time `json:"expires_at"`
 }
 
 type Ping struct {

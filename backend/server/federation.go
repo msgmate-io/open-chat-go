@@ -189,6 +189,13 @@ func CreateFederationHost(
 }
 
 func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
+	// first remove all expired proxies
+	err := h.RemoveExpiredProxies(DB)
+	if err != nil {
+		log.Println("Couldn't remove expired proxies", err)
+		return
+	}
+
 	egressProxies := []database.Proxy{}
 	q := DB.Where("active = ? AND direction = ?", true, "egress").Find(&egressProxies)
 
@@ -247,6 +254,8 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 		trafficTarget := fmt.Sprintf(":%s", targetPort)
 		h.Host.SetStreamHandler(protocolID, federation.CreateLocalTCPProxyHandler(h, proxy.NetworkName, trafficTarget))
 	}
+
+	go h.AutoRemoveExpiredProxies(DB)
 }
 
 func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
