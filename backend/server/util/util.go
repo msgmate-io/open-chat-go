@@ -3,6 +3,7 @@ package util
 import (
 	"backend/api/websocket"
 	"backend/database"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -96,4 +97,10 @@ func CreateRootUser(DB *gorm.DB, username string, password string) (error, *data
 	}
 
 	return nil, &user
+}
+
+func Hash(data string) string {
+	hash := sha256.New()
+	hash.Write([]byte(data))
+	return fmt.Sprintf("%x", hash.Sum(nil))
 }
