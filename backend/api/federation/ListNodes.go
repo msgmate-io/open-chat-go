@@ -6,17 +6,26 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type ListedNode struct {
-	UUID      string                 `json:"uuid"`
-	NodeName  string                 `json:"node_name"`
-	Addresses []database.NodeAddress `json:"addresses"`
+	UUID               string                 `json:"uuid"`
+	NodeName           string                 `json:"node_name"`
+	PeerID             string                 `json:"peer_id"`
+	NetworkMemberships []SimpleNetworkMember  `json:"network_memberships"`
+	Addresses          []database.NodeAddress `json:"addresses"`
+	LatestContact      time.Time              `json:"latest_contact"`
 }
 
 type PaginatedNodes struct {
 	database.Pagination
 	Rows []ListedNode `json:"rows"`
+}
+
+type SimpleNetworkMember struct {
+	NetworkName string    `json:"network_name"`
+	LastSync    time.Time `json:"last_sync"`
 }
 
 // List Nodes
@@ -75,10 +84,26 @@ func (h *FederationHandler) ListNodes(w http.ResponseWriter, r *http.Request) {
 
 	listedNodes := make([]ListedNode, len(nodes))
 	for i, node := range nodes {
+		var networkMemberShips []database.NetworkMember
+		var simpleNetworkMemberShips []SimpleNetworkMember
+		var latestContact time.Time
+		DB.Model(&database.NetworkMember{}).Preload("Network").Where("node_id = ?", node.ID).Find(&networkMemberShips)
+		for _, networkMemberShip := range networkMemberShips {
+			simpleNetworkMemberShips = append(simpleNetworkMemberShips, SimpleNetworkMember{
+				NetworkName: networkMemberShip.Network.NetworkName,
+				LastSync:    networkMemberShip.LastSync,
+			})
+			if networkMemberShip.LastSync.After(latestContact) {
+				latestContact = networkMemberShip.LastSync
+			}
+		}
 		listedNodes[i] = ListedNode{
-			UUID:      node.UUID,
-			NodeName:  node.NodeName,
-			Addresses: node.Addresses,
+			UUID:               node.UUID,
+			NodeName:           node.NodeName,
+			Addresses:          node.Addresses,
+			PeerID:             node.PeerID,
+			NetworkMemberships: simpleNetworkMemberShips,
+			LatestContact:      latestContact,
 		}
 	}
 
