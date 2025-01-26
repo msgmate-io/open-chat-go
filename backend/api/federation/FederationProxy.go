@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func CreateProxyHandlerHTTP(h *FederationHandler, DB *gorm.DB, localPort string, node database.Node, proxy database.Proxy) http.HandlerFunc {
@@ -183,8 +184,9 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		req.NetworkName = "network"
 	}
 
+	in5min := time.Now().Add(5 * time.Minute)
 	proxy := database.Proxy{
-		Port:          req.Port, // TODO: can be depricated! we only use Origin and Target now!
+		Port:          req.Port,
 		Active:        true,
 		UseTLS:        req.UseTLS,
 		Kind:          req.Kind,
@@ -192,6 +194,8 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 		NetworkName:   req.NetworkName,
 		TrafficOrigin: req.TrafficOrigin,
 		TrafficTarget: req.TrafficTarget,
+		// per default expire 5 minutes after creation!
+		ExpiresAt: &in5min,
 	}
 
 	if proxy.TrafficOrigin == "" && proxy.Direction == "egress" {
@@ -259,6 +263,31 @@ func (h *FederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *http.R
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Proxy created and started"))
+}
+
+func (h *FederationHandler) AutoRemoveExpiredProxies(DB *gorm.DB) {
+	// every 5 min remove expired proxies
+	ticker := time.NewTicker(5 * time.Minute)
+	for range ticker.C {
+		err := h.RemoveExpiredProxies(DB)
+		if err != nil {
+			log.Println("Couldn't remove expired proxies", err)
+		}
+	}
+}
+
+func (h *FederationHandler) RemoveExpiredProxies(DB *gorm.DB) error {
+	expiredProxies := []database.Proxy{}
+	q := DB.Where("expires_at < ? AND expires_at IS NOT NULL", time.Now()).Find(&expiredProxies)
+	if q.Error != nil {
+		log.Println("No proxies that are expired!")
+		return nil
+	}
+	for _, proxy := range expiredProxies {
+		DB.Delete(&proxy)
+		log.Println("Removed expired proxy", proxy.ID)
+	}
+	return nil
 }
 
 func (h *FederationHandler) StartEgressProxy(
