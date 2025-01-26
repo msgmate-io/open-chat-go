@@ -11,12 +11,18 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"time"
 )
 
 type NetworkCreate struct {
 	Name     string `json:"name"`
 	Password string `json:"password"`
+}
+
+func orderAdressesAlphabetically(addresses []string) []string {
+	sort.Strings(addresses)
+	return addresses
 }
 
 func (h *FederationHandler) NetworkCreate(w http.ResponseWriter, r *http.Request) {
@@ -144,31 +150,38 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 				Addresses:           addresses,
 				RequestRegistration: false,
 				AddToNetwork:        networkName,
+				LastChanged:         &networkMember.Node.LastChanged,
 			})
 		} else {
 			// if it's contained we need to check if it's outdated
 			// calculate & compare the node info hash
-			networkMemberInfoJson, err := json.Marshal(NodeSyncInfo{
-				Name:        networkMember.Node.PeerID,
-				Addresses:   make([]string, len(networkMember.Node.Addresses)),
-				LastUpdated: networkMember.Node.UpdatedAt,
+			addresses := make([]string, len(networkMember.Node.Addresses))
+			for i, addr := range networkMember.Node.Addresses {
+				addresses[i] = addr.Address
+			}
+			networkMemberInfoJson, err := json.Marshal(NodeRepresentation{
+				Name:      networkMember.Node.NodeName,
+				PeerId:    networkMember.Node.PeerID,
+				Addresses: orderAdressesAlphabetically(addresses),
 			})
 			if err != nil {
 				log.Println("Error marshalling network member info", err)
 				continue
 			}
-			if data.PeerInfoHashes[networkMember.Node.PeerID] != util.Hash(string(networkMemberInfoJson)) {
-				// TODO: send the node info to the node
-				addresses := make([]string, len(networkMember.Node.Addresses))
-				for i, addr := range networkMember.Node.Addresses {
-					addresses[i] = addr.Address
+			if networkMember.Node.PeerID != data.RequestorInfo.PeerId {
+				if data.PeerInfoHashes[networkMember.Node.PeerID] != util.Hash(string(networkMemberInfoJson)) {
+					// TODO: send the node info to the node
+					addresses = make([]string, len(networkMember.Node.Addresses))
+					for i, addr := range networkMember.Node.Addresses {
+						addresses[i] = addr.Address
+					}
+					differentNodes = append(differentNodes, NodeSyncInfo{
+						Name:        networkMember.Node.NodeName,
+						PeerId:      networkMember.Node.PeerID,
+						Addresses:   orderAdressesAlphabetically(addresses),
+						LastUpdated: networkMember.Node.LastChanged,
+					})
 				}
-				differentNodes = append(differentNodes, NodeSyncInfo{
-					Name:        networkMember.Node.NodeName,
-					PeerId:      networkMember.Node.PeerID,
-					Addresses:   addresses,
-					LastUpdated: networkMember.Node.UpdatedAt,
-				})
 			}
 		}
 	}
@@ -179,7 +192,7 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 	response.DifferentNodes = differentNodes
 	// Last we check if the 'RequestorInfo' is in our network
 	// log.Println("Requestor info", data.RequestorInfo, networkMemberPeerIds)
-	if !Contains(networkMemberPeerIds, data.RequestorInfo.Name) {
+	if !Contains(networkMemberPeerIds, data.RequestorInfo.PeerId) {
 		// log.Println("Requestor info is in our network, adding it directly")
 		// add directly to own nodes
 		_, err := RegisterNodeRaw(DB, h, RegisterNode{
@@ -187,7 +200,8 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 			Addresses:           data.RequestorInfo.Addresses,
 			RequestRegistration: false,
 			AddToNetwork:        networkName,
-		})
+			LastChanged:         &data.RequestorInfo.LastUpdated,
+		}, &data.RequestorInfo.LastUpdated)
 		if err != nil {
 			log.Println("Error registering requestor node", err)
 		}
@@ -225,7 +239,7 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 	var networkMembers []database.NetworkMember
 	var networkMembersToSync []database.NetworkMember
 	// get all network members wher last_sync is older than 60 seconds
-	DB.Where("network_id = ?", network.ID).Preload("Node").Find(&networkMembers)
+	DB.Where("network_id = ?", network.ID).Preload("Node").Preload("Node.Addresses").Find(&networkMembers)
 	DB.Where("network_id = ? AND last_sync < ? AND node_id NOT IN (SELECT id FROM nodes WHERE peer_id = ?)",
 		network.ID,
 		time.Now().Add(-60*time.Second),
@@ -234,21 +248,23 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 		Find(&networkMembersToSync)
 	var networkMemberPeerIds []string
 	var memberInfoHashes map[string]string = make(map[string]string)
+	var networkMemberInfoMap map[string]NodeRepresentation = make(map[string]NodeRepresentation)
 	var peerIdNodeMap map[string]database.Node = make(map[string]database.Node)
 
 	for _, networkMember := range networkMembers {
 		peerIdNodeMap[networkMember.Node.PeerID] = networkMember.Node
 		networkMemberPeerIds = append(networkMemberPeerIds, networkMember.Node.PeerID)
-		networkMemberInfo := NodeSyncInfo{
-			Name:        networkMember.Node.PeerID,
-			Addresses:   ownIdentity.ConnectMultiadress,
-			LastUpdated: networkMember.LastSync,
+		networkMemberInfo := NodeRepresentation{
+			Name:      networkMember.Node.NodeName,
+			PeerId:    networkMember.Node.PeerID,
+			Addresses: orderAdressesAlphabetically(ownIdentity.ConnectMultiadress),
 		}
 		networkMemberInfoJson, err := json.Marshal(networkMemberInfo)
 		if err != nil {
 			log.Println("Error marshalling network member info", err)
 			continue
 		}
+		networkMemberInfoMap[networkMember.Node.PeerID] = networkMemberInfo
 		memberInfoHashes[networkMember.Node.PeerID] = util.Hash(string(networkMemberInfoJson))
 	}
 
@@ -313,8 +329,9 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 				Name:        ownNode.NodeName,
 				PeerId:      ownIdentity.ID,
 				Addresses:   ownIdentity.ConnectMultiadress,
-				LastUpdated: ownNode.UpdatedAt,
+				LastUpdated: ownNode.LastChanged,
 			},
+			PeerInfoHashes: memberInfoHashes,
 		}
 		syncGetRequestJson, err := json.Marshal(syncGetRequest)
 		if err != nil {
@@ -360,7 +377,7 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 		}
 
 		for _, missingNode := range syncNetworkResponse.MissingNodes {
-			RegisterNodeRaw(DB, h, missingNode)
+			RegisterNodeRaw(DB, h, missingNode, missingNode.LastChanged)
 		}
 
 		if len(syncNetworkResponse.DifferentNodes) != 0 {
@@ -374,19 +391,47 @@ func (h *FederationHandler) SyncNetwork(DB *gorm.DB, networkName string) {
 
 		// check if nodes where the hashes differed needed updating
 		for _, differentNode := range syncNetworkResponse.DifferentNodes {
-			if peerIdNodeMap[differentNode.Name].UpdatedAt.After(differentNode.LastUpdated) {
+			fmt.Println("Different node", differentNode.Name, differentNode.LastUpdated, "vs (my node)", peerIdNodeMap[differentNode.PeerId].LastChanged)
+			if differentNode.PeerId == ownIdentity.ID {
+				// nevery sync a change of the own node!
+				continue
+			}
+			// Normalize timestamps to UTC before comparison
+			ownLastChanged := peerIdNodeMap[differentNode.PeerId].LastChanged.UTC()
+			differentNodeLastUpdated := differentNode.LastUpdated.UTC()
+
+			fmt.Println("Own last changed", ownLastChanged)
+			fmt.Println("Different node last updated", differentNodeLastUpdated)
+			prettyOwnNode, err := json.MarshalIndent(networkMemberInfoMap[differentNode.PeerId], "", "  ")
+			if err != nil {
+				log.Println("Error marshalling own node", err)
+			}
+			log.Println("Pretty own node", string(prettyOwnNode))
+
+			if ownLastChanged.After(differentNodeLastUpdated) || ownLastChanged.Equal(differentNodeLastUpdated) {
 				continue
 			}
 			fmt.Println("Updating node", differentNode.Name)
 			var nodeUpdate database.Node
-			DB.Where("peer_id = ?", differentNode.PeerId).First(&nodeUpdate)
-			nodeUpdate.NodeName = differentNode.Name
-			nodeUpdate.UpdatedAt = differentNode.LastUpdated
-			DB.Save(&nodeUpdate)
-
-			for _, addr := range nodeUpdate.Addresses {
-				DB.Model(&addr).Update("address", addr.Address)
+			DB.Where("peer_id = ?", differentNode.PeerId).Preload("Addresses").First(&nodeUpdate)
+			existingAddressIds := make([]uint, len(nodeUpdate.Addresses))
+			for i, addr := range nodeUpdate.Addresses {
+				existingAddressIds[i] = addr.ID
 			}
+			nodeUpdate.NodeName = differentNode.Name
+			nodeUpdate.LastChanged = differentNode.LastUpdated
+			// create new adresses, then delete old ones
+			for i := len(differentNode.Addresses) - 1; i >= 0; i-- {
+				addr := differentNode.Addresses[i]
+				newAddress := database.NodeAddress{
+					NodeID:  nodeUpdate.ID,
+					Address: addr,
+				}
+				DB.Create(&newAddress)
+				nodeUpdate.Addresses = append(nodeUpdate.Addresses, newAddress)
+			}
+			DB.Where("node_id = ? AND id IN (?)", nodeUpdate.ID, existingAddressIds).Delete(&database.NodeAddress{})
+			DB.Save(&nodeUpdate)
 		}
 
 		networkMemberToSync.LastSync = time.Now()

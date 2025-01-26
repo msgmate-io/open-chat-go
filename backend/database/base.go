@@ -10,7 +10,7 @@ type Model struct {
 	UUID      string         `gorm:"type:uuid;" json:"uuid"`
 	ID        uint           `gorm:"primarykey" json:"-"`
 	CreatedAt time.Time      `json:"-"`
-	UpdatedAt time.Time      `json:"-"`
+	UpdatedAt time.Time      `json:"-" gorm:"autoUpdateTime"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

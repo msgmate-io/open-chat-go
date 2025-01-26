@@ -19,6 +19,12 @@ type NodeInfo struct {
 	Addresses []string `json:"addresses"`
 }
 
+type NodeRepresentation struct {
+	Name      string   `json:"name"`
+	PeerId    string   `json:"peer_id"`
+	Addresses []string `json:"addresses"`
+}
+
 type NodeSyncInfo struct {
 	Name        string    `json:"name"`
 	PeerId      string    `json:"peer_id"`
@@ -28,10 +34,11 @@ type NodeSyncInfo struct {
 
 // TODO: allow directly assigning the node to a network in the future
 type RegisterNode struct {
-	Name                string   `json:"name"`
-	Addresses           []string `json:"addresses"`
-	RequestRegistration bool     `json:"request_registration"`
-	AddToNetwork        string   `json:"add_to_network"`
+	Name                string     `json:"name"`
+	Addresses           []string   `json:"addresses"`
+	RequestRegistration bool       `json:"request_registration"`
+	AddToNetwork        string     `json:"add_to_network"`
+	LastChanged         *time.Time `json:"last_changed"`
 }
 
 // Registers a Peer to Peer Node
@@ -68,7 +75,7 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	node, err := RegisterNodeRaw(DB, h, data)
+	node, err := RegisterNodeRaw(DB, h, data, data.LastChanged)
 	if err != nil {
 		log.Println("Error registering node: ", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -80,7 +87,7 @@ func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(node)
 }
 
-func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode) (database.Node, error) {
+func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode, lastChanged *time.Time) (database.Node, error) {
 	var nodeAddresses []database.NodeAddress
 
 	var info *peer.AddrInfo
@@ -115,11 +122,16 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode) (data
 	if peerInfo.ID == "" {
 		h.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
 	}
+	if lastChanged == nil {
+		now := time.Now()
+		lastChanged = &now
+	}
 
 	node := database.Node{
-		NodeName:  data.Name,
-		PeerID:    info.ID.String(),
-		Addresses: nodeAddresses,
+		NodeName:    data.Name,
+		PeerID:      info.ID.String(),
+		Addresses:   nodeAddresses,
+		LastChanged: *lastChanged,
 	}
 
 	q = DB.Create(&node)
