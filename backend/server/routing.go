@@ -98,6 +98,8 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
+	v1PrivateApis.HandleFunc("GET /bin/download", federationHandler.DownloadBinary)
+	v1PrivateApis.HandleFunc("POST /bin/upload", federationHandler.UploadBinary)
 
 	providerMiddlewares := CreateStack(
 		dbMiddleware(DB),
