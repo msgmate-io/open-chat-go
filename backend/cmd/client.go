@@ -161,12 +161,17 @@ func GetClientCmd(action string) *cli.Command {
 					Usage: "The port of the proxy",
 					Value: "1984",
 				},
+				&cli.StringFlag{
+					Name:  "network",
+					Usage: "The network to create the proxy in",
+					Value: "network",
+				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Proxy traffic to a node")
 				ocClient := client.NewClient(c.String("host"))
 				ocClient.SetSessionId(c.String("session-id"))
-				err := ocClient.CreateProxy(c.String("direction"), c.String("origin"), c.String("target"), c.String("port"))
+				err := ocClient.CreateProxy(c.String("direction"), c.String("origin"), c.String("target"), c.String("port"), c.String("network"))
 				if err != nil {
 					return fmt.Errorf("failed to proxy traffic: %w", err)
 				}
@@ -465,11 +470,17 @@ func GetClientCmd(action string) *cli.Command {
 					Usage: "The node to open a shell to",
 					Value: "",
 				},
+				&cli.StringFlag{
+					Name:  "network",
+					Usage: "The network to open a shell to",
+					Value: "network",
+				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Attempting to establish ssh connection to node", c.String("node"))
 				// prompt the user to enter the 'nodes' admin password!
 				fmt.Println("Enter the 'nodes' admin login string 'username:password'")
+				networkName := c.String("network")
 				username, password, err := promptForUsernameAndPassword()
 				if err != nil {
 					return fmt.Errorf("failed to read password: %w", err)
@@ -512,7 +523,7 @@ func GetClientCmd(action string) *cli.Command {
 					Direction:     "egress",
 					TrafficOrigin: "ssh:" + randomPassword,
 					TrafficTarget: "tim:" + randomPassword,
-					NetworkName:   "betwork",
+					NetworkName:   networkName,
 				}
 				json.NewEncoder(body).Encode(proxyData)
 				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
@@ -537,7 +548,7 @@ func GetClientCmd(action string) *cli.Command {
 					Direction:     "ingress",
 					TrafficOrigin: ownPeerId + ":" + randomSSHPort,
 					TrafficTarget: "",
-					NetworkName:   "network",
+					NetworkName:   networkName,
 				}
 				json.NewEncoder(body).Encode(proxyData)
 				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
@@ -553,7 +564,7 @@ func GetClientCmd(action string) *cli.Command {
 				}
 
 				// now finally we can register the proxy on the local node!
-				err = ocClient.CreateProxy("egress", "", remotePeerId+":"+randomSSHPort, randomSSHPort)
+				err = ocClient.CreateProxy("egress", "", remotePeerId+":"+randomSSHPort, randomSSHPort, networkName)
 				if err != nil {
 					return fmt.Errorf("failed to create proxy: %w", err)
 				}

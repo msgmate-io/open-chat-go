@@ -75,7 +75,7 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "server port",
 		},
 		&cli.IntFlag{
-			Sources: cli.EnvVars("PORT"),
+			Sources: cli.EnvVars("P2PORT"),
 			Name:    "p2pport",
 			Aliases: []string{"pp2p"},
 			Value:   0,
@@ -113,10 +113,9 @@ func GetServerFlags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Sources: cli.EnvVars("NET_BOOTSTRAP_PEERS"),
 			Name:    "network-bootstrap-peers",
-			Value: []string{
-				"eyJuYW1lIjoiYm9vdHN0cmFwcGVyXzg5XzU4XzI1XzE4OCIsImFkZHJlc3NlcyI6WyIvaXA0Lzg5LjU4LjI1LjE4OC90Y3AvODA4Mi9wMnAvUW1QaVlzQ0M4S1N2a0hUeXZaOUJNN2pZalNRczV3dzNCaWlWSGdSUTI2U29NVSJdfQo=",
-			},
-			Usage: "List of bootstrap peers to connect to on startup",
+			Aliases: []string{"bs"},
+			Value:   []string{},
+			Usage:   "List of bootstrap peers to connect to on startup",
 		},
 		&cli.BoolFlag{
 			Sources: cli.EnvVars("START_BOT"),
