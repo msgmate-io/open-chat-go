@@ -212,6 +212,7 @@ func ServerCli() *cli.Command {
 						Addresses:           ownIdentity.ConnectMultiadress,
 						RequestRegistration: false,
 						AddToNetwork:        usernameNetwork,
+						LastChanged:         &now,
 					},
 					&now,
 				)
@@ -233,11 +234,12 @@ func ServerCli() *cli.Command {
 					return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
 				}
 
+				begginningOfTime := time.Time{}
 				var registerNode federation.RegisterNode
 				registerNode.Name = nodeInfo.Name
 				registerNode.Addresses = nodeInfo.Addresses
 				registerNode.AddToNetwork = usernameNetwork
-				begginningOfTime := time.Time{}
+				registerNode.LastChanged = &begginningOfTime
 				_, err = federation.RegisterNodeRaw(
 					DB,
 					federationHandler,
