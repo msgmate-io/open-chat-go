@@ -4,6 +4,7 @@ import (
 	"backend/api/chats"
 	"backend/api/contacts"
 	"backend/api/federation"
+	"backend/api/metrics"
 	"backend/api/reference"
 	"backend/api/tls"
 	"backend/api/user"
@@ -73,6 +74,7 @@ func BackendRouting(
 	userHandler := &user.UserHandler{}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
+	metricsHandler := &metrics.MetricsHandler{}
 	websocketHandler := websocket.NewWebSocketHandler()
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
@@ -94,6 +96,8 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
 	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
 	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
+
+	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
 
 	providerMiddlewares := CreateStack(
 		dbMiddleware(DB),

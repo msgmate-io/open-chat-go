@@ -580,6 +580,27 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "metrics" {
+		return &cli.Command{
+			Name:  "metrics",
+			Usage: "Get metrics",
+			Flags: defaultFlags,
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Get metrics")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err, metrics := ocClient.GetMetrics()
+				if err != nil {
+					return fmt.Errorf("failed to get metrics: %w", err)
+				}
+				prettyMetrics, err := json.MarshalIndent(metrics, "", "  ")
+				if err != nil {
+					return fmt.Errorf("failed to marshal metrics: %w", err)
+				}
+				fmt.Println(string(prettyMetrics))
+				return nil
+			},
+		}
 	} else {
 		return nil
 	}
