@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"backend/database"
+	"backend/server"
 	"backend/server/util"
 	"context"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -56,6 +58,27 @@ func InstallCli() *cli.Command {
 				err, _ = util.CreateUser(DB, usernameBot, passwordBot, false)
 				if err != nil {
 					return fmt.Errorf("failed to create bot user: %w", err)
+				}
+
+				// create the default network
+
+				_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")))
+
+				if err != nil {
+					return err
+				}
+				var usernameNetwork string
+				var passwordNetwork string
+				if c.String("default-network-credentials") != "" {
+					// create default network
+					networkCredentials := strings.Split(c.String("default-network-credentials"), ":")
+					usernameNetwork = networkCredentials[0]
+					passwordNetwork = networkCredentials[1]
+					// call network.Create
+					err = federationHandler.NetworkCreateRAW(DB, usernameNetwork, passwordNetwork)
+					if err != nil {
+						return err
+					}
 				}
 
 				// check if directory exists else create it
@@ -133,6 +156,7 @@ After=network.target
 Type=simple
 Environment="DB_BACKEND=%s"
 Environment="DB_PATH=%s" 
+Environment="P2PORT=%s"
 Environment="HOST=%s"
 Environment="PORT=%s"
 Environment="DEBUG=%t"
@@ -143,7 +167,14 @@ User=root
 
 [Install]
 WantedBy=multi-user.target
-`, c.String("db-backend"), fmt.Sprintf("%s/data.db", installedDBPath), c.String("host"), c.String("port"), c.Bool("debug"), installPath, binaryName)
+`, c.String("db-backend"),
+				fmt.Sprintf("%s/data.db", installedDBPath),
+				strconv.Itoa(int(c.Int("p2pport"))),
+				c.String("host"),
+				strconv.Itoa(int(c.Int("port"))),
+				c.Bool("debug"),
+				installPath,
+				binaryName)
 
 			if err := os.WriteFile(serviceFilePath, []byte(serviceContent), 0644); err != nil {
 				return fmt.Errorf("failed to write service file: %w", err)

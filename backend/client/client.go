@@ -344,7 +344,10 @@ func (c *Client) GetKeys(index int64, limit int64) (error, tls.PaginatedKeysResp
 	return nil, paginatedKeys
 }
 
-func (c *Client) CreateProxy(direction string, origin string, target string, port string) error {
+func (c *Client) CreateProxy(direction string, origin string, target string, port string, networkName string) error {
+	if networkName == "" {
+		networkName = "network"
+	}
 	body := new(bytes.Buffer)
 	err := json.NewEncoder(body).Encode(federation.CreateAndStartProxyRequest{
 		Direction:     direction,
@@ -352,6 +355,7 @@ func (c *Client) CreateProxy(direction string, origin string, target string, por
 		TrafficTarget: target,
 		Port:          port,
 		Kind:          "tcp",
+		NetworkName:   networkName,
 	})
 	if err != nil {
 		log.Printf("Error encoding data: %v", err)
