@@ -35,34 +35,6 @@ func main() {
 			runCmd = cmd.InstallCli()
 		case "uninstall":
 			runCmd = cmd.UninstallCli()
-		case "ssh":
-			// Set up signal handling
-			sigChan := make(chan os.Signal, 1)
-			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-			// Start SSH server
-			server, err := federation.NewSSHServer(2222, "Test123!")
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			// Start server in goroutine
-			errChan := make(chan error, 1)
-			go func() {
-				errChan <- server.Start()
-			}()
-
-			// Wait for either error or signal
-			select {
-			case err := <-errChan:
-				if err != nil {
-					log.Fatal(err)
-				}
-			case <-sigChan:
-				log.Println("Shutting down SSH server...")
-				server.Shutdown()
-			}
-			return
 		default:
 			runCmd = cmd.ServerCli()
 		}
