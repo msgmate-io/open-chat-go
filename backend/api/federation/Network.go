@@ -146,7 +146,7 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 				addresses[i] = addr.Address
 			}
 			missingNodes = append(missingNodes, RegisterNode{
-				Name:                networkMember.Node.PeerID,
+				Name:                networkMember.Node.NodeName,
 				Addresses:           addresses,
 				RequestRegistration: false,
 				AddToNetwork:        networkName,
