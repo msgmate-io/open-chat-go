@@ -98,8 +98,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
-	v1PrivateApis.HandleFunc("GET /bin/download", federationHandler.DownloadBinary)
+
 	v1PrivateApis.HandleFunc("POST /bin/upload", federationHandler.UploadBinary)
+	v1PrivateApis.HandleFunc("POST /bin/request-self-update", federationHandler.RequestSelfUpdate)
 
 	providerMiddlewares := CreateStack(
 		dbMiddleware(DB),
@@ -107,6 +108,8 @@ func BackendRouting(
 	)
 
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
+	// v1PrivateApis.HandleFunc("GET /bin/download", federationHandler.DownloadBinary)
+	mux.Handle("GET /api/v1/bin/download", providerMiddlewares(http.HandlerFunc(federationHandler.DownloadBinary)))
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
 
 	mux.Handle("POST /api/v1/federation/networks/login", providerMiddlewares(http.HandlerFunc(userHandler.NetworkUserLogin)))
