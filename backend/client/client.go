@@ -450,7 +450,7 @@ func (c *Client) RequestSessionOnRemoteNode(username string, password string, pe
 	}
 
 	cookieHeader := resp.Header.Get("Set-Cookie")
-	fmt.Println("Cookie header:", cookieHeader)
+	// fmt.Println("Cookie header:", cookieHeader)
 	re := regexp.MustCompile(`session_id=([^;]+)`)
 
 	match := re.FindStringSubmatch(cookieHeader)

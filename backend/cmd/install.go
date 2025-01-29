@@ -106,6 +106,64 @@ func InstallCli() *cli.Command {
 				fmt.Println("Existing service found, updating binary and restarting service...")
 			}
 
+			// Stop existing service if running
+			if exec.Command("systemctl", "is-active", "--quiet", serviceName).Run() == nil {
+				fmt.Println("Stopping existing service...")
+				/*
+					if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
+						return fmt.Errorf("failed to stop service: %w", err)
+					}*/
+			}
+
+			/** Kill all backend processes except the current one
+			fmt.Println("Killing all other backend processes...")
+			currentPID := os.Getpid()
+			fmt.Println("Current PID:", currentPID)
+			out, err := exec.Command("pgrep", "-a", "-f", binaryName).Output()
+			if err != nil {
+				return fmt.Errorf("failed to list backend processes: %w", err)
+			}
+
+			for _, line := range strings.Split(string(out), "\n") {
+				if line == "" {
+					continue
+				}
+				fields := strings.Fields(line)
+				pidStr := fields[0]
+				cmdLine := strings.Join(fields[1:], " ")
+
+				pid, err := strconv.Atoi(pidStr)
+				if err != nil {
+					continue
+				}
+
+				// Check if the command line matches the current process
+				if pid != currentPID && !strings.Contains(cmdLine, strconv.Itoa(currentPID)) {
+					fmt.Println("Killing process:", pid)
+					exec.Command("kill", "-9", strconv.Itoa(pid)).Run()
+				}
+			}
+
+			// Wait for a moment to ensure all processes are terminated
+			time.Sleep(2 * time.Second)
+
+			// Verify no other backend processes are running
+			out, err = exec.Command("pgrep", "-f", binaryName).Output()
+			if err != nil {
+				return fmt.Errorf("failed to list backend processes: %w", err)
+			}
+
+			for _, pidStr := range strings.Fields(string(out)) {
+				pid, err := strconv.Atoi(pidStr)
+				if err != nil {
+					continue
+				}
+				if pid != currentPID {
+					fmt.Println("Still running process:", pid)
+					return fmt.Errorf("other backend processes are still running, please try again")
+				}
+			} */
+
 			// Copy binary to install path
 			fmt.Printf("Installing binary to %s/%s...\n", installPath, binaryName)
 
@@ -123,10 +181,6 @@ func InstallCli() *cli.Command {
 				return fmt.Errorf("failed to create destination binary: %w", err)
 			}
 			defer dst.Close()
-
-			if _, err := io.Copy(dst, src); err != nil {
-				return fmt.Errorf("failed to copy binary: %w", err)
-			}
 
 			if !serviceExists {
 				// Create service file only if it doesn't exist
@@ -164,17 +218,13 @@ WantedBy=multi-user.target
 				}
 			}
 
+			if _, err := io.Copy(dst, src); err != nil {
+				return fmt.Errorf("failed to copy binary: %w", err)
+			}
+
 			// Reload systemd daemon
 			if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
 				return fmt.Errorf("failed to reload systemd: %w", err)
-			}
-
-			// Stop existing service if running
-			if exec.Command("systemctl", "is-active", "--quiet", serviceName).Run() == nil {
-				fmt.Println("Stopping existing service...")
-				if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
-					return fmt.Errorf("failed to stop service: %w", err)
-				}
 			}
 
 			// Enable and start service
