@@ -3,6 +3,7 @@ package federation
 import (
 	"backend/database"
 	"backend/server/util"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,7 +59,7 @@ func (h *FederationHandler) RequestSelfUpdate(w http.ResponseWriter, r *http.Req
 	}
 
 	var node database.Node
-	err = DB.Where("peer_id = ?", request.BinaryOwnerPeerId).First(&node).Error
+	err = DB.Where("peer_id = ?", request.BinaryOwnerPeerId).Preload("Addresses").First(&node).Error
 	if err != nil {
 		http.Error(w, "Unable to find node", http.StatusBadRequest)
 		return
@@ -69,7 +70,7 @@ func (h *FederationHandler) RequestSelfUpdate(w http.ResponseWriter, r *http.Req
 		Path:    fmt.Sprintf("/api/v1/bin/download"),
 		Headers: map[string]string{},
 		Body:    "",
-	}, T1mHttpRequestProtocolID)
+	}, T1mNetworkRequestProtocolID)
 
 	if err != nil {
 		http.Error(w, "Failed to send request to node", http.StatusInternalServerError)
@@ -96,11 +97,53 @@ func (h *FederationHandler) RequestSelfUpdate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	cmd := exec.Command(binaryPath, "install")
+	fmt.Println("Binary path:", binaryPath)
+
+	// Make the binary executable
+	err = os.Chmod(binaryPath, 0755)
+	if err != nil {
+		http.Error(w, "Unable to make binary executable", http.StatusInternalServerError)
+		return
+	}
+
+	// Updating requires some trickery cause we have to kill the own process first
+	// so what we do is we point the service to `backend_updated` and then restart it.
+	// The service itself detechts if it's called `backend_updated` and the copies the backend update again to `backend` then restarts the service
+
+	// copy file to `/usr/local/bin/backend_updated`
+	err = os.Rename(binaryPath, "/usr/local/bin/backend_updated")
+	if err != nil {
+		http.Error(w, "Unable to copy binary to /usr/local/bin/backend_updated", http.StatusInternalServerError)
+		return
+	}
+
+	// edit the service file to point to `/usr/local/bin/backend_updated`
+	serviceFilePath := "/etc/systemd/system/open-chat.service"
+	serviceFile, err := os.ReadFile(serviceFilePath)
+	if err != nil {
+		http.Error(w, "Unable to read service file", http.StatusInternalServerError)
+		return
+	}
+
+	// replace the line `ExecStart=/usr/local/bin/backend` with `ExecStart=/usr/local/bin/backend_updated`
+	serviceFile = bytes.ReplaceAll(serviceFile, []byte("ExecStart=/usr/local/bin/backend"), []byte("ExecStart=/usr/local/bin/backend_updated"))
+	err = os.WriteFile(serviceFilePath, serviceFile, 0644)
+	if err != nil {
+		http.Error(w, "Unable to write service file", http.StatusInternalServerError)
+		return
+	}
+
+	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+		http.Error(w, "Unable to reload systemd", http.StatusInternalServerError)
+		return
+	}
+
+	// Now reload the service and restart the service
+	cmd := exec.Command("systemctl", "restart", "open-chat")
 	cmd.Run()
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Performed self update"))
+	w.Write([]byte("Installation started successfully"))
 }
 
 func (h *FederationHandler) UploadBinary(w http.ResponseWriter, r *http.Request) {
