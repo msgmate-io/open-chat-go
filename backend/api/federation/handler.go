@@ -9,8 +9,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 )
 
-const VERSION = "0.0.1"
-
 const (
 	T1mHttpRequestProtocolID    = "/t1m-http-request/0.0.1"
 	T1mNetworkTCPProxyProtoID   = "/t1m-tcp-tunnel/0.0.1"

@@ -194,14 +194,14 @@ func ServerCli() *cli.Command {
 			// we must assure that the own node is in the meers store
 			ownPeerId := federationHandler.Host.ID().String()
 			var ownNode database.Node
+			ownIdentity := federationHandler.GetIdentity()
 			DB.Where("peer_id = ?", ownPeerId).First(&ownNode)
+			hostname, err := os.Hostname()
+			if err != nil {
+				fmt.Println("Error:", err)
+			}
 			if ownNode.ID == 0 {
 				log.Println("Own node not found, creating it")
-				ownIdentity := federationHandler.GetIdentity()
-				hostname, err := os.Hostname()
-				if err != nil {
-					fmt.Println("Error:", err)
-				}
 
 				now := time.Now()
 				_, err = federation.RegisterNodeRaw(
@@ -219,6 +219,24 @@ func ServerCli() *cli.Command {
 				if err != nil {
 					log.Println("Error registering own node", err)
 				}
+			} else {
+				log.Println("Own node already existed updating it!")
+				// first delete all existing adresses
+				DB.Where("node_id = ?", ownNode.ID).Delete(&database.NodeAddress{})
+				// then add the new ones
+				adresses := []database.NodeAddress{}
+				for _, address := range ownIdentity.ConnectMultiadress {
+					adresses = append(adresses, database.NodeAddress{
+						Address: address,
+						NodeID:  ownNode.ID,
+					})
+					DB.Create(&adresses)
+				}
+				ownNode.NodeName = hostname
+				ownNode.Addresses = adresses
+				ownNode.LastChanged = time.Now()
+				ownNode.PeerID = ownPeerId
+				DB.Save(&ownNode)
 			}
 			server.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")))
 			// Now we also have to register the bootstrap peers!
