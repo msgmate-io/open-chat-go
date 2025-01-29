@@ -11,6 +11,7 @@ import (
 )
 
 type Metrics struct {
+	NodeVersion string       `json:"node_version"`
 	CPUInfo     CPUInfo      `json:"cpu_info"`
 	MemoryInfo  MemoryInfo   `json:"memory_info"`
 	VolumesInfo []VolumeInfo `json:"volumes_info"`
@@ -152,6 +153,7 @@ func (h *MetricsHandler) Metrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	metrics := Metrics{
+		NodeVersion: VERSION,
 		CPUInfo:     cpuInfo,
 		MemoryInfo:  memInfo,
 		VolumesInfo: volumesInfo,
