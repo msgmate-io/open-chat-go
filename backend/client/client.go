@@ -661,3 +661,36 @@ func (c *Client) RetrieveKey(keyName string) (error, *database.Key) {
 
 	return nil, &key
 }
+
+func (c *Client) ListProxies(index int64, limit int64) (error, federation.PaginatedProxies) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/federation/proxies/list", c.host), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err, federation.PaginatedProxies{}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err, federation.PaginatedProxies{}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status), federation.PaginatedProxies{}
+	}
+
+	var proxies federation.PaginatedProxies
+	err = json.NewDecoder(resp.Body).Decode(&proxies)
+	if err != nil {
+		log.Printf("Error decoding response: %v", err)
+		return err, federation.PaginatedProxies{}
+	}
+
+	return nil, proxies
+}
