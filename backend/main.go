@@ -11,18 +11,12 @@ import (
 	"os/exec"
 )
 
-// make version a variable so the build system can inject it
-var version = "unknown"
-
 func main() {
 	var runCmd *ufcli.Command
 
 	if os.Args[0] == "/usr/local/bin/backend_updated" {
 		fmt.Println("Detected update cycle, performing self-update...")
-		// means we are in an update circle,
-		// Copy the binary to /usr/local/bin/backend
 		os.Rename("/usr/local/bin/backend_updated", "/usr/local/bin/backend")
-		// Edit the service file to point to /usr/local/bin/backend
 		serviceFilePath := "/etc/systemd/system/open-chat.service"
 		serviceFile, err := os.ReadFile(serviceFilePath)
 		if err != nil {
@@ -34,7 +28,6 @@ func main() {
 			log.Fatal(err)
 		}
 
-		// Reload the systemd service
 		exec.Command("systemctl", "daemon-reload").Run()
 		exec.Command("systemctl", "restart", "open-chat").Run()
 		return
