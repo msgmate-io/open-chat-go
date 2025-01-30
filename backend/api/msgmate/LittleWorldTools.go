@@ -27,13 +27,11 @@ var LittleWorldChatReplyToolDef = ToolDefinition{
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
 		var chatReplyInput = input.(LittleWorldChatReplyToolInput)
 
-		// Extract initialization data
 		sessionID, xcsrfToken, apiHost, chatUUID, err := ExtractChatInitData(initData)
 		if err != nil {
 			return "", err
 		}
 
-		// Prepare request body
 		body := new(bytes.Buffer)
 		err = json.NewEncoder(body).Encode(map[string]interface{}{
 			"text": chatReplyInput.Message,
@@ -42,12 +40,7 @@ var LittleWorldChatReplyToolDef = ToolDefinition{
 			return "", fmt.Errorf("error encoding request body: %w", err)
 		}
 
-		// Make API request
 		fullURL := fmt.Sprintf("%s/api/messages/%s/send/", apiHost, chatUUID)
-		fmt.Println("Full URL: ", fullURL)
-		fmt.Println("Using X-CSRFToken: ", xcsrfToken)
-		fmt.Println("Using ChatUUID: ", chatUUID)
-		fmt.Println("Using SessionID: ", sessionID)
 
 		_, err = MakeAPIRequest("POST", fullURL, body, sessionID, xcsrfToken)
 		if err != nil {
@@ -74,31 +67,23 @@ var LittleWorldGetPastMessagesWithUserToolDef = ToolDefinition{
 	RequiredParams: []string{},
 	Parameters:     map[string]interface{}{},
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
-		// Extract initialization data
 		sessionID, xcsrfToken, apiHost, chatUUID, err := ExtractChatInitData(initData)
 		if err != nil {
 			return "", err
 		}
 
-		// Make API request to get past messages
 		fullURL := fmt.Sprintf("%s/api/messages/%s/", apiHost, chatUUID)
-		fmt.Println("Full URL: ", fullURL)
-		fmt.Println("Using X-CSRFToken: ", xcsrfToken)
-		fmt.Println("Using ChatUUID: ", chatUUID)
-		fmt.Println("Using SessionID: ", sessionID)
 
 		responseBody, err := MakeAPIRequest("GET", fullURL, nil, sessionID, xcsrfToken)
 		if err != nil {
 			return fmt.Sprintf("error fetching messages: %s", err), err
 		}
 
-		// Validate JSON response
 		err = ValidateJSONResponse(responseBody)
 		if err != nil {
 			return "", err
 		}
 
-		// Return the raw JSON response
 		return string(responseBody), nil
 	},
 }
@@ -128,13 +113,11 @@ var LittleWorldSetUserSearchingStateToolDef = ToolDefinition{
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
 		var toolInput = input.(LittleWorldSetUserSearchingStateToolInput)
 
-		// Extract initialization data
 		sessionID, xcsrfToken, apiHost, userId, err := ExtractUserInitData(initData)
 		if err != nil {
 			return "", err
 		}
 
-		// Prepare request body
 		body := new(bytes.Buffer)
 		searchingState := "idle"
 		if toolInput.Searching {
@@ -148,19 +131,13 @@ var LittleWorldSetUserSearchingStateToolDef = ToolDefinition{
 			return "", fmt.Errorf("error encoding request body: %w", err)
 		}
 
-		// Make API request
 		fullURL := fmt.Sprintf("%s/api/matching/users/%s/change_searching_state/", apiHost, userId)
-		fmt.Println("Full URL: ", fullURL)
-		fmt.Println("Using X-CSRFToken: ", xcsrfToken)
-		fmt.Println("Using UserId: ", userId)
-		fmt.Println("Using SessionID: ", sessionID)
 
 		_, err = MakeAPIRequest("POST", fullURL, body, sessionID, xcsrfToken)
 		if err != nil {
 			return fmt.Sprintf("error changing user searching state: %s", err), err
 		}
 
-		// Return success message
 		if toolInput.Searching {
 			return "Successfully set user searching state to active", nil
 		} else {
@@ -185,27 +162,18 @@ var LittleWorldGetUserStateToolDef = ToolDefinition{
 	RequiredParams: []string{},
 	Parameters:     map[string]interface{}{},
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
-		// Extract initialization data
 		sessionID, xcsrfToken, apiHost, userId, err := ExtractUserInitData(initData)
 		if err != nil {
 			return "", err
 		}
 
-		fmt.Println("InitData: ", initData)
-
-		// Make API request
 		fullURL := fmt.Sprintf("%s/api/matching/users/%s/", apiHost, userId)
-		fmt.Println("Full URL: ", fullURL)
-		fmt.Println("Using X-CSRFToken: ", xcsrfToken)
-		fmt.Println("Using UserId: ", userId)
-		fmt.Println("Using SessionID: ", sessionID)
 
 		responseBody, err := MakeAPIRequest("GET", fullURL, nil, sessionID, xcsrfToken)
 		if err != nil {
 			return fmt.Sprintf("error fetching user state: %s", err), err
 		}
 
-		// Extract state field from response
 		stateJSON, err := ExtractJSONField(responseBody, "state")
 		if err != nil {
 			return "", err
@@ -231,27 +199,18 @@ var LittleWorldRetrieveMatchOverviewToolDef = ToolDefinition{
 	RequiredParams: []string{},
 	Parameters:     map[string]interface{}{},
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
-		// Extract initialization data
 		sessionID, xcsrfToken, apiHost, userId, err := ExtractUserInitData(initData)
 		if err != nil {
 			return "", err
 		}
 
-		fmt.Println("InitData: ", initData)
-
-		// Make API request
 		fullURL := fmt.Sprintf("%s/api/matching/users/%s/", apiHost, userId)
-		fmt.Println("Full URL: ", fullURL)
-		fmt.Println("Using X-CSRFToken: ", xcsrfToken)
-		fmt.Println("Using UserId: ", userId)
-		fmt.Println("Using SessionID: ", sessionID)
 
 		responseBody, err := MakeAPIRequest("GET", fullURL, nil, sessionID, xcsrfToken)
 		if err != nil {
 			return fmt.Sprintf("error fetching user matches: %s", err), err
 		}
 
-		// Extract matches field from response
 		matchesJSON, err := ExtractJSONField(responseBody, "matches")
 		if err != nil {
 			return "", err
