@@ -11,10 +11,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v3"
-	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -35,58 +34,6 @@ var defaultFlags = []cli.Flag{
 		Value:   "",
 		Sources: cli.EnvVars("OPEN_CHAT_SESSION_ID"),
 	},
-}
-
-func SSHSession(host string, port string, username string, password string) {
-	config := &ssh.ClientConfig{
-		User: username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(password),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	// Connect to the SSH server
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", host, port), config)
-	if err != nil {
-		log.Printf("Failed to dial: %v", err)
-		return
-	}
-	defer client.Close()
-
-	// Create a new session
-	session, err := client.NewSession()
-	if err != nil {
-		log.Printf("Failed to create session: %v", err)
-		return
-	}
-	defer session.Close()
-
-	// Set up standard input, output, and error
-	session.Stdin = os.Stdin
-	session.Stdout = os.Stdout
-	session.Stderr = os.Stderr
-
-	// Set terminal into raw mode
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		log.Printf("Failed to set terminal to raw mode: %v", err)
-		return
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	// Start an interactive shell
-	err = session.Shell()
-	if err != nil {
-		log.Printf("Failed to start shell: %v", err)
-		return
-	}
-
-	// Wait for the session to complete
-	err = session.Wait()
-	if err != nil {
-		log.Printf("Session ended with error: %v", err)
-	}
 }
 
 func GetClientCmd(action string) *cli.Command {
@@ -596,14 +543,36 @@ func GetClientCmd(action string) *cli.Command {
 							return fmt.Errorf("failed to unmarshal response body: %w", err)
 						}
 
-						// Extract the required information
-						nodeVersion := data["node_version"].(string)
-						cpuInfo := data["cpu_info"].(map[string]interface{})
-						usage := cpuInfo["usage"].(map[string]interface{})
-						totalCPUUsage := usage["all"].(float64)
+						// Extract the required information with error handling
+						nodeVersion, ok := data["node_version"].(string)
+						if !ok {
+							nodeVersion = "unknown"
+						}
 
-						memoryInfo := data["memory_info"].(map[string]interface{})
-						totalMemoryUsage := memoryInfo["used_percent"].(float64)
+						cpuInfo, ok := data["cpu_info"].(map[string]interface{})
+						if !ok {
+							cpuInfo = make(map[string]interface{})
+						}
+
+						usage, ok := cpuInfo["usage"].(map[string]interface{})
+						if !ok {
+							usage = make(map[string]interface{})
+						}
+
+						totalCPUUsage, ok := usage["all"].(float64)
+						if !ok {
+							totalCPUUsage = 0.0
+						}
+
+						memoryInfo, ok := data["memory_info"].(map[string]interface{})
+						if !ok {
+							memoryInfo = make(map[string]interface{})
+						}
+
+						totalMemoryUsage, ok := memoryInfo["used_percent"].(float64)
+						if !ok {
+							totalMemoryUsage = 0.0
+						}
 
 						// Append the result
 						results = append(results, struct {
@@ -704,6 +673,11 @@ func GetClientCmd(action string) *cli.Command {
 					Value:   "network",
 					Sources: cli.EnvVars("OPEN_CHAT_DEFAULT_NETWORK"),
 				},
+				&cli.BoolFlag{
+					Name:  "no-connect",
+					Usage: "Do not connect to the ssh server, just create the proxies",
+					Value: false,
+				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Attempting to establish ssh connection to node", c.String("node"))
@@ -724,7 +698,6 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to get identity: %w", err)
 				}
 				ownPeerId := identity.ID
-				//fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
 
 				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
 				if err != nil {
@@ -733,7 +706,7 @@ func GetClientCmd(action string) *cli.Command {
 				randomPassword := ocClient.RandomPassword()
 
 				randomSSHPort := ocClient.RandomSSHPort()
-				// with the remote session id we can now setup the proies required!
+				// with the remote session id we can now setup the proxies required!
 				// Trough the proxy on the remote peer we need to setup:
 				// 1 - ./backend client proxy --direction egress --target "server_username:SomeRandomPassword" --port 2222 --kind ssh
 				// 2 - ./backend client proxy --direction ingress --origin "<local_peer_id>:2222" --port 2222
@@ -797,13 +770,20 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to create proxy: %w", err)
 				}
 
-				fmt.Println("Random password:", randomPassword)
-				fmt.Println("Random SSH port:", randomSSHPort)
-				// wait few seconds for the proxies to be created
-				fmt.Println("Connecting to ssh server...")
-				time.Sleep(1 * time.Second)
+				if !c.Bool("no-connect") {
+					// fmt.Println("Random password:", randomPassword)
+					// fmt.Println("Random SSH port:", randomSSHPort)
+					// wait few seconds for the proxies to be created
+					fmt.Println("Connecting to ssh server...")
+					time.Sleep(1 * time.Second)
 
-				SSHSession("localhost", randomSSHPort, "tim", randomPassword)
+					federation.SSHSession("localhost", randomSSHPort, "tim", randomPassword)
+				} else {
+					fmt.Println("Proxies created, but not connecting to ssh server")
+					fmt.Println("You can connect to the ssh server by running:")
+					fmt.Println("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p", randomSSHPort, "tim@"+"localhost")
+					fmt.Println("Using the password:", randomPassword)
+				}
 
 				return nil
 			},
@@ -840,14 +820,12 @@ func GetClientCmd(action string) *cli.Command {
 				if err != nil {
 					return fmt.Errorf("failed to request session on remote node: %w", err)
 				}
-				fmt.Println("Session ID:", sessionId)
 				// now we can setup a simple 2 way proxy to upload the binary
 				err, identity := ocClient.GetFederationIdentity()
 				if err != nil {
 					return fmt.Errorf("failed to get identity: %w", err)
 				}
 				ownPeerId := identity.ID
-				fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
 
 				body := new(bytes.Buffer)
 				json.NewEncoder(body).Encode(federation.RequestSelfUpdate{
@@ -867,6 +845,84 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to request node by peer id: %w", err)
 				}
 
+				return nil
+			},
+		}
+	} else if action == "proxies" {
+		return &cli.Command{
+			Name:  "proxies",
+			Usage: "List proxies",
+			Flags: defaultFlags,
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("List proxies")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err, proxies := ocClient.ListProxies(1, 10)
+				if err != nil {
+					return fmt.Errorf("failed to list proxies: %w", err)
+				}
+				prettyProxies, err := json.MarshalIndent(proxies, "", "  ")
+				if err != nil {
+					return fmt.Errorf("failed to marshal proxies: %w", err)
+				}
+				fmt.Println(string(prettyProxies))
+				return nil
+			},
+		}
+	} else if action == "get-proxies" {
+		return &cli.Command{
+			Name:  "get-proxies",
+			Usage: "Get proxies",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "node",
+					Usage: "The node to get proxies from",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Get proxies")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				// ret remote session id
+				remotePeerId := c.String("node")
+				username, password, err := retrieveOrPromptForCreds(ocClient, remotePeerId)
+				if err != nil {
+					return fmt.Errorf("failed to read password: %w", err)
+				}
+				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
+				if err != nil {
+					return fmt.Errorf("failed to request session on remote node: %w", err)
+				}
+
+				// now request the proxies endpoing of the remote node
+				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "GET",
+					Path:   "/api/v1/federation/proxies/list",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+				defer resp.Body.Close()
+
+				bodyBytes, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return fmt.Errorf("failed to read response body: %w", err)
+				}
+				var data map[string]interface{}
+				err = json.Unmarshal(bodyBytes, &data)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal response body: %w", err)
+				}
+				prettyData, err := json.MarshalIndent(data, "", "  ")
+				if err != nil {
+					return fmt.Errorf("failed to marshal data: %w", err)
+				}
+				fmt.Println("Proxies:", string(prettyData))
 				return nil
 			},
 		}
@@ -909,23 +965,14 @@ func GetClientCmd(action string) *cli.Command {
 
 				// First we open a tcl tunnel to the node
 				remotePeerId := c.String("node")
-
-				username, password, err := promptForUsernameAndPassword()
+				username, password, err := retrieveOrPromptForCreds(ocClient, remotePeerId)
 				if err != nil {
-					return fmt.Errorf("failed to read password: %w", err)
+					return fmt.Errorf("failed to retrieve or prompt for credentials: %w", err)
 				}
 				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
 				if err != nil {
 					return fmt.Errorf("failed to request session on remote node: %w", err)
 				}
-				fmt.Println("Session ID:", sessionId)
-				// now we can setup a simple 2 way proxy to upload the binary
-				err, identity := ocClient.GetFederationIdentity()
-				if err != nil {
-					return fmt.Errorf("failed to get identity: %w", err)
-				}
-				ownPeerId := identity.ID
-				fmt.Println("Identity:", identity, "Own Peer ID:", ownPeerId)
 
 				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
 					Method: "GET",
@@ -957,6 +1004,27 @@ func GetClientCmd(action string) *cli.Command {
 				}
 				fmt.Println("Metrics:", string(prettyData))
 
+				return nil
+			},
+		}
+	} else if action == "hash-password" {
+		return &cli.Command{
+			Name:  "hash-password",
+			Usage: "Hash a password",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "password",
+					Usage: "The password to hash",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				password := c.String("password")
+				hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+				if err != nil {
+					return fmt.Errorf("failed to hash password: %w", err)
+				}
+				fmt.Println("Hashed password:", string(hashedPassword))
 				return nil
 			},
 		}

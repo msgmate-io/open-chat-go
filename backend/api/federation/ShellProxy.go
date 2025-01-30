@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 	"io"
 	"log"
 	"net"
@@ -203,4 +204,56 @@ func (s *SSHServer) handleChannel(channel ssh.Channel, requests <-chan *ssh.Requ
 	io.Copy(f, channel)
 
 	cmd.Wait()
+}
+
+func SSHSession(host string, port string, username string, password string) {
+	config := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	// Connect to the SSH server
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", host, port), config)
+	if err != nil {
+		log.Printf("Failed to dial: %v", err)
+		return
+	}
+	defer client.Close()
+
+	// Create a new session
+	session, err := client.NewSession()
+	if err != nil {
+		log.Printf("Failed to create session: %v", err)
+		return
+	}
+	defer session.Close()
+
+	// Set up standard input, output, and error
+	session.Stdin = os.Stdin
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	// Set terminal into raw mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		log.Printf("Failed to set terminal to raw mode: %v", err)
+		return
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Start an interactive shell
+	err = session.Shell()
+	if err != nil {
+		log.Printf("Failed to start shell: %v", err)
+		return
+	}
+
+	// Wait for the session to complete
+	err = session.Wait()
+	if err != nil {
+		log.Printf("Session ended with error: %v", err)
+	}
 }
