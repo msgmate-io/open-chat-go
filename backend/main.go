@@ -17,7 +17,6 @@ var version = "unknown"
 func main() {
 	var runCmd *ufcli.Command
 
-	fmt.Println("FULL COMMAND: ", os.Args)
 	if os.Args[0] == "/usr/local/bin/backend_updated" {
 		fmt.Println("Detected update cycle, performing self-update...")
 		// means we are in an update circle,
