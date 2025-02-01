@@ -88,6 +88,8 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
+	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/request-relay-reservation", federationHandler.NetworkRequestRelayReservation)
+	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/forward-request", federationHandler.NetworkForwardRelayReservation)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
 	v1PrivateApis.HandleFunc("GET /federation/nodes/list", federationHandler.ListNodes)
 	v1PrivateApis.HandleFunc("GET /federation/nodes/whitelisted", federationHandler.WhitelistedPeers)
@@ -95,6 +97,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/peer/{peer_id}/request", federationHandler.RequestNodeByPeerId)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
 	v1PrivateApis.HandleFunc("GET /federation/proxies/list", federationHandler.ListProxies)
+	v1PrivateApis.HandleFunc("DELETE /tls/keys/{key_name}", tls.DeleteKey)
 	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
 	v1PrivateApis.HandleFunc("GET /keys/names", tls.ListKeyNames)
 	v1PrivateApis.HandleFunc("GET /keys/{key_name}/get", tls.RetrieveKey)
