@@ -86,6 +86,12 @@ func CreateHost(
 	h, err := libp2p.New(
 		libp2p.ListenAddrs(sourceMultiAddr),
 		libp2p.Identity(prvKey),
+		// libp2p.EnableRelay(),
+		libp2p.EnableRelay(),
+		libp2p.EnableNATService(),
+		libp2p.NATPortMap(),
+		libp2p.EnableAutoNATv2(),
+		libp2p.EnableRelayService(),
 		// libp2p.ConnectionGater(gater), TODO: peer gating should be disabled for all bootstrap peers
 		// TODO introduce option to toggle ConnectionGater
 		// Enable stuff for hole punching etc...
@@ -101,7 +107,6 @@ func writePrivateKeyToFile(prvKey crypto.PrivKey, filename string) error {
 	if err != nil {
 		return err
 	}
-
 	// Create a PEM block
 	privPemBlock := &pem.Block{
 		Type:  "RSA PRIVATE KEY",
