@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	net "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/core/protocol"
@@ -80,7 +81,7 @@ func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, da
 
 		// TODO; implement a way to dynamicly choose the correct network
 		var network database.Network
-		DB.Where("name = ?", "hive").First(&network)
+		DB.Where("network_name = ?", "hive").First(&network)
 		networkUser := user.UserLogin{
 			Email:    network.NetworkName,
 			Password: network.NetworkPassword,
@@ -113,8 +114,8 @@ func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, da
 			return nil, fmt.Errorf("No session id found in unable to authenticate with peer!")
 		}
 
-		var relayForwardRequest = NetworkRequestRelayReservation{
-			PeerId: info.ID.String(),
+		var relayForwardRequest = NetworkForwardRelayReservation{
+			ForwardToPeerId: info.ID.String(),
 		}
 		relayForwardRequestJson, err := json.Marshal(relayForwardRequest)
 		if err != nil {
@@ -122,9 +123,9 @@ func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, da
 		}
 
 		// send a request to the default relay peer to ask it to make a reservation with the other node!
-		_, err = SendRequestToNode(DB, h, relayNode, RequestNode{
+		_, err = SendRequestToNode(nil, h, relayNode, RequestNode{
 			Method: "POST",
-			Path:   "/api/v1/federation/networks/forward-request",
+			Path:   fmt.Sprintf("/api/v1/federation/networks/%s/forward-request", network.NetworkName),
 			Body:   string(relayForwardRequestJson),
 			Headers: map[string]string{
 				"Cookie": fmt.Sprintf("session_id=%s", sessionId),
@@ -138,15 +139,27 @@ func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, da
 		if err != nil {
 			return nil, fmt.Errorf("Error creating relayed address")
 		}
+		/**
 		info, err = peer.AddrInfoFromP2pAddr(relayaddr)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating relayed address info")
-		}
+		}*/
 		// we have to reset the stream backoff to try again if this succeded!
 		h.Host.Network().(*swarm.Swarm).Backoff().Clear(info.ID)
 
 		// now we can attempt to open a relayed stream
-		stream, err = h.Host.NewStream(context.Background(), info.ID, protocol.ID(protocolName))
+		// stream, err = h.Host.NewStream(context.Background(), info.ID, protocol.ID(protocolName))
+		// instead connect explicity to the relayed address
+		unreachable2relayinfo := peer.AddrInfo{
+			ID:    info.ID,
+			Addrs: []multiaddr.Multiaddr{relayaddr},
+		}
+		if err := h.Host.Connect(context.Background(), unreachable2relayinfo); err != nil {
+			log.Printf("Failed to connect to relayed address: %v", err)
+			return nil, fmt.Errorf("Failed to connect to relayed address: %v", err)
+		}
+
+		stream, err = h.Host.NewStream(net.WithAllowLimitedConn(context.Background(), protocolName), info.ID, protocol.ID(protocolName))
 		if err != nil {
 			return nil, fmt.Errorf("Error opening relayed stream to node: %s", err)
 		}
