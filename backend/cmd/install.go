@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"backend/api/federation"
+	"backend/api"
 	"backend/database"
-	"backend/server"
+	"backend/federation_factory"
 	"backend/server/util"
 	"context"
 	"encoding/base64"
@@ -78,7 +78,15 @@ func InstallCli() *cli.Command {
 
 				// create the default network
 
-				_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"))
+				var fallbackPort int
+				if c.Bool("http-fallback-enabled") {
+					fallbackPort = int(c.Int("port")) + 1
+					if c.Int("http-fallback-port") != 0 {
+						fallbackPort = int(c.Int("http-fallback-port"))
+					}
+				}
+				factory := &federation_factory.FederationFactory{}
+				federationHandler, err := factory.NewFederationHandler(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"), c.Bool("http-fallback-enabled"), fallbackPort)
 
 				if err != nil {
 					return err
@@ -104,19 +112,19 @@ func InstallCli() *cli.Command {
 					if err != nil {
 						return fmt.Errorf("failed to decode bootstrap peer b64: %w", err)
 					}
-					var nodeInfo federation.NodeInfo
+					var nodeInfo api.NodeInfo
 					err = json.Unmarshal(decoded, &nodeInfo)
 					if err != nil {
 						return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
 					}
 
 					begginningOfTime := time.Time{}
-					var registerNode federation.RegisterNode
+					var registerNode api.RegisterNode
 					registerNode.Name = nodeInfo.Name
 					registerNode.Addresses = nodeInfo.Addresses
 					registerNode.AddToNetwork = usernameNetwork
 					registerNode.LastChanged = &begginningOfTime
-					_, err = federation.RegisterNodeRaw(
+					_, err = factory.RegisterNodeRaw(
 						DB,
 						federationHandler,
 						registerNode,
@@ -160,55 +168,6 @@ func InstallCli() *cli.Command {
 						return fmt.Errorf("failed to stop service: %w", err)
 					}*/
 			}
-
-			/** Kill all backend processes except the current one
-			fmt.Println("Killing all other backend processes...")
-			currentPID := os.Getpid()
-			fmt.Println("Current PID:", currentPID)
-			out, err := exec.Command("pgrep", "-a", "-f", binaryName).Output()
-			if err != nil {
-				return fmt.Errorf("failed to list backend processes: %w", err)
-			}
-
-			for _, line := range strings.Split(string(out), "\n") {
-				if line == "" {
-					continue
-				}
-				fields := strings.Fields(line)
-				pidStr := fields[0]
-				cmdLine := strings.Join(fields[1:], " ")
-
-				pid, err := strconv.Atoi(pidStr)
-				if err != nil {
-					continue
-				}
-
-				// Check if the command line matches the current process
-				if pid != currentPID && !strings.Contains(cmdLine, strconv.Itoa(currentPID)) {
-					fmt.Println("Killing process:", pid)
-					exec.Command("kill", "-9", strconv.Itoa(pid)).Run()
-				}
-			}
-
-			// Wait for a moment to ensure all processes are terminated
-			time.Sleep(2 * time.Second)
-
-			// Verify no other backend processes are running
-			out, err = exec.Command("pgrep", "-f", binaryName).Output()
-			if err != nil {
-				return fmt.Errorf("failed to list backend processes: %w", err)
-			}
-
-			for _, pidStr := range strings.Fields(string(out)) {
-				pid, err := strconv.Atoi(pidStr)
-				if err != nil {
-					continue
-				}
-				if pid != currentPID {
-					fmt.Println("Still running process:", pid)
-					return fmt.Errorf("other backend processes are still running, please try again")
-				}
-			} */
 
 			// Copy binary to install path
 			fmt.Printf("Installing binary to %s/%s...\n", installPath, binaryName)
