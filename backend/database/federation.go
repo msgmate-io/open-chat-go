@@ -30,12 +30,13 @@ type Network struct {
 
 type NetworkMember struct {
 	Model
-	NetworkID uint      `json:"-"`
-	Network   Network   `json:"-" gorm:"foreignKey:NetworkID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	NodeID    uint      `json:"-"`
-	Node      Node      `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	LastSync  time.Time `json:"last_sync"`
-	Status    string    `json:"status"`
+	NetworkID uint       `json:"-"`
+	Network   Network    `json:"-" gorm:"foreignKey:NetworkID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	NodeID    uint       `json:"-"`
+	Node      Node       `json:"-" gorm:"foreignKey:NodeID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	LastSync  time.Time  `json:"last_sync"`
+	Status    string     `json:"status"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type ContactRequest struct {

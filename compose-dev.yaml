@@ -12,9 +12,12 @@ services:
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      FRONTEND_PROXY: "http://frontend:3000"
       HOST: "0.0.0.0"
       PORT: 1984
       PP2P: 1985
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - app-network
   frontend:
@@ -26,6 +29,8 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend:/frontend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - app-network
 
