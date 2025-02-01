@@ -1,10 +1,22 @@
 [
+  "/chat/new",
+  "/chat/new/{contact_token}",
   "/chat",
   "/chat/{chat_uuid}",
+  "/tls/settings",
+  "/tls",
   "/login",
+  "/nodes/settings",
+  "/nodes",
+  "/nodes/users",
+  "/nodes/networks",
+  "/nodes/self",
+  "/nodes/proxies",
+  "/nodes/all",
   "/admin",
   "/admin/{table_name}",
   "/admin/{table_name}/{id}",
   "/test",
-  "/terminal"
+  "/integrations/settings",
+  "/integrations"
 ]

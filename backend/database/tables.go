@@ -24,12 +24,13 @@ type ChatAndMessageMigration struct{}
 
 type TempChat struct {
 	Model
-	User1Id         uint  `gorm:"index"`
-	User2Id         uint  `gorm:"index"`
-	User1           User  `gorm:"foreignKey:User1Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	User2           User  `gorm:"foreignKey:User2Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
-	LatestMessageId *uint `gorm:"index"`
-	SharedConfigId  *uint `gorm:"index"`
+	User1Id         uint   `gorm:"index"`
+	User2Id         uint   `gorm:"index"`
+	User1           User   `gorm:"foreignKey:User1Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	User2           User   `gorm:"foreignKey:User2Id;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	LatestMessageId *uint  `gorm:"index"`
+	SharedConfigId  *uint  `gorm:"index"`
+	ChatType        string `gorm:"default:'conversation'"`
 }
 
 func (TempChat) TableName() string {
@@ -67,6 +68,18 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 			return fmt.Errorf("failed to create chat table: %v", err)
 		}
 		fmt.Println("Chat table created")
+	} else {
+		// Check if ChatType column exists, add it if not
+		if !db.Migrator().HasColumn(&Chat{}, "chat_type") {
+			if err := db.Migrator().AddColumn(&Chat{}, "chat_type"); err != nil {
+				return fmt.Errorf("failed to add chat_type column: %v", err)
+			}
+			// Set default value for existing rows
+			if err := db.Exec("UPDATE chats SET chat_type = 'conversation' WHERE chat_type IS NULL").Error; err != nil {
+				return fmt.Errorf("failed to set default chat_type for existing rows: %v", err)
+			}
+			fmt.Println("Added chat_type column to chats table")
+		}
 	}
 
 	if !db.Migrator().HasTable("shared_chat_configs") {
@@ -123,6 +136,7 @@ var Tabels []interface{} = []interface{}{
 	&ContactRequest{},
 	&UploadedFile{},
 	&FileAccess{},
+	&Integration{},
 }
 
 var Migrations []Migration = []Migration{
@@ -140,4 +154,5 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ChatSettings{}},
 	TableMigration{&ContactRequest{}},
 	FileUploadMigration{},
+	TableMigration{&Integration{}},
 }
