@@ -8,7 +8,7 @@ on:
         default: '1.0.63'
         type: string
 jobs:
-  example:
+  build-and-release:
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -23,6 +23,7 @@ jobs:
           rm -rf ./backend/dist
           rm -rf ./backend/out
       - name: Build
+        id: build
         uses: hashicorp/actions-go-build@main
         with:
           product_name: open-chat-go
@@ -44,34 +45,20 @@ jobs:
                   -X 'main.Revision=$PRODUCT_REVISION'
                   -X 'main.RevisionTime=$PRODUCT_REVISION_TIME'
                 "
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: open-chat-go-${{ matrix.os }}-${{ matrix.arch }}
-          path: ./backend/dist/*
-
-  create-release:
-    needs: example
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@main
       
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
-        with:
-          path: artifacts
-      
+      # Create release only once when the last matrix job completes
       - name: Create GitHub Release
+        if: matrix.os == 'windows' && matrix.arch == 'amd64'
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: v${{ github.event.inputs.product_version }}
-          name: Open Chat Go v${{ github.event.inputs.product_version }}
+          tag_name: v${{ inputs.product_version }}
+          name: Open Chat Go v${{ inputs.product_version }}
           body: |
-            ## Open Chat Go Release v${{ github.event.inputs.product_version }}
+            ## Open Chat Go Release v${{ inputs.product_version }}
             
-            **Version:** ${{ github.event.inputs.product_version }}
+            **Version:** ${{ inputs.product_version }}
             **Commit:** ${{ github.sha }}
             
             ### Binaries
@@ -81,4 +68,5 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: artifacts/**/*
+          files: |
+            ./backend/dist/*.zip
