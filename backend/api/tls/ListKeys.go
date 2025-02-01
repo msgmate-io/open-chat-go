@@ -149,3 +149,28 @@ func RetrieveKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(key)
 }
+
+func DeleteKey(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	if !user.IsAdmin {
+		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return
+	}
+
+	keyName := r.PathValue("key_name")
+
+	q := DB.Where("key_name = ?", keyName).Delete(&database.Key{})
+
+	if q.Error != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}

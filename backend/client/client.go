@@ -7,6 +7,7 @@ import (
 	"backend/api/tls"
 	"backend/client/raw"
 	"backend/database"
+	"backend/server/util"
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 )
@@ -27,12 +29,18 @@ type SendMessage struct {
 type Client struct {
 	host      string
 	sessionId string
+	sealKey   []byte
 }
 
 func NewClient(host string) *Client {
+	sealKey := os.Getenv("OPEN_CHAT_SEAL_KEY")
+	if sealKey == "" {
+		sealKey = ""
+	}
 	return &Client{
 		host:      host,
 		sessionId: "",
+		sealKey:   []byte(sealKey),
 	}
 }
 
@@ -176,6 +184,7 @@ func (c *Client) LoginUser(username string, password string) (error, string) {
 		return err, ""
 	}
 	c.sessionId = sessionId
+	c.sealKey = []byte(password)
 	return nil, sessionId
 }
 
@@ -592,6 +601,16 @@ func (c *Client) GetKeyNames() (error, []string) {
 }
 
 func (c *Client) CreateKey(keyName string, keyType string, keyContent []byte, sealed bool) error {
+	if sealed {
+		encrypted, err := util.Encrypt(keyContent, []byte(c.sealKey))
+		if err != nil {
+			log.Printf("Error encrypting key: %v", err)
+			return err
+		}
+		fmt.Println("Sealed key with user password!")
+		keyContent = encrypted
+	}
+
 	body := new(bytes.Buffer)
 	err := json.NewEncoder(body).Encode(tls.CreateKeyRequest{
 		KeyName:    keyName,
@@ -659,6 +678,19 @@ func (c *Client) RetrieveKey(keyName string) (error, *database.Key) {
 		return err, nil
 	}
 
+	if key.Sealed {
+		if c.sealKey == nil {
+			fmt.Println("No seal key found, unable to decrypt key!, please set the seal key with `backend client seal-key <key>`")
+			return nil, &key
+		}
+		decrypted, err := util.Decrypt(key.KeyContent, []byte(c.sealKey))
+		if err != nil {
+			log.Printf("Error decrypting key: %v", err)
+			return err, nil
+		}
+		key.KeyContent = decrypted
+	}
+
 	return nil, &key
 }
 
@@ -693,4 +725,30 @@ func (c *Client) ListProxies(index int64, limit int64) (error, federation.Pagina
 	}
 
 	return nil, proxies
+}
+
+func (c *Client) DeleteKey(keyName string) error {
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v1/tls/keys/%s", c.host, keyName), nil)
+	if err != nil {
+		log.Printf("Error creating request: %v", err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", c.host)
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error sending request: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("Error response: %v", resp.Status)
+	}
+
+	return nil
 }
