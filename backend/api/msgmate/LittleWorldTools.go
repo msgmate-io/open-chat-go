@@ -216,10 +216,90 @@ var LittleWorldRetrieveMatchOverviewToolDef = ToolDefinition{
 			return "", err
 		}
 
-		return string(matchesJSON), nil
+		// Parse the matches JSON to remove the chat object from each match
+		var matchesData map[string]interface{}
+		if err := json.Unmarshal([]byte(matchesJSON), &matchesData); err != nil {
+			return "", fmt.Errorf("error parsing matches data: %w", err)
+		}
+
+		// Process each match category (confirmed, proposed, etc.)
+		for category, categoryData := range matchesData {
+			categoryMap, ok := categoryData.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			items, ok := categoryMap["items"].([]interface{})
+			if !ok {
+				continue
+			}
+
+			// Remove the chat object from each match
+			for i, item := range items {
+				match, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				delete(match, "chat")
+				items[i] = match
+			}
+			categoryMap["items"] = items
+			matchesData[category] = categoryMap
+		}
+
+		// Convert back to JSON
+		cleanedJSON, err := json.Marshal(matchesData)
+		if err != nil {
+			return "", fmt.Errorf("error converting cleaned matches to JSON: %w", err)
+		}
+
+		return string(cleanedJSON), nil
 	},
 }
 
 func NewLittleWorldRetrieveMatchOverviewTool() Tool {
 	return NewToolFromDefinition(LittleWorldRetrieveMatchOverviewToolDef)
+}
+
+// --- Little World Resolve Match Tool ---
+
+type LittleWorldResolveMatchToolInput struct {
+	MatchID int `json:"match_id"`
+}
+
+var LittleWorldResolveMatchToolDef = ToolDefinition{
+	Name:           "little_world__resolve_match",
+	Description:    "Resolve a match in Little World",
+	RequiresInit:   true,
+	InputType:      LittleWorldResolveMatchToolInput{},
+	RequiredParams: []string{"match_id"},
+	Parameters: map[string]interface{}{
+		"match_id": map[string]interface{}{
+			"type":        "integer",
+			"description": "The (int) ID of the match to resolve, you can find it on the match object of the overview: [match-category].match.id ( don't confuse it with partner.id! )",
+		},
+	},
+	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
+		var toolInput = input.(LittleWorldResolveMatchToolInput)
+
+		sessionID, xcsrfToken, apiHost, _, err := ExtractUserInitData(initData)
+		fmt.Println("match_id", toolInput.MatchID)
+
+		if err != nil {
+			return "", err
+		}
+
+		fullURL := fmt.Sprintf("%s/api/matching/matches/%d/resolve/", apiHost, toolInput.MatchID)
+
+		_, err = MakeAPIRequest("POST", fullURL, nil, sessionID, xcsrfToken)
+		if err != nil {
+			return fmt.Sprintf("error resolving match: %s", err), err
+		}
+
+		return "Successfully resolved match", nil
+	},
+}
+
+func NewLittleWorldResolveMatchTool() Tool {
+	return NewToolFromDefinition(LittleWorldResolveMatchToolDef)
 }
