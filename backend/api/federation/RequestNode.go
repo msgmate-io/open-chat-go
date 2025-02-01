@@ -31,6 +31,7 @@ type RequestNode struct {
 }
 
 func SendRequestToNode(DB *gorm.DB, h *FederationHandler, node database.Node, data RequestNode, protocolName string) (*http.Response, error) {
+	// TODO: better differentiate between cases calling for network-join requests and network authenticated requests!
 	// now we build a new request based on the data
 	req, err := http.NewRequest(data.Method, data.Path, strings.NewReader(data.Body))
 	if err != nil {
