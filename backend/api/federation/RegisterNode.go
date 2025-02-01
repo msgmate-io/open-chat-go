@@ -121,7 +121,6 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode, lastC
 			q = DB.Where("node_id = ?", existingNode.ID).Where("network_id = ?", h.Networks[data.AddToNetwork].ID).First(&networkMemberShip)
 			if q.Error != nil {
 				// then we need to still create that network membership
-
 				network, ok := h.Networks[data.AddToNetwork]
 				if !ok {
 					return database.Node{}, fmt.Errorf("Network not found")

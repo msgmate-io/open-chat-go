@@ -74,8 +74,7 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, host
 			return
 		}
 
-		fmt.Println("Response:", resp, resp.Header)
-
+		// fmt.Println("Response:", resp, resp.Header)
 		// Check if the response is an octet stream
 		if false && resp.Header.Get("Content-Type") == "application/octet-stream" {
 			// Create a temporary file
