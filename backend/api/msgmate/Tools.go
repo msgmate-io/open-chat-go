@@ -27,6 +27,72 @@ var AllTools = []Tool{
 	NewLittleWorldSetUserSearchingStateTool(),
 	NewLittleWorldGetPastMessagesWithUserTool(),
 	NewLittleWorldRetrieveMatchOverviewTool(),
+	NewLittleWorldResolveMatchTool(),
+	NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(),
+	NewSignalSendMessageTool(),
+	NewSignalReadPastMessagesTool(),
+	NewSignalRemoveFromWhitelistTool(),
+	NewSignalAddToWhitelistTool(),
+	NewSignalGetWhitelistTool(),
+	NewSignalShowTypingIndicatorTool(),
+	NewRunCallbackFunctionTool(),
+}
+
+// NewToolByName maps tool names to their constructor functions
+func NewToolByName(name string) (Tool, bool) {
+	switch name {
+	case "get_weather":
+		return NewWeatherTool(), true
+	case "get_current_time":
+		return NewCurrentTimeTool(), true
+	case "get_random_number":
+		return NewRandomNumberTool(), true
+	case "little_world__chat_reply":
+		return NewLittleWorldChatReplyTool(), true
+	case "little_world__get_user_state":
+		return NewLittleWorldGetUserStateTool(), true
+	case "little_world__set_user_searching_state":
+		return NewLittleWorldSetUserSearchingStateTool(), true
+	case "little_world__get_past_messages":
+		return NewLittleWorldGetPastMessagesWithUserTool(), true
+	case "little_world__retrieve_match_overview":
+		return NewLittleWorldRetrieveMatchOverviewTool(), true
+	case "little_world__resolve_match":
+		return NewLittleWorldResolveMatchTool(), true
+	case "rwth_aachen_seminar_tims_auto_paper_include_exclude_agent":
+		return NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(), true
+	case "signal_send_message":
+		return NewSignalSendMessageTool(), true
+	case "signal_read_past_messages":
+		return NewSignalReadPastMessagesTool(), true
+	case "signal_remove_from_whitelist":
+		return NewSignalRemoveFromWhitelistTool(), true
+	case "signal_add_to_whitelist":
+		return NewSignalAddToWhitelistTool(), true
+	case "signal_get_whitelist":
+		return NewSignalGetWhitelistTool(), true
+	case "signal_show_typing_indicator":
+		return NewSignalShowTypingIndicatorTool(), true
+	case "run_callback_function":
+		return NewRunCallbackFunctionTool(), true
+	default:
+		return nil, false
+	}
+}
+
+func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool {
+	// Create a new instance using the constructor function
+	newTool, found := NewToolByName(name)
+	if !found {
+		return nil
+	}
+
+	// Set init data if provided
+	if newTool.GetRequiresInit() {
+		newTool.SetInitData(initData)
+	}
+
+	return newTool
 }
 
 type BaseTool struct {
