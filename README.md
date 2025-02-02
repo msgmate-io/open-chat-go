@@ -1,6 +1,10 @@
-## Open Chat V2 ( The Hive Mind )
+## Open Chat V4 ( Msgmate's Hive Mind )
 
 3rd iteration of open-chat now written in Go and federated through libp2p.
+
+> This software is very early stage & experimental! 
+> It deliberately has no licence yet and should in no case be used in production!
+> Use at your own risk! Contributions & Comments are welcome though.
 
 ### Motivation
 
@@ -22,14 +26,16 @@ Each node may additionally provide an admin user with different credentials, whi
 
 **Example:** Suppose we have two nodes, `public-ip-node` and `private-ip-node`, and we want them both to join `my-network`:
 
+> Genarally Hive-Mind nodes can be setup without root, some featues like persistence on restart and self-update apis only work with root.
+
 ```bash
 # on the public-ip-node
-backend -dnc my-network:NetworkPassword -rc controller:ControllerPassOfPublicIpNode
+backend -dnc my-network:NetworkPassword -rc admin:ControllerPassOfPublicIpNode # alternatively pass a pre-hashed password via -rc admin:hash_<SOME PRE HASHED ADMIN PASSWORD>
 backend client login # to retrieve current node's identity, you'll be prompted for controller login credentials
 backend client id -base64 # print the node's identity in base64; this can be used to discover the network through another node
 
 # on the private-ip-node
-backend -dnc my-network:NetworkPassword -rc controller:ControllerPassOfPrivateIpNode
+backend -dnc my-network:NetworkPassword -rc admin:ControllerPassOfPrivateIpNode
 backend client login # login to the node to add the public-ip-node as a known peer
 backend client register -b64 <public-ip-node-identity-base64> -network my-network
 # the node will automatically join the network and synchronize with the public-ip-node ...
@@ -66,7 +72,51 @@ It works for arbitrary TCP traffic, including database connections.
 
 Proxy configurations are saved to the database and persist / auto-reconnect if a node restarts or goes offline for a while.
 
-### Using the federation network
+### Persistent proxies across NAT's
+
+The hive mind makes use of libp2p's relay capabilities, and add some logic that lets nodes dynamicly reserver relay slots on public nodes, if necessary. Relay connections are transient and are automaticly replaced with direct (hole-punched) connections if possible.
+
+E.g.: quickly create a ssh connection from `tims-minipc` to `tim-labtop` while both are in different networks:
+
+```bash
+# client has this dynamic process build in:
+backend client shell --node <tim-labtop-peer-id> --network my-network -nc # remove -nc to directly connect trough a shell
+#  under the hood this works by creating 3 temporary proxies and one ssh serv
+# on <tims-labtop>:
+# 1 - ./backend client proxy --direction egress --target "server_username:SomeRandomPassword" --port 2222 --kind ssh
+# 2 - ./backend client proxy --direction ingress --origin "<local_peer_id>:2222" --port 2222
+# on <tims-minipc>:
+# 3 - ./backend client proxy --direction egress --target "<remote_peer_id>:2222" --port 2222
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 @localhost
+```
+
+Conveniently even the proxies for `tims-labtop` can be created from `tims-minipc` via realyed requests trough the hive mind network.
+This does require knowlege of `tims-labtop` AND `tims-minipc`'s admin user passwords!
+
+### TLS termination anywhere!
+
+The hive mind has very basic TLS challenge solving and termination build in.
+E.g.: on a node with a public IP and the correct DNS entry you can easily request a TLS certificate using the client:
+
+```bash
+backend client login
+backend client tls --hostname=subdomain.example.com --key-prefix=subdomain_example_com
+# automaticly solves the letsencrypt ACME challenge and store the certificates to the database
+backend client keys # List the keys and optionally copy them to any other hive mind node
+backend client proxy --direction egress --target "<local-peer-id>:8080" --port 443
+
+# Now on any other node e.g.: a node behind NAT load the certificates e.g.: tim-labtop
+backend client create-key --key-name subdomain_example_com_cert.pem --key-type cert --key-content ...
+backend client create-key --key-name subdomain_example_com_key.pem --key-type key --key-content ...
+backend client create-key --key-name subdomain_example_com_issuer.pem --key-type issuer --key-content ...
+
+# Now you can tunnel the tls traffice from `subdomain.example.com` to  tims-labtop and terminate the TLS traffic at the local node!
+backend client proxy --direction ingress -tls true -key-prefix p2p_signal_api_dev --origin "<public-ip-node-peer-id>:443" -port 8080
+```
+
+TADA you server a TLS secured application from a device behind NAT & you made sure that the traffice is encrypted untill it reaches your private node!
+
+### More uses of the federation network
 
 Any node joined to a network can request information from any other node in the network.  
 Most node-APIs, however, require privileged access to perform actions, so always keep the node’s controller credentials handy!

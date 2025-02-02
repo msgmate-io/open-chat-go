@@ -88,6 +88,7 @@ func CreateHost(
 		libp2p.Identity(prvKey),
 		// libp2p.EnableRelay(),
 		libp2p.EnableRelay(),
+		// libp2p.PrivateNetwork(), TODO: enable this key option for extra protection layer in the future!
 		/*libp2p.EnableAutoRelayWithStaticRelays([]peer.AddrInfo{
 			{
 				ID:    peer.ID("QmUQE8cu5zrNCWd9RqzzVAriCrdyHMqFDAU2Fhh8T4LBfx"),
