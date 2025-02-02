@@ -71,6 +71,14 @@ jobs:
           chmod +x ./full_build.sh
           ./full_build.sh
 
+      - name: Read version from metrics handler
+        id: get_version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Prepare artifact
         if: ${{ success() }}
         shell: bash
@@ -80,16 +88,16 @@ jobs:
           BIN_NAME="backend"
           EXT=""
           if [[ "${{ matrix.goos }}" == "windows" ]]; then EXT=".exe"; fi
-          OUT_NAME="${{ matrix.artifact_name }}"
-          if [[ "$OUT_NAME" != *.exe ]] && [[ "$EXT" == ".exe" ]]; then OUT_NAME+="$EXT"; fi
+          OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goarch }}"
+          if [[ "$EXT" == ".exe" ]]; then OUT_NAME+="$EXT"; fi
           mv -f "$BIN_NAME$EXT" "../dist/$OUT_NAME"
 
       - name: Upload artifact
         if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.artifact_name }}*
+          name: open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goarch }}
+          path: dist/open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goarch }}*
           if-no-files-found: error
 
   release:
@@ -108,6 +116,11 @@ jobs:
           echo "Artifacts collected:" || true
           ls -R all-artifacts || true
 
+      - name: Create source archive
+        run: |
+          git archive --format=zip --output=source-clean.zip HEAD -- . ':!frontend' ':!backend/federation' ':!backend/federation_factory' ':!backend/api/federation' ':!backend/api/federation_disabled.go' ':!backend/api/federation_interface.go' ':!backend/server/federation.go' ':!backend/database/federation.go'
+          echo "Created source-clean.zip without frontend and federation code"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: always()
@@ -118,5 +131,6 @@ jobs:
           prerelease: false
           files: |
             all-artifacts/**/*
+            source-clean.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
