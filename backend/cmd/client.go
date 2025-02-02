@@ -682,6 +682,106 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "request-video" {
+		return &cli.Command{
+			Name:  "request-video",
+			Usage: "Request video",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "node",
+					Usage: "The node to request video from",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "network",
+					Usage: "The network to request video from",
+					Value: "network",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				// on the remote node:
+				// backend client proxy --direction egress --port <random-video-port> --kind video
+				// backend client proxy --direction ingress --origin "<requesting-peer-id>:<random-video-port>" --port <random-video-port> --kind tcp
+				// on the local node:
+				// backend client proxy --direction egress --type tcp --target "<remote-peer-id>:<random-video-port>" --port <random-video-port>
+				// to view the stream visit: http://localhost:<local-port-2>
+
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				networkName := c.String("network")
+				username, password, err := retrieveOrPromptForCreds(ocClient, c.String("node"))
+				if err != nil {
+					return fmt.Errorf("failed to retrieve or prompt for credentials: %w", err)
+				}
+				// fmt.Println("Login string entered:", username, password)
+				remotePeerId := c.String("node")
+
+				err, identity := ocClient.GetFederationIdentity()
+				if err != nil {
+					return fmt.Errorf("failed to get identity: %w", err)
+				}
+				ownPeerId := identity.ID
+
+				err, sessionId := ocClient.RequestSessionOnRemoteNode(username, password, remotePeerId)
+				if err != nil {
+					return fmt.Errorf("failed to request session on remote node: %w", err)
+				}
+				randomServerPort := ocClient.RandomSSHPort()
+
+				body := new(bytes.Buffer)
+				json.NewEncoder(body).Encode(federation.CreateAndStartProxyRequest{
+					Direction:     "egress",
+					TrafficOrigin: "/dev/video0:video",
+					TrafficTarget: ":",
+					Port:          randomServerPort,
+					Kind:          "video",
+					NetworkName:   networkName,
+				})
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "POST",
+					Path:   "/api/v1/federation/nodes/proxy",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+					Body: string(body.Bytes()),
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+
+				// creeate the remote ingress proxy
+				body = new(bytes.Buffer)
+				json.NewEncoder(body).Encode(federation.CreateAndStartProxyRequest{
+					Direction:     "ingress",
+					TrafficOrigin: ownPeerId + ":" + randomServerPort,
+					TrafficTarget: "",
+					Port:          randomServerPort,
+					Kind:          "tcp",
+					NetworkName:   networkName,
+				})
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+					Method: "POST",
+					Path:   "/api/v1/federation/nodes/proxy",
+					Headers: map[string]string{
+						"Cookie": fmt.Sprintf("session_id=%s", sessionId),
+					},
+					Body: string(body.Bytes()),
+				})
+				if err != nil {
+					return fmt.Errorf("failed to request node by peer id: %w", err)
+				}
+
+				// create the local egress proxy
+				err = ocClient.CreateProxy("egress", "", remotePeerId+":"+randomServerPort, randomServerPort, networkName)
+				if err != nil {
+					return fmt.Errorf("failed to create proxy: %w", err)
+				}
+
+				fmt.Println("Proxies created, you can now view the video by visiting: http://localhost:" + randomServerPort)
+
+				return nil
+			},
+		}
 	} else if action == "shell" {
 		return &cli.Command{
 			Name:  "shell",
