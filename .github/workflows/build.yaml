@@ -109,6 +109,12 @@ jobs:
     needs: [build]
     if: always()
     steps:
+      - name: Checkout repository (for source archive)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_PAT }}
+          submodules: recursive
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -123,6 +129,7 @@ jobs:
         run: |
           git archive --format=zip --output=source-clean.zip HEAD -- . ':!frontend' ':!backend/federation' ':!backend/federation_factory' ':!backend/api/federation' ':!backend/api/federation_disabled.go' ':!backend/api/federation_interface.go' ':!backend/server/federation.go' ':!backend/database/federation.go'
           echo "Created source-clean.zip without frontend and federation code"
+          ls -la source-clean.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
