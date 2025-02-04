@@ -97,8 +97,8 @@ NEW_PATCH=$((PATCH + 1))
 NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
 echo "New version: $NEW_VERSION"
 
-# Update the version in the file
-sed -i "s/var VERSION = \"$CURRENT_VERSION\"/var VERSION = \"$NEW_VERSION\"/" backend/api/metrics/handler.go
+TMP_FILE="$(mktemp)"
+sed "s|var VERSION = \"$CURRENT_VERSION\"|var VERSION = \"$NEW_VERSION\"|" backend/api/metrics/handler.go > "$TMP_FILE" && mv "$TMP_FILE" backend/api/metrics/handler.go
 
 echo "Version updated to: $NEW_VERSION"
 
