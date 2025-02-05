@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "./utils";
+import image from "../assets/logo.png"
 
 export function CinematicLogo({
   className = "",
@@ -9,7 +10,7 @@ export function CinematicLogo({
   clickedClass = "",
   size = 240,
   defaultClass = "",
-  logoUrl = "https://msgmate.io/assets/logo.svg",
+  logoUrl = image,
 }) {
   <div className="absolute inset-0 "
       style={{

@@ -1,5 +1,7 @@
 import { ChatBase } from "@/components/chat/ChatBase";
 import { useNavigate } from "@remix-run/react";
+import { LoaderFunctionArgs, redirect } from "@remix-run/node";
+import { checkAuth } from "~/utils/auth";
 
 export default function ChatPage() {
   const navigate = useNavigate()
@@ -9,8 +11,3 @@ export default function ChatPage() {
     </ChatBase>
   );
 }
-
-// Disable server-side rendering for this route
-export const handle = {
-  hydrate: true,
-}; 

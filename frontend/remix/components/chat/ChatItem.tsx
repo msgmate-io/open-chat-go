@@ -70,39 +70,37 @@ export function ChatItemCompact({ chat = null, isSelected = false, navigateTo = 
 
 
     //const content = chat?.settings?.title ? chat?.settings?.title : (chat.partner.is_bot ? chat.newest_message.text : `${chat.partner.first_name} ${chat.partner.second_name}`)
-    const content = "TODO"
+    var content = "No messages yet"
 
     return (
-        <>
-            <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen} >
-                <Card className={cn(
-                    "bg-base-200 hover:bg-base-100 p-0 border-0",
-                    settingsOpen && "pointer-events-none hover:bg-base-300",
-                    isSelected && "bg-base-100"
-                )}
-                    key={chat?.uuid} onClick={() => {
-                        if (!settingsOpen) {
-                            navigateTo(`/chat/${chat?.uuid}`)
-                        }
-                    }}>
-                    <div className="p-[5px] px-2">
-                        <div className="">
-                            <div className='flex text-nowrap text-lg whitespace-nowrap overflow-x-hidden'>
-                                {content}
-                                <div className="absolute right-4 flex flex-row">
-                                    <UnreadBadge unreadCount={0} /> {/**TODO add the actual count */}
-                                    {!chat?.partner?.is_bot && <OnlineIndicator isOnline={false} />}
-                                    <Button className="flex h-4 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
-                                        setSettingsOpen(!settingsOpen)
-                                        e.stopPropagation()
-                                    }}><DotsHorizontal /></Button>
-                                </div>
+        <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen} >
+            <Card className={cn(
+                "bg-base-200 hover:bg-base-100 p-0 border-0",
+                settingsOpen && "pointer-events-none hover:bg-base-300",
+                isSelected && "bg-base-100"
+            )}
+                key={chat?.uuid} onClick={() => {
+                    if (!settingsOpen) {
+                        navigateTo(`/chat/${chat?.uuid}`)
+                    }
+                }}>
+                <div className="p-[5px] px-2">
+                    <div className="">
+                        <div className='flex text-nowrap text-lg whitespace-nowrap overflow-x-hidden'>
+                            {content}
+                            <div className="absolute right-4 flex flex-row">
+                                <UnreadBadge unreadCount={0} /> {/**TODO add the actual count */}
+                                {!chat?.partner?.is_bot && <OnlineIndicator isOnline={false} />}
+                                <Button className="flex h-4 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
+                                    setSettingsOpen(!settingsOpen)
+                                    e.stopPropagation()
+                                }}><DotsHorizontal /></Button>
                             </div>
                         </div>
                     </div>
-                </Card>
-                <DropdownMenuTrigger className="h-0 bg-error z-10 display-none"></DropdownMenuTrigger>
-            </ChatSettings>
-        </>
+                </div>
+            </Card>
+            <DropdownMenuTrigger className="h-0 bg-error z-10 display-none"></DropdownMenuTrigger>
+        </ChatSettings>
     )
 }
