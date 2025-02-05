@@ -186,6 +186,7 @@ func CreateFederationHost(
 	federationHandler := &federation.FederationHandler{
 		Host:               h,
 		Gater:              gater,
+		ActiveProxies:      make(map[string]context.CancelFunc),
 		AutoPings:          make(map[string]context.CancelFunc),
 		Networks:           make(map[string]database.Network),
 		NetworkSyncs:       make(map[string]context.CancelFunc),
@@ -236,7 +237,16 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 				log.Println("Cannot start SSH proxy, invalid port", proxy.Port, err)
 				continue
 			}
-			h.StartSSHProxy(portNum, originPort)
+			h.StartSSHProxy(portNum, originPort) // here it holds the ssh password! TODO: we could actually extend this to store onl pw hashes too
+		} else if proxy.Kind == "video" {
+			/**
+			portNum, err := strconv.Atoi(proxy.Port)
+			if err != nil {
+				log.Println("Cannot start video proxy, invalid port", proxy.Port, err)
+				continue
+			}
+			federation.LinuxStartVideoServer(portNum, originPeerId)
+			*/
 		}
 	}
 
