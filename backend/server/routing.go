@@ -9,8 +9,10 @@ import (
 	"backend/api/tls"
 	"backend/api/user"
 	"backend/api/websocket"
+	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
 	"io"
@@ -19,11 +21,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
 
-//go:embed all:frontend
+//go:embed all:frontend routes.json
 var frontendFS embed.FS
 
 func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
@@ -58,6 +61,87 @@ func websocketMiddleware(ch *websocket.WebSocketHandler) func(next http.Handler)
 			ctx := context.WithValue(r.Context(), "websocket", ch)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+func frontendRedirectMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// TODO: for some paths do stuff
+		next.ServeHTTP(w, r)
+	})
+}
+
+func getFrontendRoutes() ([]string, error) {
+	content, err := frontendFS.ReadFile("routes.json")
+	if err != nil {
+		return nil, fmt.Errorf("error reading routes.json: %w", err)
+	}
+
+	var routes []string
+	if err := json.Unmarshal(content, &routes); err != nil {
+		return nil, fmt.Errorf("error parsing routes.json: %w", err)
+	}
+
+	return routes, nil
+}
+
+func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWriter, *http.Request) {
+	fsys, err := fs.Sub(frontendFS, "frontend")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fs := http.FileServer(http.FS(fsys))
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		accept := r.Header.Get("Accept")
+		if !strings.Contains(accept, "text/html") {
+			// serve all other assets normally
+			fs.ServeHTTP(w, r)
+			return
+		}
+
+		// e.g.: route = "/star-wars/{id}"
+		// the html file we have to server is at 'route/index.html'
+		// but we also need to match all possible '{}' paths in the route
+		// e.g.: for /star-wars/{id} we need to replace {id} in the html file with r.PathValue("id")
+		// and then serve the html file
+		regMatch := regexp.MustCompile(`{(.*?)}`)
+		pathValues := make(map[string]string)
+		matches := regMatch.FindAllStringSubmatch(route, -1)
+		for _, match := range matches {
+			if val := r.PathValue(match[1]); val != "" {
+				pathValues[match[1]] = val
+			} else {
+				log.Printf("Warning: No value found for path parameter %s", match[1])
+				pathValues[match[1]] = match[1]
+			}
+		}
+
+		// Remove the leading slash from the route when accessing the filesystem
+		cleanRoute := strings.TrimPrefix(route, "/")
+		staticFile := fmt.Sprintf("%s%s", cleanRoute, pathEnding)
+		indexFile, err := fsys.Open(staticFile)
+		if err != nil {
+			log.Printf("Error opening index.html for route %s: %v", cleanRoute, err)
+			http.Error(w, "Page Not Found", http.StatusNotFound)
+			return
+		}
+		defer indexFile.Close()
+
+		content, err := io.ReadAll(indexFile)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Replace all the path values in the html file
+		for key, value := range pathValues {
+			content = bytes.Replace(content, []byte(fmt.Sprintf("{%s}", key)), []byte(value), -1)
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(content))
 	}
 }
 
@@ -108,81 +192,56 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("POST /bin/upload", federationHandler.UploadBinary)
 	v1PrivateApis.HandleFunc("POST /bin/request-self-update", federationHandler.RequestSelfUpdate)
+	v1PrivateApis.HandleFunc("POST /federation/networks/addnode", federationHandler.RegisterNode)
+	v1PrivateApis.HandleFunc("GET /federation/networks/sync/{network_name}/get", federationHandler.SyncGet)
 
 	providerMiddlewares := CreateStack(
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 	)
 
-	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
-	// v1PrivateApis.HandleFunc("GET /bin/download", federationHandler.DownloadBinary)
-	mux.Handle("GET /api/v1/bin/download", providerMiddlewares(http.HandlerFunc(federationHandler.DownloadBinary)))
-	mux.Handle("GET /api/v1/bin/setup", providerMiddlewares(http.HandlerFunc(federationHandler.GetHiveSetupScript)))
-	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
-
-	mux.Handle("POST /api/v1/federation/networks/login", providerMiddlewares(http.HandlerFunc(userHandler.NetworkUserLogin)))
-	v1PrivateApis.HandleFunc("POST /federation/networks/addnode", federationHandler.RegisterNode)
-	v1PrivateApis.HandleFunc("GET /federation/networks/sync/{network_name}/get", federationHandler.SyncGet)
-
-	mux.Handle("POST /api/v1/federation/nodes/{peer_id}/ping", providerMiddlewares(http.HandlerFunc(federationHandler.Ping)))
-
-	// TODO deprivate again? Now basicly handeled trough networks
-	mux.Handle("POST /api/v1/federation/nodes/register/request", providerMiddlewares(http.HandlerFunc(federationHandler.RequestNodeRegistration)))
-
-	mux.HandleFunc("GET /_health", func(w http.ResponseWriter, r *http.Request) {
-		// TODO: need some better way to check if server is running
-		if ServerStatus != "running" {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(fmt.Sprintf("Server is not running, status: %s", ServerStatus)))
-		} else {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("Server is running"))
-		}
-	})
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", providerMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
-	mux.HandleFunc("/reference", reference.ScalarReference)
-
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
 	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
 
+	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
+	mux.Handle("GET /api/v1/bin/download", providerMiddlewares(http.HandlerFunc(federationHandler.DownloadBinary)))
+	mux.Handle("GET /api/v1/bin/setup", providerMiddlewares(http.HandlerFunc(federationHandler.GetHiveSetupScript)))
+	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
+	mux.Handle("POST /api/v1/federation/networks/login", providerMiddlewares(http.HandlerFunc(userHandler.NetworkUserLogin)))
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", providerMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
+	mux.HandleFunc("/reference", reference.ScalarReference)
+	mux.HandleFunc("/api/reference", reference.ScalarReference)
+
 	// server frontend or proxy to dev-frontend
 	if frontendProxy == "" {
-		fsys, err := fs.Sub(frontendFS, "frontend")
+		// in production all frontend routes are staticly prebuild
+		routes, err := getFrontendRoutes()
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Warning: Failed to load routes from routes.json: %v", err)
+			// Fallback to empty routes list
+			routes = []string{}
 		}
-		fs := http.FileServer(http.FS(fsys))
-		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path := r.URL.Path
 
-			// Serve static assets directly
-			if strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/build/") {
-				if _, err := fsys.Open(strings.TrimPrefix(path, "/")); err != nil {
-					http.NotFound(w, r)
-					return
-				}
-				fs.ServeHTTP(w, r)
-				return
+		for _, route := range routes {
+			fmt.Printf("Serving route: %s\n", route)
+			mux.Handle(route, providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
+		}
+		mux.Handle("/", providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				ServeFrontendRoute("/", "index.html")(w, r)
+			} else {
+				ServeFrontendRoute("/404", ".html")(w, r)
 			}
-
-			// For all other routes, serve index.html directly from the filesystem
-			indexFile, err := fsys.Open("index.html")
-			if err != nil {
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			defer indexFile.Close()
-
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			http.ServeContent(w, r, "index.html", time.Time{}, indexFile.(io.ReadSeeker))
-		}))
+		}))))
 	} else {
 		targetURL, err := url.Parse(frontendProxy)
 		if err != nil {
 			log.Fatal(err)
 		}
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
-		mux.HandleFunc("/", ProxyRequestHandler(proxy, targetURL, "/"))
+		mux.Handle("/", providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(
+			ProxyRequestHandler(proxy, targetURL, "/"),
+		))))
 	}
 
 	return mux, websocketHandler
