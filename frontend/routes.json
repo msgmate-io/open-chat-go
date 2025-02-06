@@ -1,0 +1,8 @@
+[
+  "/chat/",
+  "/chat/{chat_uuid}/",
+  "/todo/",
+  "/login/",
+  "/star-wars/",
+  "/star-wars/{id}/"
+]
