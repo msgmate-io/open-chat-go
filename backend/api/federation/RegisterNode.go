@@ -228,6 +228,7 @@ func RegisterNodeRaw(DB *gorm.DB, h *FederationHandler, data RegisterNode, lastC
 	return node, nil
 }
 
+// TODO: depricate
 // RequestNodeRegistration requests a node registration from a node
 //
 //	@Summary      Request node registration

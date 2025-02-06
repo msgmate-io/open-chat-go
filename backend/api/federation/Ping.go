@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// TODO: depricate
 func (h *FederationHandler) Ping(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {
