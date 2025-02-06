@@ -33,6 +33,7 @@ type FederationHandler struct {
 	Host               host.Host
 	AutoPings          map[string]context.CancelFunc
 	Gater              *WhitelistGater
+	ActiveProxies      map[string]context.CancelFunc
 	Networks           map[string]database.Network
 	NetworkPeerIds     map[string]map[string]bool
 	NetworkSyncs       map[string]context.CancelFunc

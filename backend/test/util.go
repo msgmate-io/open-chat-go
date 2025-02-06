@@ -19,6 +19,7 @@ import (
 )
 
 func isServerRunning(host string) (bool, error) {
+	// TODO: /_health was depricated
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/_health", host), nil)
 	if err != nil {
 		log.Printf("Error creating request: %v", err)
