@@ -6,6 +6,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"log"
+	_ "modernc.org/sqlite"
 )
 
 type DBConfig struct {
