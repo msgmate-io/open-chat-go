@@ -2,11 +2,10 @@ package database
 
 import (
 	"fmt"
+	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"log"
-	_ "modernc.org/sqlite"
 )
 
 type DBConfig struct {
