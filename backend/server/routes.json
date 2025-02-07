@@ -1,8 +1,9 @@
 [
-  "/login",
-  "/chat",
-  "/chat/{chat_uuid}",
-  "/todo",
-  "/star-wars",
-  "/star-wars/{id}"
+  "/chat/",
+  "/chat/{chat_uuid}/",
+  "/login/",
+  "/admin/",
+  "/admin/{table_name}/",
+  "/admin/{table_name}/{id}/",
+  "/test/"
 ]
