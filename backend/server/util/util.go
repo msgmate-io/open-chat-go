@@ -90,7 +90,7 @@ func CreateUser(
 	password string,
 	isAdminUser bool,
 ) (error, *database.User) {
-	log.Println("Creating root user")
+	log.Println("Creating user", username, "isAdminUser: ", isAdminUser)
 	// first chaeck if that user already exists
 	var user database.User
 	q := DB.First(&user, "email = ?", username)

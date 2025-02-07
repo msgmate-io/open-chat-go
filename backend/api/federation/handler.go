@@ -31,7 +31,6 @@ func CreateT1mTCPTunnelProtocolID(originPort string, originPeerId string, target
 
 type FederationHandler struct {
 	Host               host.Host
-	AutoPings          map[string]context.CancelFunc
 	Gater              *WhitelistGater
 	ActiveProxies      map[string]context.CancelFunc
 	Networks           map[string]database.Network

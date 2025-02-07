@@ -122,7 +122,15 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 
 		cookie, err := r.Cookie("session_id")
 		if err != nil {
-			w.Header().Set("X-Authorized", "false")
+			http.SetCookie(w, &http.Cookie{
+				Name:     "is_authorized",
+				Value:    "false",
+				Path:     "/",
+				MaxAge:   0,
+				HttpOnly: false,
+				Secure:   false,
+				SameSite: http.SameSiteStrictMode,
+			})
 			if slices.Contains(PublicRoutes, r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
@@ -136,12 +144,26 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		if cookie.Expires.Before(time.Now()) {
-			w.Header().Set("X-Authorized", "false")
+			http.SetCookie(w, &http.Cookie{
+				Name:     "is_authorized",
+				Value:    "true",
+				Path:     "/",
+				MaxAge:   0,
+				HttpOnly: false,
+				Secure:   false,
+				SameSite: http.SameSiteStrictMode,
+			})
+
+			if r.URL.Path == "/login" {
+				// autorized user on the login page can be redirected to /chat
+				http.Redirect(w, r, "/chat", http.StatusFound)
+				return
+			}
+
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		w.Header().Set("X-Authorized", "true")
 		next.ServeHTTP(w, r)
 	})
 }

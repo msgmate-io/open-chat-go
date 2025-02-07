@@ -187,7 +187,6 @@ func CreateFederationHost(
 		Host:               h,
 		Gater:              gater,
 		ActiveProxies:      make(map[string]context.CancelFunc),
-		AutoPings:          make(map[string]context.CancelFunc),
 		Networks:           make(map[string]database.Network),
 		NetworkSyncs:       make(map[string]context.CancelFunc),
 		NetworkSyncBlocker: make(map[string]bool),

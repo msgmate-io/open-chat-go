@@ -150,11 +150,10 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 				addresses[i] = addr.Address
 			}
 			missingNodes = append(missingNodes, RegisterNode{
-				Name:                networkMember.Node.NodeName,
-				Addresses:           addresses,
-				RequestRegistration: false,
-				AddToNetwork:        networkName,
-				LastChanged:         &networkMember.Node.LastChanged,
+				Name:         networkMember.Node.NodeName,
+				Addresses:    addresses,
+				AddToNetwork: networkName,
+				LastChanged:  &networkMember.Node.LastChanged,
 			})
 		} else {
 			// if it's contained we need to check if it's outdated
@@ -200,11 +199,10 @@ func (h *FederationHandler) SyncGet(w http.ResponseWriter, r *http.Request) {
 		// log.Println("Requestor info is in our network, adding it directly")
 		// add directly to own nodes
 		_, err := RegisterNodeRaw(DB, h, RegisterNode{
-			Name:                data.RequestorInfo.Name,
-			Addresses:           data.RequestorInfo.Addresses,
-			RequestRegistration: false,
-			AddToNetwork:        networkName,
-			LastChanged:         &data.RequestorInfo.LastUpdated,
+			Name:         data.RequestorInfo.Name,
+			Addresses:    data.RequestorInfo.Addresses,
+			AddToNetwork: networkName,
+			LastChanged:  &data.RequestorInfo.LastUpdated,
 		}, &data.RequestorInfo.LastUpdated)
 		if err != nil {
 			log.Println("Error registering requestor node", err)
