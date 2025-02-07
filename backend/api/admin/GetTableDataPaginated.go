@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
+	"math"
 	"net/http"
 	"strconv"
 )
@@ -34,13 +35,13 @@ func GetTableDataPaginated(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the corresponding model in the Tabels slice
-	var model interface{}
+	//var model interface{}
 	found := false
 	for _, t := range database.Tabels {
 		stmt := &gorm.Statement{DB: DB}
 		stmt.Parse(t)
 		if stmt.Schema.Table == tableName {
-			model = t
+			//model = t
 			found = true
 			break
 		}
@@ -65,11 +66,26 @@ func GetTableDataPaginated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// First get total count for pagination
+	var totalRows int64
+	if err := DB.Table(tableName).Count(&totalRows).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Error counting rows: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	pagination.TotalRows = totalRows
+	pagination.TotalPages = int(math.Ceil(float64(totalRows) / float64(pagination.Limit)))
+
 	// Create a slice to hold the results
 	var results []map[string]interface{}
 
 	// Query the database with pagination
-	rows, err := DB.Table(tableName).Scopes(database.Paginate(model, &pagination, DB)).Rows()
+	rows, err := DB.Table(tableName).
+		Offset(pagination.GetOffset()).
+		Limit(pagination.GetLimit()).
+		Order(pagination.GetSort()).
+		Rows()
+
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error querying table: %v", err), http.StatusInternalServerError)
 		return
