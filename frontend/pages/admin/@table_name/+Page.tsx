@@ -13,9 +13,9 @@ export default function Page() {
   const pageContext = usePageContext()
   
   // Get initial values from URL search params
-  const searchParams = new URLSearchParams(window.location.search);
-  const initialPage = parseInt(searchParams.get('page') || '1');
-  const initialLimit = parseInt(searchParams.get('limit') || '10');
+  const searchParams = new URLSearchParams(typeof window !== 'undefined' ? window?.location?.search || '' : '');
+  const initialPage = parseInt(searchParams?.get('page') || '1');
+  const initialLimit = parseInt(searchParams?.get('limit') || '10');
   
   const [page, setPage] = React.useState(initialPage)
   const [limit, setLimit] = React.useState(initialLimit)
@@ -23,18 +23,19 @@ export default function Page() {
   
   // Update URL when page/limit changes
   React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(window?.location?.search || '');
     params.set('page', page.toString());
     params.set('limit', limit.toString());
-    navigate(`${window.location.pathname}?${params.toString()}`, {
+    navigate(`${window?.location?.pathname}?${params.toString()}`, {
       keepScrollPosition: true,
       overwriteLastHistoryEntry: true
     });
   }, [page, limit]);
 
-  const { data: table } = useSWR(`/api/v1/admin/table/${pageContext.routeParams.table_name}`, fetcher)
+  const table_name = pageContext.routeParams.table_name
+  const { data: table } = useSWR(`/api/v1/admin/table/${table_name}`, fetcher)
   const { data: tableData } = useSWR(
-    `/api/v1/admin/table/${pageContext.routeParams.table_name}/data?page=${page}&limit=${limit}`,
+    `/api/v1/admin/table/${table_name}/data?page=${page}&limit=${limit}`,
     fetcher
   )
   
@@ -48,7 +49,7 @@ export default function Page() {
   return <div className="p-4 min-h-screen">
     <div className="flex items-center justify-between mb-4">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" onClick={() => window.history.back()}>
+        <Button variant="ghost" onClick={() => navigate(`/admin/`)}>
           <ChevronLeft className="h-4 w-4 mr-2" />
           Back
         </Button>
