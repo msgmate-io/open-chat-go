@@ -9,15 +9,16 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "@/components/DropdownMenu";
+import imgSrc from "@/assets/logo.png"
 
 export const ToggleInputModeButton = () => {
     const [open, setOpen] = useState(false);
 
     return <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger className=""></DropdownMenuTrigger>
-        {/**<img className="h-9 m-3 hover:ring-base-100 rounded-full ring-2 ring-base-300 dark:ring-gray-500" src={"TODO_image"} alt="Bordered avatar" onClick={() => {
+        {<img className="h-9 m-3 hover:ring-base-100 rounded-full ring-2 ring-base-300 dark:ring-gray-500" src={imgSrc} alt="Bordered avatar" onClick={() => {
             setOpen(!open);
-        }} />*/}
+        }} />}
         <DropdownMenuContent className="w-56 pointer-events-none border-0 shadow-xl">
             <DropdownMenuLabel className="h-6">Chat Settings</DropdownMenuLabel>
             <DropdownMenuSeparator />

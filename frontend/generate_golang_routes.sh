@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Routes to exclude
-exclude_routes=("/404/" "/")
+exclude_routes=("/404" "")
 
 # Initialize JSON array
 echo '[' > routes.json
@@ -12,11 +12,6 @@ first=true
 find dist/client -name "*.html" | while read -r file; do
     # Strip dist/client prefix and index.html suffix
     route=$(echo "$file" | sed 's|dist/client||' | sed 's|/index\.html$||' | sed 's|\.html$||')
-    
-    # Ensure routes end with trailing slash if they're not root
-    if [ "$route" != "/" ]; then
-        route="${route%/}/"
-    fi
     
     # Skip excluded routes
     skip=false
