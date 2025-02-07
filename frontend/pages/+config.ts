@@ -10,11 +10,15 @@ export default {
   Layout,
 
   // https://vike.dev/head-tags
-  title: "My Vike App",
-  description: "Demo showcasing Vike",
+  title: "Open-Chat Go",
+  description: "Open-Chat Go is an federated chat app, build for the msgmate ai",
   extends: vikeReact,
   passToClient: [
     'pageContext'
   ],
+  htmlAttributes: {
+    lang: "en",
+    // "data-theme": "light",
+  },
   prerender: true,
 } satisfies Config;
