@@ -1,6 +1,7 @@
 package server
 
 import (
+	"backend/api/admin"
 	"backend/api/chats"
 	"backend/api/contacts"
 	"backend/api/federation"
@@ -187,6 +188,11 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /keys/{key_name}/get", tls.RetrieveKey)
 	v1PrivateApis.HandleFunc("POST /keys/create", tls.CreateKey)
 	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
+
+	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}", admin.GetTableInfo)
+	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/data", admin.GetTableDataPaginated)
+	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/{id}", admin.GetTableItemById)
+	v1PrivateApis.HandleFunc("GET /admin/tables", admin.GetAllTables)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
 
