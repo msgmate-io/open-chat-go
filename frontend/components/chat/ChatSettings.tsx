@@ -51,7 +51,7 @@ export function ChatSettings({
 
     return <DropdownMenu open={open} onOpenChange={setOpen}>
         {children}
-        <DropdownMenuContent className="w-56 pointer-events-none border-0 shadow-xl">
+        <DropdownMenuContent className="w-56 pointer-events-none border-0 shadow-xl bg-base-300">
             <DropdownMenuLabel className="h-6">Chat Settings</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="flex flex-row gap-1">
@@ -74,17 +74,6 @@ export function ChatSettings({
             </DropdownMenuLabel>
             <DropdownMenuLabel>
                 {/**<ViewChatJsonModal chat={chat} />**/}
-            </DropdownMenuLabel>
-            <DropdownMenuLabel>
-                <Button variant="ghost" className="h-6 w-full" onClick={() => {
-                    /**
-                     * navigate(null, {
-                    chat: chat.uuid,
-                    chatType: "audio"
-                     * })
-                     */
-                    // TODO navigate
-                }}>Start Audio Chat</Button>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             {chat?.partner?.is_bot && <DropdownMenuLabel>

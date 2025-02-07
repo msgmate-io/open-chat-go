@@ -9,6 +9,7 @@ import { Button } from "@/components/Button"
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { LoginSection } from "@/components/sections/LoginSection"
+import { Cookies } from "typescript-cookie";
 
 
 interface TabState {
@@ -82,7 +83,15 @@ function IndexTab({
             </div>
             <div className="flex w-1/2 justify-start pl-4">
                 <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2" onClick={() => {
-                    navigateTo("/login")
+                    // check if the user has a current session cookie
+                    const isAuthorized = Cookies.get("is_authorized")
+                    // check if the cookies is not expired
+                    console.log("SID", isAuthorized)
+                    if (isAuthorized === "true") {
+                        navigateTo("/chat")
+                    } else {
+                        navigateTo("/login")
+                    }
                 }}>Log-in</Button>
             </div>
         </div>
@@ -113,10 +122,6 @@ export function LandingHero({
     const setTab = useTabs(state => state.setTab)
     const [showVideoCard, setShowVideoCard] = useState(false)
 
-      useEffect(() => {
-        setTab("index")
-      }, [])
-
     return <>
         <div className="relative w-full z-40">
             <div className="absolute flex w-full p-4 font-bold text-2xl w-full">
@@ -139,7 +144,7 @@ export function LandingHero({
                 </div>
             </div>
             <div className="flex flex-col flex-grow items-center justify-center content-center bg-base-100 w-1/3 h-full">
-                <div className="flex flex-row items-end justify-end content-center w-full p-2">
+                <div className="flex flex-row items-end justify-end content-center w-full">
                     <div className="p-2 hover:bg-base-300 rounded-xl z-40" onClick={() => {
                         setTab("index")
                     }}>
@@ -147,7 +152,7 @@ export function LandingHero({
                         {tab === "index" && <ModeToggle />}
                     </div>
                 </div>
-                <div className="flex flex-col items-center justify-center content-center w-full flex-grow">
+                <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4">
                     {tab === "index" && <IndexTab navigateTo={navigateTo}/>}
                     {tab === "login" && <LoginSection navigateTo={navigateTo}/>}
                     {tab === "register" && <RegisterTab/>}

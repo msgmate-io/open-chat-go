@@ -182,7 +182,11 @@ export function ChatBase({
                 leftPannelRef={leftPannelRef}
                 rightPannelRef={rightPannelRef}
                 setLeftCollapsed={setLeftCollapsed}
-                left={<ChatsList chatUUID={chatUUID} leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} navigateTo={navigateTo} />}
+                left={<ChatsList chatUUID={chatUUID} 
+                    leftPannelCollapsed={leftPannelCollapsed} 
+                    onToggleCollapse={onToggleCollapse} 
+                    navigateTo={navigateTo} 
+                />}
                 right={children}
             />
         </div>

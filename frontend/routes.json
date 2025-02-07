@@ -1,9 +1,9 @@
 [
-  "/chat/",
-  "/chat/{chat_uuid}/",
-  "/login/",
-  "/admin/",
-  "/admin/{table_name}/",
-  "/admin/{table_name}/{id}/",
-  "/test/"
+  "/chat",
+  "/chat/{chat_uuid}",
+  "/login",
+  "/admin",
+  "/admin/{table_name}",
+  "/admin/{table_name}/{id}",
+  "/test"
 ]

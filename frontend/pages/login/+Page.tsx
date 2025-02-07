@@ -10,6 +10,6 @@ export default function Page() {
   
   useEffect(() => {
     setTab("login");
-  }, [setTab]);
+  }, [tab]);
   return  <LandingHero navigateTo={(to: string) => {navigate(to)}} />
 }

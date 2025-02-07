@@ -4,7 +4,6 @@ import { StateStorage, PersistStorage, StorageValue } from 'zustand/middleware';
 import { getCookie, setCookie, removeCookie } from 'typescript-cookie';
 import { Moon, Sun } from "lucide-react";
 import React, { useEffect } from 'react';
-const THEMES = ["dark", "light", "cupcake", "retro"]
 import { Button } from "@/components/Button"
 import {
   DropdownMenu,
@@ -15,6 +14,7 @@ import {
 
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
+export const THEMES = ["dark", "light", "cupcake", "retro"]
 
 interface ThemeState {
   theme: string
@@ -41,7 +41,7 @@ export const useThemeStore = create<ThemeState>()(
       (set) => ({
         theme: "dark",
         changeTheme: (theme) => {
-          // document.documentElement.setAttribute('data-theme', theme);
+          document.documentElement.setAttribute('data-theme', theme);
           document.getElementById('theme-root')?.setAttribute('data-theme', theme);
           set({ theme })
         },
@@ -56,11 +56,6 @@ export const useThemeStore = create<ThemeState>()(
 
 export function ModeToggle() {
   const changeTheme = useThemeStore(state => state.changeTheme)
-  const theme = useThemeStore(state => state.theme)
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme])
 
   return (
     <DropdownMenu>

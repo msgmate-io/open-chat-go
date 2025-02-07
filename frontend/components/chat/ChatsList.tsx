@@ -1,7 +1,10 @@
 import { ChatItemCompact } from "@/components/chat/ChatItem"
+import { ProfileCard } from "@/components/chat/ProfileCard"
 import { LoadingSpinner } from "@/components/LoadingSpinner"
 import { isToday, isYesterday, isWithinLast7Days } from "@/components/utils"
 import useSWR from 'swr'
+import { DefaultChats } from "./DefaultChats"
+import { NewChatCard } from "./NewChatCard"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
@@ -71,12 +74,16 @@ export function ChatsList({
 
     return (
         <div className="flex flex-col gap-0 h-full relative w-full">
-            {/**<NewChatCard onToggleCollapse={onToggleCollapse} leftPannelCollapsed={leftPannelCollapsed} />**/}
+            <NewChatCard 
+                leftPannelCollapsed={leftPannelCollapsed}
+                onToggleCollapse={onToggleCollapse}
+                navigateTo={navigateTo}
+            />
             <div className="flex flex-col flex-grow gap-1 overflow-y-auto pl-2 pr-2 relative w-full max-w-full">
-                {/**<DefaultChatButtons />*/}
+                <DefaultChats navigateTo={navigateTo} />
                 {!isLoading && renderChatItems()}
             </div>
-            {/**<ProfileCard />*/}
+            <ProfileCard navigateTo={navigateTo} />
         </div>
     );
 }

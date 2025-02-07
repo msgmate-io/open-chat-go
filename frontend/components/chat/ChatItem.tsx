@@ -27,37 +27,35 @@ export function ChatItem({ chat, isSelected = false }: {
     const [settingsOpen, setSettingsOpen] = useState(false)
 
     return (
-        <>
-            <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
-                <Card className={cn(
-                    "bg-base-200 hover:bg-base-300 p-0 border-0",
-                    settingsOpen && "pointer-events-none hover:bg-base-300",
-                    isSelected && "bg-base-100"
-                )} key={chat.uuid} onClick={() => {
-                    if (!settingsOpen) {
-                        // TODO: navigate
-                    }
-                }}>
-                    <CardHeader className="p-0 px-2">
-                        <CardDescription className="flex flex-row">
-                            <div className="flex flex-grow">{chat?.settings?.title ? chat?.settings?.title : `${chat.partner.first_name} ${chat.partner.second_name}`}</div>
-                            <div className="relative h-full">
-                                <div className="absolute right-0 flex flex-row">
-                                    <UnreadBadge unreadCount={0} /> {/**TODO add the actual count */}
-                                    {!chat?.partner?.is_bot && <OnlineIndicator isOnline={chat?.partner?.is_online} />}
-                                    <Button className="flex h-6 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
-                                        setSettingsOpen(!settingsOpen)
-                                        e.stopPropagation()
-                                    }}><DotsHorizontal /></Button>
-                                </div>
+        <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
+            <Card className={cn(
+                "bg-base-200 hover:bg-base-300 p-0 border-0",
+                settingsOpen && "pointer-events-none hover:bg-base-300",
+                isSelected && "bg-base-100"
+            )} key={chat.uuid} onClick={() => {
+                if (!settingsOpen) {
+                    // TODO: navigate
+                }
+            }}>
+                <CardHeader className="p-0 px-2">
+                    <CardDescription className="flex flex-row">
+                        <div className="flex flex-grow">{chat?.settings?.title ? chat?.settings?.title : `${chat.partner.first_name} ${chat.partner.second_name}`}</div>
+                        <div className="relative h-full">
+                            <div className="absolute right-0 flex flex-row">
+                                <UnreadBadge unreadCount={0} /> {/**TODO add the actual count */}
+                                {!chat?.partner?.is_bot && <OnlineIndicator isOnline={chat?.partner?.is_online} />}
+                                <Button className="flex h-6 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
+                                    setSettingsOpen(!settingsOpen)
+                                    e.stopPropagation()
+                                }}><DotsHorizontal /></Button>
                             </div>
-                        </CardDescription>
-                        <CardDescription className="flex text-nowrap text-lg whitespace-nowrap overflow-x-hidden">{chat.newest_message.text}</CardDescription>
-                    </CardHeader>
-                </Card>
-                <DropdownMenuTrigger className="h-0 bg-error z-10 display-none"></DropdownMenuTrigger>
-            </ChatSettings>
-        </>
+                        </div>
+                    </CardDescription>
+                    <CardDescription className="flex text-nowrap text-lg whitespace-nowrap overflow-x-hidden">{chat.newest_message.text}</CardDescription>
+                </CardHeader>
+            </Card>
+            <DropdownMenuTrigger className="h-0 bg-error z-10 display-none"></DropdownMenuTrigger>
+        </ChatSettings>
     )
 }
 
@@ -73,7 +71,7 @@ export function ChatItemCompact({ chat = null, isSelected = false, navigateTo = 
     var content = "No messages yet"
 
     return (
-        <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen} >
+        <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
             <Card className={cn(
                 "bg-base-200 hover:bg-base-100 p-0 border-0",
                 settingsOpen && "pointer-events-none hover:bg-base-300",
