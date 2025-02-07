@@ -29,72 +29,79 @@ module.exports = {
   prefix: "",
   screens,
   theme: {
-    container: {
-      center: true,
-      padding: "2rem",
-      screens
-    },
-    extend: {
-      colors: {
-        border: daisyuiColorObj["base-content"],
-        input: daisyuiColorObj["base-content"],
-        ring: daisyuiColorObj["base-content"],
-        background: daisyuiColorObj["base-100"],
-        foreground: daisyuiColorObj["base-content"],
-        primary: {
-          DEFAULT: daisyuiColorObj["primary"],
-          foreground: daisyuiColorObj["primary-content"],
-        },
-        secondary: {
-          DEFAULT: daisyuiColorObj["secondary"],
-          foreground: daisyuiColorObj["secondary-content"],
-        },
-        destructive: {
-          DEFAULT: daisyuiColorObj["error"],
-          foreground: daisyuiColorObj["error-content"],
-        },
-        muted: {
-          DEFAULT: daisyuiColorObj["base-300"],
-          foreground: daisyuiColorObj["base-content"],
-        },
-        accent: {
-          DEFAULT: daisyuiColorObj["accent"],
-          foreground: daisyuiColorObj["accent-content"],
-        },
-        popover: {
-          DEFAULT: daisyuiColorObj["base-100"],
-          foreground: daisyuiColorObj["base-content"],
-        },
-        card: {
-          DEFAULT: daisyuiColorObj["base-100"],
-          foreground: daisyuiColorObj["base-content"],
-        },
-        zIndex: {
-          '60': '60'
-        }
-      },
-      borderRadius: {
-        lg: "var(--rounded-btn)",
-        md: "calc(var(--rounded-btn) - 2px)",
-        sm: "calc(var(--rounded-btn) - 4px)",
-      },
-      keyframes: {
-        "accordion-down": {
-          from: { height: "0" },
-          to: { height: "var(--radix-accordion-content-height)" },
-        },
-        "accordion-up": {
-          from: { height: "var(--radix-accordion-content-height)" },
-          to: { height: "0" },
-        },
-      },
-      animation: {
-        "accordion-down": "accordion-down 0.2s ease-out",
-        "accordion-up": "accordion-up 0.2s ease-out",
-      },
-    },
+  	container: {
+  		center: true,
+  		padding: '2rem'
+  	},
+  	extend: {
+  		colors: {
+  			border: 'daisyuiColorObj["base-content"],
+  			input: 'daisyuiColorObj["base-content"],
+  			ring: 'daisyuiColorObj["base-content"],
+  			background: 'daisyuiColorObj["base-100"],
+  			foreground: 'daisyuiColorObj["base-content"],
+  			primary: {
+  				DEFAULT: 'daisyuiColorObj["primary"],
+  				foreground: 'daisyuiColorObj["primary-content"]
+  			},
+  			secondary: {
+  				DEFAULT: 'daisyuiColorObj["secondary"],
+  				foreground: 'daisyuiColorObj["secondary-content"]
+  			},
+  			destructive: {
+  				DEFAULT: 'daisyuiColorObj["error"],
+  				foreground: 'daisyuiColorObj["error-content"]
+  			},
+  			muted: {
+  				DEFAULT: 'daisyuiColorObj["base-300"],
+  				foreground: 'daisyuiColorObj["base-content"]
+  			},
+  			accent: {
+  				DEFAULT: 'daisyuiColorObj["accent"],
+  				foreground: 'daisyuiColorObj["accent-content"]
+  			},
+  			popover: {
+  				DEFAULT: 'daisyuiColorObj["base-100"],
+  				foreground: 'daisyuiColorObj["base-content"]
+  			},
+  			card: {
+  				DEFAULT: 'daisyuiColorObj["base-100"],
+  				foreground: 'daisyuiColorObj["base-content"]
+  			},
+  			zIndex: {
+  				'60': '60'
+  			}
+  		},
+  		borderRadius: {
+  			lg: 'var(--radius)',
+  			md: 'calc(var(--radius) - 2px)',
+  			sm: 'calc(var(--radius) - 4px)'
+  		},
+  		keyframes: {
+  			'accordion-down': {
+  				from: {
+  					height: '0'
+  				},
+  				to: {
+  					height: 'var(--radix-accordion-content-height)'
+  				}
+  			},
+  			'accordion-up': {
+  				from: {
+  					height: 'var(--radix-accordion-content-height)'
+  				},
+  				to: {
+  					height: '0'
+  				}
+  			}
+  		},
+  		animation: {
+  			'accordion-down': 'accordion-down 0.2s ease-out',
+  			'accordion-up': 'accordion-up 0.2s ease-out'
+  		}
+  	}
   },
-  plugins: [require("daisyui"), require('@tailwindcss/typography')],
+  plugins: [require("daisyui"), require('@tailwindcss/typography'), require("tailwindcss-animate")],
   daisyui: {
     themes: ["light", "dark", "cupcake", "retro"],
   },

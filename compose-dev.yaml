@@ -1,13 +1,32 @@
 services:
-  app:
+  backend:
     build:
       dockerfile: dev.dockerfile
       context: .
     image: dev-backend
     ports:
-      - "8080:8080"
+      - "1984:1984"
+      - "1985:1985"
     volumes:
       - ./backend:/backend
     environment:
       HOST: "0.0.0.0"
-      PORT: 8080
+      PORT: 1984
+      PP2P: 1985
+    networks:
+      - app-network
+  frontend:
+    build:
+      dockerfile: dev.dockerfile
+      context: ./frontend/
+    image: dev-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/frontend
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
