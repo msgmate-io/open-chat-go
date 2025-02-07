@@ -254,10 +254,7 @@ func GetClientCmd(action string) *cli.Command {
 					if c.String("network") != "" {
 						registerNode.AddToNetwork = c.String("network")
 					}
-					if c.Bool("request") {
-						registerNode.RequestRegistration = true
-					}
-					err, node := ocClient.RegisterNode(registerNode.Name, registerNode.Addresses, registerNode.RequestRegistration, registerNode.AddToNetwork)
+					err, node := ocClient.RegisterNode(registerNode.Name, registerNode.Addresses, registerNode.AddToNetwork)
 					if err != nil {
 						return fmt.Errorf("failed to register node: %w", err)
 					}

@@ -71,6 +71,16 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Set-Cookie", cookie.String())
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 
+	http.SetCookie(w, &http.Cookie{
+		Name:     "is_authorized",
+		Value:    "true",
+		Path:     "/",
+		MaxAge:   0,
+		HttpOnly: false,
+		Secure:   false,
+		SameSite: http.SameSiteStrictMode,
+	})
+
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Login successful"))
 }
