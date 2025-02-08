@@ -36,6 +36,7 @@ var AllTools = []Tool{
 	NewSignalGetWhitelistTool(),
 	NewSignalShowTypingIndicatorTool(),
 	NewRunCallbackFunctionTool(),
+	NewN8NTriggerWorkflowWebhookTool(),
 }
 
 // NewToolByName maps tool names to their constructor functions
@@ -75,6 +76,8 @@ func NewToolByName(name string) (Tool, bool) {
 		return NewSignalShowTypingIndicatorTool(), true
 	case "run_callback_function":
 		return NewRunCallbackFunctionTool(), true
+	case "n8n_trigger_workflow_webhook":
+		return NewN8NTriggerWorkflowWebhookTool(), true
 	default:
 		return nil, false
 	}
