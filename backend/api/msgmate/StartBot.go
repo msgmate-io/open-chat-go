@@ -31,68 +31,18 @@ func StartBotWithRestart(host string, ch *wsapi.WebSocketHandler, username strin
 
 // StartBotWithRestartContext starts the bot with automatic restart capability, error logging, and context cancellation
 func StartBotWithRestartContext(ctx context.Context, host string, ch *wsapi.WebSocketHandler, username string, password string) {
-	go func() {
-		restartCount := 0
-		maxRestartDelay := 30 * time.Second
-		baseRestartDelay := 5 * time.Second
-		maxRestartAttempts := 1000 // Prevent infinite restarts in case of persistent issues
+	// Create restart manager
+	restartManager := RestartManagerFactory()
 
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("Bot restart loop panicked: %v", r)
-				logErrorToDisk(fmt.Errorf("panic: %v", r), restartCount, username)
-			}
-		}()
+	// Create bot
+	bot, err := NewMsgmateBot(host, username, password, ch)
+	if err != nil {
+		log.Printf("Failed to create bot: %v", err)
+		return
+	}
 
-		for restartCount < maxRestartAttempts {
-			select {
-			case <-ctx.Done():
-				log.Printf("Bot restart loop cancelled: %v", ctx.Err())
-				return
-			default:
-				// Continue with bot restart logic
-			}
-
-			restartCount++
-			log.Printf("Starting bot (attempt %d)...", restartCount)
-
-			// Start the bot and capture any errors
-			err := StartBot(host, ch, username, password)
-
-			// Log the error to disk
-			if err != nil {
-				logErrorToDisk(err, restartCount, username)
-				log.Printf("Bot crashed (attempt %d): %v", restartCount, err)
-			} else {
-				log.Printf("Bot stopped normally (attempt %d)", restartCount)
-				// If the bot stopped normally (no error), we might want to exit the restart loop
-				// For now, we'll continue restarting to handle cases where the bot exits gracefully
-				// but we want it to keep running
-			}
-
-			// Calculate restart delay with exponential backoff (capped at maxRestartDelay)
-			restartDelay := time.Duration(restartCount) * baseRestartDelay
-			if restartDelay > maxRestartDelay {
-				restartDelay = maxRestartDelay
-			}
-
-			log.Printf("Restarting bot in %v (attempt %d)", restartDelay, restartCount+1)
-
-			// Use a timer with context cancellation for the restart delay
-			timer := time.NewTimer(restartDelay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				log.Printf("Bot restart loop cancelled during delay: %v", ctx.Err())
-				return
-			case <-timer.C:
-				// Continue to next iteration
-			}
-		}
-
-		log.Printf("Bot restart loop stopped after %d attempts (max reached)", maxRestartAttempts)
-		logErrorToDisk(fmt.Errorf("max restart attempts reached (%d)", maxRestartAttempts), restartCount, username)
-	}()
+	// Start with restart capability
+	restartManager.StartWithRestart(ctx, bot)
 }
 
 // logErrorToDisk writes bot errors to a log file
@@ -139,106 +89,13 @@ func logErrorToDisk(err error, attempt int, username string) {
 }
 
 func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password string) error {
-	// 'host' e.g.: 'http://localhost:1984'
-	// TODO useSSL :=
-	hostNoProto := strings.Replace(strings.Replace(host, "http://", "", 1), "https://", "", 1)
-	ctx := context.Background() // Persistent context for the WebSocket connection
-
-	// Login the bot
-	ocClient := client.NewClient(host)
-	err, _ := ocClient.LoginUser(username, password)
-
+	bot, err := NewMsgmateBot(host, username, password, ch)
 	if err != nil {
-		return fmt.Errorf("failed to login bot: %w", err)
+		return err
 	}
 
-	err, botUser := ocClient.GetUserInfo()
-	if err != nil {
-		return fmt.Errorf("failed to get user info: %w", err)
-	}
-
-	chatCaneler := ChatCanceler{
-		cancels: make(map[string]context.CancelFunc),
-	}
-
-	// --- SESSION REFRESH LOGIC ---
-	refreshInterval := 12 * time.Hour        // Refresh session every 12 hours (should be less than session expiry)
-	sessionRefresh := make(chan struct{}, 1) // signal channel for session refresh
-	var sessionMu sync.Mutex                 // mutex to protect session id updates
-
-	go func() {
-		for {
-			time.Sleep(refreshInterval)
-			log.Println("Refreshing bot session...")
-			sessionMu.Lock()
-			err, _ := ocClient.LoginUser(username, password)
-			sessionMu.Unlock()
-			if err != nil {
-				log.Printf("Failed to refresh session: %v", err)
-				continue
-			}
-			// Signal main loop to reconnect WebSocket
-			select {
-			case sessionRefresh <- struct{}{}:
-				log.Println("Session refresh signal sent.")
-			default:
-				// If signal already pending, skip
-			}
-		}
-	}()
-	// --- END SESSION REFRESH LOGIC ---
-
-	for {
-		// TODO: allow also connecting to the websocket via ssl
-		sessionMu.Lock()
-		wsSessionId := ocClient.GetSessionId()
-		sessionMu.Unlock()
-		// Use wss:// for secure connections, ws:// for insecure
-		protocol := "ws://"
-		if strings.Contains(hostNoProto, "https://") {
-			protocol = "wss://"
-		}
-		c, _, err := websocket.Dial(ctx, fmt.Sprintf("%s%s/ws/connect", protocol, hostNoProto), &websocket.DialOptions{
-			HTTPHeader: http.Header{
-				"Cookie": []string{fmt.Sprintf("session_id=%s", wsSessionId)},
-			},
-		})
-		if err != nil {
-			log.Printf("WebSocket connection error: %v", err)
-			time.Sleep(5 * time.Second) // Wait before retrying to connect
-			continue                    // Retry connecting
-		}
-
-		// Use a channel to close the connection on session refresh
-		closeConn := make(chan struct{})
-		var closeOnce sync.Once
-		// Watch for session refresh
-		go func() {
-			<-sessionRefresh
-			closeOnce.Do(func() {
-				log.Println("Closing WebSocket due to session refresh...")
-				c.Close(websocket.StatusNormalClosure, "session refresh")
-				close(closeConn)
-			})
-		}()
-
-		log.Println("Bot connected to WebSocket")
-
-		// Blocking call to continuously read messages
-		err = readWebSocketMessages(ocClient, ch, *botUser, ctx, c, &chatCaneler)
-		if err != nil {
-			log.Printf("Error reading from WebSocket: %v", err)
-		}
-		// Wait for closeConn if session refresh triggered, otherwise just loop
-		select {
-		case <-closeConn:
-			log.Println("WebSocket closed for session refresh, reconnecting...")
-			continue
-		default:
-			// Normal error, reconnect after delay
-			time.Sleep(5 * time.Second)
-		}
-	}
+	ctx := context.Background()
+	return bot.Start(ctx)
 }
 
 func parseMessage(messageType string, rawMessage json.RawMessage) (error, *wsapi.NewMessage) {
