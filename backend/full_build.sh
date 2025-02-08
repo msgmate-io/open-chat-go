@@ -102,13 +102,45 @@ sed "s|var VERSION = \"$CURRENT_VERSION\"|var VERSION = \"$NEW_VERSION\"|" backe
 
 echo "Version updated to: $NEW_VERSION"
 
-# Step 3: Build the Go backend
+# Step 3: Generate Swagger documentation
 if [ "$FRONTEND" = true ]; then
-    echo "Step 3: Building Go backend..."
+    echo "Step 3: Generating Swagger documentation..."
 else
-    echo "Step 2: Building Go backend..."
+    echo "Step 2: Generating Swagger documentation..."
 fi
 cd backend
+
+# Install swag tool if not already installed
+if ! command -v swag &> /dev/null; then
+    echo "Installing swag tool..."
+    go install github.com/swaggo/swag/v2/cmd/swag@latest
+fi
+
+# Get the path to the swag binary
+SWAG_PATH=$(go env GOPATH)/bin/swag
+if [ ! -f "$SWAG_PATH" ]; then
+    # Fallback to checking if it's in the current directory
+    SWAG_PATH="./swag"
+    if [ ! -f "$SWAG_PATH" ]; then
+        echo "Error: swag tool not found after installation"
+        exit 1
+    fi
+fi
+
+# Generate swagger documentation
+echo "Generating swagger.json..."
+$SWAG_PATH init --parseDependency --parseInternal --output ./docs --generalInfo ./main.go
+
+# Copy swagger files to server directory for embedding
+echo "Copying swagger files for embedding..."
+cp ./docs/swagger.json ./server/
+
+# Step 4: Build the Go backend
+if [ "$FRONTEND" = true ]; then
+    echo "Step 4: Building Go backend..."
+else
+    echo "Step 3: Building Go backend..."
+fi
 
 # Set build tags based on federation flag
 BUILD_TAGS=""
@@ -161,12 +193,12 @@ else
     echo "Backend binary built as: backend (with federation support)"
 fi
 
-# Step 4: Install if requested
+# Step 5: Install if requested
 if [ "$INSTALL" = true ]; then
     if [ "$FRONTEND" = true ]; then
-        echo "Step 4: Installing backend..."
+        echo "Step 5: Installing backend..."
     else
-        echo "Step 3: Installing backend..."
+        echo "Step 4: Installing backend..."
     fi
     echo "Running: sudo ./backend install"
     sudo ./backend install
