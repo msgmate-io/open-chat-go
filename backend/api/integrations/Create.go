@@ -230,16 +230,8 @@ func (h *IntegrationsHandler) createSignalIntegration(DB *gorm.DB, user database
 		return fmt.Errorf("failed to save integration: %v", err)
 	}
 
-	// Create and add the polling task if scheduler service is available
-	if h.SchedulerService != nil {
-		err = CreateSignalPollingTask(DB, h.SchedulerService, integration)
-		if err != nil {
-			log.Printf("Warning: Failed to create Signal polling task: %v", err)
-			// Continue anyway, as the integration is still usable without the polling task
-		} else {
-			log.Printf("Created Signal polling task for integration %s", alias)
-		}
-	}
+	// Signal polling is now handled by SignalBotService in the scheduler
+	log.Printf("Signal integration created - polling will be handled by SignalBotService")
 
 	return nil
 }
