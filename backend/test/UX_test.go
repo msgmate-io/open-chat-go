@@ -151,7 +151,12 @@ func Test_UXFlow(t *testing.T) {
 
 	// ================== Websocket communication tests ==================
 
-	c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/ws/connect", hostNoProtocol), &websocket.DialOptions{
+	// Use wss:// for secure connections, ws:// for insecure
+	protocol := "ws://"
+	if strings.Contains(hostNoProtocol, "https://") {
+		protocol = "wss://"
+	}
+	c, _, err := websocket.Dial(ctx, fmt.Sprintf("%s%s/ws/connect", protocol, hostNoProtocol), &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"Cookie": []string{fmt.Sprintf("session_id=%s", sessionIdA)},
 		},
