@@ -123,17 +123,8 @@ func (h *IntegrationsHandler) handleSignalIntegrationDeletion(integration databa
 		log.Printf("Successfully removed integration directory %s", integrationPath)
 	}
 
-	// Step 4: Remove any associated scheduler tasks
-	if h.SchedulerService != nil {
-		taskName := fmt.Sprintf("signal_polling_%s", alias)
-		log.Printf("Removing scheduler task %s", taskName)
-		if err := h.SchedulerService.RemoveTask(taskName); err != nil {
-			log.Printf("Warning: Failed to remove scheduler task %s: %v", taskName, err)
-			// Continue even if task removal fails
-		} else {
-			log.Printf("Successfully removed scheduler task %s", taskName)
-		}
-	}
+	// Step 4: Scheduler tasks are now managed by SignalBotService
+	log.Printf("Signal integration deleted - scheduler tasks managed by SignalBotService")
 
 	log.Printf("Successfully cleaned up Signal integration %s", alias)
 	return nil
