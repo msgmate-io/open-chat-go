@@ -31,6 +31,7 @@ type FederationHandlerInterface interface {
 	// Node management
 	RegisterNode(w http.ResponseWriter, r *http.Request)
 	ListNodes(w http.ResponseWriter, r *http.Request)
+	GetNode(w http.ResponseWriter, r *http.Request)
 	WhitelistedPeers(w http.ResponseWriter, r *http.Request)
 	RequestNode(w http.ResponseWriter, r *http.Request)
 	RequestNodeByPeerId(w http.ResponseWriter, r *http.Request)
@@ -219,6 +220,10 @@ func (s *StubFederationHandler) RegisterNode(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *StubFederationHandler) ListNodes(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Federation not available", http.StatusNotImplemented)
+}
+
+func (s *StubFederationHandler) GetNode(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
 
