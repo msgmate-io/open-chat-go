@@ -436,6 +436,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/nodes/{node_peer_id}/restore", federationHandler.RestoreNodeFromNetwork)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
 	v1PrivateApis.HandleFunc("GET /federation/nodes/list", federationHandler.ListNodes)
+	v1PrivateApis.HandleFunc("GET /federation/nodes/{node_uuid}", federationHandler.GetNode)
 	v1PrivateApis.HandleFunc("GET /federation/nodes/whitelisted", federationHandler.WhitelistedPeers)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/peer/{peer_id}/request", federationHandler.RequestNodeByPeerId)
