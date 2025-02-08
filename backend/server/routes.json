@@ -13,6 +13,8 @@
   "/nodes/self",
   "/nodes/proxies",
   "/nodes/all",
+  "/profile",
+  "/profile/2fa",
   "/admin",
   "/admin/{table_name}",
   "/admin/{table_name}/{id}",
