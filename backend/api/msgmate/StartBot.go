@@ -149,7 +149,7 @@ func readWebSocketMessages(
 
 		if senderUUID != botUser.UUID {
 
-			if messageType == "stop_response" {
+			if messageType == "interrupt_signal" {
 				log.Printf("Stopping response for chat %s", chatUUID)
 				cancelChatResponse(chatCanceler, chatUUID)
 				continue
@@ -325,7 +325,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 }
 
 func preProcessMessage(rawMessage json.RawMessage) (error, string, string, string) {
-	var chatMessageTypes = []string{"new_message", "stop_response"}
+	var chatMessageTypes = []string{"new_message", "interrupt_signal"}
 	var messageMap map[string]interface{}
 	err := json.Unmarshal(rawMessage, &messageMap)
 	if err != nil {
