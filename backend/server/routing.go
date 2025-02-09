@@ -222,6 +222,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /federation/nodes/peer/{peer_id}/request", federationHandler.RequestNodeByPeerId)
 	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
 	v1PrivateApis.HandleFunc("GET /federation/proxies/list", federationHandler.ListProxies)
+	v1PrivateApis.HandleFunc("GET /federation/proxies/search", federationHandler.SearchProxies)
 	v1PrivateApis.HandleFunc("DELETE /federation/proxies/{id}", federationHandler.DeleteProxy)
 	v1PrivateApis.HandleFunc("POST /federation/proxies/reload", federationHandler.ReloadDomainProxies)
 	v1PrivateApis.HandleFunc("DELETE /tls/keys/{key_name}", tls.DeleteKey)
