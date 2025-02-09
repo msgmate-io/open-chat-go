@@ -1,9 +1,37 @@
 package database
 
-import "time"
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// StringSlice is a custom type for handling string slices in GORM
+type StringSlice []string
+
+func (s StringSlice) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	return json.Marshal(s)
+}
+
+func (s *StringSlice) Scan(value interface{}) error {
+	if value == nil {
+		*s = nil
+		return nil
+	}
+	switch v := value.(type) {
+	case []byte:
+		return json.Unmarshal(v, s)
+	case string:
+		return json.Unmarshal([]byte(v), s)
+	}
+	return fmt.Errorf("cannot scan %T into StringSlice", value)
+}
 
 // KeyTypes: cert, key, issuer, login
-// TODO: Sealed keys should be encrypted and only be decrypted on demand!
 type Key struct {
 	Model
 	Sealed     bool   `json:"sealed"`
@@ -58,13 +86,14 @@ type NodeAddress struct {
 // If we have UseTLS=true, we assume there are 3 keys with names <proxy_id>_cert.pem, <proxy_id>_key.pem, <proxy_id>_issuer.pem
 type Proxy struct {
 	Model
-	Port          string     `json:"port"`
-	Active        bool       `json:"active"`
-	UseTLS        bool       `json:"use_tls"`
-	Kind          string     `json:"kind"`
-	Direction     string     `json:"direction"`
-	NetworkName   string     `json:"network_name"`
-	TrafficOrigin string     `json:"traffic_origin"`
-	TrafficTarget string     `json:"traffic_target"`
-	ExpiresAt     *time.Time `json:"expires_at"`
+	Port          string      `json:"port"`
+	Active        bool        `json:"active"`
+	UseTLS        bool        `json:"use_tls"`
+	Kind          string      `json:"kind"`
+	Direction     string      `json:"direction"`
+	NetworkName   string      `json:"network_name"`
+	TrafficOrigin string      `json:"traffic_origin"`
+	TrafficTarget string      `json:"traffic_target"`
+	Tags          StringSlice `json:"tags" gorm:"type:json"`
+	ExpiresAt     *time.Time  `json:"expires_at"`
 }

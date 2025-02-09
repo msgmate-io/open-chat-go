@@ -118,8 +118,29 @@ func (FileUploadMigration) Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(&UploadedFile{}, &FileAccess{})
 }
 
+type ProxyTagsMigration struct{}
+
+func (ProxyTagsMigration) Migrate(db *gorm.DB) error {
+	// Check if tags column exists, add it if not
+	if !db.Migrator().HasColumn(&Proxy{}, "tags") {
+		if err := db.Migrator().AddColumn(&Proxy{}, "tags"); err != nil {
+			return fmt.Errorf("failed to add tags column: %v", err)
+		}
+
+		// Set default value for existing rows (empty JSON array)
+		if err := db.Exec("UPDATE proxies SET tags = '[]' WHERE tags IS NULL").Error; err != nil {
+			return fmt.Errorf("failed to set default tags for existing rows: %v", err)
+		}
+
+		fmt.Println("Added tags column to proxies table")
+	}
+
+	return nil
+}
+
 var Tabels []interface{} = []interface{}{
 	&User{},
+	&TwoFactorRecoveryCode{},
 	&Proxy{},
 	&Key{},
 	&Session{},
@@ -141,6 +162,7 @@ var Tabels []interface{} = []interface{}{
 
 var Migrations []Migration = []Migration{
 	TableMigration{&User{}},
+	TableMigration{&TwoFactorRecoveryCode{}},
 	TableMigration{&Proxy{}},
 	TableMigration{&Key{}},
 	TableMigration{&Session{}},
@@ -154,5 +176,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ChatSettings{}},
 	TableMigration{&ContactRequest{}},
 	FileUploadMigration{},
+	ProxyTagsMigration{}, // Adds tags column to proxies table
 	TableMigration{&Integration{}},
+	TableMigration{&ToolInitData{}},
 }

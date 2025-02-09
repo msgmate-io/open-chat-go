@@ -161,7 +161,7 @@ var SignalSendMessageToolDef = ToolDefinition{
 		chatReq.Header.Set("Origin", backendHost)
 		chatReq.Header.Set("Cookie", fmt.Sprintf("session_id=%s", signalUserSessionId))
 
-		log.Printf("[SignalTool] Chat request headers: Content-Type=%s, Origin=%s, Cookie=session_id=%s",
+		log.Printf("[SignalTool] Chat request headers: Content-Type=%s, Origin=%s, Cookie=%s",
 			chatReq.Header.Get("Content-Type"),
 			chatReq.Header.Get("Origin"),
 			chatReq.Header.Get("Cookie"))
