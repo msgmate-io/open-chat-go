@@ -166,6 +166,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}", chatsHandler.GetChat)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/send", chatsHandler.MessageSend)
+	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/signals/{signal}", chatsHandler.SignalSendMessage)
 	v1PrivateApis.HandleFunc("POST /chats/create", chatsHandler.Create)
 
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
