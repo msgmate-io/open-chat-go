@@ -899,28 +899,31 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 			func(initData map[string]interface{}, inputData map[string]interface{}) (interface{}, error) {
 				sbs.logFunctionInfo(alias, initData, inputData)
 				showTypingIndicatorTool := msgmate.GetNewToolInstanceByName("signal_show_typing_indicator", commonToolConfig)
-				sendSignalMessageTool := msgmate.GetNewToolInstanceByName("signal_send_message", commonToolConfig)
+				// sendSignalMessageTool := msgmate.GetNewToolInstanceByName("signal_send_message", commonToolConfig)
 				n8nTriggerWorkflowWebhookTool := msgmate.GetNewToolInstanceByName("n8n_trigger_workflow_webhook", n8nToolConfig)
 				n8nTriggerWorkflowWebhookTool.RunTool(msgmate.N8NTriggerWorkflowWebhookToolInput{
 					InputParameters: map[string]interface{}{
+						"mcp_endpoint":    fmt.Sprintf("%s/api/v1/interactions/%s/mcp", sbs.serverURL, chatUUID),
+						"config":          botConfig,
+						"chat_uuid":       chatUUID,
 						"available_tools": sbs.getFullToolsDescription(toolsList),
 						"tool_endpoint":   fmt.Sprintf("%s/api/v1/interactions/%s/tools", sbs.serverURL, chatUUID),
 						"bot_session_id":  signalUserToken,
 					},
 				})
-				sendSignalMessageTool.RunTool(msgmate.SignalSendMessageToolInput{
+				/** sendSignalMessageTool.RunTool(msgmate.SignalSendMessageToolInput{
 					Message: "Starting n8n bot workflow...",
-				})
+				}) */
 				showTypingIndicatorTool.RunTool(msgmate.SignalShowTypingIndicatorToolInput{})
 				return nil, nil
 			})
 		stopFuncId, err = msgmate.GetGlobalMsgmateHandler().QuickRegisterFunction(
 			func(initData map[string]interface{}, inputData map[string]interface{}) (interface{}, error) {
 				sbs.logFunctionInfo(alias, initData, inputData)
-				sendSignalMessageTool := msgmate.GetNewToolInstanceByName("signal_send_message", commonToolConfig)
-				sendSignalMessageTool.RunTool(msgmate.SignalSendMessageToolInput{
+				// sendSignalMessageTool := msgmate.GetNewToolInstanceByName("signal_send_message", commonToolConfig)
+				/* sendSignalMessageTool.RunTool(msgmate.SignalSendMessageToolInput{
 					Message: "Thank you for your message. I'm here to help!",
-				})
+				}) */
 				return nil, nil
 			})
 	} else {
