@@ -31,6 +31,7 @@ type Client struct {
 	host      string
 	sessionId string
 	sealKey   []byte
+	apiKeys   map[string]string
 	User      database.User
 }
 
@@ -39,10 +40,15 @@ func NewClient(host string) *Client {
 	if sealKey == "" {
 		sealKey = ""
 	}
+	apiKeys := map[string]string{
+		"deepinfra": os.Getenv("DEEPINFRA_API_KEY"),
+		"openai":    os.Getenv("OPENAI_API_KEY"),
+	}
 	return &Client{
 		host:      host,
 		sessionId: "",
 		sealKey:   []byte(sealKey),
+		apiKeys:   apiKeys,
 	}
 }
 
@@ -828,4 +834,8 @@ func (c *Client) GetChat(chatUUID string) (error, chats.ListedChat) {
 	}
 
 	return nil, chat
+}
+
+func (c *Client) GetApiKey(keyName string) string {
+	return c.apiKeys[keyName]
 }
