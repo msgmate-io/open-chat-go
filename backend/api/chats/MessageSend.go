@@ -53,6 +53,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	var chat database.Chat
 	result := DB.Preload("User1").
 		Preload("User2").
+		Preload("LatestMessage").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
 
@@ -97,6 +98,65 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		SenderUUID: user.UUID,
 		Text:       *message.Text,
 	})
+}
+
+func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	ch, err := util.GetWebsocket(r)
+	if err != nil {
+		http.Error(w, "Unable to get websocket", http.StatusBadRequest)
+		return
+	}
+
+	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
+	if chatUuid == "" {
+		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
+	}
+
+	signal := r.PathValue("signal")
+	if signal == "" {
+		http.Error(w, "Invalid signal", http.StatusBadRequest)
+		return
+	}
+
+	var chat database.Chat
+	result := DB.Preload("User1").
+		Preload("User2").
+		Preload("LatestMessage").
+		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
+		First(&chat)
+
+	if result.Error != nil {
+		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+	}
+
+	var receiver database.User
+	if chat.User1.ID == user.ID {
+		receiver = chat.User2
+	} else {
+		receiver = chat.User1
+	}
+
+	if signal == "interrupt" {
+		ch.MessageHandler.SendMessage(
+			ch,
+			receiver.UUID,
+			ch.MessageHandler.InterruptSignal(
+				chatUuid,
+				user.UUID,
+			),
+		)
+	} else {
+		http.Error(w, "Invalid signal", http.StatusBadRequest)
+		return
+	}
 }
 
 func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data SendMessage) {
