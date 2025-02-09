@@ -2,6 +2,7 @@ import { usePageContext } from "vike-react/usePageContext";
 import { ChatBase } from "@/components/chat/ChatBase";
 import { MessagesView } from "@/components/chat/MessagesView";
 import { navigate } from 'vike/client/router'
+import { WebsocketHandler } from "@/components/WebsocketHandler";
 
 const routeBase = "/chat"
 
@@ -14,5 +15,6 @@ export default function ChatPage() {
     const chatUUID = pageContext.routeParams.chat_uuid;
   return <ChatBase chatUUID={chatUUID} navigateTo={(to: string) => {navigate(to)}}>
       <MessagesView chatUUID={chatUUID} />
+      <WebsocketHandler />
     </ChatBase>
 }

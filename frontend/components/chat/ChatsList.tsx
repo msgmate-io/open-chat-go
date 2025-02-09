@@ -31,6 +31,11 @@ export function ChatsList({
     navigateTo: (to: string) => void
 }) {
     const { data: chats, isLoading } = useSWR('/api/v1/chats/list', fetcher)
+    const { data: contacts } = useSWR(`/api/v1/contacts/list`, fetcher)
+    console.log("contacts", contacts)
+    // try to get the default bot contact
+    const defaultBotContact = contacts?.rows.find((contact: any) => contact.name === "bot")
+    console.log("defaultBotContact", defaultBotContact)
 
     const ChatItm = ChatItemCompact
 
@@ -80,7 +85,7 @@ export function ChatsList({
                 navigateTo={navigateTo}
             />
             <div className="flex flex-col flex-grow gap-1 overflow-y-auto pl-2 pr-2 relative w-full max-w-full">
-                <DefaultChats navigateTo={navigateTo} />
+                <DefaultChats navigateTo={navigateTo} defaultBotContact={defaultBotContact} />
                 {!isLoading && renderChatItems()}
             </div>
             <ProfileCard navigateTo={navigateTo} />

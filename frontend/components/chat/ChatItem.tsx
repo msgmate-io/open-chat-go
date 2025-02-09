@@ -68,7 +68,7 @@ export function ChatItemCompact({ chat = null, isSelected = false, navigateTo = 
 
 
     //const content = chat?.settings?.title ? chat?.settings?.title : (chat.partner.is_bot ? chat.newest_message.text : `${chat.partner.first_name} ${chat.partner.second_name}`)
-    var content = "No messages yet"
+    var content = chat?.latest_message?.text || "No messages yet"
 
     return (
         <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>

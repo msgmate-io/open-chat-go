@@ -1,4 +1,5 @@
 import Markdown from "react-markdown"
+import logoUrl from "@/assets/logo.png"
 
 export function UserMessageItem({
     message,
@@ -49,7 +50,7 @@ export function BotMessageItem({
     }else{
         return <div key={message.uuid} className="flex flex-row px-4 w-full relativ max-w-full">
             <div className="flex p-2 hidden md:flex">
-                <img alt="logo" className="h-9 w-9 m-3 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src="/logo.png" />
+                <img alt="logo" className="h-9 w-9 m-3 rounded-full ring-2 ring-base-300 dark:ring-gray-500 filter grayscale" src={logoUrl} />
             </div>
             <div className="w-full flex flex-col flex-grow relative">
                 <div className="article prose w-95 pt-3 pl-1 overflow-x-auto">
