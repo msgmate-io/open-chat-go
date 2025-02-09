@@ -157,4 +157,5 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ContactRequest{}},
 	FileUploadMigration{},
 	TableMigration{&Integration{}},
+	TableMigration{&ToolInitData{}},
 }
