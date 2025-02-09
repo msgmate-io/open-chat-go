@@ -128,6 +128,10 @@ func (s *StubFederationHandler) ListProxies(w http.ResponseWriter, r *http.Reque
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
 
+func (s *StubFederationHandler) SearchProxies(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Federation not available", http.StatusNotImplemented)
+}
+
 func (s *StubFederationHandler) DeleteProxy(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
