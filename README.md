@@ -9,15 +9,9 @@ Edit the `.env`
 
 ```bash
 LOCALAI_ENDPOINT=...
-DEEPINFRA_API_KEY=...
+DEEPINFRA_API_KEY=... # cheers next time ;)
 OPENAI_API_KEY=...
 ```
-
-You may edit the accessible models and base-bot configuration in `backend/api/msgmate/botProfile.json` (WIP).
-
-### Federation
-
-WIP, for a rough overview see [`_docs/federation.md`](_docs/federation.md).
 
 ### Development
 
@@ -29,6 +23,7 @@ docker compose -f compose-dev.yaml up
 ### Production
 
 ```bash
-docker compose build
-docker compose up
+cd backend
+./full_build.sh
+./backend
 ```
