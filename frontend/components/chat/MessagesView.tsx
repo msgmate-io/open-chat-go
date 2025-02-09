@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, forwardRef } from 'react';
 import { CollapseIndicator } from "@/components/CollapseIndicator";
 import { usePartialMessageStore } from "@/components/chat/PartialMessages";
 import { MessageInput } from "@/components/chat/MessageInput";
+import { useSidePanelCollapse } from "./ChatBase";
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
 export function MessagesScroll({ 
@@ -65,6 +66,10 @@ export function MessagesScroll({
     }
 
     const onStopBotResponse = () => {
+        fetch(`/api/v1/chats/${chatUUID}/signals/interrupt`, {
+            method: "POST",
+        })
+        console.log("interrupt sent")
     }
     
     const isBotResponding = chatUUID ? partialMessages?.[chatUUID]?.length > 0 : false
@@ -81,17 +86,15 @@ export function MessagesScroll({
 
 export function MessagesView({ 
         chatUUID = null, 
-        leftPannelCollapsed = false, 
-        onToggleCollapse = () => {}
     }: {
         chatUUID: string | null,
-        leftPannelCollapsed?: boolean,
-        onToggleCollapse?: () => void
     }) {
 
     const { data: chat } = useSWR(`/api/v1/chats/${chatUUID}`, fetcher)
     const { data: messages, mutate: mutateMessages } = useSWR(`/api/v1/chats/${chatUUID}/messages/list`, fetcher)
     const { data: user } = useSWR(`/api/v1/user/self`, fetcher)
+    const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
+    const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
 
     return <>
         <div className="flex flex-col h-full w-full content-center items-center">
