@@ -150,7 +150,7 @@ func readWebSocketMessages(
 		if senderUUID != botUser.UUID {
 
 			if _, found := chatCanceler.Load(chatUUID); found {
-				// We’re already responding to this chat.
+				// We're already responding to this chat.
 				// You can decide what to do: skip, or maybe cancel the old one and start a new one, etc.
 				log.Printf("Already responding to chat %s. Skipping or handle logic here.", chatUUID)
 				continue
@@ -208,14 +208,37 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		}
 		return fmt.Errorf("Unknown command '%s'", command)
 	} else {
-		// TODO: load past messgaes
+		// Load the chat and it's current configuration
+		err, chat := ocClient.GetChat(message.Content.ChatUUID)
+		if err != nil {
+			return err
+		}
+		fmt.Println("chat", chat.Config)
+
+		endpoint := mapGetOrDefault[string](chat.Config.(map[string]interface{}), "endpoint", "http://localai:8080")
+		model := mapGetOrDefault[string](chat.Config.(map[string]interface{}), "model", "meta-llama-3.1-8b-instruct")
+		context := mapGetOrDefault[int64](chat.Config.(map[string]interface{}), "context", 10)
+
+		// Load the past messages
+		err, paginatedMessages := ocClient.GetMessages(message.Content.ChatUUID, 1, context)
+		if err != nil {
+			return err
+		}
+		fmt.Println("paginatedMessages", paginatedMessages)
+		openAiMessages := []map[string]string{}
+		for _, message := range paginatedMessages.Rows {
+			if message.SenderUUID == ocClient.User.UUID {
+				openAiMessages = append(openAiMessages, map[string]string{"role": "assistant", "content": message.Text})
+			} else {
+				openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Text})
+			}
+		}
 		// send a message trough the websocket
 		chunks, errs := streamChatCompletion(
-			"http://localai:8080",
-			"meta-llama-3.1-8b-instruct",
-			[]map[string]string{
-				{"role": "user", "content": message.Content.Text},
-			})
+			endpoint,
+			model,
+			openAiMessages,
+		)
 
 		var fullText strings.Builder
 		ch.MessageHandler.SendMessage(
@@ -296,4 +319,19 @@ func preProcessMessage(rawMessage json.RawMessage) (error, string, string, strin
 
 	return fmt.Errorf("Cannot process category"), "", "", ""
 
+}
+
+func mapGetOrDefault[T any](m map[string]interface{}, key string, defaultValue T) T {
+	if m == nil {
+		return defaultValue
+	}
+
+	if val, exists := m[key]; exists {
+		// Try to convert the value to the desired type
+		if converted, ok := val.(T); ok {
+			return converted
+		}
+	}
+
+	return defaultValue
 }

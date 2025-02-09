@@ -193,7 +193,6 @@ func ServerCli() *cli.Command {
 				}
 			}
 			// Create default connection with admin user
-			// TODO: re-implement
 			err = server.SetupBaseConnections(DB, adminUser.ID, botUser.ID)
 			if err != nil {
 				return err

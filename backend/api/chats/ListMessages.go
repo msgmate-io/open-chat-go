@@ -53,7 +53,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination := database.Pagination{Page: 1, Limit: 10}
+	pagination := database.Pagination{Page: 1, Limit: 40}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, err := strconv.Atoi(pageParam); err == nil && page > 0 {
 			pagination.Page = page

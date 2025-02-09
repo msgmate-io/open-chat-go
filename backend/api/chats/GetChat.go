@@ -24,6 +24,7 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	var chat database.Chat
 	result := DB.Preload("User1").
 		Preload("User2").
+		Preload("SharedConfig").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
 
@@ -33,19 +34,6 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	var partner database.User
-
-	if chat.User2Id == user.ID {
-		partner = chat.User2
-	} else {
-		partner = chat.User1
-	}
-
-	listedChat := ListedChat{
-		UUID:          chat.UUID,
-		Partner:       partner,
-		LatestMessage: chat.LatestMessage,
-	}
-
+	listedChat := convertChatToListedChat(user, chat)
 	json.NewEncoder(w).Encode(listedChat)
 }

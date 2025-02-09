@@ -1,6 +1,7 @@
 package chats
 
 import (
+	"backend/api/websocket"
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
@@ -82,25 +83,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	DB.Model(&chat).Update("latest_message_id", message.ID)
 
 	// Now publish websocket updates to online & subscribed users
-	ch.MessageHandler.SendMessage(
-		ch,
-		receiver.UUID,
-		ch.MessageHandler.NewMessage(
-			chatUuid,
-			user.UUID,
-			data.Text,
-		),
-	)
-
-	ch.MessageHandler.SendMessage(
-		ch,
-		user.UUID,
-		ch.MessageHandler.NewMessage(
-			chatUuid,
-			user.UUID,
-			data.Text,
-		),
-	)
+	SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
 
 	if q.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -114,4 +97,16 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		SenderUUID: user.UUID,
 		Text:       *message.Text,
 	})
+}
+
+func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data SendMessage) {
+	ch.MessageHandler.SendMessage(
+		ch,
+		receiverId,
+		ch.MessageHandler.NewMessage(
+			chatUuid,
+			user.UUID,
+			data.Text,
+		),
+	)
 }

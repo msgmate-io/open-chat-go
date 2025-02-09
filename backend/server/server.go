@@ -109,6 +109,13 @@ func SetupBaseConnections(
 		return err
 	}
 
+	// first check if already a chat between these two exists
+	var chat database.Chat
+	DB.Where("user1_id = ? AND user2_id = ?", adminUser.ID, botUser.ID).First(&chat)
+	if chat.ID != 0 {
+		return nil
+	}
+
 	// add to each others contacts
 	contact := database.Contact{
 		OwningUserId:  adminUser.ID,
@@ -121,7 +128,7 @@ func SetupBaseConnections(
 		return r.Error
 	}
 
-	chat := database.Chat{
+	chat = database.Chat{
 		User1Id: contact.OwningUserId,
 		User2Id: contact.ContactUserId,
 	}
