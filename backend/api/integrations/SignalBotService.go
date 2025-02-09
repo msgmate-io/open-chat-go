@@ -809,6 +809,7 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 	toolsList := []string{
 		//"signal_send_message",
 		"signal_read_past_messages",
+		"signal_send_message",
 		//"signal_show_typing_indicator",
 		"get_current_time",
 		"interaction_start:run_callback_function",
@@ -887,6 +888,12 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 	var startFuncId string
 	var stopFuncId string
 
+	nonInteractionTools := map[string]interface{}{
+		"signal_send_message":          commonToolConfig,
+		"signal_read_past_messages":    commonToolConfig,
+		"signal_show_typing_indicator": commonToolConfig,
+	}
+
 	if useN8n {
 		startFuncId, err = msgmate.GetGlobalMsgmateHandler().QuickRegisterFunction(
 			func(initData map[string]interface{}, inputData map[string]interface{}) (interface{}, error) {
@@ -897,6 +904,8 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 				n8nTriggerWorkflowWebhookTool.RunTool(msgmate.N8NTriggerWorkflowWebhookToolInput{
 					InputParameters: map[string]interface{}{
 						"available_tools": sbs.getFullToolsDescription(toolsList),
+						"tool_endpoint":   fmt.Sprintf("%s/api/v1/interactions/%s/tools", sbs.serverURL, chatUUID),
+						"bot_session_id":  signalUserToken,
 					},
 				})
 				sendSignalMessageTool.RunTool(msgmate.SignalSendMessageToolInput{
@@ -934,18 +943,28 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 			})
 	}
 
+	// Find the chat by UUID
+	var chat database.Chat
+	if err := sbs.DB.Where("uuid = ?", chatUUID).First(&chat).Error; err != nil {
+		log.Printf("[SignalBot:%s] Failed to find chat with UUID %s: %v", alias, chatUUID, err)
+		return fmt.Errorf("failed to find chat: %w", err)
+	}
+
+	// Store tool initialization data in chat configuration
+	toolInitData := make(map[string]interface{})
+
+	// Store non-interaction tools
+	for toolName, initData := range nonInteractionTools {
+		toolInitData[toolName] = initData
+	}
+
+	// Store interaction tools
+	toolInitData["interaction_start:run_callback_function"] = map[string]interface{}{"callback_function_id": startFuncId}
+	toolInitData["interaction_complete:run_callback_function"] = map[string]interface{}{"callback_function_id": stopFuncId}
+
 	if err != nil {
 		log.Printf("[SignalBot:%s] Failed to register signal interaction start function: %v", alias, err)
 		return fmt.Errorf("failed to register signal interaction start function: %w", err)
-	}
-
-	// Initialize tools
-	toolInit := map[string]interface{}{
-		"signal_send_message":                        commonToolConfig,
-		"signal_read_past_messages":                  commonToolConfig,
-		"signal_show_typing_indicator":               commonToolConfig,
-		"interaction_start:run_callback_function":    map[string]interface{}{"callback_function_id": startFuncId},
-		"interaction_complete:run_callback_function": map[string]interface{}{"callback_function_id": stopFuncId},
 	}
 
 	// If the source is the admin, initialize the whitelist management tools
@@ -962,10 +981,10 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 		whitelistToolConfig["admin_user_session_id"] = token // Use the integration owner's token
 		whitelistToolConfig["integration_alias"] = alias     // Set the integration alias
 
-		// Initialize the whitelist tools
-		toolInit["signal_get_whitelist"] = whitelistToolConfig
-		toolInit["signal_add_to_whitelist"] = whitelistToolConfig
-		toolInit["signal_remove_from_whitelist"] = whitelistToolConfig
+		// Store whitelist tools in chat configuration
+		toolInitData["signal_get_whitelist"] = whitelistToolConfig
+		toolInitData["signal_add_to_whitelist"] = whitelistToolConfig
+		toolInitData["signal_remove_from_whitelist"] = whitelistToolConfig
 	}
 
 	// Process attachments if any
@@ -1057,8 +1076,8 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 		log.Printf("[SignalBot:%s] Final content array: %+v", alias, contentArray)
 		log.Printf("[SignalBot:%s] File mapping: %+v", alias, fileMapping)
 
-		// Store file mapping in toolInit for LocalInteractionClient
-		toolInit["file_mapping"] = fileMapping
+		// Store file mapping in chat configuration
+		toolInitData["file_mapping"] = fileMapping
 
 		// Convert content array to JSON string for the message
 		contentJSON, err := json.Marshal(contentArray)
@@ -1073,8 +1092,44 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 		processedMessage = message
 	}
 
+	// Update chat configuration to include tool init data
+	if chat.SharedConfig == nil {
+		chat.SharedConfig = &database.SharedChatConfig{}
+	}
+
+	// Parse existing config or create new one
+	var configData map[string]interface{}
+	if chat.SharedConfig.ConfigData != nil {
+		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err != nil {
+			log.Printf("[SignalBot:%s] Failed to parse existing config: %v", alias, err)
+			configData = make(map[string]interface{})
+		}
+	} else {
+		configData = make(map[string]interface{})
+	}
+
+	// Add tool init data to config
+	configData["tool_init"] = toolInitData
+
+	// Debug logging
+	log.Printf("[SignalBot:%s] Storing tool init data: %+v", alias, toolInitData)
+
+	// Save updated config
+	configBytes, err := json.Marshal(configData)
+	if err != nil {
+		log.Printf("[SignalBot:%s] Failed to marshal config: %v", alias, err)
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	chat.SharedConfig.ConfigData = configBytes
+	if err := sbs.DB.Save(&chat).Error; err != nil {
+		log.Printf("[SignalBot:%s] Failed to save chat config: %v", alias, err)
+		return fmt.Errorf("failed to save chat config: %w", err)
+	}
+
 	// Create the interaction with the AI
-	interaction, err := interactionClient.CreateInteraction(toolInit, processedMessage)
+	// Note: Tool init data is now stored in chat configuration
+	interaction, err := interactionClient.CreateInteraction(toolInitData, processedMessage)
 	if err != nil {
 		log.Printf("[SignalBot:%s] Failed to create AI interaction: %v", alias, err)
 		return fmt.Errorf("failed to create AI interaction: %w", err)
