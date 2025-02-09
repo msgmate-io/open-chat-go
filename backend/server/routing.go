@@ -10,6 +10,7 @@ import (
 	"backend/api/metrics"
 	"backend/api/reference"
 	"backend/api/tls"
+	"backend/api/tools"
 	"backend/api/user"
 	"backend/api/websocket"
 	"backend/database"
@@ -406,6 +407,7 @@ func BackendRouting(
 		SignalService: signalService,
 	}
 	filesHandler := &files.FilesHandler{}
+	toolsHandler := &tools.ToolsHandler{}
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
@@ -414,6 +416,11 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/send", chatsHandler.MessageSend)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/signals/{signal}", chatsHandler.SignalSendMessage)
 	v1PrivateApis.HandleFunc("POST /chats/create", chatsHandler.Create)
+
+	// Tool execution endpoints (bot users only)
+	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}", toolsHandler.ExecuteTool)
+	v1PrivateApis.HandleFunc("GET /interactions/{chat_uuid}/tools", toolsHandler.GetAvailableTools)
+	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/init", toolsHandler.StoreToolInitData)
 
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
