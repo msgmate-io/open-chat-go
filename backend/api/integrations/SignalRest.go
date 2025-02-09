@@ -183,16 +183,8 @@ func (h *IntegrationsHandler) InstallSignalRest(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Create and add the polling task if scheduler service is available
-	if h.SchedulerService != nil {
-		err = CreateSignalPollingTask(DB, h.SchedulerService, integration)
-		if err != nil {
-			log.Printf("Warning: Failed to create Signal polling task: %v", err)
-			// Continue anyway, as the integration is still usable without the polling task
-		} else {
-			log.Printf("Created Signal polling task for integration %s", data.Alias)
-		}
-	}
+	// Signal polling is now handled by SignalBotService in the scheduler
+	log.Printf("Signal integration created - polling will be handled by SignalBotService")
 
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")
@@ -304,16 +296,8 @@ func (h *IntegrationsHandler) UninstallSignalRest(w http.ResponseWriter, r *http
 		}
 	}
 
-	// Before deactivating the integration, remove any associated polling task
-	if h.SchedulerService != nil {
-		taskName := fmt.Sprintf("signal_poll_%s", data.Alias)
-		if err := h.SchedulerService.RemoveTask(taskName); err != nil {
-			log.Printf("Warning: Failed to remove Signal polling task: %v", err)
-			// Continue anyway, as we still want to uninstall the integration
-		} else {
-			log.Printf("Removed Signal polling task for integration %s", data.Alias)
-		}
-	}
+	// Scheduler tasks are now managed by SignalBotService
+	log.Printf("Signal integration deactivated - scheduler tasks managed by SignalBotService")
 
 	// Step 3: Update the integration record in the database (mark as inactive)
 	// This is the most important step and should happen regardless of previous failures
