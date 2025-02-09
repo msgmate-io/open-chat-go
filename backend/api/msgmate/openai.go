@@ -15,7 +15,7 @@ import (
 // chat/completions endpoint. It returns two channels:
 //  1. chunks: a channel of text chunks that arrive from the stream
 //  2. errs: a channel for errors (if any occur)
-func streamChatCompletion(host string, model string, messages []map[string]string) (<-chan string, <-chan error) {
+func streamChatCompletion(host string, model string, messages []map[string]string, apiKey string) (<-chan string, <-chan error) {
 	// We’ll send our partial text over this channel:
 	chunkChan := make(chan string)
 	// We’ll send any errors over this channel:
@@ -42,7 +42,7 @@ func streamChatCompletion(host string, model string, messages []map[string]strin
 		// Create the HTTP request.
 		req, err := http.NewRequest(
 			"POST",
-			fmt.Sprintf("%s/v1/chat/completions", host),
+			fmt.Sprintf("%s/chat/completions", host),
 			bytes.NewBuffer(jsonData),
 		)
 		if err != nil {
@@ -52,7 +52,7 @@ func streamChatCompletion(host string, model string, messages []map[string]strin
 
 		// Set headers.
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer YOUR_API_KEY")
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 
 		// Construct an HTTP client with a timeout (for safety).
 		client := &http.Client{Timeout: 300 * time.Second}
