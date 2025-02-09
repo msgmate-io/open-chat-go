@@ -238,6 +238,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			endpoint,
 			model,
 			openAiMessages,
+			"1hitBXCR7H3xiKAQ87B2GJi5xOOjPyhl",
 		)
 
 		var fullText strings.Builder
