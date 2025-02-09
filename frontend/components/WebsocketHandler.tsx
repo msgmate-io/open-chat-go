@@ -6,11 +6,23 @@ import { mutate } from "swr";
 import { usePartialMessageStore } from "@/components/chat/PartialMessages";
 
 export function WebsocketHandler(){
-        const [socketUrl, setSocketUrl] = useState('ws://localhost:1984/ws/connect');
+    const [socketUrl, setSocketUrl] = useState('ws://localhost:1984/ws/connect');
+    const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
+    return <WebsocketHandlerBase sendMessage={sendMessage} lastMessage={lastMessage} readyState={readyState} />
+}
+
+export function WebsocketHandlerBase({
+    sendMessage,
+    lastMessage,
+    readyState
+}: {
+    sendMessage: (message: string) => void
+    lastMessage: MessageEvent<any> | null
+    readyState: number
+}){
         const [messageHistory, setMessageHistory] = useState<MessageEvent<any>[]>([]);
         const { partialMessages, addPartialMessage, appendPartialMessage, removePartialMessage } = usePartialMessageStore()
       
-        const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
       
         useEffect(() => {
           if (lastMessage !== null) {
@@ -22,7 +34,9 @@ export function WebsocketHandler(){
             }else if(parsedMessage.type === "start_partial_message"){
                 addPartialMessage(parsedMessage?.content?.chat_uuid, "")
             }else if(parsedMessage.type === "end_partial_message"){
-                removePartialMessage(parsedMessage?.content?.chat_uuid)
+                // TODO: this callback isn't used cause it can cause a quick flash of the message
+                // removePartialMessage(parsedMessage?.content?.chat_uuid)
+                /*
                 mutate(`/api/v1/chats/${parsedMessage?.content?.chat_uuid}/messages/list`, async (data: any) => {
                     return {
                         ...data,
@@ -33,9 +47,12 @@ export function WebsocketHandler(){
                             uuid: "partial_message"
                         }, ...data.rows]
                     }
-                })
+                })*/
             }else if(parsedMessage.type === "new_message"){
                 mutate(`/api/v1/chats/${parsedMessage?.content?.chat_uuid}/messages/list`, async (data: any) => {
+                    // check if there is still any uuid: 'partial_message' in the rows
+                    const newRows = data.rows.filter((row: any) => row.uuid !== 'partial_message')
+                    removePartialMessage(parsedMessage?.content?.chat_uuid)
                     return {
                         ...data,
                         rows: [{
@@ -43,7 +60,7 @@ export function WebsocketHandler(){
                             sender_uuid: parsedMessage?.content?.sender_uuid,
                             chat_uuid: parsedMessage?.content?.chat_uuid,
                             uuid: parsedMessage?.content?.uuid
-                        }, ...data.rows]
+                        }, ...newRows]
                     }
                 })
             }
@@ -58,11 +75,11 @@ export function WebsocketHandler(){
           [ReadyState.UNINSTANTIATED]: 'Uninstantiated',
         }[readyState];
         
-        return <div className="absolute top0 left0 z50 bgbase200 p2">
+        return <>{false && <div className="absolute top0 left0 z50 bgbase200 p2">
             <div className="flex flexcol">
                 <div className="flex flexcol">
                     <div className="textsm">Debug connection status: {connectionStatus}</div>
                 </div>
             </div>
-        </div>
+        </div>}</>
     }
