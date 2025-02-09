@@ -42,7 +42,7 @@ export function ChatItem({ chat, isSelected = false }: {
                         <div className="flex flex-grow">{chat?.settings?.title ? chat?.settings?.title : `${chat.partner.first_name} ${chat.partner.second_name}`}</div>
                         <div className="relative h-full">
                             <div className="absolute right-0 flex flex-row">
-                                <UnreadBadge unreadCount={0} /> {/**TODO add the actual count */}
+                                {/* <UnreadBadge unreadCount={0} /> TODO add the actual count */}
                                 {!chat?.partner?.is_bot && <OnlineIndicator isOnline={chat?.partner?.is_online} />}
                                 <Button className="flex h-6 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
                                     setSettingsOpen(!settingsOpen)
@@ -87,8 +87,8 @@ export function ChatItemCompact({ chat = null, isSelected = false, navigateTo = 
                         <div className='flex text-nowrap text-lg whitespace-nowrap overflow-x-hidden'>
                             {content}
                             <div className="absolute right-4 flex flex-row">
-                                <UnreadBadge unreadCount={0} /> {/**TODO add the actual count */}
-                                {!chat?.partner?.is_bot && <OnlineIndicator isOnline={false} />}
+                                {/* <UnreadBadge unreadCount={0} /> TODO add the actual count */}
+                                {/* {!chat?.partner?.is_bot && <OnlineIndicator isOnline={false} />} */}
                                 <Button className="flex h-4 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
                                     setSettingsOpen(!settingsOpen)
                                     e.stopPropagation()
