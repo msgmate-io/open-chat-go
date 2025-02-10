@@ -11,11 +11,8 @@ export const CollapseIndicator = ({
     const isSm = useMediaQuery({ query: '(max-width: 640px)' })
 
     const onClick = () => {
-        console.log("onToggleCollapse")
         if (!isSm) {
             onToggleCollapse()
-        } else {
-            // navigate(null, { chat: null }) TODO
         }
     }
 
