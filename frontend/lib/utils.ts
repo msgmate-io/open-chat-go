@@ -17,6 +17,8 @@ export const cookiesStorage = <T>(): PersistStorage<T> => ({
   }
 })
 
+export const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
