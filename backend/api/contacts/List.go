@@ -5,15 +5,18 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"fmt"
+	"gorm.io/gorm"
 	"net/http"
 	"strconv"
 )
 
 type ListedContact struct {
-	ContactToken string `json:"contact_token"`
-	Name         string `json:"name"`
-	UserUUID     string `json:"user_uuid"`
-	IsOnline     bool   `json:"is_online"`
+	ContactToken string                 `json:"contact_token"`
+	Name         string                 `json:"name"`
+	UserUUID     string                 `json:"user_uuid"`
+	IsOnline     bool                   `json:"is_online"`
+	ProfileData  map[string]interface{} `json:"profile_data"`
 }
 
 func isSubscriber(subscribers []websocket.Subscriber, userUUID string) bool {
@@ -25,7 +28,7 @@ func isSubscriber(subscribers []websocket.Subscriber, userUUID string) bool {
 	return false
 }
 
-func contactToContactListed(ch *websocket.WebSocketHandler, contacts []database.Contact, userId uint) []ListedContact {
+func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contacts []database.Contact, userId uint) []ListedContact {
 	// check if the contact is online
 
 	subscribers := ch.GetSubscribers()
@@ -39,6 +42,13 @@ func contactToContactListed(ch *websocket.WebSocketHandler, contacts []database.
 		} else {
 			partner = contact.ContactUser
 		}
+
+		// try to retrieve possible partner profile data
+		profileData := make(map[string]interface{})
+		DB.Model(&database.PublicProfile{}).Where("user_id = ?", partner.ID).First(&profileData)
+
+		fmt.Println("profileData", profileData)
+
 		if isSubscriber(subscribers, partner.UUID) {
 			listedContacts[i] = ListedContact{
 				ContactToken: partner.ContactToken,
@@ -120,7 +130,7 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination.Rows = contactToContactListed(ch, contacts, user.ID)
+	pagination.Rows = contactToContactListed(DB, ch, contacts, user.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pagination)
@@ -151,7 +161,7 @@ func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	token := r.PathValue("token")
+	token := r.PathValue("contact_token")
 	if token == "" {
 		http.Error(w, "Contact token is required", http.StatusBadRequest)
 		return
@@ -163,12 +173,91 @@ func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	var publicProfile database.PublicProfile
+	DB.Model(&database.PublicProfile{}).Where("user_id = ?", user.ID).First(&publicProfile)
+	// Now parse the profile data
+	var profileData map[string]interface{}
+	json.Unmarshal(publicProfile.ProfileData, &profileData)
+	fmt.Println("profileData", profileData)
+
 	subscribers := ch.GetSubscribers()
 	listedContact := ListedContact{
 		ContactToken: user.ContactToken,
 		Name:         user.Name,
 		UserUUID:     user.UUID,
 		IsOnline:     isSubscriber(subscribers, user.UUID),
+		ProfileData:  profileData,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(listedContact)
+}
+
+// GetContactByChatUUID
+// @Summary      Get contact by chat UUID
+// @Description  Retrieve a single contact based on a chat UUID
+// @Tags         contacts
+// @Accept       json
+// @Produce      json
+// @Param        chat_uuid path string true "Chat UUID"
+// @Success      200 {object} contacts.ListedContact
+// @Failure      400 {string} string "Invalid request"
+// @Failure      404 {string} string "Chat or contact not found"
+// @Failure      500 {string} string "Internal server error"
+// @Router       /api/v1/chats/{chat_uuid}/contact [get]
+func (h *ContactsHander) GetContactByChatUUID(w http.ResponseWriter, r *http.Request) {
+	DB, currentUser, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	ch, err := util.GetWebsocket(r)
+	if err != nil {
+		http.Error(w, "Unable to get websocket", http.StatusBadRequest)
+		return
+	}
+
+	chatUUID := r.PathValue("chat_uuid")
+	if chatUUID == "" {
+		http.Error(w, "Chat UUID is required", http.StatusBadRequest)
+		return
+	}
+
+	// First find the chat and ensure the current user has access to it
+	var chat database.Chat
+	if err := DB.Where("uuid = ? AND (user1_id = ? OR user2_id = ?)",
+		chatUUID, currentUser.ID, currentUser.ID).
+		Preload("User1").
+		Preload("User2").
+		First(&chat).Error; err != nil {
+		http.Error(w, "Chat not found", http.StatusNotFound)
+		return
+	}
+
+	// Determine which user is the contact (the other party in the chat)
+	var contactUser database.User
+	if chat.User1Id == currentUser.ID {
+		contactUser = chat.User2
+	} else {
+		contactUser = chat.User1
+	}
+
+	// Get the contact's public profile
+	var publicProfile database.PublicProfile
+	DB.Model(&database.PublicProfile{}).Where("user_id = ?", contactUser.ID).First(&publicProfile)
+
+	// Parse the profile data
+	var profileData map[string]interface{}
+	json.Unmarshal(publicProfile.ProfileData, &profileData)
+
+	subscribers := ch.GetSubscribers()
+	listedContact := ListedContact{
+		ContactToken: contactUser.ContactToken,
+		Name:         contactUser.Name,
+		UserUUID:     contactUser.UUID,
+		IsOnline:     isSubscriber(subscribers, contactUser.UUID),
+		ProfileData:  profileData,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
