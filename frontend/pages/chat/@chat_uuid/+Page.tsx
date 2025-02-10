@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { usePageContext } from "vike-react/usePageContext";
-import useWebSocket, { ReadyState } from "react-use-websocket";
 import { ChatBase } from "@/components/chat/ChatBase";
 import { MessagesView } from "@/components/chat/MessagesView";
 import { navigate } from 'vike/client/router'
