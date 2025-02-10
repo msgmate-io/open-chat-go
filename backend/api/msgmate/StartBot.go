@@ -224,9 +224,16 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		}
 		fmt.Println("chat", chat.Config)
 
-		endpoint := mapGetOrDefault[string](chat.Config.(map[string]interface{}), "endpoint", "http://localai:8080")
-		model := mapGetOrDefault[string](chat.Config.(map[string]interface{}), "model", "meta-llama-3.1-8b-instruct")
-		context := mapGetOrDefault[int64](chat.Config.(map[string]interface{}), "context", 10)
+		var configMap map[string]interface{}
+		if chat.Config != nil {
+			if m, ok := chat.Config.(map[string]interface{}); ok {
+				configMap = m
+			}
+		}
+
+		endpoint := mapGetOrDefault[string](configMap, "endpoint", "http://localai:8080")
+		model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
+		context := mapGetOrDefault[int64](configMap, "context", 10)
 
 		// Load the past messages
 		err, paginatedMessages := ocClient.GetMessages(message.Content.ChatUUID, 1, context)
