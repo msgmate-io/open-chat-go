@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"gorm.io/gorm"
 	"log"
 	"net/http"
 	"slices"
@@ -368,4 +369,86 @@ func mapGetOrDefault[T any](m map[string]interface{}, key string, defaultValue T
 	}
 
 	return defaultValue
+}
+
+func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
+	// first check if the profile exists
+	var botProfile database.PublicProfile
+	DB.Where("user_id = ?", botUser.ID).First(&botProfile)
+	if botProfile.ID != 0 {
+		return nil
+	}
+
+	botProfileInfo := map[string]interface{}{
+		"name":        "Bot",
+		"description": "This is a bot user",
+		"models": []interface{}{
+			map[string]interface{}{
+				"title":       "gpt-4o",
+				"description": "OpenAI's GPT-4o, optimized for specific applications with advanced tool and function support.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"model":         "gpt-4o",
+					"endpoint":      "https://api.openai.com/v1/",
+					"backend":       "openai",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "o3-mini-2025-01-31",
+				"description": "OpenAI's O3 Mini, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"model":         "o3-mini-2025-01-31",
+					"endpoint":      "https://api.openai.com/v1/",
+					"backend":       "openai",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "deepseek-ai/DeepSeek-V3",
+				"description": "DeepSeek's DeepSeek V3, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"model":         "deepseek-ai/DeepSeek-V3",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+				"description": "Meta's Llama 3.3, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"model":         "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+		},
+	}
+	// create default public profile for bot user
+	botProfileBytes, err := json.Marshal(botProfileInfo)
+	if err != nil {
+		return err
+	}
+	botProfile = database.PublicProfile{
+		ProfileData: botProfileBytes,
+		UserId:      botUser.ID,
+	}
+	q := DB.Create(&botProfile)
+	if q.Error != nil {
+		return q.Error
+	}
+	return nil
 }
