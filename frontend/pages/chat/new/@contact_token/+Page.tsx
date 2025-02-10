@@ -6,6 +6,10 @@ import useSWR, { mutate } from "swr"
 import { usePageContext } from "vike-react/usePageContext";
 import { fetcher } from "@/lib/utils";
 
+export async function onBeforePrerenderStart() {
+  return [`/chat/new/{contact_token}`]
+}
+
 export default function Page() {
   const pageContext = usePageContext()
 
