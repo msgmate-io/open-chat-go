@@ -15,4 +15,5 @@ var Tabels []interface{} = []interface{}{
 	&Network{},
 	&NetworkMember{},
 	&SharedChatConfig{},
+	&PublicProfile{},
 }
