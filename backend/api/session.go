@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -21,14 +22,28 @@ func GenerateToken(tokenBase string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func CreateSessionToken(w http.ResponseWriter, domain string, token string, expiry time.Time) *http.Cookie {
+func CreateSessionToken(w http.ResponseWriter, r *http.Request, domain string, token string, expiry time.Time) *http.Cookie {
 	persist := true
+
+	secure := false
+	if r != nil {
+		if r.TLS != nil {
+			secure = true
+		}
+		if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			secure = true
+		}
+		if strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on") {
+			secure = true
+		}
+	}
+
 	cookie := &http.Cookie{
 		Name:     "session_id",
 		Value:    token,
 		Path:     "/",
 		Domain:   domain,
-		Secure:   true,
+		Secure:   secure,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	}
