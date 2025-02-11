@@ -45,7 +45,11 @@ func InstallCli() *cli.Command {
 				}
 			} else {
 				fmt.Println("service is not installed, installing for the first time...")
-				DB := database.SetupDatabase(c.String("db-backend"), "./data.db", c.Bool("debug"), true)
+				DB := database.SetupDatabase(database.DBConfig{
+					Backend:  c.String("db-backend"),
+					FilePath: "./data.db",
+					Debug:    c.Bool("debug"),
+				})
 
 				// - create default admin user
 				rootCredentials := strings.Split(c.String("root-credentials"), ":")
