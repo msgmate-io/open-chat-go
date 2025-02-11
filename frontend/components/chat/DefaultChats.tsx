@@ -25,7 +25,7 @@ export function DefaultChats({
 }) {
 
     return <>
-        <Card className={cn(
+        {/*<Card className={cn(
             "bg-base-200 hover:bg-base-300 p-2 border-0")}
             onClick={() => {
                 // TODO navigateTo(null, { chat: "createAudio", userName: "hal" })
@@ -39,7 +39,7 @@ export function DefaultChats({
                     </div>
                 </div>
             </div>
-        </Card>
+        </Card>**/}
         <Card className={cn(
             "bg-base-200 hover:bg-base-300 p-2 border-0")}
             onClick={() => {
