@@ -35,5 +35,6 @@ COPY --from=builder /backend/backend /backend
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS prod-alpine
 WORKDIR /backend
 COPY --from=builder /backend/backend /usr/local/bin/backend
+COPY --from=builder /backend/server/routes.json /backend/routes.json
 
-CMD ["backend", "-b", "0.0.0.0", "-p", "1984"]
+CMD ["backend", "-b", "0.0.0.0", "-p", "1984", "-db-backend", "postgres", "-db-path", "postgresql://postgres:dbpass@db:5432/dbname"]
