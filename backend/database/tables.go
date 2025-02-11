@@ -75,7 +75,6 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 		}
 		fmt.Println("SharedChatConfig table created")
 	}
-	fmt.Println("SharedChatConfig table created")
 
 	if !db.Migrator().HasTable("messages") {
 		if err := db.Set("gorm:table_options", "").Migrator().CreateTable(&TempMessage{}); err != nil {
@@ -83,7 +82,6 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 		}
 		fmt.Println("Message table created")
 	}
-	fmt.Println("Message table created")
 
 	if err := db.AutoMigrate(&Message{}); err != nil {
 		return fmt.Errorf("failed to add constraints to message: %v", err)
