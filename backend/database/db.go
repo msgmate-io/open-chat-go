@@ -2,50 +2,78 @@ package database
 
 import (
 	"fmt"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"log"
 )
 
-func SetupDatabase(
-	dbBackend string,
-	dbPathSqlite string,
-	debug bool,
-	resetDB bool,
-) *gorm.DB {
-	if dbBackend != "sqlite" {
-		panic(fmt.Sprintf("Unsupported/Unimplemented database backend: %s", dbBackend))
+type DBConfig struct {
+	Backend  string // "sqlite" or "postgres"
+	Host     string
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	SSLMode  string
+	FilePath string // for SQLite
+	Debug    bool
+	ResetDB  bool
+}
+
+func SetupDatabase(config DBConfig) *gorm.DB {
+	var db *gorm.DB
+	var err error
+
+	switch config.Backend {
+	case "sqlite":
+		db, err = gorm.Open(sqlite.Open(config.FilePath), &gorm.Config{})
+	case "postgres":
+		db, err = gorm.Open(postgres.Open(config.FilePath), &gorm.Config{})
+	default:
+		panic(fmt.Sprintf("Unsupported database backend: %s", config.Backend))
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPathSqlite), &gorm.Config{})
 	if err != nil {
 		panic(fmt.Sprintf("Failed to connect to database: %v", err))
 	}
 
 	stmt := &gorm.Statement{DB: db}
-	if resetDB {
-		for i, table := range Tabels {
-			stmt.Parse(table)
-			tableName := stmt.Schema.Table
-			log.Println(fmt.Sprintf("Dropping tables (%v/%v): %v", i+1, len(Tabels), tableName))
-			if tableName == "keys" {
-				fmt.Println("NOT dropping keys table")
-			} else {
-				db.Migrator().DropTable(table)
+	if config.ResetDB {
+		for i, migration := range Migrations {
+			if tableMigration, ok := migration.(TableMigration); ok {
+				stmt.Parse(tableMigration.Model)
+				tableName := stmt.Schema.Table
+				log.Println(fmt.Sprintf("Dropping tables (%v/%v): %v", i+1, len(Migrations), tableName))
+				if tableName == "keys" {
+					fmt.Println("NOT dropping keys table")
+				} else {
+					db.Migrator().DropTable(tableMigration.Model)
+				}
+			} else if _, ok := migration.(ChatAndMessageMigration); ok {
+				log.Println("Dropping chat and message tables")
+				db.Migrator().DropTable(&Chat{}, &Message{})
 			}
 		}
 	}
 
-	for i, table := range Tabels {
-		stmt.Parse(table)
-		tableName := stmt.Schema.Table
-		log.Printf("Attempting to migrate table (%v/%v): %v (type: %T)", i+1, len(Tabels), tableName, table)
-		err = db.AutoMigrate(table)
-		if err != nil {
-			log.Printf("Migration failed for table %s. Table structure: %+v", tableName, table)
-			panic(fmt.Sprintf("Failed to migrate table %s: %v", tableName, err))
+	for i, migration := range Migrations {
+		var tableName string
+		if tableMigration, ok := migration.(TableMigration); ok {
+			stmt.Parse(tableMigration.Model)
+			tableName = stmt.Schema.Table
+			log.Printf("Attempting to migrate table (%v/%v): %v", i+1, len(Migrations), tableName)
+		} else {
+			tableName = fmt.Sprintf("custom migration %T", migration)
+			log.Printf("Attempting to run custom migration (%v/%v): %v", i+1, len(Migrations), tableName)
 		}
-		log.Printf("Successfully migrated table: %s", tableName)
+
+		err = migration.Migrate(db)
+		if err != nil {
+			log.Printf("Migration failed for %s", tableName)
+			panic(fmt.Sprintf("Failed to migrate %s: %v", tableName, err))
+		}
+		log.Printf("Successfully migrated: %s", tableName)
 	}
 
 	return db
