@@ -21,13 +21,13 @@ func GenerateToken(tokenBase string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func CreateSessionToken(w http.ResponseWriter, token string, expiry time.Time) *http.Cookie {
+func CreateSessionToken(w http.ResponseWriter, domain string, token string, expiry time.Time) *http.Cookie {
 	persist := true
 	cookie := &http.Cookie{
 		Name:     "session_id",
 		Value:    token,
 		Path:     "/",
-		Domain:   "localhost",
+		Domain:   domain,
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,

@@ -67,7 +67,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie := api.CreateSessionToken(w, token, expiry)
+	cookie := api.CreateSessionToken(w, h.CookieDomain, token, expiry)
 	w.Header().Add("Set-Cookie", cookie.String())
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 
@@ -114,7 +114,7 @@ func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie := api.CreateSessionToken(w, token, expiry)
+	cookie := api.CreateSessionToken(w, h.CookieDomain, token, expiry)
 	w.Header().Add("Set-Cookie", cookie.String())
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 

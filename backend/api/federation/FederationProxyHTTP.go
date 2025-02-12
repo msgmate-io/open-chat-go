@@ -2,6 +2,7 @@ package federation
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/network"
 	"io"
@@ -12,7 +13,7 @@ import (
 )
 
 // CreateIncomingRequestStreamHandler creates a stream handler with configured host and port
-func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, hostPort int, pathPrefixWhitelist []string, restrictToNetworkName string) network.StreamHandler {
+func (h *FederationHandler) CreateIncomingRequestStreamHandler(scheme string, host string, domain string, hostPort int, pathPrefixWhitelist []string, restrictToNetworkName string) network.StreamHandler {
 	// empty whitelist means allow all
 	preprocessor := func(path string) bool {
 		return true
@@ -27,6 +28,12 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, host
 			}
 			return false
 		}
+	}
+	// Create a custom transport that skips certificate verification
+	customTransport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
 	}
 	// check possible proxies
 	return func(stream network.Stream) {
@@ -59,15 +66,21 @@ func (h *FederationHandler) CreateIncomingRequestStreamHandler(host string, host
 
 		defer req.Body.Close()
 
-		fullHost := fmt.Sprintf("%s:%d", host, hostPort)
-		req.URL.Scheme = "http"
-		req.URL.Host = fullHost
+		// Use the actual hostname instead of IP
+		req.URL.Scheme = scheme
+		req.URL.Host = domain
+		if hostPort != 443 { // Only add port if it's not the default HTTPS port
+			req.URL.Host = fmt.Sprintf("%s:%d", domain, hostPort)
+		}
 
+		// Set the Host header to match the URL
 		outreq := new(http.Request)
 		*outreq = *req
-
+		outreq.Host = req.URL.Host
 		outreq.Header = req.Header
-		resp, err := http.DefaultTransport.RoundTrip(outreq)
+
+		// Use custom transport instead of default
+		resp, err := customTransport.RoundTrip(outreq)
 		if err != nil {
 			stream.Reset()
 			log.Println("Error: handling incoming request", err)
