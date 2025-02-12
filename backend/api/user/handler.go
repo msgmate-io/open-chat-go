@@ -5,5 +5,6 @@ import (
 )
 
 type UserHandler struct {
-	DB *gorm.DB
+	DB           *gorm.DB
+	CookieDomain string
 }

@@ -78,7 +78,7 @@ func InstallCli() *cli.Command {
 
 				// create the default network
 
-				_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")))
+				_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"))
 
 				if err != nil {
 					return err

@@ -162,6 +162,8 @@ func CreateFederationHost(
 	host string,
 	p2pPort int,
 	hostPort int,
+	useSsl bool,
+	domain string,
 ) (*host.Host, *federation.FederationHandler, error) {
 	var r io.Reader
 	r = rand.Reader
@@ -193,7 +195,14 @@ func CreateFederationHost(
 		NetworkPeerIds:     make(map[string]map[string]bool),
 	}
 
-	StartRequestReceivingPeer(context.Background(), h, federationHandler.CreateIncomingRequestStreamHandler(host, hostPort, []string{
+	scheme := "http"
+	if useSsl {
+		scheme = "https"
+	} else {
+		domain = "http://" + host
+	}
+
+	StartRequestReceivingPeer(context.Background(), h, federationHandler.CreateIncomingRequestStreamHandler(scheme, host, domain, hostPort, []string{
 		"/api/v1/federation/networks/",
 	}, ""), federation.T1mNetworkJoinProtocolID)
 
@@ -311,7 +320,13 @@ func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
 	return nil
 }
 
-func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host string, hostPort int) {
+func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host string, hostPort int, useSsl bool, domain string) {
+	scheme := "http"
+	if useSsl {
+		scheme = "https"
+	} else {
+		domain = "http://" + host
+	}
 	log.Println("Initializing networks")
 	networks := []database.Network{}
 	DB.Find(&networks)
@@ -329,7 +344,7 @@ func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host strin
 
 		// start the network request protocol that allows querying any local api to network members only!
 		StartRequestReceivingPeer(
-			context.Background(), h.Host, h.CreateIncomingRequestStreamHandler(host, hostPort, []string{}, network.NetworkName),
+			context.Background(), h.Host, h.CreateIncomingRequestStreamHandler(scheme, host, domain, hostPort, []string{}, network.NetworkName),
 			federation.T1mNetworkRequestProtocolID,
 		)
 	}
