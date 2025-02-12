@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/urfave/cli/v3"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -131,6 +132,20 @@ func GetServerFlags() []cli.Flag {
 			Value:   true,
 			Usage:   "If the in-build msgmate bot should be started",
 		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("HOST_DOMAIN"),
+			Name:    "host-domain",
+			Aliases: []string{"hd"},
+			Value:   "localhost",
+			Usage:   "domain for the host",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("HTTP_REDIRECT_PORT"),
+			Name:    "http-redirect-port",
+			Aliases: []string{"hrp"},
+			Value:   "",
+			Usage:   "port for the http redirect",
+		},
 	}
 }
 
@@ -152,14 +167,22 @@ func ServerCli() *cli.Command {
 				database.SetupTestUsers(DB)
 			}
 
+			/**
+			var pageHost string
+			if c.Bool("ssl") {
+				pageHost = "https://" + c.String("host-domain")
+			} else {
+				pageHost = "http://" + c.String("host") + ":" + strconv.Itoa(int(c.Int("port")))
+			} */
+
 			// start channels to other nodes
-			_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")))
+			_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"))
 
 			if err != nil {
 				return err
 			}
 
-			s, ch, fullHost, err := server.BackendServer(DB, federationHandler, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("tls-key-prefix"), c.String("frontend-proxy"))
+			s, ch, fullHost, err := server.BackendServer(DB, federationHandler, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("tls-key-prefix"), c.String("frontend-proxy"), c.String("host-domain"))
 			if err != nil {
 				return err
 			}
@@ -264,7 +287,7 @@ func ServerCli() *cli.Command {
 				ownNode.PeerID = ownPeerId
 				DB.Save(&ownNode)
 			}
-			server.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")))
+			server.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"))
 			// Now we also have to register the bootstrap peers!
 			for _, peer := range c.StringSlice("network-bootstrap-peers") {
 				log.Println("Registering bootstrap peer", peer)
@@ -312,6 +335,35 @@ func ServerCli() *cli.Command {
 			}
 
 			server.StartProxies(DB, federationHandler)
+
+			if c.String("http-redirect-port") != "" {
+				// Start HTTP redirect server
+				protocol := "http"
+				if c.Bool("ssl") {
+					protocol = "https"
+				}
+				go func() {
+					redirectMux := http.NewServeMux()
+					redirectMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+						target := fmt.Sprintf("%s://%s", protocol, c.String("host-domain"))
+						if c.Int("port") != 443 {
+							target += fmt.Sprintf(":%d", c.Int("port"))
+						}
+						target += r.URL.Path
+						if r.URL.RawQuery != "" {
+							target += "?" + r.URL.RawQuery
+						}
+						http.Redirect(w, r, target, http.StatusMovedPermanently)
+					})
+					redirectServer := &http.Server{
+						Addr:    ":" + c.String("http-redirect-port"),
+						Handler: redirectMux,
+					}
+					if err := redirectServer.ListenAndServe(); err != nil {
+						log.Printf("HTTP redirect server error: %v", err)
+					}
+				}()
+			}
 
 			if c.Bool("ssl") {
 				err = s.ListenAndServeTLS("", "")
