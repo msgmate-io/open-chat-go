@@ -75,11 +75,13 @@ func BackendServer(
 	ssl bool,
 	sslKeyPrefix string,
 	frontendProxy string,
+	cookieDomain string,
 ) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	var protocol string
 	var fullHost string
+	var router *http.ServeMux
+	var websocketHandler *websocket.WebSocketHandler
 
-	router, websocketHandler := BackendRouting(DB, federationHandler, debug, frontendProxy)
 	var server *http.Server
 	if ssl {
 		protocol = "https"
@@ -111,16 +113,19 @@ func BackendServer(
 			Certificates: []tls.Certificate{cert},
 		}
 
+		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
+
+		router, websocketHandler = BackendRouting(DB, federationHandler, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:      fmt.Sprintf("%s:%d", host, port),
 			Handler:   router,
 			TLSConfig: tlsConfig,
 		}
-		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 	} else {
 		protocol = "http"
 		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 
+		router, websocketHandler = BackendRouting(DB, federationHandler, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", host, port),
 			Handler: router,
