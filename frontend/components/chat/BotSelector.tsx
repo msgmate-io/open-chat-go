@@ -23,16 +23,17 @@ export function BotSelector({
 }) {
     console.log("TBS contact", contact)
     return (
-        <NavigationMenu className="bg-base-2    00">
-            <NavigationMenuList className="bg-base-200">
-                <NavigationMenuItem className="bg-base-200 focus:bg-base-200">
-                    <NavigationMenuTrigger className="hover:bg-base-200 focus:bg-base-200">{selectedModel}</NavigationMenuTrigger>
+        <NavigationMenu>
+            <NavigationMenuList>
+                <NavigationMenuItem>
+                    <NavigationMenuTrigger>{selectedModel}</NavigationMenuTrigger>
                     <NavigationMenuContent>
-                        <ul className="grid w-[400px] gap-3 p-4 md:w-[500px] md:grid-cols-2 lg:w-[600px] ">
+                        {!contact?.profile_data?.models || contact?.profile_data?.models?.length === 0 && <div>No models found</div>}
+                        {contact?.profile_data?.models && contact?.profile_data?.models?.length > 0 && <ul className="grid w-[400px] gap-3 p-4 md:w-[500px] md:grid-cols-2 lg:w-[600px] ">
                             {contact?.profile_data?.models?.map((model: any) => (
                                 <ListItem
-                                    className={cn("hover:bg-base-200 hover:text-content-neutral", {
-                                        "bg-base-200": selectedModel === model.title,
+                                    className={cn("hover:secondary hover:text-content-neutral", {
+                                        "bg-secondary": selectedModel === model.title,
                                     })}
                                     onClick={() => setSelectedModel(model.title)}
                                     key={model.title}
@@ -42,7 +43,7 @@ export function BotSelector({
                                     {model.description}
                                 </ListItem>
                             ))}
-                        </ul>
+                        </ul>}
                     </NavigationMenuContent>
                 </NavigationMenuItem>
             </NavigationMenuList>
@@ -60,7 +61,7 @@ export const ListItem = React.forwardRef<
                 <div
                     ref={ref}
                     className={cn(
-                        "block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-base-200 focus:text-accent-foreground",
+                        "block select-none space-y-1 rounded-md p-3 leading-none no-underline outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-secondary focus:text-accent-foreground",
                         className
                     )}
                     {...props}
@@ -82,7 +83,7 @@ export function BotDisplay({
     selectedModel: string
 }) {
     return (
-        <div className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-base-200">
+        <div className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-secondary">
             {selectedModel}
         </div>
     )

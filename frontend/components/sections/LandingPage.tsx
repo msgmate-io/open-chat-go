@@ -120,32 +120,23 @@ export function LandingHero({
 }) {
     const tab = useTabs(state => state.tab)
     const setTab = useTabs(state => state.setTab)
-    const [showVideoCard, setShowVideoCard] = useState(false)
 
     return <>
-        <div className="relative w-full z-40">
+        <div className="flex relative w-full z-40">
             <div className="absolute flex w-full p-4 font-bold text-2xl w-full">
                 Open-Chat
                 <div className="text-sm text-gray-500 mt-3 ml-1">by Msgmate.io (beta)</div>
             </div>
         </div>
         <div className="flex flex-row items-center justify-center content-center h-screen">
-            <div className="flex flex-col flex-grow items-center justify-center content-center bg-base-200 w-2/3 h-full shadow-xl z-10 hidden lg:flex relative">
-                {!showVideoCard && <Typewriter
+            <div className="flex flex-col flex-grow items-center justify-center content-center bg-background w-2/3 h-full shadow-xl z-10 lg:flex relative">
+                <Typewriter
                     typingSpeed={10}
-                    texts={TEXTS} />}
-                {showVideoCard && <div className="flex flex-col flex-grow items-center justify-center content-center w-full" dangerouslySetInnerHTML={{__html: '<iframe width="720" height="404" src="https://www.youtube.com/embed/OqT_kIhz8Dc?si=ABasYeQNTMswr6gq" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowFullScreen={true}></iframe>'}}/>}
-                <div className="relative w-full z-40">
-                    <div className="absolute flex w-full p-4 bottom-0 font-bold text-2xl w-full z-40 itemes-end content-end justify-end">
-                        <Button variant="ghost" className="rounded-full py-2 text-xl text-bold text-indigo-200" onClick={() => {
-                            setShowVideoCard(!showVideoCard)
-                        }}>What is open chat?</Button>
-                    </div>
-                </div>
+                    texts={TEXTS} />
             </div>
-            <div className="flex flex-col flex-grow items-center justify-center content-center bg-base-100 w-1/3 h-full">
+            <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary w-1/3 h-full">
                 <div className="flex flex-row items-end justify-end content-center w-full">
-                    <div className="p-2 hover:bg-base-300 rounded-xl z-40" onClick={() => {
+                    <div className="p-2 hover:bg-secondary rounded-xl z-40" onClick={() => {
                         setTab("index")
                     }}>
                         {tab !== "index" && <div className="p-1"><ModeToggle /></div>}
