@@ -110,21 +110,27 @@ else
 fi
 cd backend
 
-# Install swag tool if not already installed
+# IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
+# Build-time tools (like `swag`) must be installed for the *host* platform so they can run.
+TARGET_GOOS="${GOOS:-}"
+TARGET_GOARCH="${GOARCH:-}"
+HOST_GOOS="$(go env GOHOSTOS)"
+HOST_GOARCH="$(go env GOHOSTARCH)"
+
+# Install swag tool if not already installed (install into a repo-local bin dir)
+TOOLS_BIN="$PWD/.tools/bin"
+mkdir -p "$TOOLS_BIN"
+export PATH="$TOOLS_BIN:$PATH"
+SWAG_PATH="$TOOLS_BIN/swag"
+
 if ! command -v swag &> /dev/null; then
-    echo "Installing swag tool..."
-    go install github.com/swaggo/swag/v2/cmd/swag@latest
+    echo "Installing swag tool for host platform (${HOST_GOOS}/${HOST_GOARCH})..."
+    GOBIN="$TOOLS_BIN" GOOS="$HOST_GOOS" GOARCH="$HOST_GOARCH" go install github.com/swaggo/swag/v2/cmd/swag@latest
 fi
 
-# Get the path to the swag binary
-SWAG_PATH=$(go env GOPATH)/bin/swag
 if [ ! -f "$SWAG_PATH" ]; then
-    # Fallback to checking if it's in the current directory
-    SWAG_PATH="./swag"
-    if [ ! -f "$SWAG_PATH" ]; then
-        echo "Error: swag tool not found after installation"
-        exit 1
-    fi
+    echo "Error: swag tool not found after installation at: $SWAG_PATH"
+    exit 1
 fi
 
 # Generate swagger documentation
@@ -141,6 +147,10 @@ if [ "$FRONTEND" = true ]; then
 else
     echo "Step 3: Building Go backend..."
 fi
+
+# Restore target platform env for the actual backend build (if they were set by the caller)
+if [ -n "$TARGET_GOOS" ]; then export GOOS="$TARGET_GOOS"; else unset GOOS; fi
+if [ -n "$TARGET_GOARCH" ]; then export GOARCH="$TARGET_GOARCH"; else unset GOARCH; fi
 
 # Set build tags based on federation flag
 BUILD_TAGS=""
