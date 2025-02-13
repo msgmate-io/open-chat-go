@@ -13,6 +13,7 @@ import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { persist } from "zustand/middleware";
 import { cookiesStorage } from "@/lib/utils";
+import { CollapseIndicator } from "../CollapseIndicator";
 
 function useMobileConfig(chatId: any, defaultLeftSize = null, defaultRightSize = null) {
     return {
@@ -63,34 +64,23 @@ export const ResizableChatLayout = forwardRef(({
     rightPannelRef: any,
     setLeftCollapsed: any
 }, ref) => {
-    const frontend = null
     const { isSm: biggerThanSm } = useBreakpoint('sm');
     const [, setRightCollapsed] = useState(false);
 
-    const layout = frontend?.resizableLayout;
-
-    let defaultLayout;
-    if (layout) {
-        console.log("DEF layout", layout);
-        defaultLayout = JSON.parse(layout);
-    }
-    const defaultLayoutLeft = defaultLayout ? defaultLayout[0] : null;
-    const defaultLayoutRight = defaultLayout ? defaultLayout[1] : null;
+    // TODO load the correct default layout from the cookie!
+    const defaultLayoutLeft = null
+    const defaultLayoutRight = null
     const mobileConfig = useMobileConfig(chatUUID, defaultLayoutLeft, defaultLayoutRight);
     const desktopConfig = useDesktopConfig(defaultLayoutLeft, defaultLayoutRight);
 
     console.log("chatId", chatUUID);
-    console.log("FRONTEND", frontend);
 
     useEffect(() => {
         if (!biggerThanSm) {
-            // layout changed to mobile
             if (chatUUID) {
-                // chat selected -> hide left panel
                 leftPannelRef.current.collapse();
                 setLeftCollapsed(true);
             } else if (!chatUUID) {
-                // chat not selected -> hide right panel
                 rightPannelRef.current.collapse();
                 setRightCollapsed(true);
             }
@@ -101,7 +91,11 @@ export const ResizableChatLayout = forwardRef(({
         setLeftCollapsed(leftPannelRef.current.isCollapsed());
     };
 
-    const onLayout = (sizes) => {
+    const onToggleCollapse = () => {
+        setLeftCollapsed(!leftPannelRef.current.isCollapsed());
+    };
+
+    const onLayout = (sizes: any) => {
         console.log("onLayout", sizes);
         Cookies.set('react-resizable-panels-layout', JSON.stringify(sizes));
     };
@@ -126,12 +120,12 @@ export const ResizableChatLayout = forwardRef(({
                 {...(biggerThanSm ? desktopConfig.left : mobileConfig.left)}
                 order={1}
             >
-                <div className="flex flex-col h-full bg-base-200 relative">
+                <div className="flex flex-col h-full bg-secondary relative">
                     {left}
                 </div>
             </ResizablePanel>
             {biggerThanSm && <ResizableHandle id="resize-handle" withHandle />}
-            {/*biggerThanSm && <CollapseIndicator isCollapsed={leftPannelRef.current?.isCollapsed()} onToggle={onToggleCollapse} />*/}
+            {/**biggerThanSm && <CollapseIndicator leftPannelCollapsed={leftPannelRef.current?.isCollapsed()} onToggleCollapse={onToggleCollapse} />**/}
             <ResizablePanel
                 ref={rightPannelRef}
                 id="right-panel"

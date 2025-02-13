@@ -35,41 +35,51 @@ module.exports = {
   	},
   	extend: {
   		colors: {
-  			border: 'daisyuiColorObj["base-content"],
-  			input: 'daisyuiColorObj["base-content"],
-  			ring: 'daisyuiColorObj["base-content"],
-  			background: 'daisyuiColorObj["base-100"],
-  			foreground: 'daisyuiColorObj["base-content"],
+  			border: 'daisyuiColorObj["base-content"],',
+  			input: 'daisyuiColorObj["base-content"],',
+  			ring: 'daisyuiColorObj["base-content"],',
+  			background: 'daisyuiColorObj["base-100"],',
+  			foreground: 'daisyuiColorObj["base-content"],',
   			primary: {
-  				DEFAULT: 'daisyuiColorObj["primary"],
+  				DEFAULT: 'daisyuiColorObj["primary"],',
   				foreground: 'daisyuiColorObj["primary-content"]
   			},
   			secondary: {
-  				DEFAULT: 'daisyuiColorObj["secondary"],
+  				DEFAULT: 'daisyuiColorObj["secondary"],',
   				foreground: 'daisyuiColorObj["secondary-content"]
   			},
   			destructive: {
-  				DEFAULT: 'daisyuiColorObj["error"],
+  				DEFAULT: 'daisyuiColorObj["error"],',
   				foreground: 'daisyuiColorObj["error-content"]
   			},
   			muted: {
-  				DEFAULT: 'daisyuiColorObj["base-300"],
+  				DEFAULT: 'daisyuiColorObj["base-300"],',
   				foreground: 'daisyuiColorObj["base-content"]
   			},
   			accent: {
-  				DEFAULT: 'daisyuiColorObj["accent"],
+  				DEFAULT: 'daisyuiColorObj["accent"],',
   				foreground: 'daisyuiColorObj["accent-content"]
   			},
   			popover: {
-  				DEFAULT: 'daisyuiColorObj["base-100"],
+  				DEFAULT: 'daisyuiColorObj["base-100"],',
   				foreground: 'daisyuiColorObj["base-content"]
   			},
   			card: {
-  				DEFAULT: 'daisyuiColorObj["base-100"],
+  				DEFAULT: 'daisyuiColorObj["base-100"],',
   				foreground: 'daisyuiColorObj["base-content"]
   			},
   			zIndex: {
   				'60': '60'
+  			},
+  			sidebar: {
+  				DEFAULT: 'hsl(var(--sidebar-background))',
+  				foreground: 'hsl(var(--sidebar-foreground))',
+  				primary: 'hsl(var(--sidebar-primary))',
+  				'primary-foreground': 'hsl(var(--sidebar-primary-foreground))',
+  				accent: 'hsl(var(--sidebar-accent))',
+  				'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+  				border: 'hsl(var(--sidebar-border))',
+  				ring: 'hsl(var(--sidebar-ring))'
   			}
   		},
   		borderRadius: {

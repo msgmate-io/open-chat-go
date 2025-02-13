@@ -51,24 +51,24 @@ export function ChatSettings({
 
     return <DropdownMenu open={open} onOpenChange={setOpen}>
         {children}
-        <DropdownMenuContent className="w-56 pointer-events-none border-0 shadow-xl bg-base-300">
+        <DropdownMenuContent className="w-56 pointer-events-none border-0 shadow-xl bg-secondary">
             <DropdownMenuLabel className="h-6">Chat Settings</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="flex flex-row gap-1">
-                <Input type="text" value={extraName} onChange={(e) => setExtraName(e.target.value)} placeholder="Extra name" className="h-6 border-0" />
-                {(!extraName || !extraNameChanged) && <Button className="h-6 px-1 bg-base-200 hover:bg-accent">
+                <Input type="text" value={extraName} onChange={(e) => setExtraName(e.target.value)} placeholder="Extra name" className="h-6 border-0 bg-secondary" />
+                {(!extraName || !extraNameChanged) && <Button className="h-6 px-1 hover:bg-accent">
                     ✍️
                 </Button>}
-                {(extraName && extraNameChanged) && <Button className="h-6 px-1 bg-base-200 hover:bg-accent" onClick={onSaveExtraTitle}>
+                {(extraName && extraNameChanged) && <Button className="h-6 px-1 hover:bg-accent" onClick={onSaveExtraTitle}>
                     ✅
                 </Button>}
-                {chat?.settings?.title && !extraNameChanged && <Button className="h-6 px-1 bg-base-200 hover:bg-accent">
+                {chat?.settings?.title && !extraNameChanged && <Button className="h-6 px-1 hover:bg-accent">
                     🪣
                 </Button>}
-                {!chat?.settings?.title && !extraNameChanged && <Button className="h-6 px-1 bg-base-200 hover:bg-accent">
+                {!chat?.settings?.title && !extraNameChanged && <Button className="h-6 px-1 hover:bg-accent">
                     🕳️
                 </Button>}
-                {extraNameChanged && <Button className="h-6 px-1 bg-base-200 hover:bg-accent" onClick={onResetExtraText}>
+                {extraNameChanged && <Button className="h-6 px-1 hover:bg-accent" onClick={onResetExtraText}>
                     ↩
                 </Button>}
             </DropdownMenuLabel>
