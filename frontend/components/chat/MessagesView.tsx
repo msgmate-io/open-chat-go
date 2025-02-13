@@ -105,7 +105,7 @@ export function MessagesView({
     return <>
         <div className="flex flex-col h-full w-full content-center items-center">
             <div className="w-full flex items-center content-center justify-left">
-                <div className="absolute top-0 mt-2 ml-2 z-40">
+                <div className="absolute top-0 mt-2 ml-2 z-40 flex">
                     {leftPannelCollapsed && <CollapseIndicator leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onToggleCollapse} />}
                     <BotDisplay selectedModel={chat?.config?.model} />
                 </div>
