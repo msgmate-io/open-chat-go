@@ -52,12 +52,15 @@ export function ProfileCard({ navigateTo }: { navigateTo: (path: string) => void
     return <div className="shadow-xl">
         <DropdownMenu>
             <ProfileCardButton />
-            <DropdownMenuContent className="bg-base-100 w-56 border-0">
+            <DropdownMenuContent className="w-56 border-0">
                 <DropdownMenuLabel>My Account</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => {
                     navigateTo('/')
                 }}>Home Page</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                    navigateTo('/nodes')
+                }}>Nodes</DropdownMenuItem>
                 <DropdownMenuItem>Docs</DropdownMenuItem>
                 <DropdownMenuLabel><ThemeSelector /></DropdownMenuLabel>
                 <DropdownMenuItem disabled>API</DropdownMenuItem>

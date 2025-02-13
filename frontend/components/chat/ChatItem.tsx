@@ -29,9 +29,9 @@ export function ChatItem({ chat, isSelected = false }: {
     return (
         <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
             <Card className={cn(
-                "bg-base-200 hover:bg-base-300 p-0 border-0",
-                settingsOpen && "pointer-events-none hover:bg-base-300",
-                isSelected && "bg-base-100"
+                "bg-secondary hover:bg-accent p-0 border-0",
+                settingsOpen && "pointer-events-none hover:bg-accent",
+                isSelected && "bg-accent"
             )} key={chat.uuid} onClick={() => {
                 if (!settingsOpen) {
                     // TODO: navigate
@@ -73,9 +73,9 @@ export function ChatItemCompact({ chat = null, isSelected = false, navigateTo = 
     return (
         <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
             <Card className={cn(
-                "bg-base-200 hover:bg-base-100 p-0 border-0",
-                settingsOpen && "pointer-events-none hover:bg-base-300",
-                isSelected && "bg-base-100"
+                "bg-secondary hover:bg-accent p-0 border-0",
+                settingsOpen && "pointer-events-none hover:bg-accent",
+                isSelected && "bg-accent"
             )}
                 key={chat?.uuid} onClick={() => {
                     if (!settingsOpen) {
@@ -89,7 +89,7 @@ export function ChatItemCompact({ chat = null, isSelected = false, navigateTo = 
                             <div className="absolute right-4 flex flex-row">
                                 {/* <UnreadBadge unreadCount={0} /> TODO add the actual count */}
                                 {/* {!chat?.partner?.is_bot && <OnlineIndicator isOnline={false} />} */}
-                                <Button className="flex h-4 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
+                                <Button variant="ghost" className="flex h-4 w-6 p-0 content-center items-center justify-center bg-transparent shadow-none hover:bg-base-200" onClick={(e) => {
                                     setSettingsOpen(!settingsOpen)
                                     e.stopPropagation()
                                 }}><DotsHorizontal /></Button>
