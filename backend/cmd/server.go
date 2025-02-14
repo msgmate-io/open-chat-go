@@ -9,16 +9,102 @@ import (
 	"backend/server"
 	"backend/server/util"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/urfave/cli/v3"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/urfave/cli/v3"
 )
+
+// generateRandomPassword generates a secure random password with:
+// - At least 16 characters
+// - Contains uppercase and lowercase letters
+// - Contains numbers
+// - Contains special characters
+func generateRandomPassword() (string, error) {
+	const (
+		lowercase = "abcdefghijklmnopqrstuvwxyz"
+		uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		numbers   = "0123456789"
+		special   = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+		allChars  = lowercase + uppercase + numbers + special
+	)
+
+	// Ensure at least one of each required character type
+	password := make([]byte, 16)
+
+	// Use crypto/rand for secure random selection
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+
+	password[0] = lowercase[int(randomBytes[0])%len(lowercase)]
+	password[1] = uppercase[int(randomBytes[1])%len(uppercase)]
+	password[2] = numbers[int(randomBytes[2])%len(numbers)]
+	password[3] = special[int(randomBytes[3])%len(special)]
+
+	// Fill the rest randomly
+	for i := 4; i < 16; i++ {
+		password[i] = allChars[int(randomBytes[i])%len(allChars)]
+	}
+
+	// Shuffle the password to avoid predictable patterns
+	shuffleBytes := make([]byte, 16)
+	if _, err := rand.Read(shuffleBytes); err != nil {
+		return "", err
+	}
+	for i := len(password) - 1; i > 0; i-- {
+		j := int(shuffleBytes[i]) % (i + 1)
+		password[i], password[j] = password[j], password[i]
+	}
+
+	return string(password), nil
+}
+
+// validatePasswordStrength validates that a password meets security requirements:
+// - At least 8 characters long
+// - Contains letters and numbers
+// - Contains at least one special character
+func validatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters long")
+	}
+
+	hasLetter := false
+	hasNumber := false
+	hasSpecial := false
+
+	for _, char := range password {
+		switch {
+		case unicode.IsLetter(char):
+			hasLetter = true
+		case unicode.IsNumber(char):
+			hasNumber = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	if !hasLetter {
+		return fmt.Errorf("password must contain at least one letter")
+	}
+	if !hasNumber {
+		return fmt.Errorf("password must contain at least one number")
+	}
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
+	}
+
+	return nil
+}
 
 func GetServerFlags() []cli.Flag {
 	return []cli.Flag{
@@ -96,7 +182,7 @@ func GetServerFlags() []cli.Flag {
 			Name:    "root-credentials",
 			Aliases: []string{"rc"},
 			Usage:   "root credentials",
-			Value:   "admin:password",
+			Value:   "admin:random",
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
@@ -246,6 +332,23 @@ func ServerCli() *cli.Command {
 			password := rootCredentials[1]
 			var adminUser *database.User
 
+			// Handle random password generation
+			if password == "random" {
+				generatedPassword, err := generateRandomPassword()
+				if err != nil {
+					return fmt.Errorf("failed to generate random password: %w", err)
+				}
+				password = generatedPassword
+				fmt.Printf("Generated random root password: %s\n", password)
+				fmt.Println("⚠️  IMPORTANT: Save this password securely! It will not be shown again.")
+			} else if !c.Bool("debug") {
+				// Validate password strength if not in debug mode
+				if err := validatePasswordStrength(password); err != nil {
+					return fmt.Errorf("password does not meet security requirements: %w", err)
+				}
+			}
+
+			// hashed passwords always pass the strengh validation anyways due to the prefix
 			if strings.HasPrefix(password, "hashed_") {
 				hashedPassword := strings.TrimPrefix(password, "hashed_")
 				// instead of providing the plain text password one may also provide a pre-hashed password
