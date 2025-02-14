@@ -5,7 +5,6 @@ import (
 	"backend/api/admin"
 	"backend/api/chats"
 	"backend/api/contacts"
-	"backend/api/federation"
 	"backend/api/files"
 	"backend/api/integrations"
 	"backend/api/metrics"
@@ -20,7 +19,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"gorm.io/gorm"
 	"io"
 	"io/fs"
 	"log"
@@ -30,6 +28,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 //go:embed all:frontend routes.json swagger.json
@@ -279,7 +279,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
 	providerMiddlewares := CreateStack(
-		federation.DomainRoutingMiddleware(DB),
+		getDomainRoutingMiddleware(DB),
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 	)
