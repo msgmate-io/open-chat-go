@@ -12,7 +12,19 @@ type SignalWhitelistRequest struct {
 	PhoneNumber string `json:"phone_number"`
 }
 
-// List whitelist numbers for a Signal integration
+// GetSignalWhitelist returns the whitelist of phone numbers for a Signal integration
+//
+//	@Summary      Get Signal whitelist
+//	@Description  Retrieve the list of whitelisted phone numbers for a Signal integration. Only whitelisted numbers can send messages through the integration.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        alias path string true "Signal integration alias"
+//	@Success      200 {object} map[string]interface{} "Whitelist of phone numbers"
+//	@Failure      400 {string} string "Unable to get database or user, or alias missing"
+//	@Failure      404 {string} string "Integration not found"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/signal/{alias}/whitelist [get]
 func (h *IntegrationsHandler) GetSignalWhitelist(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -49,7 +61,20 @@ func (h *IntegrationsHandler) GetSignalWhitelist(w http.ResponseWriter, r *http.
 	})
 }
 
-// Add a number to the Signal integration whitelist
+// AddToSignalWhitelist adds a phone number to the Signal integration whitelist
+//
+//	@Summary      Add to Signal whitelist
+//	@Description  Add a phone number to the whitelist of a Signal integration. Whitelisted numbers are allowed to send messages through the integration.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        alias path string true "Signal integration alias"
+//	@Param        request body SignalWhitelistRequest true "Phone number to add"
+//	@Success      200 {object} map[string]interface{} "Success message"
+//	@Failure      400 {string} string "Unable to get database or user, alias missing, or invalid request"
+//	@Failure      404 {string} string "Integration not found"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/signal/{alias}/whitelist/add [post]
 func (h *IntegrationsHandler) AddToSignalWhitelist(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -113,7 +138,20 @@ func (h *IntegrationsHandler) AddToSignalWhitelist(w http.ResponseWriter, r *htt
 	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Number added to whitelist"})
 }
 
-// Remove a number from the Signal integration whitelist
+// RemoveFromSignalWhitelist removes a phone number from the Signal integration whitelist
+//
+//	@Summary      Remove from Signal whitelist
+//	@Description  Remove a phone number from the whitelist of a Signal integration. The number will no longer be able to send messages through the integration.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        alias path string true "Signal integration alias"
+//	@Param        request body SignalWhitelistRequest true "Phone number to remove"
+//	@Success      200 {object} map[string]interface{} "Success message"
+//	@Failure      400 {string} string "Unable to get database or user, alias missing, or invalid request"
+//	@Failure      404 {string} string "Integration not found"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/signal/{alias}/whitelist/remove [post]
 func (h *IntegrationsHandler) RemoveFromSignalWhitelist(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
