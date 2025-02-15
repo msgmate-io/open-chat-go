@@ -10,12 +10,39 @@ import (
 
 // TODO: allow different message types
 type SendMessage struct {
-	Text string `json:"text"`
+	Text      string    `json:"text"`
+	Reasoning *[]string `json:"reasoning,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
 	Text      string   `json:"text"`
 	Reasoning []string `json:"reasoning"`
+}
+
+// MessageData interface for different message types
+type MessageData interface {
+	GetText() string
+	GetReasoning() []string
+}
+
+// Add GetText and GetReasoning methods to both types
+func (m SendMessage) GetText() string {
+	return m.Text
+}
+
+func (m SendMessage) GetReasoning() []string {
+	if m.Reasoning == nil {
+		return nil
+	}
+	return *m.Reasoning
+}
+
+func (m SendMessageWithReasoning) GetText() string {
+	return m.Text
+}
+
+func (m SendMessageWithReasoning) GetReasoning() []string {
+	return m.Reasoning
 }
 
 // Send a message to a chat
@@ -81,6 +108,11 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		SenderId:   user.ID,
 		ReceiverId: receiverId,
 		Text:       &data.Text,
+	}
+
+	// Only set Reasoning if it's not nil
+	if data.Reasoning != nil {
+		message.Reasoning = data.Reasoning
 	}
 
 	q := DB.Create(&message)
@@ -164,15 +196,15 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data SendMessageWithReasoning) {
+func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data MessageData) {
 	ch.MessageHandler.SendMessage(
 		ch,
 		receiverId,
 		ch.MessageHandler.NewMessage(
 			chatUuid,
 			user.UUID,
-			data.Text,
-			data.Reasoning,
+			data.GetText(),
+			data.GetReasoning(),
 		),
 	)
 }
