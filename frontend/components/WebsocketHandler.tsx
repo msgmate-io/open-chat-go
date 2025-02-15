@@ -36,9 +36,9 @@ export function WebsocketHandlerBase({
             const parsedMessage = JSON.parse(lastMessage.data)
             console.log("parsedMessage", parsedMessage)
             if(parsedMessage.type === "new_partial_message"){
-                appendPartialMessage(parsedMessage?.content?.chat_uuid, parsedMessage?.content?.text)
+                appendPartialMessage(parsedMessage?.content?.chat_uuid, {text: parsedMessage?.content?.text, thoughts: parsedMessage?.content?.reasoning})
             }else if(parsedMessage.type === "start_partial_message"){
-                addPartialMessage(parsedMessage?.content?.chat_uuid, "")
+                addPartialMessage(parsedMessage?.content?.chat_uuid, {text: "", thoughts: []})
             }else if(parsedMessage.type === "end_partial_message"){
                 // TODO: this callback isn't used cause it can cause a quick flash of the message
                 // removePartialMessage(parsedMessage?.content?.chat_uuid)
