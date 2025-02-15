@@ -26,6 +26,7 @@ export function MessagesScroll({
     const [stickScroll, setStickScroll] = useState(false)                                                                                                                                                            
     const { partialMessages, addPartialMessage, removePartialMessage } = usePartialMessageStore()                                                                                                                    
     const [isSendingMessage, setIsSendingMessage] = useState(false)
+    console.log("partialMessages", partialMessages)
 
     const scrollRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -74,13 +75,12 @@ export function MessagesScroll({
         console.log("interrupt sent")
     }
     
-    const isBotResponding = chatUUID ? partialMessages?.[chatUUID]?.length > 0 : false
+    const isBotResponding = chatUUID ? (partialMessages?.[chatUUID]?.text.length > 0 || partialMessages?.[chatUUID]?.thoughts.length > 0) : false
 
     return <div className="flex flex-col h-full w-full lg:max-w-[900px] relative">
         <div ref={scrollRef} className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto relative pb-4 pt-2">
-            {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={message} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
-            {chatUUID && partialMessages?.[chatUUID] && <MessageItem key={`msg_${chatUUID}`} message={{text: partialMessages[chatUUID]}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
-            <PendingMessageItem />
+            {messages && messages.rows.map((message: any) => <MessageItem key={`msg_${message.uuid}`} message={{text: message.text, thoughts: message.reasoning}} chat={chat} selfIsSender={user?.uuid === message.sender_uuid} isBotChat={true} />).reverse()}
+            {chatUUID && partialMessages?.[chatUUID] && <MessageItem key={`msg_${chatUUID}`} message={{text: partialMessages[chatUUID]?.text, thoughts: partialMessages[chatUUID]?.thoughts}} chat={chat} selfIsSender={user?.uuid === chat.sender_uuid} isBotChat={true} />}
         </div>
         {!hideInput && <MessageInput text={text} setText={setText} isLoading={isSendingMessage} isBotResponding={isBotResponding} stopBotResponse={onStopBotResponse} onSendMessage={onSendMessage} ref={inputRef} />}
     </div>
