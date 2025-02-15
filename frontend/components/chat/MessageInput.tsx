@@ -110,7 +110,7 @@ export const MessageInput = forwardRef<
     };
 
     return <div className='flex flex-col content-center items-center justify-center'>
-        <Card className="bg-base-200 pr-4 md:px-4 flex items-center rounded-3xl border-0 max-w-[900px] md:min-w-[800px] mb-2" key={"chatListHeader"}>
+        <Card className="bg-background pr-4 md:px-4 flex items-center rounded-3xl border-0 max-w-[900px] md:min-w-[800px] mb-2" key={"chatListHeader"}>
             <div className="flex pr-4">
                 <ToggleInputModeButton />
             </div>
@@ -119,7 +119,7 @@ export const MessageInput = forwardRef<
                 placeholder="Send message to Msgmate.io"
                 onChange={handleTextChange}
                 onKeyPress={handleKeyPress}
-                className={`bg-base-200 rounded-2xl text-lg resize-none border-0 focus:border-0 outline-none focus:outline-none shadow-none focus:shadow-none h-[${minHeight}px]`}
+                className={`bg-background rounded-2xl text-lg resize-none border-0 focus:border-0 outline-none focus:outline-none shadow-none focus:shadow-none h-[${minHeight}px]`}
                 style={{
                     overflowY: 'hidden',
                     height: `${minHeight}px`,
