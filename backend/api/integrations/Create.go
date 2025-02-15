@@ -5,13 +5,14 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"fmt"
-	"gorm.io/gorm"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // CreateIntegrationRequest represents the request for creating a new integration
@@ -28,7 +29,18 @@ type CreateIntegrationResponse struct {
 }
 
 // Create handles the creation of new integrations
-// POST /api/v1/integrations/create
+//
+//	@Summary      Create integration
+//	@Description  Create a new integration for the authenticated user. Supports different integration types (e.g., signal). For Signal integrations, this sets up a Docker container and configures the integration.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        request body CreateIntegrationRequest true "Integration creation request"
+//	@Success      201 {object} CreateIntegrationResponse "Integration created successfully"
+//	@Failure      400 {string} string "Invalid request or missing required fields"
+//	@Failure      409 {string} string "Integration with this name already exists"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/create [post]
 func (h *IntegrationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -70,6 +82,8 @@ func (h *IntegrationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	switch data.IntegrationType {
 	case "signal":
 		err = h.createSignalIntegration(DB, *user, data)
+	case "matrix":
+		err = h.createMatrixIntegration(DB, *user, data)
 	default:
 		http.Error(w, fmt.Sprintf("Unsupported integration type: %s", data.IntegrationType), http.StatusBadRequest)
 		return
@@ -232,6 +246,149 @@ func (h *IntegrationsHandler) createSignalIntegration(DB *gorm.DB, user database
 
 	// Signal polling is now handled by SignalBotService in the scheduler
 	log.Printf("Signal integration created - polling will be handled by SignalBotService")
+
+	return nil
+}
+
+// createMatrixIntegration creates a Matrix integration for encrypted messaging
+func (h *IntegrationsHandler) createMatrixIntegration(DB *gorm.DB, user database.User, data CreateIntegrationRequest) error {
+	// Extract Matrix-specific configuration
+	homeserver, ok := data.Config["homeserver"].(string)
+	if !ok || homeserver == "" {
+		return fmt.Errorf("homeserver is required for Matrix integration")
+	}
+
+	userID, ok := data.Config["user_id"].(string)
+	if !ok || userID == "" {
+		return fmt.Errorf("user_id is required for Matrix integration")
+	}
+
+	deviceID, ok := data.Config["device_id"].(string)
+	if !ok || deviceID == "" {
+		return fmt.Errorf("device_id is required for Matrix integration")
+	}
+
+	accessToken, ok := data.Config["access_token"].(string)
+	if !ok || accessToken == "" {
+		return fmt.Errorf("access_token is required for Matrix integration")
+	}
+
+	// Optional: display name
+	displayName, _ := data.Config["display_name"].(string)
+
+	// Optional: encryption settings
+	enableEncryption := true // Default to enabled
+	if enc, ok := data.Config["enable_encryption"].(bool); ok {
+		enableEncryption = enc
+	}
+
+	// Check if Matrix user exists, create if not
+	var matrixUser database.User
+	result := DB.Where("name = ?", MatrixUserName).First(&matrixUser)
+	if result.Error != nil {
+		// Matrix user doesn't exist, create it
+		log.Printf("Creating Matrix system user")
+		randomPassword := []byte(fmt.Sprintf("matrix-%d", time.Now().UnixNano()))
+		newMatrixUser, err := database.RegisterUser(
+			DB,
+			MatrixUserName,
+			MatrixUserEmail,
+			randomPassword,
+		)
+		if err != nil {
+			log.Printf("Warning: Failed to create Matrix user: %v", err)
+		} else {
+			log.Printf("Created Matrix user with ID: %d", newMatrixUser.ID)
+			matrixUser = *newMatrixUser
+
+			// Create contact relationship between the installing user and Matrix user
+			contact := database.Contact{
+				OwningUserId:  user.ID,
+				ContactUserId: matrixUser.ID,
+			}
+
+			if err := DB.Create(&contact).Error; err != nil {
+				log.Printf("Warning: Failed to create contact relationship with Matrix user: %v", err)
+			} else {
+				log.Printf("Created contact relationship between user %d and Matrix user %d", user.ID, matrixUser.ID)
+			}
+		}
+	} else {
+		log.Printf("Matrix user already exists with ID: %d", matrixUser.ID)
+
+		// Check if contact relationship already exists
+		var existingContact database.Contact
+		contactResult := DB.Where("owning_user_id = ? AND contact_user_id = ?", user.ID, matrixUser.ID).First(&existingContact)
+
+		if contactResult.Error != nil {
+			// Contact doesn't exist, create it
+			contact := database.Contact{
+				OwningUserId:  user.ID,
+				ContactUserId: matrixUser.ID,
+			}
+
+			if err := DB.Create(&contact).Error; err != nil {
+				log.Printf("Warning: Failed to create contact relationship with Matrix user: %v", err)
+			} else {
+				log.Printf("Created contact relationship between user %d and Matrix user %d", user.ID, matrixUser.ID)
+			}
+		}
+	}
+
+	// Store the integration config
+	configData := map[string]interface{}{
+		"homeserver":        homeserver,
+		"user_id":           userID,
+		"device_id":         deviceID,
+		"display_name":      displayName,
+		"enable_encryption": enableEncryption,
+		"whitelist":         []string{}, // Initialize with empty whitelist
+	}
+
+	configBytes, err := json.Marshal(configData)
+	if err != nil {
+		return fmt.Errorf("failed to serialize configuration: %v", err)
+	}
+
+	// Create the integration
+	integration := database.Integration{
+		IntegrationName: data.IntegrationName,
+		IntegrationType: "matrix",
+		Active:          true,
+		Config:          configBytes,
+		UserID:          user.ID,
+	}
+
+	if err := DB.Create(&integration).Error; err != nil {
+		return fmt.Errorf("failed to save integration: %v", err)
+	}
+
+	// Create the Matrix client state
+	matrixState := database.MatrixClientState{
+		IntegrationID: integration.ID,
+		UserID:        userID,
+		DeviceID:      deviceID,
+		Homeserver:    homeserver,
+		AccessToken:   accessToken, // Note: In production, this should be encrypted
+		DisplayName:   displayName,
+	}
+
+	if err := DB.Create(&matrixState).Error; err != nil {
+		// Rollback integration creation
+		DB.Delete(&integration)
+		return fmt.Errorf("failed to create Matrix client state: %v", err)
+	}
+
+	log.Printf("Matrix integration '%s' created successfully for user %s", data.IntegrationName, userID)
+
+	// Start the Matrix integration service if available
+	if h.MatrixService != nil {
+		go func() {
+			if err := h.MatrixService.StartIntegration(integration); err != nil {
+				log.Printf("Warning: Failed to start Matrix integration: %v", err)
+			}
+		}()
+	}
 
 	return nil
 }
