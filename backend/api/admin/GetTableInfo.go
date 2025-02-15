@@ -31,7 +31,7 @@ var tableConfigurations = map[string]TableInfoConfig{
 		IncludeFields: []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt", "Name", "Email", "Password", "Role"},
 	},
 	"messages": {
-		IncludeFields: []string{"UUID", "ID", "CreatedAt", "DeletedAt", "SenderId", "ReceiverId", "DataType", "ChatId", "Text"},
+		IncludeFields: []string{"UUID", "ID", "CreatedAt", "DeletedAt", "SenderId", "ReceiverId", "DataType", "ChatId", "Text", "Reasoning", "MetaData"},
 	},
 }
 
