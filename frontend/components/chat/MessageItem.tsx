@@ -159,6 +159,12 @@ function wrapInBlockquote(children: any) {
 import { ThumbsUp, ThumbsDown, Volume2, Clipboard, Pen, RefreshCcw } from "lucide-react";
 
 const BotMessageToolbar = ({message}: {message: any}) => {
+    let tokensPerSecond = 0.0
+    let parsedTotalTime = 0.0
+    if(message?.meta_data?.total_time && message?.meta_data?.token_usage?.completion_tokens){
+        parsedTotalTime = parseFloat(message?.meta_data?.total_time)
+        tokensPerSecond = parseFloat((message?.meta_data?.token_usage?.completion_tokens / parsedTotalTime).toFixed(2))
+    }
   return (
     <div className="flex items-center gap-3 p-2 rounded-lg text-foreground">
       <Clipboard className="cursor-pointer hover:text-foreground" size={20} />
@@ -167,7 +173,9 @@ const BotMessageToolbar = ({message}: {message: any}) => {
       <Volume2 className="cursor-pointer hover:text-foreground" size={20} />*/}
       {/*<Pen className="cursor-pointer hover:text-white" size={20} />*/}
       <RefreshCcw className="cursor-pointer hover:text-foreground" size={20} />
-      <span className="text-foreground text-sm">Generated in {message?.meta_data?.total_time}</span>
+      {message?.is_generating && <span className="text-foreground text-sm"> {message?.meta_data?.total_time} generating...</span>}
+      {(!message?.is_generating && !message?.meta_data?.cancelled && message?.text !== "") && <span className="text-foreground text-sm"> (prompt: {message?.meta_data?.token_usage?.prompt_tokens} completion: {message?.meta_data?.token_usage?.completion_tokens} total: {message?.meta_data?.token_usage?.total_tokens}) in {message?.meta_data?.total_time} ({tokensPerSecond} tokens/s)</span>}
+      {message?.meta_data?.cancelled && <span className="text-foreground text-sm">Cancelled</span>}
     </div>
   );
 };
