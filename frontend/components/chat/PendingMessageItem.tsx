@@ -2,7 +2,7 @@ import { CinematicLogo } from "@/components/CinematicLogo"
 import { useContext } from "react"
 import logoUrl from "@/assets/logo.png"
 
-const ShinyText = ({ children }: { children: React.ReactNode }) => {
+export const ShinyText = ({ children }: { children: React.ReactNode }) => {
     return (
         <span className="shiny-text" data-content={children}>
             {children}
