@@ -88,6 +88,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		DB.Create(&sharedConfig)
 		chat.SharedConfigId = &sharedConfig.ID
+		chat.SharedConfig = &sharedConfig
 		DB.Save(&chat)
 	}
 

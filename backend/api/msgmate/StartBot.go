@@ -274,7 +274,10 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			ocClient.GetApiKey("deepinfra"),
 		)
 
-		var fullText strings.Builder
+		var fullText, thoughtText, thoughtBuffer strings.Builder
+		var isThinking bool
+		var currentBuffer strings.Builder
+
 		ch.MessageHandler.SendMessage(
 			ch,
 			message.Content.SenderUUID,
@@ -298,10 +301,79 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			text := fullText.String()
 			if isCancelled {
 				text += "\n[cancelled]"
+				if reasoning {
+					thoughtText.WriteString(thoughtBuffer.String())
+					thoughtText.WriteString("\n[cancelled]")
+				}
 			}
-			ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
-				Text: text,
-			})
+
+			if reasoning {
+				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
+					Text:      text,
+					Reasoning: []string{thoughtText.String()},
+				})
+			} else {
+				ocClient.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
+					Text: text,
+				})
+			}
+		}
+
+		processChunk := func(chunk string) {
+			if reasoning {
+				currentBuffer.WriteString(chunk)
+				bufferStr := currentBuffer.String()
+
+				// Check for thinking tags
+				if strings.Contains(bufferStr, "<think>") && !isThinking {
+					isThinking = true
+					currentBuffer.Reset()
+				} else if strings.Contains(bufferStr, "</think>") && isThinking {
+					isThinking = false
+					// Extract thought content (everything before </think>)
+					thought := bufferStr[:strings.Index(bufferStr, "</think>")]
+					thoughtText.WriteString(thought)
+					currentBuffer.Reset()
+				} else {
+					if !isThinking {
+						fullText.WriteString(chunk)
+						ch.MessageHandler.SendMessage(
+							ch,
+							message.Content.SenderUUID,
+							ch.MessageHandler.NewPartialMessage(
+								message.Content.ChatUUID,
+								message.Content.SenderUUID,
+								chunk,
+								[]string{""},
+							),
+						)
+					} else {
+						thoughtBuffer.WriteString(chunk)
+						ch.MessageHandler.SendMessage(
+							ch,
+							message.Content.SenderUUID,
+							ch.MessageHandler.NewPartialMessage(
+								message.Content.ChatUUID,
+								message.Content.SenderUUID,
+								"",
+								[]string{chunk},
+							),
+						)
+					}
+				}
+			} else {
+				fullText.WriteString(chunk)
+				ch.MessageHandler.SendMessage(
+					ch,
+					message.Content.SenderUUID,
+					ch.MessageHandler.NewPartialMessage(
+						message.Content.ChatUUID,
+						message.Content.SenderUUID,
+						chunk,
+						[]string{},
+					),
+				)
+			}
 		}
 
 		for {
@@ -314,16 +386,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				if !ok {
 					chunks = nil
 				} else {
-					ch.MessageHandler.SendMessage(
-						ch,
-						message.Content.SenderUUID,
-						ch.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
-							message.Content.SenderUUID,
-							chunk,
-						),
-					)
-					fullText.WriteString(chunk)
+					processChunk(chunk)
 				}
 			case err, ok := <-errs:
 				if ok && err != nil {
