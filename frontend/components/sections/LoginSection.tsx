@@ -162,7 +162,7 @@ export function LoginSection({
     navigateTo: (to: string) => void
 }) {
 
-    return <div className="container py-24 sm:py-32 flex flex-col flex-grow items-center content-center justify-center" id={sectionId}>
+    return <div className="container py-24 sm:py-32 flex flex-col flex-grow items-center content-center justify-center text-foreground" id={sectionId}>
         <div className="flex flex-col items-center content-center justify-center pb-2">
             <h1 className="text-2xl font-bold text-center">Welcome back!</h1>
             <p className="text-lg text-center">To Open-Chat! Login:</p>

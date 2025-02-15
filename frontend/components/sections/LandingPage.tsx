@@ -123,13 +123,13 @@ export function LandingHero({
 
     return <>
         <div className="flex relative w-full z-40">
-            <div className="absolute flex w-full p-4 font-bold text-2xl w-full">
+            <div className="absolute flex w-full p-4 font-bold text-2xl w-full text-foreground">
                 Open-Chat
                 <div className="text-sm text-gray-500 mt-3 ml-1">by Msgmate.io (beta)</div>
             </div>
         </div>
         <div className="flex flex-row items-center justify-center content-center h-screen">
-            <div className="flex flex-col flex-grow items-center justify-center content-center bg-background w-2/3 h-full shadow-xl z-10 lg:flex relative">
+            <div className="flex flex-col flex-grow items-center justify-center content-center bg-background w-2/3 h-full shadow-xl z-10 lg:flex relative text-foreground">
                 <Typewriter
                     typingSpeed={10}
                     texts={TEXTS} />
