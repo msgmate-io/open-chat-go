@@ -24,8 +24,9 @@ import (
 )
 
 type SendMessage struct {
-	Text      string   `json:"text"`
-	Reasoning []string `json:"reasoning"`
+	Text      string                  `json:"text"`
+	Reasoning []string                `json:"reasoning"`
+	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
 }
 
 type Client struct {
