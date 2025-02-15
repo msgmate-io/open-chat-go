@@ -28,6 +28,18 @@ type InstallSignalRestRequest struct {
 	Mode        string `json:"mode"`
 }
 
+// InstallSignalRest installs a Signal REST API integration
+//
+//	@Summary      Install Signal REST API integration
+//	@Description  Install a Signal REST API integration by starting a Docker container and configuring the integration. Creates a Signal system user if it doesn't exist.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        request body InstallSignalRestRequest true "Signal installation request"
+//	@Success      201 {object} map[string]interface{} "Integration installed successfully"
+//	@Failure      400 {string} string "Invalid request, missing fields, or Docker not available"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/signal/install [post]
 func (h *IntegrationsHandler) InstallSignalRest(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -208,6 +220,19 @@ type UninstallSignalRestRequest struct {
 	Alias string `json:"alias"`
 }
 
+// UninstallSignalRest uninstalls a Signal REST API integration
+//
+//	@Summary      Uninstall Signal REST API integration
+//	@Description  Uninstall a Signal REST API integration by stopping and removing the Docker container, archiving data, and marking the integration as inactive.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        request body UninstallSignalRestRequest true "Signal uninstallation request"
+//	@Success      200 {object} map[string]interface{} "Integration uninstalled successfully with archive path"
+//	@Failure      400 {string} string "Invalid request or missing alias"
+//	@Failure      404 {string} string "Integration not found"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/signal/uninstall [post]
 func (h *IntegrationsHandler) UninstallSignalRest(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
