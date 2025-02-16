@@ -15,6 +15,8 @@ import (
 type ToolCall struct {
 	ToolName  string
 	ToolInput interface{}
+	Id        string
+	Result    string
 }
 
 type ToolCallsResult struct {
@@ -165,6 +167,7 @@ func streamChatCompletion(
 	backend string,
 	messages []map[string]interface{},
 	tools []interface{},
+	toolMap map[string]Tool,
 	apiKey string,
 ) (<-chan string, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
@@ -187,10 +190,19 @@ func streamChatCompletion(
 		defer close(errChan)
 
 		currentMessages := messages
+		maxRetries := 3 // Maximum number of tool call retries
+		retryCount := 0
+
 		for {
+			// Check if we've exceeded max retries
+			if retryCount >= maxRetries {
+				errChan <- fmt.Errorf("exceeded maximum number of tool call retries (%d)", maxRetries)
+				return
+			}
+
 			// Make initial request
 			toolCallResult, err := processStreamingRequest(
-				host, model, backend, currentMessages, tools, apiKey,
+				host, model, backend, currentMessages, tools, toolMap, apiKey,
 				chunkChan, usageChan, toolChan, errChan,
 			)
 			if err != nil {
@@ -205,6 +217,9 @@ func streamChatCompletion(
 				return
 			}
 
+			// Increment retry counter when a tool is used
+			retryCount++
+
 			toolsCallMessage := map[string]interface{}{
 				"role":         "assistant",
 				"tool_call_id": toolCallResult.id,
@@ -214,7 +229,7 @@ func streamChatCompletion(
 						"type": "function",
 						"id":   toolCallResult.id,
 						"function": map[string]interface{}{
-							"arguments": toolCallResult.result,
+							"arguments": toolCallResult.arguments,
 							"name":      toolCallResult.toolName,
 						},
 					},
@@ -243,6 +258,7 @@ type toolCallResult struct {
 	toolName        string
 	toolCallMessage map[string]string
 	result          string
+	arguments       string
 	err             error
 }
 
@@ -250,6 +266,7 @@ func processStreamingRequest(
 	host, model, backend string,
 	messages []map[string]interface{},
 	tools []interface{},
+	toolMap map[string]Tool,
 	apiKey string,
 	chunkChan chan<- string,
 	usageChan chan<- *struct {
@@ -396,13 +413,28 @@ func processStreamingRequest(
 
 					// Try to parse complete tool call
 					if currentToolCall.name != "" && currentToolCall.arguments != "" {
-						var toolsTmp Tool = NewWeatherTool()
-						if toolInput, err := toolsTmp.ParseArguments(currentToolCall.arguments); err == nil {
+						tool := toolMap[currentToolCall.name]
+						if toolInput, err := tool.ParseArguments(currentToolCall.arguments); err == nil {
 							toolChan <- ToolCall{
 								ToolName:  currentToolCall.name,
 								ToolInput: toolInput,
+								Id:        currentToolCall.id,
+								Result:    "",
 							}
-							result.result = "The weather in Paris is sunny" // TODO call the actual tool
+
+							// call the tools
+							result.result, err = tool.RunTool(toolInput)
+							if err != nil {
+								result.err = err
+							}
+							result.arguments = currentToolCall.arguments
+
+							toolChan <- ToolCall{
+								ToolName:  currentToolCall.name,
+								ToolInput: toolInput,
+								Id:        currentToolCall.id,
+								Result:    result.result,
+							}
 						}
 					}
 				}
