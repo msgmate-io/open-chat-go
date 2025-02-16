@@ -9,14 +9,12 @@ import (
 type Tool interface {
 	Run(input string) (string, error)
 	RunTool(input interface{}) (string, error)
+	ParseArguments(input string) (interface{}, error)
 	GetToolFunctionName() string
 	GetToolDescription() string
 	GetToolType() string
 	GetToolName() string
 	GetToolParameters() map[string]interface{}
-}
-
-type ToolFactory interface {
 	ConstructTool() interface{}
 }
 
@@ -31,20 +29,31 @@ type BaseTool struct {
 
 func (t *BaseTool) ConstructTool() interface{} {
 	return map[string]interface{}{
-		"type":        t.ToolType,
-		"function":    t.GetToolFunctionName(),
-		"description": t.GetToolDescription(),
-		"parameters": map[string]interface{}{
-			"type":        "object",
-			"properties":  t.GetToolParameters(),
-			"required":    t.RequiredParams,
-			"description": "The parameters for the tool",
+		"type": t.ToolType,
+		"function": map[string]interface{}{
+			"name":        t.GetToolFunctionName(),
+			"description": t.GetToolDescription(),
+			"parameters": map[string]interface{}{
+				"type":        "object",
+				"properties":  t.GetToolParameters(),
+				"required":    t.RequiredParams,
+				"description": "The parameters for the tool",
+			},
 		},
 	}
 }
 
 func (t *BaseTool) RunTool(input interface{}) (string, error) {
 	return "", nil // User must overrite this otherwise tool ain't doing anything
+}
+
+func (t *BaseTool) ParseArguments(input string) (interface{}, error) {
+	toolInput := t.ToolInput
+	err := json.Unmarshal([]byte(input), &toolInput)
+	if err != nil {
+		return nil, err
+	}
+	return toolInput, nil
 }
 
 func (t *BaseTool) Run(input string) (string, error) {
@@ -98,28 +107,37 @@ func (t *WeatherTool) RunTool(input interface{}) (string, error) {
 	return "The temperature in " + weatherToolInput.Location + " is " + strconv.Itoa(rand.Intn(100)) + " " + weatherToolInput.Unit, nil
 }
 
+func (t *WeatherTool) ParseArguments(input string) (interface{}, error) {
+	var weatherInput WeatherToolInput
+	err := json.Unmarshal([]byte(input), &weatherInput)
+	if err != nil {
+		return nil, err
+	}
+	return weatherInput, nil
+}
+
 type ToolManager struct {
 	Tools []Tool
 }
 
 func NewWeatherTool() Tool {
-	return &WeatherTool{
-		BaseTool: BaseTool{
-			ToolName:        "WeatherTool",
-			ToolType:        "function",
-			ToolInput:       WeatherToolInput{},
-			ToolDescription: "Return the temperature of the specified region specified by the user",
-			RequiredParams:  []string{"location", "unit"},
-			Parameters: map[string]interface{}{
-				"location": map[string]interface{}{
-					"type":        "string",
-					"description": "The location to get weather for",
-				},
-				"unit": map[string]interface{}{
-					"type":        "string",
-					"description": "The unit of temperature (C or F)",
-				},
+	weatherTool := &WeatherTool{}
+	weatherTool.BaseTool = BaseTool{
+		ToolName:        "WeatherTool",
+		ToolType:        "function",
+		ToolInput:       WeatherToolInput{},
+		ToolDescription: "Return the temperature of the specified region specified by the user",
+		RequiredParams:  []string{"location", "unit"},
+		Parameters: map[string]interface{}{
+			"location": map[string]interface{}{
+				"type":        "string",
+				"description": "The location to get weather for",
+			},
+			"unit": map[string]interface{}{
+				"type":        "string",
+				"description": "The unit of temperature (C or F)",
 			},
 		},
 	}
+	return weatherTool
 }
