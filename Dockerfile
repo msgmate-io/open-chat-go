@@ -17,7 +17,7 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /backend
 
-RUN apk add --no-cache gcc musl-dev
+RUN apk add --no-cache gcc musl-dev bash libc6-compat
 COPY backend/go.mod ./
 COPY backend/go.sum ./
 RUN CGO_ENABLED=1 go mod download
@@ -29,7 +29,8 @@ COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
 
 ARG MVPAPP_VERSION=dockerbuild
-RUN go build -ldflags="-X main.version=$MVPAPP_VERSION"
+RUN ls -alt
+RUN bash full_build.sh --no-frontend
 
 FROM scratch AS prod
 COPY --from=builder /backend/backend /backend
