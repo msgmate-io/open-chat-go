@@ -21,7 +21,7 @@ type ToolCallsResult struct {
 	ToolCalls []ToolCall
 }
 
-func toolRequest(host string, model string, backend string, messages []map[string]string, apiKey string) (<-chan ToolCallsResult, <-chan *struct {
+func toolRequest(host string, model string, backend string, messages []map[string]string, tools []interface{}, apiKey string) (<-chan ToolCallsResult, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
@@ -45,6 +45,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 		requestBody := map[string]interface{}{
 			"model":    model,
 			"messages": messages,
+			"tools":    tools,
 		}
 
 		// Convert the request body to JSON
@@ -86,6 +87,16 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 				resp.StatusCode, string(bodyBytes))
 			return
 		}
+
+		// Pretty print response body for debugging
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var prettyJSON bytes.Buffer
+		if err := json.Indent(&prettyJSON, bodyBytes, "", "    "); err == nil {
+			fmt.Printf("Response body:\n%s\n", prettyJSON.String())
+		}
+
+		// Create new reader from the body bytes for further processing
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 		// Read and parse the response
 		var response struct {
@@ -148,11 +159,18 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 //  1. chunks: a channel of text chunks that arrive from the stream
 //  2. usage: a channel for usage information (if any occur)
 //  3. errs: a channel for errors (if any occur)
-func streamChatCompletion(host string, model string, backend string, messages []map[string]string, apiKey string) (<-chan string, <-chan *struct {
+func streamChatCompletion(
+	host string,
+	model string,
+	backend string,
+	messages []map[string]string,
+	tools []interface{},
+	apiKey string,
+) (<-chan string, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
-}, <-chan error) {
+}, <-chan ToolCall, <-chan error) {
 	// We'll send our partial text over this channel:
 	chunkChan := make(chan string)
 	// We'll send usage info over this channel:
@@ -161,19 +179,25 @@ func streamChatCompletion(host string, model string, backend string, messages []
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	})
+	// We'll send tool calls over this channel:
+	toolChan := make(chan ToolCall)
 	// We'll send any errors over this channel:
 	errChan := make(chan error, 1)
 
-	// Launch the request in a goroutine so the caller can keep receiving chunks.
 	go func() {
 		defer close(chunkChan)
 		defer close(usageChan)
+		defer close(toolChan)
 		defer close(errChan)
 
 		requestBody := map[string]interface{}{
 			"model":    model,
 			"messages": messages,
-			"stream":   true, // enable streaming
+			"stream":   true,
+		}
+
+		if len(tools) > 0 {
+			requestBody["tools"] = tools
 		}
 
 		if backend == "openai" {
@@ -220,8 +244,22 @@ func streamChatCompletion(host string, model string, backend string, messages []
 			return
 		}
 
+		// Pretty print response body for debugging
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var prettyJSON bytes.Buffer
+		if err := json.Indent(&prettyJSON, bodyBytes, "", "    "); err == nil {
+			fmt.Printf("Response body:\n%s\n", prettyJSON.String())
+		}
+
+		// Create new reader from the body bytes for further processing
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 		// Read the response stream line by line.
 		reader := bufio.NewReader(resp.Body)
+		var arguments string
+		var toolName string
+		var usedTool bool
+		usedTool = false
 
 		for {
 			line, err := reader.ReadString('\n')
@@ -256,8 +294,9 @@ func streamChatCompletion(host string, model string, backend string, messages []
 				Model   string `json:"model"`
 				Choices []struct {
 					Delta struct {
-						Role    string `json:"role"`
-						Content string `json:"content"`
+						Role      string        `json:"role"`
+						Content   string        `json:"content"`
+						ToolCalls []interface{} `json:"tool_calls"`
 					} `json:"delta"`
 					FinishReason interface{} `json:"finish_reason"`
 					Index        int         `json:"index"`
@@ -281,12 +320,63 @@ func streamChatCompletion(host string, model string, backend string, messages []
 					chunk.Usage.CompletionTokens,
 					chunk.Usage.TotalTokens)
 				usageChan <- chunk.Usage
-			} else {
-				log.Printf("No token usage information found in chunk")
 			}
-
 			// Extract the content if available.
+
+			var toolsTmp Tool = NewWeatherTool()
+			type StreamedToolCall struct {
+				Id       string
+				Function struct {
+					Arguments string
+				}
+			}
 			if len(chunk.Choices) > 0 {
+				if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
+					for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
+						// First the tool name is passed in one or multiple tokens, then the arguments are streamed in chunks
+						callId := mapGetOrDefault(toolCall.(map[string]interface{}), "id", "")
+
+						prettyJSON, err := json.MarshalIndent(toolCall, "", "    ")
+						if err == nil {
+							fmt.Printf("Tool Call:\n%s\n", string(prettyJSON))
+						}
+						if callId != "" {
+							fmt.Println("callId", callId)
+
+							if toolCallMap, ok := toolCall.(map[string]interface{}); ok {
+								if function, exists := toolCallMap["function"].(map[string]interface{}); exists {
+									if newArgs, exists := function["name"].(string); exists {
+										toolName = newArgs
+									}
+								}
+							}
+						} else {
+
+							// Handle the tool call data which comes as a map[string]interface{}
+							if toolCallMap, ok := toolCall.(map[string]interface{}); ok {
+								if function, exists := toolCallMap["function"].(map[string]interface{}); exists {
+									if newArgs, exists := function["arguments"].(string); exists {
+										arguments += newArgs
+									}
+								}
+							}
+
+							fmt.Println("arguments", arguments)
+
+							toolInput, err := toolsTmp.ParseArguments(arguments)
+							if err != nil {
+								fmt.Println("Error parsing arguments:", err)
+							} else {
+								fmt.Println("Successfully parsed streamed tool input", toolInput)
+								toolChan <- ToolCall{
+									ToolName:  toolName,
+									ToolInput: toolInput,
+								}
+							}
+						}
+
+					}
+				}
 				content := chunk.Choices[0].Delta.Content
 				if content != "" {
 					// Send this chunk to the caller via the channel.
@@ -296,6 +386,5 @@ func streamChatCompletion(host string, model string, backend string, messages []
 		}
 	}()
 
-	// Return the channels so the caller can listen for chunks and/or errors.
-	return chunkChan, usageChan, errChan
+	return chunkChan, usageChan, toolChan, errChan
 }
