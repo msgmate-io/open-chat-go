@@ -10,7 +10,7 @@ import (
 )
 
 // getDomainRoutingMiddleware returns a no-op middleware when federation is disabled
-func getDomainRoutingMiddleware(DB *gorm.DB) func(http.Handler) http.Handler {
+func getDomainRoutingMiddleware(DB *gorm.DB, cookieDomain string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return next
 	}
