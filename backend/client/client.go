@@ -45,6 +45,7 @@ func NewClient(host string) *Client {
 	apiKeys := map[string]string{
 		"deepinfra": os.Getenv("DEEPINFRA_API_KEY"),
 		"openai":    os.Getenv("OPENAI_API_KEY"),
+		"groq":      os.Getenv("GROQ_API_KEY"),
 	}
 	return &Client{
 		host:      host,
