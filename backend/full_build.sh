@@ -123,9 +123,20 @@ mkdir -p "$TOOLS_BIN"
 export PATH="$TOOLS_BIN:$PATH"
 SWAG_PATH="$TOOLS_BIN/swag"
 
-if ! command -v swag &> /dev/null; then
+# Check if swag exists and is actually executable (not just present in PATH)
+SWAG_WORKS=false
+if [ -f "$SWAG_PATH" ]; then
+    if "$SWAG_PATH" --version &> /dev/null; then
+        SWAG_WORKS=true
+    else
+        echo "Existing swag binary is not executable, removing..."
+        rm -f "$SWAG_PATH"
+    fi
+fi
+
+if [ "$SWAG_WORKS" = false ]; then
     echo "Installing swag tool for host platform (${HOST_GOOS}/${HOST_GOARCH})..."
-    GOBIN="$TOOLS_BIN" GOOS="$HOST_GOOS" GOARCH="$HOST_GOARCH" go install github.com/swaggo/swag/v2/cmd/swag@latest
+    CGO_ENABLED=0 GOBIN="$TOOLS_BIN" GOOS="$HOST_GOOS" GOARCH="$HOST_GOARCH" go install github.com/swaggo/swag/v2/cmd/swag@latest
 fi
 
 if [ ! -f "$SWAG_PATH" ]; then
