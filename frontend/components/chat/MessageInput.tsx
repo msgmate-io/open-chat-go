@@ -9,6 +9,8 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "@/components/DropdownMenu";
+import { Search, Lightbulb } from "lucide-react";
+
 import { Button } from "@/components/Button";
 import imgSrc from "@/assets/logo.png"
 
@@ -110,10 +112,8 @@ export const MessageInput = forwardRef<
     };
 
     return <div className='flex flex-col content-center items-center justify-center'>
-        <Card className="bg-background pr-4 md:px-4 flex items-center rounded-3xl border-0 max-w-[900px] md:min-w-[800px] mb-2" key={"chatListHeader"}>
-            <div className="flex pr-4">
-                <ToggleInputModeButton />
-            </div>
+        <Card className="bg-background p-2 pr-4 md:px-4 flex flex-col items-center rounded-3xl border-0 max-w-[900px] md:min-w-[800px] mb-2" key={"chatListHeader"}>
+            <div className="flex flex-row flex-grow w-full">
             <Textarea
                 value={text}
                 placeholder="Send message to Msgmate.io"
@@ -128,7 +128,20 @@ export const MessageInput = forwardRef<
                 }}
                 ref={ref}
             />
-            {!isBotResponding ? <SendMessageButton onClick={handleSendMessage} isLoading={isLoading} /> : <CancelResponseButton onClick={stopBotResponse} />}
+            </div>
+            <div className="flex items-center gap-3 p-2 rounded-lg text-foreground w-full">
+                <div className="flex flex-row flex-grow">
+                    <Button variant="ghost" className="cursor-pointer hover:text-foreground">
+                        <Search className="cursor-pointer hover:text-foreground" size={20} />
+                        Search
+                    </Button>
+                    <Button variant="ghost" className="cursor-pointer hover:text-foreground">
+                        <Lightbulb className="cursor-pointer hover:text-foreground" size={20} />
+                        Search
+                    </Button>
+                </div>
+                {!isBotResponding ? <SendMessageButton onClick={handleSendMessage} isLoading={isLoading} /> : <CancelResponseButton onClick={stopBotResponse} />}
+            </div>
         </Card>
         <div className='flex grow items-center content-center justify-center text-sm hidden md:flex'>
             msgmate.io uses magic, be sceptical and verify information!

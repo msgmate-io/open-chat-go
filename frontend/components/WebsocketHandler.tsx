@@ -36,9 +36,9 @@ export function WebsocketHandlerBase({
             const parsedMessage = JSON.parse(lastMessage.data)
             console.log("parsedMessage", parsedMessage)
             if(parsedMessage.type === "new_partial_message"){
-                appendPartialMessage(parsedMessage?.content?.chat_uuid, {text: parsedMessage?.content?.text, thoughts: parsedMessage?.content?.reasoning, meta_data: parsedMessage?.content?.meta_data})
+                appendPartialMessage(parsedMessage?.content?.chat_uuid, {text: parsedMessage?.content?.text, thoughts: parsedMessage?.content?.reasoning, meta_data: parsedMessage?.content?.meta_data, tool_calls: parsedMessage?.content?.tool_calls})
             }else if(parsedMessage.type === "start_partial_message"){
-                addPartialMessage(parsedMessage?.content?.chat_uuid, {text: "", thoughts: [], meta_data: {}})
+                addPartialMessage(parsedMessage?.content?.chat_uuid, {text: "", thoughts: [], meta_data: {}, tool_calls: []})
             }else if(parsedMessage.type === "end_partial_message"){
                 // TODO: this callback isn't used cause it can cause a quick flash of the message
                 // removePartialMessage(parsedMessage?.content?.chat_uuid)
@@ -65,7 +65,8 @@ export function WebsocketHandlerBase({
                             text: parsedMessage?.content?.text,
                             sender_uuid: parsedMessage?.content?.sender_uuid,
                             chat_uuid: parsedMessage?.content?.chat_uuid,
-                            uuid: parsedMessage?.content?.uuid
+                            uuid: parsedMessage?.content?.uuid,
+                            tool_calls: parsedMessage?.content?.tool_calls
                         }, ...newRows]
                     }
                 })
