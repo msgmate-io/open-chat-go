@@ -248,15 +248,15 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			return err
 		}
 		// fmt.Println("paginatedMessages", paginatedMessages)
-		openAiMessages := []map[string]string{}
+		openAiMessages := []map[string]interface{}{}
 		currentMessageIncluded := false
 
 		for i := len(paginatedMessages.Rows) - 1; i >= 0; i-- {
 			msg := paginatedMessages.Rows[i]
 			if msg.SenderUUID == ocClient.User.UUID {
-				openAiMessages = append(openAiMessages, map[string]string{"role": "assistant", "content": msg.Text})
+				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
 			} else {
-				openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": msg.Text})
+				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": msg.Text})
 			}
 			if msg.Text == message.Content.Text {
 				currentMessageIncluded = true
@@ -264,7 +264,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		}
 
 		if !currentMessageIncluded {
-			openAiMessages = append(openAiMessages, map[string]string{"role": "user", "content": message.Content.Text})
+			openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": message.Content.Text})
 		}
 
 		fmt.Println("TOOOLS openAiMessages", tools)
@@ -449,29 +449,6 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				} else {
 					fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
 					// Now run the tool
-					tool := NewWeatherTool()
-					res, err := tool.RunTool(toolCall.ToolInput.(WeatherToolInput))
-					if err != nil {
-						fmt.Println("error running tool", err)
-					}
-					fmt.Println("res", res)
-					newText := fmt.Sprintf("I'll use the %s to help answer your question.", toolCall.ToolName)
-					newText += res
-					fullText.WriteString(newText)
-					totalTime := time.Since(startTime)
-					ch.MessageHandler.SendMessage(
-						ch,
-						message.Content.SenderUUID,
-						ch.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
-							message.Content.SenderUUID,
-							newText,
-							[]string{},
-							&map[string]interface{}{
-								"total_time": totalTime.Round(time.Millisecond).String(),
-							},
-						),
-					)
 				}
 			case err, ok := <-errs:
 				if ok && err != nil {
