@@ -17,8 +17,16 @@ env:
 
 jobs:
   build:
-    name: Build
+    name: Build (${{ matrix.federation_enabled && 'federation' || 'standalone' }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - federation_enabled: false
+            image_suffix: ""
+          - federation_enabled: true
+            image_suffix: "-federation"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,7 +45,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.image_suffix }}
           tags: |
             type=ref,event=branch
             type=sha,prefix=
@@ -48,5 +56,7 @@ jobs:
         with:
           context: .
           push: true
+          build-args: |
+            FEDERATION_ENABLED=${{ matrix.federation_enabled }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
