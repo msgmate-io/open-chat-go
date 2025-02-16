@@ -11,6 +11,6 @@ import (
 )
 
 // getDomainRoutingMiddleware returns the federation domain routing middleware
-func getDomainRoutingMiddleware(DB *gorm.DB) func(http.Handler) http.Handler {
-	return federation.DomainRoutingMiddleware(DB)
+func getDomainRoutingMiddleware(DB *gorm.DB, cookieDomain string) func(http.Handler) http.Handler {
+	return federation.DomainRoutingMiddleware(DB, cookieDomain)
 }
