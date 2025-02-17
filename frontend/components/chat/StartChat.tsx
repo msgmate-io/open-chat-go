@@ -78,9 +78,9 @@ export function StartChat({
             <div className="flex flex-col h-full w-full lg:max-w-[900px] relativ">
                 <div className="flex flex-col flex-grow gap-2 items-center content-center overflow-y-auto justify-center">
                     {/*{isLoading && <LoadingSpinner size={48} className="text-content" />}*/}
-                    <NewBotChatCard />
+                    <NewBotChatCard startChat={onCreateChat}/>
                 </div>
-                <MessageInput ref={inputRef} onSendMessage={() => {
+                <MessageInput ref={inputRef} contact={contact} botConfig={botConfig} onSendMessage={() => {
                     onCreateChat(text)
                 }} text={text} setText={setText} />
             </div>
