@@ -6,6 +6,8 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"net/http"
+
+	"gorm.io/gorm"
 )
 
 // TODO: allow different message types
@@ -156,18 +158,31 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		message.ToolCalls = &toolCalls
 	}
 
-	q := DB.Create(&message)
+	// Wrap message creation and chat update in a transaction
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		// Create the message
+		if err := tx.Create(&message).Error; err != nil {
+			return err
+		}
 
-	// update the 'latest_message' field in the chat
-	DB.Model(&chat).Update("latest_message_id", message.ID)
+		// Update both the latest_message_id and the LatestMessage association
+		if err := tx.Model(&chat).Updates(map[string]interface{}{
+			"latest_message_id": message.ID,
+			"LatestMessage":     message,
+		}).Error; err != nil {
+			return err
+		}
 
-	// Now publish websocket updates to online & subscribed users
-	SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
+		return nil
+	})
 
-	if q.Error != nil {
+	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// Now publish websocket updates to online & subscribed users
+	SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ListedMessage{
