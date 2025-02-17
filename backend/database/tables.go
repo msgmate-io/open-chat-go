@@ -98,6 +98,13 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 	return nil
 }
 
+type FileUploadMigration struct{}
+
+func (FileUploadMigration) Migrate(db *gorm.DB) error {
+	db.SetupJoinTable(&UploadedFile{}, "SharedWith", &FileAccess{})
+	return db.AutoMigrate(&UploadedFile{}, &FileAccess{})
+}
+
 var Tabels []interface{} = []interface{}{
 	&User{},
 	&Proxy{},
@@ -114,6 +121,8 @@ var Tabels []interface{} = []interface{}{
 	&ChatSettings{},
 	&Message{},
 	&ContactRequest{},
+	&UploadedFile{},
+	&FileAccess{},
 }
 
 var Migrations []Migration = []Migration{
@@ -130,4 +139,5 @@ var Migrations []Migration = []Migration{
 	ChatAndMessageMigration{}, // Migrates: 'Chat', 'SharedChatConfig', 'Message'
 	TableMigration{&ChatSettings{}},
 	TableMigration{&ContactRequest{}},
+	FileUploadMigration{},
 }
