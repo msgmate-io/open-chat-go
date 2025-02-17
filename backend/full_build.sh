@@ -4,16 +4,11 @@ set -e  # Exit on any error
 
 # Parse command line arguments
 INSTALL=false
-FEDERATION=true
 FRONTEND=true
 for arg in "$@"; do
     case $arg in
         -i|--install)
             INSTALL=true
-            shift
-            ;;
-        --no-federation)
-            FEDERATION=false
             shift
             ;;
         --no-frontend)
@@ -24,7 +19,6 @@ for arg in "$@"; do
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
             echo "  -i, --install        Install the backend after successful build"
-            echo "  --no-federation      Build without federation support (federation package will be excluded)"
             echo "  --no-frontend        Skip frontend build (useful for backend-only builds)"
             echo "  -h, --help           Show this help message"
             echo ""
@@ -34,10 +28,8 @@ for arg in "$@"; do
             echo "  BUILD_NETWORK_BOOTSTRAP_PEERS        Bootstrap peers (comma-separated base64 encoded node info)"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Build with federation and frontend (default)"
-            echo "  $0 --no-federation                   # Build without federation"
+            echo "  $0                                    # Build with frontend (default)"
             echo "  $0 --no-frontend                     # Build backend only (skip frontend)"
-            echo "  $0 --no-federation --no-frontend     # Build backend only without federation"
             echo "  BUILD_DEFAULT_BOT=mybot:mypass $0    # Build with custom bot credentials"
             exit 0
             ;;
@@ -163,16 +155,6 @@ fi
 if [ -n "$TARGET_GOOS" ]; then export GOOS="$TARGET_GOOS"; else unset GOOS; fi
 if [ -n "$TARGET_GOARCH" ]; then export GOARCH="$TARGET_GOARCH"; else unset GOARCH; fi
 
-# Set build tags based on federation flag
-BUILD_TAGS=""
-if [ "$FEDERATION" = false ]; then
-    BUILD_TAGS="-tags !federation"
-    echo "Building without federation support"
-else
-    BUILD_TAGS="-tags federation"
-    echo "Building with federation support"
-fi
-
 # Build ldflags for build-time defaults
 LDFLAGS=""
 
@@ -192,13 +174,13 @@ if [ -n "$BUILD_NETWORK_BOOTSTRAP_PEERS" ]; then
     echo "Setting build-time bootstrap peers: $BUILD_NETWORK_BOOTSTRAP_PEERS"
 fi
 
-# Build with ldflags and build tags
+# Build with ldflags
 if [ -n "$LDFLAGS" ]; then
-    echo "Building with ldflags: $LDFLAGS and build tags: $BUILD_TAGS"
-    go build $BUILD_TAGS -ldflags "$LDFLAGS" -o backend .
+    echo "Building with ldflags: $LDFLAGS"
+    go build -ldflags "$LDFLAGS" -o backend .
 else
-    echo "Building with build tags: $BUILD_TAGS (no custom ldflags)"
-    go build $BUILD_TAGS -o backend .
+    echo "Building backend (no custom ldflags)"
+    go build -o backend .
 fi
 
 echo "Full build complete!"
@@ -208,11 +190,7 @@ else
     echo "Frontend build skipped (--no-frontend flag)"
 fi
 echo "Version updated to: $NEW_VERSION"
-if [ "$FEDERATION" = false ]; then
-    echo "Backend binary built as: backend (without federation support)"
-else
-    echo "Backend binary built as: backend (with federation support)"
-fi
+echo "Backend binary built as: backend"
 
 # Step 5: Install if requested
 if [ "$INSTALL" = true ]; then

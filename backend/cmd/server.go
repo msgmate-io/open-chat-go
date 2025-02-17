@@ -1,21 +1,16 @@
 package cmd
 
 import (
-	"backend/api"
 	"backend/api/msgmate"
 	"backend/database"
-	"backend/federation_factory"
 	"backend/scheduler"
 	"backend/server"
 	"backend/server/util"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -170,13 +165,6 @@ func GetServerFlags() []cli.Flag {
 			Value:   1984,
 			Usage:   "server port",
 		},
-		&cli.IntFlag{
-			Sources: cli.EnvVars("P2PORT"),
-			Name:    "p2pport",
-			Aliases: []string{"pp2p"},
-			Value:   0,
-			Usage:   "server port",
-		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("ROOT_CREDENTIALS"),
 			Name:    "root-credentials",
@@ -197,21 +185,6 @@ func GetServerFlags() []cli.Flag {
 			Aliases: []string{"fpx"},
 			Usage:   "Path '' for no proxy, e.g.: 'http://localhost:5173/' for remix",
 			Value:   "",
-		},
-		&cli.StringFlag{
-			Sources: cli.EnvVars("DEFAULT_NETOWORK_CREDENTIALS"),
-			Name:    "default-network-credentials",
-			Aliases: []string{"dnc"},
-			// If empty default network is disabled
-			Value: GetBuildTimeDefaultNetworkCredentials(),
-			Usage: "default network credentials",
-		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("NET_BOOTSTRAP_PEERS"),
-			Name:    "network-bootstrap-peers",
-			Aliases: []string{"bs"},
-			Value:   GetBuildTimeNetworkBootstrapPeersSlice(),
-			Usage:   "List of bootstrap peers to connect to on startup",
 		},
 		&cli.BoolFlag{
 			Sources: cli.EnvVars("START_BOT"),
@@ -277,13 +250,6 @@ func ServerCli() *cli.Command {
 					fallbackPort = int(c.Int("http-fallback-port"))
 				}
 			}
-			factory := &federation_factory.FederationFactory{}
-			federationHandler, err := factory.NewFederationHandler(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"), c.Bool("http-fallback-enabled"), fallbackPort)
-
-			if err != nil {
-				return err
-			}
-
 			// First, determine both external and local fullHost values
 			var externalFullHost string
 			if c.Bool("ssl") {
@@ -302,7 +268,7 @@ func ServerCli() *cli.Command {
 			}
 
 			// Initialize the scheduler service with the localFullHost (so it always reaches the node even if TLS is broken)
-			schedulerService := scheduler.NewSchedulerService(DB, federationHandler, localFullHost)
+			schedulerService := scheduler.NewSchedulerService(DB, localFullHost)
 			schedulerService.RegisterTasks()
 			schedulerService.Start()
 			defer schedulerService.Stop()
@@ -310,7 +276,6 @@ func ServerCli() *cli.Command {
 			// Pass external settings to BackendServer (serves HTTPS if enabled)
 			s, ch, signalService, matrixService, _, err := server.BackendServer(
 				DB,
-				federationHandler,
 				schedulerService,
 				c.String("host"),
 				c.Int("port"),
@@ -377,106 +342,10 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			var usernameNetwork string
-			var passwordNetwork string
-			if c.String("default-network-credentials") != "" {
-				// create default network
-				networkCredentials := strings.Split(c.String("default-network-credentials"), ":")
-				usernameNetwork = networkCredentials[0]
-				passwordNetwork = networkCredentials[1]
-				// call network.Create
-				err = federationHandler.NetworkCreateRAW(DB, usernameNetwork, passwordNetwork)
-				if err != nil {
-					return err
-				}
-			}
 			// Create default connection with admin user
 			err = server.SetupBaseConnections(DB, adminUser.ID, botUser.ID)
 			if err != nil {
 				return err
-			}
-
-			// we must assure that the own node is in the meers store
-			ownIdentity := federationHandler.GetIdentity()
-			hostname, err := os.Hostname()
-			if err != nil {
-				fmt.Println("Error:", err)
-			}
-
-			// Only try to register own node if federation is enabled
-			if federationHandler.Host() != nil {
-				ownPeerId := federationHandler.Host().ID().String()
-				var ownNode database.Node
-				DB.Where("peer_id = ?", ownPeerId).First(&ownNode)
-
-				if ownNode.ID == 0 {
-					log.Println("Own node not found, creating it")
-
-					now := time.Now()
-					_, err = factory.RegisterNodeRaw(
-						DB,
-						federationHandler,
-						api.RegisterNode{
-							Name:         hostname,
-							Addresses:    ownIdentity.ConnectMultiadress,
-							AddToNetwork: usernameNetwork,
-							LastChanged:  &now,
-						},
-						&now,
-					)
-					if err != nil {
-						log.Println("Error registering own node", err)
-					}
-				} else {
-					log.Println("Own node already existed updating it!")
-					// first delete all existing adresses
-					DB.Where("node_id = ?", ownNode.ID).Delete(&database.NodeAddress{})
-					// then add the new ones
-					adresses := []database.NodeAddress{}
-					for _, address := range ownIdentity.ConnectMultiadress {
-						adresses = append(adresses, database.NodeAddress{
-							Address: address,
-							NodeID:  ownNode.ID,
-						})
-						DB.Create(&adresses)
-					}
-					ownNode.NodeName = hostname
-					ownNode.Addresses = adresses
-					ownNode.LastChanged = time.Now()
-					ownNode.PeerID = ownPeerId
-					DB.Save(&ownNode)
-				}
-			}
-			// reuse computed fallbackPort
-			factory.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"), c.Bool("http-fallback-enabled"), fallbackPort)
-			// Now we also have to register the bootstrap peers!
-			for _, peer := range c.StringSlice("network-bootstrap-peers") {
-				log.Println("Registering bootstrap peer", peer)
-				decoded, err := base64.StdEncoding.DecodeString(peer)
-				if err != nil {
-					return fmt.Errorf("failed to decode bootstrap peer b64: %w", err)
-				}
-				var nodeInfo api.NodeInfo
-				err = json.Unmarshal(decoded, &nodeInfo)
-				if err != nil {
-					return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
-				}
-
-				begginningOfTime := time.Time{}
-				var registerNode api.RegisterNode
-				registerNode.Name = nodeInfo.Name
-				registerNode.Addresses = nodeInfo.Addresses
-				registerNode.AddToNetwork = usernameNetwork
-				registerNode.LastChanged = &begginningOfTime
-				_, err = factory.RegisterNodeRaw(
-					DB,
-					federationHandler,
-					registerNode,
-					&begginningOfTime,
-				)
-				if err != nil {
-					log.Println("Error registering bootstrap peer", err)
-				}
 			}
 
 			if c.Bool("start-bot") {
@@ -487,13 +356,6 @@ func ServerCli() *cli.Command {
 					msgmate.StartBotWithRestart(localFullHost, ch, usernameBot, passwordBot)
 				}()
 			}
-
-			err = factory.PreloadPeerstore(DB, federationHandler)
-			if err != nil {
-				return err
-			}
-
-			factory.StartProxies(DB, federationHandler)
 
 			if c.String("http-redirect-port") != "" {
 				// Start HTTP redirect server
@@ -555,9 +417,8 @@ func ServerCli() *cli.Command {
 				log.Println("Starting HTTP fallback server for local access on port", fallbackPort)
 				httpFallbackServer, err := server.CreateHTTPFallbackServer(
 					DB,
-					federationHandler,
 					schedulerService,
-					"localhost", // Use localhost to match federation configuration
+					"localhost",
 					int64(fallbackPort),
 					c.Bool("debug"),
 					c.String("frontend-proxy"),
