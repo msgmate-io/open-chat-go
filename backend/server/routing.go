@@ -1,7 +1,6 @@
 package server
 
 import (
-	"backend/api"
 	"backend/api/admin"
 	"backend/api/chats"
 	"backend/api/contacts"
@@ -153,7 +152,6 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 
 func BackendRouting(
 	DB *gorm.DB,
-	federationHandler api.FederationHandlerInterface,
 	schedulerService *scheduler.SchedulerService,
 	signalService *integrations.SignalIntegrationService,
 	matrixService *integrations.MatrixIntegrationService,
@@ -164,7 +162,6 @@ func BackendRouting(
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
 	websocketMux := http.NewServeMux()
-	terminalMux := http.NewServeMux()
 
 	userHandler := &user.UserHandler{
 		DB:           DB,
@@ -207,26 +204,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
-	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
-	v1PrivateApis.HandleFunc("GET /federation/bootstrap", federationHandler.Bootstrap)
-	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/request-relay-reservation", federationHandler.NetworkRequestRelayReservation)
-	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/forward-request", federationHandler.NetworkForwardRelayReservation)
-	v1PrivateApis.HandleFunc("GET /federation/networks/list", federationHandler.ListNetworks)
-	v1PrivateApis.HandleFunc("POST /federation/networks/create", federationHandler.NetworkCreate)
-	v1PrivateApis.HandleFunc("DELETE /federation/networks/{network_name}", federationHandler.DeleteNetwork)
-	v1PrivateApis.HandleFunc("DELETE /federation/networks/{network_name}/nodes/{node_peer_id}", federationHandler.DeleteNodeFromNetwork)
-	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/nodes/{node_peer_id}/restore", federationHandler.RestoreNodeFromNetwork)
-	v1PrivateApis.HandleFunc("POST /federation/nodes/register", federationHandler.RegisterNode)
-	v1PrivateApis.HandleFunc("GET /federation/nodes/list", federationHandler.ListNodes)
-	v1PrivateApis.HandleFunc("GET /federation/nodes/{node_uuid}", federationHandler.GetNode)
-	v1PrivateApis.HandleFunc("GET /federation/nodes/whitelisted", federationHandler.WhitelistedPeers)
-	v1PrivateApis.HandleFunc("POST /federation/nodes/{node_uuid}/request", federationHandler.RequestNode)
-	v1PrivateApis.HandleFunc("POST /federation/nodes/peer/{peer_id}/request", federationHandler.RequestNodeByPeerId)
-	v1PrivateApis.HandleFunc("POST /federation/nodes/proxy", federationHandler.CreateAndStartProxy)
-	v1PrivateApis.HandleFunc("GET /federation/proxies/list", federationHandler.ListProxies)
-	v1PrivateApis.HandleFunc("GET /federation/proxies/search", federationHandler.SearchProxies)
-	v1PrivateApis.HandleFunc("DELETE /federation/proxies/{id}", federationHandler.DeleteProxy)
-	v1PrivateApis.HandleFunc("POST /federation/proxies/reload", federationHandler.ReloadDomainProxies)
 	v1PrivateApis.HandleFunc("DELETE /tls/keys/{key_name}", tls.DeleteKey)
 	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
 	v1PrivateApis.HandleFunc("GET /keys/names", tls.ListKeyNames)
@@ -244,11 +221,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
-
-	v1PrivateApis.HandleFunc("POST /bin/upload", federationHandler.UploadBinary)
-	v1PrivateApis.HandleFunc("POST /bin/request-self-update", federationHandler.RequestSelfUpdate)
-	v1PrivateApis.HandleFunc("POST /federation/networks/addnode", federationHandler.RegisterNode)
-	v1PrivateApis.HandleFunc("GET /federation/networks/sync/{network_name}/get", federationHandler.SyncGet)
 
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{id}", integrationsHandler.Get)
@@ -301,16 +273,11 @@ func BackendRouting(
 	)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
-	terminalMux.HandleFunc("/terminal", federationHandler.WebTerminalHandler) // '/federation/terminal'
 	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
-	mux.Handle("/federation/", http.StripPrefix("/federation", providerMiddlewares(terminalMux)))
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", providerMiddlewares(http.HandlerFunc(userHandler.Logout)))
 
-	mux.Handle("GET /api/v1/bin/download", providerMiddlewares(http.HandlerFunc(federationHandler.DownloadBinary)))
-	mux.Handle("GET /api/v1/bin/setup", providerMiddlewares(http.HandlerFunc(federationHandler.GetHiveSetupScript)))
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
-	mux.Handle("POST /api/v1/federation/networks/login", providerMiddlewares(http.HandlerFunc(userHandler.NetworkUserLogin)))
 
 	// Add ACME challenge handler for Let's Encrypt verification
 	mux.HandleFunc("/.well-known/acme-challenge/", tls.ACMEChallengeHandler)

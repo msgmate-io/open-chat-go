@@ -1,23 +1,17 @@
 package cmd
 
 import (
-	"backend/api"
 	"backend/database"
-	"backend/federation_factory"
 	"backend/server/util"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v3"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func InstallCli() *cli.Command {
@@ -74,65 +68,6 @@ func InstallCli() *cli.Command {
 				err, _ = util.CreateUser(DB, usernameBot, passwordBot, false)
 				if err != nil {
 					return fmt.Errorf("failed to create bot user: %w", err)
-				}
-
-				// create the default network
-
-				var fallbackPort int
-				if c.Bool("http-fallback-enabled") {
-					fallbackPort = int(c.Int("port")) + 1
-					if c.Int("http-fallback-port") != 0 {
-						fallbackPort = int(c.Int("http-fallback-port"))
-					}
-				}
-				factory := &federation_factory.FederationFactory{}
-				federationHandler, err := factory.NewFederationHandler(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"), c.Bool("http-fallback-enabled"), fallbackPort)
-
-				if err != nil {
-					return err
-				}
-				var usernameNetwork string
-				var passwordNetwork string
-				if c.String("default-network-credentials") != "" {
-					// create default network
-					networkCredentials := strings.Split(c.String("default-network-credentials"), ":")
-					usernameNetwork = networkCredentials[0]
-					passwordNetwork = networkCredentials[1]
-					// call network.Create
-					err = federationHandler.NetworkCreateRAW(DB, usernameNetwork, passwordNetwork)
-					if err != nil {
-						return err
-					}
-				}
-
-				// noe we also setup bootstrap peers
-				for _, peer := range c.StringSlice("network-bootstrap-peers") {
-					log.Println("Registering bootstrap peer", peer)
-					decoded, err := base64.StdEncoding.DecodeString(peer)
-					if err != nil {
-						return fmt.Errorf("failed to decode bootstrap peer b64: %w", err)
-					}
-					var nodeInfo api.NodeInfo
-					err = json.Unmarshal(decoded, &nodeInfo)
-					if err != nil {
-						return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
-					}
-
-					begginningOfTime := time.Time{}
-					var registerNode api.RegisterNode
-					registerNode.Name = nodeInfo.Name
-					registerNode.Addresses = nodeInfo.Addresses
-					registerNode.AddToNetwork = usernameNetwork
-					registerNode.LastChanged = &begginningOfTime
-					_, err = factory.RegisterNodeRaw(
-						DB,
-						federationHandler,
-						registerNode,
-						&begginningOfTime,
-					)
-					if err != nil {
-						log.Println("Error registering bootstrap peer", err)
-					}
 				}
 
 				// check if directory exists else create it
@@ -198,7 +133,6 @@ After=network.target
 Type=simple
 Environment="DB_BACKEND=%s"
 Environment="DB_PATH=%s" 
-Environment="P2PORT=%s"
 Environment="HOST=%s"
 Environment="PORT=%s"
 Environment="DEBUG=%t"
@@ -211,7 +145,6 @@ User=root
 WantedBy=multi-user.target
 `, c.String("db-backend"),
 					fmt.Sprintf("%s/data.db", installedDBPath),
-					strconv.Itoa(int(c.Int("p2pport"))),
 					c.String("host"),
 					strconv.Itoa(int(c.Int("port"))),
 					c.Bool("debug"),
