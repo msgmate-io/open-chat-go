@@ -605,19 +605,6 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 				},
 			},
 			map[string]interface{}{
-				"title":       "deepseek-ai/DeepSeek-V3",
-				"description": "DeepSeek's DeepSeek V3, a powerful and efficient language model.",
-				"configuration": map[string]interface{}{
-					"temperature":   0.7,
-					"max_tokens":    4096,
-					"model":         "deepseek-ai/DeepSeek-V3",
-					"endpoint":      "https://api.deepinfra.com/v1/openai",
-					"backend":       "deepinfra",
-					"context":       10,
-					"system_prompt": "You are a helpful assistant.",
-				},
-			},
-			map[string]interface{}{
 				"title":       "meta-llama/Llama-3.3-70B-Instruct-Turbo",
 				"description": "Meta's Llama 3.3, a powerful and efficient language model.",
 				"configuration": map[string]interface{}{
@@ -666,6 +653,21 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 					"reasoning":     false,
 					"tools":         []string{"get_current_time", "get_weather"},
 					"model":         "meta-llama/Meta-Llama-3.1-405B-Instruct",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "meta-llama/Meta-Llama-3.1-8B-Instruct",
+				"description": "Meta's Llama 3.1, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"reasoning":     false,
+					"tools":         []string{"get_current_time", "get_weather"},
+					"model":         "meta-llama/Meta-Llama-3.1-8B-Instruct",
 					"endpoint":      "https://api.deepinfra.com/v1/openai",
 					"backend":       "deepinfra",
 					"context":       10,
