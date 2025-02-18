@@ -7,7 +7,6 @@ import (
 	"backend/api/files"
 	"backend/api/metrics"
 	"backend/api/reference"
-	"backend/api/tls"
 	"backend/api/tools"
 	"backend/api/user"
 	"backend/api/websocket"
@@ -197,14 +196,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
-	v1PrivateApis.HandleFunc("DELETE /tls/keys/{key_name}", tls.DeleteKey)
-	v1PrivateApis.HandleFunc("GET /tls/keys", tls.ListKeys)
-	v1PrivateApis.HandleFunc("GET /keys/names", tls.ListKeyNames)
-	v1PrivateApis.HandleFunc("GET /keys/{key_name}/get", tls.RetrieveKey)
-	v1PrivateApis.HandleFunc("POST /keys/create", tls.CreateKey)
-	v1PrivateApis.HandleFunc("POST /tls/acme/solve", tls.SolveACMEChallengeHandler)
-	v1PrivateApis.HandleFunc("POST /tls/acme/renew", tls.RenewTLSCertificateHandler)
-
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}", admin.GetTableInfo)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/data", admin.GetTableDataPaginated)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/{id}", admin.GetTableItemById)
@@ -244,9 +235,6 @@ func BackendRouting(
 	mux.Handle("POST /api/v1/user/logout", providerMiddlewares(http.HandlerFunc(userHandler.Logout)))
 
 	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
-
-	// Add ACME challenge handler for Let's Encrypt verification
-	mux.HandleFunc("/.well-known/acme-challenge/", tls.ACMEChallengeHandler)
 
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", providerMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 
