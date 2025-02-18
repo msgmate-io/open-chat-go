@@ -54,14 +54,6 @@ var tableConfigurations = map[string]TableInfoConfig{
 		},
 		JsonFields: []string{"ConfigData"},
 	},
-	"integrations": {
-		IncludeFields: []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt", "IntegrationName", "IntegrationType", "Active", "Config", "LastUsed", "UserID"},
-		Preloads:      []string{"User"},
-		PreloadMappings: map[string]string{
-			"User": "user",
-		},
-		JsonFields: []string{"Config"},
-	},
 }
 
 func GetTableInfo(w http.ResponseWriter, r *http.Request) {

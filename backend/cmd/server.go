@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"backend/api/integrations"
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/scheduler"
@@ -236,25 +235,6 @@ func ensureDefaultBotUser(DB *gorm.DB, username, password string) (*database.Use
 	return botUser, nil
 }
 
-func startActiveIntegrations(
-	signalService *integrations.SignalIntegrationService,
-	matrixService *integrations.MatrixIntegrationService,
-) {
-	if signalService != nil {
-		log.Println("Starting all active Signal integrations...")
-		signalService.StartAllActiveIntegrations()
-	} else {
-		log.Println("No Signal integration service found")
-	}
-
-	if matrixService != nil {
-		log.Println("Starting all active Matrix integrations...")
-		matrixService.StartAllActiveIntegrations()
-	} else {
-		log.Println("No Matrix integration service found")
-	}
-}
-
 func ServerCli() *cli.Command {
 	log.Println("Hello from server cli")
 	cmd := &cli.Command{
@@ -275,13 +255,13 @@ func ServerCli() *cli.Command {
 
 			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Int("port"))
 
-			schedulerService := scheduler.NewSchedulerService(DB, fullHost)
+			schedulerService := scheduler.NewSchedulerService(DB)
 			schedulerService.RegisterTasks()
 			schedulerService.Start()
 			defer schedulerService.Stop()
 
 			// Initialize HTTP server and websocket handler.
-			s, ch, signalService, matrixService, _, err := server.BackendServer(
+			s, ch, _, err := server.BackendServer(
 				DB,
 				schedulerService,
 				c.String("host"),
@@ -327,8 +307,6 @@ func ServerCli() *cli.Command {
 					msgmate.StartBotWithRestart(fullHost, ch, botUsername, botPassword)
 				}()
 			}
-
-			startActiveIntegrations(signalService, matrixService)
 
 			if err := s.ListenAndServe(); err != nil {
 				return err

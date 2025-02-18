@@ -29,12 +29,6 @@ var AllTools = []Tool{
 	NewLittleWorldRetrieveMatchOverviewTool(),
 	NewLittleWorldResolveMatchTool(),
 	NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(),
-	NewSignalSendMessageTool(),
-	NewSignalReadPastMessagesTool(),
-	NewSignalRemoveFromWhitelistTool(),
-	NewSignalAddToWhitelistTool(),
-	NewSignalGetWhitelistTool(),
-	NewSignalShowTypingIndicatorTool(),
 	NewRunCallbackFunctionTool(),
 	NewN8NTriggerWorkflowWebhookTool(),
 }
@@ -62,18 +56,6 @@ func NewToolByName(name string) (Tool, bool) {
 		return NewLittleWorldResolveMatchTool(), true
 	case "rwth_aachen_seminar_tims_auto_paper_include_exclude_agent":
 		return NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(), true
-	case "signal_send_message":
-		return NewSignalSendMessageTool(), true
-	case "signal_read_past_messages":
-		return NewSignalReadPastMessagesTool(), true
-	case "signal_remove_from_whitelist":
-		return NewSignalRemoveFromWhitelistTool(), true
-	case "signal_add_to_whitelist":
-		return NewSignalAddToWhitelistTool(), true
-	case "signal_get_whitelist":
-		return NewSignalGetWhitelistTool(), true
-	case "signal_show_typing_indicator":
-		return NewSignalShowTypingIndicatorTool(), true
 	case "run_callback_function":
 		return NewRunCallbackFunctionTool(), true
 	case "n8n_trigger_workflow_webhook":
