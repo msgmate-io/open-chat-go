@@ -37,7 +37,7 @@ export function DefaultChats({
                 <div className="flex flex-row text-nowrap text-lg whitespace-nowrap overflow-x-hidden">
                     <div className='flex items-center content-center justify-start'>
                         <img src={logoUrl} className="h-8 w-auto" alt="logo" />
-                        <div className="ml-2">Msgmate Hal Bot</div>
+                        <div className="ml-2">Hal 9025</div>
                     </div>
                 </div>
             </div>
