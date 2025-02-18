@@ -1,11 +1,8 @@
 package scheduler
 
 import (
-	"backend/api/integrations"
 	"backend/database"
-	"backend/server/util"
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/go-co-op/gocron"
 	"gorm.io/gorm"
@@ -15,36 +12,26 @@ import (
 
 // SchedulerService manages all scheduled tasks
 type SchedulerService struct {
-	scheduler         *gocron.Scheduler
-	DB                *gorm.DB
-	ctx               context.Context
-	cancel            context.CancelFunc
-	registeredTasks   map[string]Task
-	serverURL         string
-	signalBotService  *integrations.SignalBotService
-	signalTaskHandler *integrations.SignalTaskHandler
+	scheduler       *gocron.Scheduler
+	DB              *gorm.DB
+	ctx             context.Context
+	cancel          context.CancelFunc
+	registeredTasks map[string]Task
 }
 
 // NewSchedulerService creates a new scheduler service
-func NewSchedulerService(DB *gorm.DB, serverURL string) *SchedulerService {
+func NewSchedulerService(DB *gorm.DB) *SchedulerService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create a scheduler with UTC timezone
 	s := gocron.NewScheduler(time.UTC)
 
-	// Initialize Signal services
-	signalBotService := integrations.NewSignalBotService(DB, serverURL)
-	signalTaskHandler := integrations.NewSignalTaskHandler(signalBotService)
-
 	service := &SchedulerService{
-		scheduler:         s,
-		DB:                DB,
-		ctx:               ctx,
-		cancel:            cancel,
-		registeredTasks:   make(map[string]Task),
-		serverURL:         serverURL,
-		signalBotService:  signalBotService,
-		signalTaskHandler: signalTaskHandler,
+		scheduler:       s,
+		DB:              DB,
+		ctx:             ctx,
+		cancel:          cancel,
+		registeredTasks: make(map[string]Task),
 	}
 
 	return service
@@ -168,53 +155,6 @@ func (s *SchedulerService) archiveOldMessages() {
 	// Implement your archiving logic here
 }
 
-// checkIntegrationsHealth checks the health of all active integrations
-func (s *SchedulerService) checkIntegrationsHealth() {
-	var integrations []database.Integration
-	result := s.DB.Where("active = ?", true).Find(&integrations)
-	if result.Error != nil {
-		log.Printf("Error finding active integrations: %v", result.Error)
-		return
-	}
-
-	for _, integration := range integrations {
-		// Check integration health based on type
-		switch integration.IntegrationType {
-		case "signal":
-			s.checkSignalIntegrationHealth(integration)
-		// Add other integration types as needed
-		default:
-			log.Printf("Unknown integration type: %s", integration.IntegrationType)
-		}
-	}
-}
-
-// checkSignalIntegrationHealth checks if a Signal integration is healthy
-func (s *SchedulerService) checkSignalIntegrationHealth(integration database.Integration) {
-	// Parse the integration config
-	var config map[string]interface{}
-	if err := util.ParseJSON(integration.Config, &config); err != nil {
-		log.Printf("Error parsing integration config: %v", err)
-		return
-	}
-
-	// Example implementation - check if the Docker container is running
-	alias, ok := config["alias"].(string)
-	if !ok {
-		log.Printf("Invalid alias in integration config")
-		return
-	}
-
-	// Update last_used timestamp if the integration is healthy
-	now := time.Now()
-	integration.LastUsed = &now
-	if err := s.DB.Save(&integration).Error; err != nil {
-		log.Printf("Error updating integration last_used: %v", err)
-	}
-
-	log.Printf("Signal integration %s is healthy", alias)
-}
-
 // syncNetworks synchronizes network data
 func (s *SchedulerService) syncNetworks() {
 	var networks []database.Network
@@ -258,71 +198,4 @@ func (s *SchedulerService) RemoveTask(taskName string) error {
 
 	log.Printf("Removed task: %s", taskName)
 	return nil
-}
-
-// InitializeIntegrationTasks sets up tasks for existing integrations
-func (s *SchedulerService) InitializeIntegrationTasks() {
-	// Find all active integrations
-	var integrations []database.Integration
-	if err := s.DB.Where("active = ?", true).Find(&integrations).Error; err != nil {
-		log.Printf("Error finding active integrations: %v", err)
-		return
-	}
-
-	log.Printf("Initializing tasks for %d active integrations", len(integrations))
-
-	// For each integration, create appropriate tasks based on type
-	for _, integration := range integrations {
-		switch integration.IntegrationType {
-		case "signal":
-			// Parse the integration config
-			var config map[string]interface{}
-			if err := json.Unmarshal(integration.Config, &config); err != nil {
-				log.Printf("Error parsing integration config: %v", err)
-				continue
-			}
-
-			alias, ok := config["alias"].(string)
-			if !ok {
-				log.Printf("Invalid alias in integration config")
-				continue
-			}
-
-			// Create a task for polling Signal messages using the Signal bot service
-			taskName := fmt.Sprintf("signal_poll_%s", alias)
-			taskHandler, err := s.signalTaskHandler.CreateSignalPollingTask(integration)
-			if err != nil {
-				log.Printf("Error creating Signal polling task: %v", err)
-				continue
-			}
-
-			task := Task{
-				Name:        taskName,
-				Description: fmt.Sprintf("Poll Signal messages for integration %s", alias),
-				Schedule:    "@every 4s", // Every 4 seconds instead of "*/1 * * * *"
-				Enabled:     true,
-				Handler:     taskHandler,
-			}
-
-			if err := s.AddTask(task); err != nil {
-				log.Printf("Error adding Signal polling task: %v", err)
-			} else {
-				log.Printf("Added Signal polling task for integration %s", alias)
-			}
-
-		// Add cases for other integration types as needed
-		default:
-			log.Printf("Unknown integration type: %s", integration.IntegrationType)
-		}
-	}
-}
-
-// processAICommand processes an AI command using the Signal bot service
-func (s *SchedulerService) processAICommand(message string, sourceNumber string, alias string, integration database.Integration, attachments []map[string]interface{}) error {
-	return s.signalTaskHandler.ProcessSignalMessage(message, sourceNumber, alias, integration, attachments)
-}
-
-// ProcessSignalMessage processes a Signal message with the AI
-func (s *SchedulerService) ProcessSignalMessage(messageText, sourceNumber, alias string, integration database.Integration, attachments []map[string]interface{}) error {
-	return s.signalTaskHandler.ProcessSignalMessage(messageText, sourceNumber, alias, integration, attachments)
 }
