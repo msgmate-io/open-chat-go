@@ -3,7 +3,6 @@ package main
 import (
 	"backend/cmd"
 	"context"
-	"fmt"
 	"log"
 	"os"
 
@@ -32,50 +31,19 @@ import (
 //	@description					Session cookie obtained from login endpoint
 
 func main() {
-	var runCmd *ufcli.Command
-
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "client":
-			if len(os.Args) == 2 {
-				fmt.Println("client command requires a subcommand")
-				return
-			}
-			runCmd = cmd.GetClientCmd(os.Args[2])
-			if runCmd == nil {
-				fmt.Println("invalid client command")
-				return
-			}
-		case "video":
-			/**
-			if len(os.Args) < 3 {
-				fmt.Println("video command requires a video device")
-				return
-			}
-			ws, err := federation.NewVideoServer(os.Args[2])
-			if err != nil {
-				log.Fatal(err)
-			}
-			mux := http.NewServeMux()
-			mux.HandleFunc("/video", ws.ServeHTTP)
-
-			fmt.Println("Starting video server at http://localhost:8080/video")
-			if err := http.ListenAndServe(":8080", mux); err != nil {
-				log.Fatal(err)
-			}
-			*/
-			return
-		default:
-			runCmd = cmd.ServerCli()
-		}
-	} else {
-		runCmd = cmd.ServerCli()
+	if len(os.Args) == 1 {
+		os.Args = append(os.Args, "--help")
 	}
 
-	if runCmd != nil {
-		err := runCmd.Run(context.Background(), os.Args)
-		if err != nil {
-			log.Fatal(err)
-		}
+	rootCmd := &ufcli.Command{
+		Name:  "open-chat",
+		Usage: "Open Chat command line interface",
+		Commands: []*ufcli.Command{
+			cmd.ServerCli(),
+		},
+	}
+
+	if err := rootCmd.Run(context.Background(), os.Args); err != nil {
+		log.Fatal(err)
 	}
 }
