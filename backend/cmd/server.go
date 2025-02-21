@@ -3,7 +3,6 @@ package cmd
 import (
 	"backend/api/msgmate"
 	"backend/database"
-	"backend/scheduler"
 	"backend/server"
 	"backend/server/util"
 	"context"
@@ -254,15 +253,9 @@ func ServerCli() *cli.Command {
 
 			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Int("port"))
 
-			schedulerService := scheduler.NewSchedulerService(DB)
-			schedulerService.RegisterTasks()
-			schedulerService.Start()
-			defer schedulerService.Stop()
-
 			// Initialize HTTP server and websocket handler.
 			s, ch, _, err := server.BackendServer(
 				DB,
-				schedulerService,
 				c.String("host"),
 				c.Int("port"),
 				c.Bool("debug"),
