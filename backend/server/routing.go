@@ -10,7 +10,6 @@ import (
 	"backend/api/tools"
 	"backend/api/user"
 	"backend/api/websocket"
-	"backend/scheduler"
 	"bytes"
 	"context"
 	"embed"
@@ -164,7 +163,6 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 
 func BackendRouting(
 	DB *gorm.DB,
-	schedulerService *scheduler.SchedulerService,
 	debug bool,
 	frontendProxy string,
 	cookieDomain string,
@@ -219,17 +217,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
-
-	// Add schedulerService to the admin handler
-	scheduledTasksHandler := &admin.ScheduledTasksHandler{
-		SchedulerService: schedulerService,
-	}
-
-	// Add new routes for scheduled tasks
-	v1PrivateApis.HandleFunc("GET /admin/tasks", scheduledTasksHandler.ListTasks)
-	v1PrivateApis.HandleFunc("POST /admin/tasks/{task_name}/run", scheduledTasksHandler.RunTask)
-	v1PrivateApis.HandleFunc("POST /admin/tasks", scheduledTasksHandler.AddTask)
-	v1PrivateApis.HandleFunc("DELETE /admin/tasks/{task_name}", scheduledTasksHandler.RemoveTask)
 
 	v1PrivateApis.HandleFunc("POST /files/upload", filesHandler.UploadFile)
 	v1PrivateApis.HandleFunc("GET /files/{file_id}", filesHandler.GetFile)
