@@ -53,7 +53,7 @@ cd "$REPO_ROOT"
 # Step 1: Build the static frontend (if not skipped)
 if [ "$FRONTEND" = true ]; then
     echo "Step 1: Building static frontend..."
-    ./_scripts/build_static_frontend.sh
+    ./development/scripts/build_static_frontend.sh
 else
     echo "Step 1: Skipping frontend build (--no-frontend flag)"
 fi
