@@ -1,0 +1,53 @@
+{{- if and .Values.ingress.use .Values.ingress.host }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-ingress
+  namespace: {{ .Values.rootNamespace }}
+  annotations:
+    {{- $ingressClass := default "public" .Values.ingress.className }}
+    {{- if eq $ingressClass "public" }}
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    kubernetes.io/ingress.class: "public"
+    {{- end }}
+    {{- if or (eq $ingressClass "traefik") (eq $ingressClass "trafic") }}
+    kubernetes.io/ingress.class: "traefik"
+    traefik.ingress.kubernetes.io/router.entrypoints: "web,websecure"
+    {{- if .Values.ingress.certManager }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- end }}
+    {{- end }}
+    {{- if .Values.ingress.certManager }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
+    {{- range $key, $value := .Values.ingress.extraAnnotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+spec:
+  {{- if or (eq .Values.ingress.className "traefik") (eq .Values.ingress.className "trafic") }}
+  ingressClassName: traefik
+  {{- else if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- else }}
+  ingressClassName: public
+  {{- end }}
+  {{- if .Values.ingress.certManager }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: backend-ingress-tls
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: {{ .Values.backend.service.port }}
+{{- end }}
