@@ -87,20 +87,6 @@ func getFrontendRoutes() ([]string, error) {
 	return routes, nil
 }
 
-func isDeprecatedFrontendRoute(route string) bool {
-	deprecatedPrefixes := []string{
-		"/nodes",
-		"/integrations",
-		"/keys-certs",
-	}
-	for _, prefix := range deprecatedPrefixes {
-		if route == prefix || strings.HasPrefix(route, prefix+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWriter, *http.Request) {
 	fsys, err := fs.Sub(frontendFS, "frontend")
 	if err != nil {
@@ -263,9 +249,6 @@ func BackendRouting(
 		}
 
 		for _, route := range routes {
-			if isDeprecatedFrontendRoute(route) {
-				continue
-			}
 			fmt.Printf("Serving route: %s\n", route)
 			mux.Handle(route, providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
 		}
