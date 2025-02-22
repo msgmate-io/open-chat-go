@@ -66,13 +66,6 @@ func websocketMiddleware(ch *websocket.WebSocketHandler) func(next http.Handler)
 	}
 }
 
-func frontendRedirectMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// TODO: for some paths do stuff
-		next.ServeHTTP(w, r)
-	})
-}
-
 func getFrontendRoutes() ([]string, error) {
 	content, err := frontendFS.ReadFile("routes.json")
 	if err != nil {
@@ -151,7 +144,7 @@ func BackendRouting(
 	DB *gorm.DB,
 	debug bool,
 	frontendProxy string,
-	cookieDomain string,
+	sessionCookieDomain string,
 ) (*http.ServeMux, *websocket.WebSocketHandler) {
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
@@ -159,7 +152,7 @@ func BackendRouting(
 
 	userHandler := &user.UserHandler{
 		DB:           DB,
-		CookieDomain: cookieDomain,
+		CookieDomain: sessionCookieDomain,
 	}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
@@ -210,20 +203,19 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /files/{file_id}/data", filesHandler.GetFileData)
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
-	providerMiddlewares := CreateStack(
-		getDomainRoutingMiddleware(DB, cookieDomain),
+	commonMiddlewares := CreateStack(
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 	)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
-	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
-	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
-	mux.Handle("POST /api/v1/user/logout", providerMiddlewares(http.HandlerFunc(userHandler.Logout)))
+	mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
+	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
+	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
 
-	mux.Handle("POST /api/v1/user/register", providerMiddlewares(http.HandlerFunc(userHandler.Register)))
+	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
 
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", providerMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 
 	// Create swagger reference handler with embedded content
 	swaggerContent, err := frontendFS.ReadFile("swagger.json")
@@ -250,9 +242,9 @@ func BackendRouting(
 
 		for _, route := range routes {
 			fmt.Printf("Serving route: %s\n", route)
-			mux.Handle(route, providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
+			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
 		}
-		mux.Handle("/", providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				ServeFrontendRoute("/", "index.html")(w, r)
 			} else {
@@ -265,7 +257,7 @@ func BackendRouting(
 			log.Fatal(err)
 		}
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
-		mux.Handle("/", providerMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(
+		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(
 			ProxyRequestHandler(proxy, targetURL, "/"),
 		))))
 	}
