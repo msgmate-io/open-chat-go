@@ -45,7 +45,6 @@ jobs:
       PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
       EVENT_NAME: ${{ github.event_name }}
       EVENT_ACTION: ${{ github.event.action }}
-      TARGET_REPOSITORY: ${{ github.repository }}
     steps:
       - name: Dispatch deploy workflow
         run: |
@@ -76,13 +75,11 @@ jobs:
             jq -n \
               --arg ref "$CI_REF" \
               --arg deploymentName "$DEPLOYMENT_NAME" \
-              --arg targetRepository "$TARGET_REPOSITORY" \
               --arg targetRef "$TARGET_REF" \
               '{
                 ref: $ref,
                 inputs: {
                   DEPLOYMENT_NAME: $deploymentName,
-                  TARGET_REPOSITORY: $targetRepository,
                   TARGET_REF: $targetRef
                 }
               }'
