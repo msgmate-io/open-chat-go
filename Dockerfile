@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
 
-ARG GOLANG_VERSION=1.24
+ARG GOLANG_VERSION=1.25.10
 ARG ALPINE_VERSION=3.20
 ARG NODE_VERSION=22
 
-FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS frontend
+FROM node:${NODE_VERSION}-alpine AS frontend
 WORKDIR /frontend
 COPY frontend/ ./
 RUN npm install
 RUN npm run build
 RUN ./generate_golang_routes.sh
 
-FROM docker.io/library/golang:${GOLANG_VERSION}-alpine${ALPINE_VERSION} AS basebuilder
+FROM docker.io/library/golang:${GOLANG_VERSION}-alpine AS basebuilder
 
 ENV GOTOOLCHAIN=auto
 
