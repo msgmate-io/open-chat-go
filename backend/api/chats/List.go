@@ -43,15 +43,14 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 // List returns a list of chats for a specified user.
 //
 //	@Summary      Get user chats
-//	@Description  Retrieve a list of chats associated with a specific user ID
+//	@Description  Retrieve a list of chats for the authenticated user
 //	@Tags         chats
 //	@Accept       json
 //	@Produce      json
 //	@Param        page  query  int  false  "Page number"  default(1)
-//	@Param        limit query  int  false  "Page size"     default(10)
-//	@Param        userID path int true "User ID"
-//	@Success      200 {array}  database.Chat "List of chats"
-//	@Failure      400 {string} string "Invalid user ID"
+//	@Param        limit query  int  false  "Page size"     default(40)
+//	@Success      200 {object} database.Pagination "Paginated list of chats"
+//	@Failure      400 {string} string "Unable to get database or user"
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/list [get]
 func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
