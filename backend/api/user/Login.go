@@ -21,17 +21,16 @@ type UserLogin struct {
 
 // Login a user
 //
-//		@Summary      Login a user
-//		@Description  Login a user
-//		@Tags         accounts
-//		@Accept       json
-//		@Produce      json
-//	 	@Param        email body string true "Email"
-//	 	@Param        password body string true "Password"
-//		@Success      200  {string}  string	"Login successful"
-//		@Failure      400  {string}  string	"Invalid email or password"
-//		@Failure      500  {object}  string	"Internal server error"
-//		@Router       /api/v1/user/login [post]
+// @Summary      Login a user
+// @Description  Authenticate and login a user with email and password
+// @Tags         user
+// @Accept       json
+// @Produce      json
+// @Param        request body UserLogin true "Login credentials"
+// @Success      200  {string}  string "Login successful"
+// @Failure      400  {string}  string "Invalid email or password"
+// @Failure      500  {string}  string "Internal server error"
+// @Router       /api/v1/user/login [post]
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var data UserLogin
 	var defaultErrorMessage string = "Invalid email or password"
