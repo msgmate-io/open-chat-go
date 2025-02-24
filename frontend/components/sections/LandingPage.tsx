@@ -10,6 +10,8 @@ import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { LoginSection } from "@/components/sections/LoginSection"
 import { Cookies } from "typescript-cookie";
+import useSWR from "swr";
+import { fetcher } from "@/lib/utils";
 
 
 interface TabState {
@@ -50,6 +52,30 @@ const TEXTS = [{
     completion: "Open-Chat's audio chat feature allows users to engage in voice conversations with AI bots, offering a more human-like interaction experience."
 }]
 
+function GenerateTextForLoggedInUser(user: any) {
+    return [{
+        model: "cognitivecomputations/dolphin-2.6-mixtral-8x7b",
+        prompt: "Starting a new conversation",
+        completion: `Welcome back ${user?.name}! Ready to explore some advanced AI capabilities together?`
+    }, {
+        model: "gpt-4o",
+        prompt: "Greeting the user",
+        completion: `Great to see you again ${user?.name}! What would you like to work on today?`
+    }, {
+        model: "meta-llama/Meta-Llama-3-8B-Instruct",
+        prompt: "User returns to chat",
+        completion: `${user?.name} has returned! Let's make something amazing happen.`
+    }, {
+        model: "databricks/dbrx-instruct",
+        prompt: "Welcoming user back",
+        completion: `Welcome back to Open Chat, ${user?.name}! Whether you want to chat, create, or analyze - I'm here to help.`
+    }, {
+        model: "llama3-70b-8192",
+        prompt: "Personal greeting",
+        completion: `Hello ${user?.name}! Looking forward to another productive conversation. What's on your mind?`
+    }]
+}
+
 function DefaultFooter() {
     return <>
         <div className="flex flex-col items-center justify-center content-center w-full">
@@ -73,6 +99,7 @@ function IndexTab({
     navigateTo: (to: string) => void
 }) {
     const setTab = useTabs(state => state.setTab)
+    const { data: user, isLoading, error } = useSWR(`/api/v1/user/self`, fetcher)
     return <>
         <CinematicLogo className={"mr-8"} size={420} />
         <div className="flex flex-row items-center justify-center content-center w-full relative">
@@ -82,7 +109,7 @@ function IndexTab({
                 }}>Sign-up</Button>
             </div>
             <div className="flex w-1/2 justify-start pl-4">
-                <Button variant="ghost" className="rounded-full border py-8 text-xl text-bold border-2 text-foreground bg-background" onClick={() => {
+                <Button variant="ghost" className={`rounded-full border py-8 text-xl text-bold border-2 ${isLoading || error ? "bg-background text-foreground" : "bg-green-300 text-background"}`} onClick={() => {
                     // check if the user has a current session cookie
                     const isAuthorized = Cookies.get("is_authorized")
                     // check if the cookies is not expired
@@ -92,7 +119,7 @@ function IndexTab({
                     } else {
                         navigateTo("/login")
                     }
-                }}>Log-in</Button>
+                }}>{(isLoading || error) ? "Log-In" : "Go-To-Chat"}</Button>
             </div>
         </div>
     </>
@@ -120,6 +147,7 @@ export function LandingHero({
 }) {
     const tab = useTabs(state => state.tab)
     const setTab = useTabs(state => state.setTab)
+    const { data: user, isLoading, error } = useSWR(`/api/v1/user/self`, fetcher)
 
     return <>
         <div className="flex relative w-full z-40">
@@ -132,7 +160,7 @@ export function LandingHero({
             <div className="flex flex-col flex-grow items-center justify-center content-center bg-background w-2/3 h-full shadow-xl z-10 lg:flex relative text-foreground">
                 <Typewriter
                     typingSpeed={10}
-                    texts={TEXTS} />
+                    texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)} />
             </div>
             <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary w-1/3 h-full">
                 <div className="flex flex-row items-end justify-end content-center w-full">
