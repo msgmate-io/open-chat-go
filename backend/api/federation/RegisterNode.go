@@ -43,14 +43,15 @@ type RegisterNode struct {
 // Registers a Peer to Peer Node
 //
 //	@Summary      Register a Peer to Peer Node
-//	@Description  Register a Peer to Peer Node
+//	@Description  Register a node in the federation network
 //	@Tags         federation
 //	@Accept       json
 //	@Produce      json
-//	@Param        node body RegisterNode true "Node to register"
-//	@Success      200 {string} string "Node registered"
-//	@Failure      400 {string} string "Invalid JSON"
-//	@Failure      403 {string} string "User is not an admin"
+//	@Param        node body RegisterNode true "Node registration details"
+//	@Success      200 {object} database.Node "Node registered successfully"
+//	@Failure      400 {string} string "Invalid JSON or address"
+//	@Failure      403 {string} string "User is not an admin or network owner"
+//	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/federation/nodes/register [post]
 func (h *FederationHandler) RegisterNode(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
