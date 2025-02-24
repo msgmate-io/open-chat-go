@@ -12,9 +12,9 @@ type IdentityResponse struct {
 	ConnectMultiadress []string `json:"connect_multiadress"`
 }
 
-// Get the identity of the current node
+// Get own identity
 //
-//	@Summary      Get the identity of the current node
+//	@Summary      Get own identity
 //	@Description  Get the identity of the current node
 //	@Tags         federation
 //	@Produce      json
