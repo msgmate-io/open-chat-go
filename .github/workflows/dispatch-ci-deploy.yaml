@@ -14,7 +14,7 @@ on:
       ci_repository:
         description: CI repository that contains the deploy workflow
         required: false
-        default: ""
+        default: msgmate-io/open-chat-go-ci
   pull_request:
     branches:
       - main
@@ -37,6 +37,7 @@ jobs:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_PAT }}
       CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
       CI_REPOSITORY_VAR: ${{ vars.CI_REPOSITORY }}
+      CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       DEPLOYMENT_NAME_VAR: ${{ vars.CI_DEPLOYMENT_NAME }}
@@ -54,9 +55,9 @@ jobs:
             exit 1
           fi
 
-          CI_REPOSITORY="${CI_REPOSITORY_INPUT:-${CI_REPOSITORY_VAR:-}}"
+          CI_REPOSITORY="${CI_REPOSITORY_INPUT:-${CI_REPOSITORY_VAR:-$CI_REPOSITORY_DEFAULT}}"
           if [ -z "$CI_REPOSITORY" ]; then
-            echo "Missing CI repository. Set workflow input ci_repository or repository variable CI_REPOSITORY."
+            echo "Missing CI repository. Set workflow input ci_repository, repository variable CI_REPOSITORY, or CI_REPOSITORY_DEFAULT."
             exit 1
           fi
 
