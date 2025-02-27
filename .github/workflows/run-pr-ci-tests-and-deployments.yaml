@@ -1,0 +1,314 @@
+name: Run PR CI Tests and Deployments
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_name:
+        description: Deployment name used by the CI deploy workflow
+        required: false
+        default: msgmate-io-staging
+      target_ref:
+        description: Target ref or SHA to deploy
+        required: false
+        default: main
+      ci_repository:
+        description: CI repository that contains the deploy workflow
+        required: false
+        default: msgmate-io/open-chat-go-ci
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.id || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+  deployments: write
+
+env:
+  CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
+  CI_REF: ${{ vars.CI_REF || 'main' }}
+
+jobs:
+  no_labels_guidance:
+    name: Label Guidance
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'android')
+    steps:
+      - name: Post no-label guidance comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: "<!-- open-chat-pr-ci-no-label-guidance -->"
+          edit-mode: replace
+          body: |
+            Add labels to trigger CI actions:
+
+            - `deploy`: trigger deployment dispatch to CI sub-repo
+            - `test`: indicates API tests required for merge policy
+            - `e2e`: indicates E2E tests required for merge policy
+            - `android`: reserved label for mobile pipeline integrations
+
+            <!-- open-chat-pr-ci-no-label-guidance -->
+
+      - name: Fail when no action labels selected
+        run: |
+          echo "No action labels set (deploy/test/e2e/android)."
+          exit 1
+
+  run-pr-ci-tests-and-deployments:
+    name: Run PR CI Tests and Deployments
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'android')
+    outputs:
+      ci_repository: ${{ steps.context.outputs.ci_repository }}
+      deployment_name: ${{ steps.context.outputs.deployment_name }}
+      target_ref: ${{ steps.context.outputs.target_ref }}
+      pr_number: ${{ steps.context.outputs.pr_number }}
+      source_repository: ${{ steps.context.outputs.source_repository }}
+      should_deploy: ${{ steps.context.outputs.should_deploy }}
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
+      DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
+      TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
+    steps:
+      - name: Resolve context and label actions
+        id: context
+        run: |
+          set -euo pipefail
+          CI_REPOSITORY="${CI_REPOSITORY_INPUT:-$CI_REPOSITORY_DEFAULT}"
+          DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ vars.CI_DEPLOYMENT_NAME || 'msgmate-io-staging' }}}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TARGET_REF="${{ github.event.pull_request.head.sha }}"
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            SOURCE_REPOSITORY="${{ github.repository }}"
+            SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | rg '^deploy$' || true)"
+          else
+            TARGET_REF="${TARGET_REF_INPUT:-main}"
+            PR_NUMBER=""
+            SOURCE_REPOSITORY="${{ github.repository }}"
+            SHOULD_DEPLOY="deploy"
+          fi
+          echo "ci_repository=$CI_REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
+          echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "source_repository=$SOURCE_REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update progress comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ env.COMMENT_TOKEN }}
+          issue-number: ${{ steps.context.outputs.pr_number }}
+          body-includes: "<!-- open-chat-pr-ci-progress -->"
+          edit-mode: replace
+          body: |
+            Running PR CI orchestration.
+
+            - deploy label: `${{ steps.context.outputs.should_deploy != '' && 'enabled' || 'disabled' }}`
+            - waiting for `build.yaml`: pending
+            - waiting for `build_docker.yaml`: pending
+            - deployment approval: pending
+            - dispatch to CI deploy repo: pending
+
+            <!-- open-chat-pr-ci-progress -->
+
+      - name: Wait for build workflows to complete
+        if: steps.context.outputs.should_deploy != '' && github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          if [ -z "${CI_DISPATCH_TOKEN:-}" ]; then
+            echo "Missing CI_DISPATCH_TOKEN, BOT_TOKEN, or BOT_PAT secret."
+            exit 1
+          fi
+          SHA="${{ steps.context.outputs.target_ref }}"
+          REPO="${{ github.repository }}"
+
+          check_workflow() {
+            workflow_file="$1"
+            run_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO}/actions/workflows/${workflow_file}/runs?head_sha=${SHA}&per_page=1")"
+            run_id="$(jq -r '.workflow_runs[0].id // ""' <<< "$run_json")"
+            run_status="$(jq -r '.workflow_runs[0].status // ""' <<< "$run_json")"
+            run_conclusion="$(jq -r '.workflow_runs[0].conclusion // ""' <<< "$run_json")"
+            if [ -z "$run_id" ]; then
+              echo "missing"
+            elif [ "$run_status" != "completed" ]; then
+              echo "running"
+            elif [ "$run_conclusion" != "success" ]; then
+              echo "failed"
+            else
+              echo "success"
+            fi
+          }
+
+          max_attempts=40
+          attempt=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            build_state="$(check_workflow "build.yaml")"
+            docker_state="$(check_workflow "build_docker.yaml")"
+            echo "Attempt $attempt/$max_attempts: build=$build_state docker=$docker_state"
+
+            if [ "$build_state" = "failed" ] || [ "$docker_state" = "failed" ]; then
+              echo "Required build workflow failed."
+              exit 1
+            fi
+            if [ "$build_state" = "success" ] && [ "$docker_state" = "success" ]; then
+              exit 0
+            fi
+            sleep 15
+            attempt=$((attempt + 1))
+          done
+          echo "Timed out waiting for build workflows."
+          exit 1
+
+      - name: Skip deploy dispatch when deploy label is missing
+        if: steps.context.outputs.should_deploy == ''
+        run: echo "Deploy label not present; skipping deploy dispatch."
+
+      - name: Update progress comment after dispatch
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ env.COMMENT_TOKEN }}
+          issue-number: ${{ steps.context.outputs.pr_number }}
+          body-includes: "<!-- open-chat-pr-ci-progress -->"
+          edit-mode: replace
+          body: |
+            PR CI orchestration completed.
+
+            - deploy label: `${{ steps.context.outputs.should_deploy != '' && 'enabled' || 'disabled' }}`
+            - `build.yaml`: validated
+            - `build_docker.yaml`: validated
+            - deployment approval: `${{ steps.context.outputs.should_deploy != '' && 'awaiting approval' || 'skipped' }}`
+            - deploy dispatch: `${{ steps.context.outputs.should_deploy != '' && 'pending approval' || 'skipped' }}`
+
+            <!-- open-chat-pr-ci-progress -->
+
+  approve-and-dispatch-deploy:
+    name: Approve and Dispatch Deploy
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments]
+    if: needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
+    environment:
+      name: pr-deployments
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_REF: ${{ vars.CI_REF || 'main' }}
+    steps:
+      - name: Create GitHub deployment
+        id: deployment
+        run: |
+          set -euo pipefail
+          deployment_json="$(curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments" \
+            -d "$(jq -n \
+              --arg ref "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
+              --arg env "${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}" \
+              '{
+                ref: $ref,
+                environment: $env,
+                auto_merge: false,
+                required_contexts: []
+              }')")"
+          deployment_id="$(jq -r '.id' <<< "$deployment_json")"
+          echo "id=$deployment_id" >> "$GITHUB_OUTPUT"
+
+      - name: Mark deployment in progress
+        run: |
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
+            -d "$(jq -n '{state:"in_progress", log_url:"'"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"'"}')"
+
+      - name: Dispatch deployment workflow in CI repository
+        run: |
+          set -euo pipefail
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg deploymentName "${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}" \
+              --arg targetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
+              --arg sourceRepository "${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}" \
+              --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
+              '{
+                ref: $ref,
+                inputs: {
+                  DEPLOYMENT_NAME: $deploymentName,
+                  TARGET_REF: $targetRef,
+                  SOURCE_REPOSITORY: $sourceRepository,
+                  SOURCE_PR_NUMBER: $sourcePrNumber
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
+            -d "$payload"
+
+      - name: Mark deployment success
+        if: success()
+        run: |
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
+            -d "$(jq -n '{state:"success", log_url:"'"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"'"}')"
+
+      - name: Mark deployment failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
+            -d "$(jq -n '{state:"failure", log_url:"'"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"'"}')"
+
+      - name: Update progress comment after approved dispatch
+        if: needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ env.COMMENT_TOKEN }}
+          issue-number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+          body-includes: "<!-- open-chat-pr-ci-progress -->"
+          edit-mode: replace
+          body: |
+            PR CI orchestration completed.
+
+            - deploy label: `enabled`
+            - `build.yaml`: validated
+            - `build_docker.yaml`: validated
+            - deployment approval: `approved`
+            - deploy dispatch: `triggered`
+
+            <!-- open-chat-pr-ci-progress -->
