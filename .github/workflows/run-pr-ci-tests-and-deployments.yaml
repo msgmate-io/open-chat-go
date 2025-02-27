@@ -42,7 +42,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'android')
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test')
     steps:
       - name: Post no-label guidance comment
         uses: peter-evans/create-or-update-comment@v4
@@ -56,20 +56,27 @@ jobs:
 
             - `deploy`: trigger deployment dispatch to CI sub-repo
             - `test`: indicates API tests required for merge policy
-            - `e2e`: indicates E2E tests required for merge policy
-            - `android`: reserved label for mobile pipeline integrations
+
+            No label found, so I automatically added `test` for this PR.
 
             <!-- open-chat-pr-ci-no-label-guidance -->
 
-      - name: Fail when no action labels selected
+      - name: Add default test label
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
         run: |
-          echo "No action labels set (deploy/test/e2e/android)."
-          exit 1
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${LABEL_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
+            -d '{"labels":["test"]}'
 
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'android')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test')
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
