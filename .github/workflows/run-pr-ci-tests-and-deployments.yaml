@@ -45,6 +45,27 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build')
     steps:
+      - name: Delete previous workflow comments
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+        run: |
+          set -euo pipefail
+          comments="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              | jq -r '.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
+          )"
+          for comment in $comments; do
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment}"
+          done
+
       - name: Post no-label guidance comment
         uses: peter-evans/create-or-update-comment@v4
         with:
@@ -122,6 +143,46 @@ jobs:
           echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
 
+      - name: Delete previous workflow comments
+        if: github.event_name == 'pull_request'
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          comments="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              | jq -r '.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
+          )"
+          for comment in $comments; do
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment}"
+          done
+
+      - name: Create initial progress comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ env.COMMENT_TOKEN }}
+          issue-number: ${{ steps.context.outputs.pr_number }}
+          body-includes: "<!-- open-chat-pr-ci-progress -->"
+          edit-mode: replace
+          body: |
+            Running PR CI orchestration.
+
+            <!-- open-chat-pr-ci-progress -->
+
+            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
+            ${{ steps.context.outputs.should_build != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for builds and approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            - [ ] `(4) test` `pending`
+
       - name: Checkout source repository for image build
         if: steps.context.outputs.should_build != ''
         uses: actions/checkout@v4
@@ -163,7 +224,7 @@ jobs:
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml build backend
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml push backend
 
-      - name: Create or update progress comment
+      - name: Update progress comment after build
         if: github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
@@ -174,14 +235,12 @@ jobs:
           body: |
             Running PR CI orchestration.
 
-            - deploy label: `${{ steps.context.outputs.should_deploy != '' && 'enabled' || 'disabled' }}`
-            - build label: `${{ steps.context.outputs.should_build != '' && 'enabled' || 'disabled' }}`
-            - waiting for `build.yaml`: pending
-            - waiting for `build_docker.yaml`: pending
-            - deployment approval: pending
-            - dispatch to CI deploy repo: pending
-
             <!-- open-chat-pr-ci-progress -->
+
+            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
+            ${{ steps.context.outputs.should_build != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for build workflows and approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            - [ ] `(4) test` `pending`
 
       - name: Wait for build workflows to complete
         if: steps.context.outputs.should_deploy != '' && github.event_name == 'pull_request'
@@ -248,17 +307,14 @@ jobs:
           body-includes: "<!-- open-chat-pr-ci-progress -->"
           edit-mode: replace
           body: |
-            PR CI orchestration completed.
-
-            - deploy label: `${{ steps.context.outputs.should_deploy != '' && 'enabled' || 'disabled' }}`
-            - build label: `${{ steps.context.outputs.should_build != '' && 'enabled' || 'disabled' }}`
-            - temporary image: `${{ steps.context.outputs.should_build != '' && steps.image.outputs.image_url || 'skipped' }}`
-            - `build.yaml`: validated
-            - `build_docker.yaml`: validated
-            - deployment approval: `${{ steps.context.outputs.should_deploy != '' && 'awaiting approval' || 'skipped' }}`
-            - deploy dispatch: `${{ steps.context.outputs.should_deploy != '' && 'pending approval' || 'skipped' }}`
+            Running PR CI orchestration.
 
             <!-- open-chat-pr-ci-progress -->
+
+            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
+            ${{ steps.context.outputs.should_build != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `awaiting approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            - [ ] `(4) test` `pending`
 
   approve-and-dispatch-deploy:
     name: Approve and Dispatch Deploy
@@ -363,12 +419,11 @@ jobs:
           body-includes: "<!-- open-chat-pr-ci-progress -->"
           edit-mode: replace
           body: |
-            PR CI orchestration completed.
-
-            - deploy label: `enabled`
-            - `build.yaml`: validated
-            - `build_docker.yaml`: validated
-            - deployment approval: `approved`
-            - deploy dispatch: `triggered`
+            Running PR CI orchestration.
 
             <!-- open-chat-pr-ci-progress -->
+
+            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
+            ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
+            - [x] `(3) deploy` `dispatch triggered`
+            - [ ] `(4) test` `pending`
