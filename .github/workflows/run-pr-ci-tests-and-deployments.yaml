@@ -43,7 +43,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build')
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test')
     steps:
       - name: Delete previous workflow comments
         env:
@@ -78,13 +78,12 @@ jobs:
 
             - `deploy`: trigger deployment dispatch to CI sub-repo
             - `test`: indicates API tests required for merge policy
-            - `build`: build and push temporary Docker image for deploy use
 
-            No label found, so I automatically added `test` and `build` for this PR.
+            No label found, so I automatically added `test` for this PR.
 
             <!-- open-chat-pr-ci-no-label-guidance -->
 
-      - name: Add default test and build labels
+      - name: Add default test label
         env:
           LABEL_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
         run: |
@@ -94,12 +93,12 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
-            -d '{"labels":["test","build"]}'
+            -d '{"labels":["test"]}'
 
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test')
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -107,7 +106,7 @@ jobs:
       pr_number: ${{ steps.context.outputs.pr_number }}
       source_repository: ${{ steps.context.outputs.source_repository }}
       should_deploy: ${{ steps.context.outputs.should_deploy }}
-      should_build: ${{ steps.context.outputs.should_build }}
+      should_test: ${{ steps.context.outputs.should_test }}
       image_url: ${{ steps.image.outputs.image_url }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
@@ -127,13 +126,13 @@ jobs:
             PR_NUMBER="${{ github.event.pull_request.number }}"
             SOURCE_REPOSITORY="${{ github.repository }}"
             SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
-            SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
+            SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
           else
             TARGET_REF="${TARGET_REF_INPUT:-main}"
             PR_NUMBER=""
             SOURCE_REPOSITORY="${{ github.repository }}"
             SHOULD_DEPLOY="deploy"
-            SHOULD_BUILD="build"
+            SHOULD_TEST=""
           fi
           echo "ci_repository=$CI_REPOSITORY" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
@@ -141,8 +140,8 @@ jobs:
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "source_repository=$SOURCE_REPOSITORY" >> "$GITHUB_OUTPUT"
           echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
-          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} build=${SHOULD_BUILD:-false}"
+          echo "should_test=$SHOULD_TEST" >> "$GITHUB_OUTPUT"
+          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false}"
 
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
@@ -180,12 +179,12 @@ jobs:
             <!-- open-chat-pr-ci-progress -->
 
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_build != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for builds and approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            - [ ] `(4) test` `pending`
+            ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
 
-      - name: Checkout source repository for image build
-        if: steps.context.outputs.should_build != ''
+      - name: Checkout source repository
+        if: steps.context.outputs.should_deploy != '' || steps.context.outputs.should_test != ''
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.context.outputs.target_ref }}
@@ -193,7 +192,7 @@ jobs:
           submodules: recursive
 
       - name: Resolve build image metadata
-        if: steps.context.outputs.should_build != ''
+        if: steps.context.outputs.should_deploy != ''
         id: image
         run: |
           set -euo pipefail
@@ -208,13 +207,13 @@ jobs:
           echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR for temporary image push
-        if: steps.context.outputs.should_build != ''
+        if: steps.context.outputs.should_deploy != ''
         run: |
           set -euo pipefail
           echo "${{ secrets.BOT_TOKEN || secrets.BOT_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Build and push temporary deployment image
-        if: steps.context.outputs.should_build != ''
+        if: steps.context.outputs.should_deploy != ''
         run: |
           set -euo pipefail
           cat > docker-compose.deploy.yaml <<EOF
@@ -224,6 +223,19 @@ jobs:
           EOF
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml build backend
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml push backend
+
+      - name: Set up Go for tests
+        if: steps.context.outputs.should_test != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Run Go tests
+        if: steps.context.outputs.should_test != ''
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go test ./...
 
       - name: Update progress comment after build
         if: github.event_name == 'pull_request'
@@ -239,61 +251,9 @@ jobs:
             <!-- open-chat-pr-ci-progress -->
 
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_build != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for build workflows and approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            - [ ] `(4) test` `pending`
-
-      - name: Wait for build workflows to complete
-        if: steps.context.outputs.should_deploy != '' && github.event_name == 'pull_request'
-        run: |
-          set -euo pipefail
-          if [ -z "${CI_DISPATCH_TOKEN:-}" ]; then
-            echo "Missing CI_DISPATCH_TOKEN, BOT_TOKEN, or BOT_PAT secret."
-            exit 1
-          fi
-          SHA="${{ steps.context.outputs.target_ref }}"
-          REPO="${{ github.repository }}"
-
-          check_workflow() {
-            workflow_file="$1"
-            run_json="$(curl -fsSL \
-              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${REPO}/actions/workflows/${workflow_file}/runs?head_sha=${SHA}&per_page=1")"
-            run_id="$(jq -r '.workflow_runs[0].id // ""' <<< "$run_json")"
-            run_status="$(jq -r '.workflow_runs[0].status // ""' <<< "$run_json")"
-            run_conclusion="$(jq -r '.workflow_runs[0].conclusion // ""' <<< "$run_json")"
-            if [ -z "$run_id" ]; then
-              echo "missing"
-            elif [ "$run_status" != "completed" ]; then
-              echo "running"
-            elif [ "$run_conclusion" != "success" ]; then
-              echo "failed"
-            else
-              echo "success"
-            fi
-          }
-
-          max_attempts=40
-          attempt=1
-          while [ "$attempt" -le "$max_attempts" ]; do
-            build_state="$(check_workflow "build.yaml")"
-            docker_state="$(check_workflow "build_docker.yaml")"
-            echo "Attempt $attempt/$max_attempts: build=$build_state docker=$docker_state"
-
-            if [ "$build_state" = "failed" ] || [ "$docker_state" = "failed" ]; then
-              echo "Required build workflow failed."
-              exit 1
-            fi
-            if [ "$build_state" = "success" ] && [ "$docker_state" = "success" ]; then
-              exit 0
-            fi
-            sleep 15
-            attempt=$((attempt + 1))
-          done
-          echo "Timed out waiting for build workflows."
-          exit 1
+            ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
 
       - name: Skip deploy dispatch when deploy label is missing
         if: steps.context.outputs.should_deploy == ''
@@ -313,9 +273,9 @@ jobs:
             <!-- open-chat-pr-ci-progress -->
 
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_build != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `awaiting approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            - [ ] `(4) test` `pending`
+            ${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
 
   approve-and-dispatch-deploy:
     name: Approve and Dispatch Deploy
@@ -427,4 +387,4 @@ jobs:
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             - [x] `(3) deploy` `dispatch triggered`
-            - [ ] `(4) test` `pending`
+            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
