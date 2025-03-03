@@ -144,6 +144,7 @@ func BackendRouting(
 	DB *gorm.DB,
 	debug bool,
 	frontendProxy string,
+	storybookProxy string,
 	sessionCookieDomain string,
 ) (*http.ServeMux, *websocket.WebSocketHandler) {
 	mux := http.NewServeMux()
@@ -252,14 +253,26 @@ func BackendRouting(
 			}
 		}))))
 	} else {
-		targetURL, err := url.Parse(frontendProxy)
-		if err != nil {
+		proxies := []FrontendProxy{}
+		// Dev-only: front a Storybook dev server under /storybook (see docker-compose).
+		if storybookProxy != "" {
+			proxies = append(proxies, FrontendProxy{
+				Name:     "storybook",
+				Target:   storybookProxy,
+				Prefixes: storybookProxyPrefixes,
+				Public:   true,
+			})
+		}
+		// The app frontend is the catch-all.
+		proxies = append(proxies, FrontendProxy{
+			Name:     "frontend",
+			Target:   frontendProxy,
+			Prefixes: []string{"/"},
+		})
+
+		if err := registerFrontendProxies(mux, proxies, commonMiddlewares); err != nil {
 			log.Fatal(err)
 		}
-		proxy := httputil.NewSingleHostReverseProxy(targetURL)
-		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(
-			ProxyRequestHandler(proxy, targetURL, "/"),
-		))))
 	}
 
 	return mux, websocketHandler
