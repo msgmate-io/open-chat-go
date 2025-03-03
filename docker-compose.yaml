@@ -12,6 +12,9 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       FRONTEND_PROXY: "http://frontend:3000"
+      # Dev-only: proxy a Storybook dev server under /storybook (502 when the
+      # optional storybook service isn't running, see the "storybook" profile).
+      STORYBOOK_FRONTEND_PROXY: "http://storybook:6006"
       ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
       PORT: 1984
@@ -26,6 +29,29 @@ services:
     image: dev-frontend
     ports:
       - "3000:3000"
+    volumes:
+      - ./frontend:/frontend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - app-network
+  # Optional dev-only Storybook. Enable with: docker compose --profile storybook up
+  # Then browse http://localhost:1984/storybook/ (proxied) or http://localhost:6006/storybook/.
+  storybook:
+    image: dev-frontend
+    build:
+      dockerfile: dev.dockerfile
+      context: ./frontend/
+    profiles:
+      - storybook
+    command: sh -c "npm install | cat && npm run storybook --workspace=@open-chat-go/ui -- --host 0.0.0.0 --no-open --ci | cat"
+    environment:
+      # Hosted under /storybook so its Vite assets don't collide with the app frontend.
+      STORYBOOK_BASE_PATH: "/storybook/"
+      # The container has no Playwright browsers, so skip the Vitest addon.
+      STORYBOOK_DISABLE_VITEST: "1"
+    ports:
+      - "6006:6006"
     volumes:
       - ./frontend:/frontend
     extra_hosts:
