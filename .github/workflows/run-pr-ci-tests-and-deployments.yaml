@@ -259,7 +259,7 @@ jobs:
 
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) `waiting for builds and approval`', steps.context.outputs.pr_deploy_url) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for builds and approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
           EOF
           )"
@@ -357,7 +357,7 @@ jobs:
 
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
             ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) `waiting for approval`', steps.context.outputs.pr_deploy_url) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
           EOF
           )"
@@ -404,7 +404,7 @@ jobs:
 
             - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
             ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) `awaiting approval`', steps.context.outputs.pr_deploy_url) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
+            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
           EOF
           )"
@@ -433,11 +433,63 @@ jobs:
               -d "$payload"
           fi
 
+  post-deploy-approval-link:
+    name: Post Deploy Approval Link
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments]
+    if: github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      BOT_USER: ${{ env.BOT_USER }}
+    steps:
+      - name: Update progress comment when approval gate opens
+        run: |
+          set -euo pipefail
+          body="$(cat <<'EOF'
+            Running PR CI orchestration.
+
+            <!-- open-chat-pr-ci-progress -->
+
+            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
+            ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
+            ${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}
+            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
+
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
-    if: needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
+    needs: [run-pr-ci-tests-and-deployments, post-deploy-approval-link]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
+      (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
     environment:
       name: pr-deployments
     env:
@@ -446,40 +498,6 @@ jobs:
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Create GitHub deployment
-        id: deployment
-        run: |
-          set -euo pipefail
-          deployment_json="$(curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments" \
-            -d "$(jq -n \
-              --arg ref "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
-              --arg env "${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}" \
-              '{
-                ref: $ref,
-                environment: $env,
-                auto_merge: false,
-                required_contexts: []
-              }')")"
-          deployment_id="$(jq -r '.id' <<< "$deployment_json")"
-          echo "id=$deployment_id" >> "$GITHUB_OUTPUT"
-
-      - name: Mark deployment in progress
-        run: |
-          set -euo pipefail
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n \
-              --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              --arg environment_url "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}" \
-              '{state:"in_progress", log_url:$log_url, environment_url:$environment_url}')"
-
       - name: Dispatch deployment workflow in CI repository
         run: |
           set -euo pipefail
@@ -572,42 +590,6 @@ jobs:
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
           exit 1
-
-      - name: Mark deployment success
-        if: success() && steps.deployment.outputs.id != ''
-        run: |
-          set -euo pipefail
-          log_url="${{ steps.wait_ci_deploy.outputs.ci_run_url }}"
-          if [ -z "$log_url" ]; then
-            log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          fi
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n \
-              --arg log_url "$log_url" \
-              --arg environment_url "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}" \
-              '{state:"success", log_url:$log_url, environment_url:$environment_url}')"
-
-      - name: Mark deployment failure
-        if: failure() && steps.deployment.outputs.id != ''
-        run: |
-          set -euo pipefail
-          log_url="${{ steps.wait_ci_deploy.outputs.ci_run_url }}"
-          if [ -z "$log_url" ]; then
-            log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          fi
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n \
-              --arg log_url "$log_url" \
-              --arg environment_url "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}" \
-              '{state:"failure", log_url:$log_url, environment_url:$environment_url}')"
 
       - name: Update progress comment after approved dispatch
         if: needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
