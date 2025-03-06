@@ -171,6 +171,13 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "Path '' for no proxy, e.g.: 'http://localhost:5173/' for remix",
 			Value:   "",
 		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("STORYBOOK_FRONTEND_PROXY"),
+			Name:    "storybook-frontend-proxy",
+			Aliases: []string{"sbpx"},
+			Usage:   "Dev-only: proxy a Storybook dev server under /storybook, e.g.: 'http://storybook:6006'",
+			Value:   "",
+		},
 		&cli.BoolFlag{
 			Sources: cli.EnvVars("START_BOT"),
 			Name:    "start-bot",
@@ -260,6 +267,7 @@ func ServerCli() *cli.Command {
 				c.Int("port"),
 				c.Bool("debug"),
 				c.String("frontend-proxy"),
+				c.String("storybook-frontend-proxy"),
 				c.String("host"),
 			)
 			if err != nil {
