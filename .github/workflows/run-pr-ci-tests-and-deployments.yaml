@@ -29,14 +29,19 @@ on:
       - closed
 
 concurrency:
-  group: pr-ci-${{ github.event.pull_request.id || github.ref }}
+  group: >-
+    ${{ github.event_name == 'workflow_dispatch'
+        && format('manual-deploy-{0}', github.run_id)
+        || github.event.action == 'closed'
+        && format('merged-deploy-{0}', github.event.pull_request.base.ref)
+        || format('pr-ci-{0}', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
-  actions: read
+  actions: write
   packages: write
 
 env:
@@ -154,6 +159,37 @@ jobs:
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
     steps:
+      - name: Cancel superseded workflow runs for this PR
+        if: github.event_name == 'pull_request' && github.event.action != 'closed'
+        env:
+          CANCEL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CANCEL_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-pr-ci-tests-and-deployments.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg current "$CURRENT_RUN_ID" --arg head_ref "$PR_HEAD_REF" \
+              '.workflow_runs[]
+              | select(.id != ($current | tonumber))
+              | select(.head_branch == $head_ref)
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded workflow run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CANCEL_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
+
       - name: Resolve context and label actions
         id: context
         run: |
@@ -535,6 +571,9 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
       (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
+    concurrency:
+      group: pr-deploy-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     environment:
       name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
     env:
@@ -543,6 +582,34 @@ jobs:
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Cancel superseded CI deployment runs for this PR
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg pr "$PR_NUMBER" \
+              '.workflow_runs[]
+              | select((.display_title // "") | contains("PR#" + $pr))
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded CI deployment run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
+
       - name: Dispatch deployment workflow in CI repository
         run: |
           set -euo pipefail
@@ -764,7 +831,7 @@ jobs:
           | | |
           | --- | --- |
           | Helm values | \`development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml\` |
-          | Bitwarden refs | \`${{ env.DEPLOYMENT_PRODUCTION }}\` (plus shared items tagged via the \`deployments\` field) |
+          | Deployment environment | \`${{ env.DEPLOYMENT_PRODUCTION }}\` |
           | Staging preview | [${STAGING_DEPLOY_URL}](${STAGING_DEPLOY_URL}) |
           | Promoted commit | \`${PROMOTED_SHA}\` |
           | Source merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) — ${MERGED_PR_TITLE} |
@@ -783,31 +850,36 @@ jobs:
           )"
 
           if [ -n "$existing_pr_number" ]; then
-            echo "Updating existing production promotion PR #${existing_pr_number}."
-            pr_number="$existing_pr_number"
+            echo "Closing stale production promotion PR #${existing_pr_number} before opening a fresh one."
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${PR_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
-              -d "$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')"
-          else
-            echo "Creating production promotion PR from main to production."
-            pr_number="$(
-              curl -fsSL -X POST \
-                -H "Authorization: Bearer ${PR_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/${REPOSITORY}/pulls" \
-                -d "$(jq -n \
-                  --arg title "$title" \
-                  --arg body "$body" \
-                  --arg head "main" \
-                  --arg base "production" \
-                  '{title: $title, body: $body, head: $head, base: $base}')" \
-                | jq -r '.number'
-            )"
+              -d '{"state":"closed"}'
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/issues/${existing_pr_number}/comments" \
+              -d "$(jq -n --arg body 'Superseded by a newer merge to `main`. A fresh production promotion PR is being opened.' '{body: $body}')"
           fi
+
+          echo "Creating production promotion PR from main to production."
+          pr_number="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/pulls" \
+              -d "$(jq -n \
+                --arg title "$title" \
+                --arg body "$body" \
+                --arg head "main" \
+                --arg base "production" \
+                '{title: $title, body: $body, head: $head, base: $base}')" \
+              | jq -r '.number'
+          )"
 
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${PR_TOKEN}" \
@@ -840,7 +912,7 @@ jobs:
           Merged deployment queued for **${DEPLOYMENT_NAME}** → [${DEPLOYMENT_URL}](${DEPLOYMENT_URL}).
 
           - Helm values: \`${HELM_VALUES_FILE}\`
-          - Bitwarden refs: \`${DEPLOYMENT_NAME}\` (shared items included when tagged via the \`deployments\` field)
+          - Deployment environment: \`${DEPLOYMENT_NAME}\`
           - [Approve deployment here](${APPROVAL_RUN_URL})
 
           <!-- open-chat-merged-deploy-comment -->
@@ -879,6 +951,9 @@ jobs:
       always() &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
+    concurrency:
+      group: merged-deploy-dispatch-${{ github.event.pull_request.base.ref }}
+      cancel-in-progress: true
     environment:
       name: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
     env:
@@ -886,6 +961,35 @@ jobs:
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Cancel superseded CI deployment runs for this branch
+        env:
+          CI_REPO: ${{ needs.resolve-merged-deployment.outputs.ci_repository }}
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+        run: |
+          set -euo pipefail
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+              '.workflow_runs[]
+              | select((.display_title // "") | startswith("Deploy " + $deployment))
+              | select((.display_title // "") | contains("PR#") | not)
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded CI deployment run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
+
       - name: Dispatch deployment workflow in CI repository
         run: |
           set -euo pipefail
