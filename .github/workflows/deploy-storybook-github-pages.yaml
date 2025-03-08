@@ -4,8 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      # TODO: switch back to main after CI branch testing
-      - feat/refine-ci
+      - main
 
 concurrency:
   group: deploy-storybook-github-pages
