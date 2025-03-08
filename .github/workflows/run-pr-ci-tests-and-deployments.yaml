@@ -43,6 +43,9 @@ env:
   CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
   CI_REF: ${{ vars.CI_REF || 'main' }}
   BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+  DEPLOYMENT_PR: msgmate-io-pr-deployment
+  DEPLOYMENT_STAGING: msgmate-io-staging
+  DEPLOYMENT_PRODUCTION: msgmate-io-production
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -156,15 +159,16 @@ jobs:
         run: |
           set -euo pipefail
           CI_REPOSITORY="${CI_REPOSITORY_INPUT:-$CI_REPOSITORY_DEFAULT}"
-          DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ vars.CI_DEPLOYMENT_NAME || 'msgmate-io-staging' }}}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             TARGET_REF="${{ github.event.pull_request.head.sha }}"
             PR_NUMBER="${{ github.event.pull_request.number }}"
             SOURCE_REPOSITORY="${{ github.repository }}"
+            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
             SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
             SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
           else
+            DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ env.DEPLOYMENT_STAGING }}}"
             TARGET_REF="${TARGET_REF_INPUT:-main}"
             PR_NUMBER=""
             SOURCE_REPOSITORY="${{ github.repository }}"
@@ -532,7 +536,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
       (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
     environment:
-      name: pr-deployments
+      name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
@@ -682,7 +686,6 @@ jobs:
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
-      approval_environment: ${{ steps.context.outputs.approval_environment }}
       target_ref: ${{ steps.context.outputs.target_ref }}
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_url: ${{ steps.context.outputs.deployment_url }}
@@ -700,20 +703,17 @@ jobs:
           fi
 
           if [ "$BASE_REF" = "production" ]; then
-            DEPLOYMENT_NAME="msgmate-io-production"
-            APPROVAL_ENVIRONMENT="production-deployments"
+            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
             DEPLOYMENT_URL="https://msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.msgmate-io-production.yaml"
+            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
           else
-            DEPLOYMENT_NAME="msgmate-io-staging"
-            APPROVAL_ENVIRONMENT="staging-deployments"
+            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
             DEPLOYMENT_URL="https://stage.msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.msgmate-io-staging.yaml"
+            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
           fi
 
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
-          echo "approval_environment=$APPROVAL_ENVIRONMENT" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
           echo "ci_repository=$CI_REPOSITORY_DEFAULT" >> "$GITHUB_OUTPUT"
           echo "deployment_url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
@@ -759,12 +759,12 @@ jobs:
           This pull request was opened automatically after a merge to \`main\`.
 
           **Merging this PR will trigger a production deployment to [msgmate.io](https://msgmate.io).**
-          Deployment requires admin approval in the \`production-deployments\` environment.
+          Deployment requires admin approval in the \`${{ env.DEPLOYMENT_PRODUCTION }}\` environment.
 
           | | |
           | --- | --- |
-          | Helm values | \`development/helm/backend/values.msgmate-io-production.yaml\` |
-          | Bitwarden refs | \`msgmate-io-production\` (plus shared items tagged for both staging and production) |
+          | Helm values | \`development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml\` |
+          | Bitwarden refs | \`${{ env.DEPLOYMENT_PRODUCTION }}\` (plus shared items tagged via the \`deployments\` field) |
           | Staging preview | [${STAGING_DEPLOY_URL}](${STAGING_DEPLOY_URL}) |
           | Promoted commit | \`${PROMOTED_SHA}\` |
           | Source merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) — ${MERGED_PR_TITLE} |
@@ -832,7 +832,6 @@ jobs:
           DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
           DEPLOYMENT_URL: ${{ needs.resolve-merged-deployment.outputs.deployment_url }}
           HELM_VALUES_FILE: ${{ needs.resolve-merged-deployment.outputs.helm_values_file }}
-          APPROVAL_ENVIRONMENT: ${{ needs.resolve-merged-deployment.outputs.approval_environment }}
           APPROVAL_RUN_URL: ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -841,8 +840,7 @@ jobs:
           Merged deployment queued for **${DEPLOYMENT_NAME}** → [${DEPLOYMENT_URL}](${DEPLOYMENT_URL}).
 
           - Helm values: \`${HELM_VALUES_FILE}\`
-          - Bitwarden refs: \`${DEPLOYMENT_NAME}\` (shared staging/production items included when tagged)
-          - Approval environment: \`${APPROVAL_ENVIRONMENT}\`
+          - Bitwarden refs: \`${DEPLOYMENT_NAME}\` (shared items included when tagged via the \`deployments\` field)
           - [Approve deployment here](${APPROVAL_RUN_URL})
 
           <!-- open-chat-merged-deploy-comment -->
@@ -882,7 +880,7 @@ jobs:
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
     environment:
-      name: ${{ needs.resolve-merged-deployment.outputs.approval_environment }}
+      name: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
