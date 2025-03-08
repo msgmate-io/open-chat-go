@@ -14,6 +14,7 @@ env:
   CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
   CI_REF: ${{ vars.CI_REF || 'main' }}
   BOT_USER: cur1ousdude
+  DEPLOYMENT_PR: msgmate-io-pr-deployment
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -23,7 +24,7 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
-      DEPLOYMENT_NAME: ${{ vars.CI_DEPLOYMENT_NAME || 'msgmate-io-staging' }}
+      DEPLOYMENT_NAME: ${{ env.DEPLOYMENT_PR }}
       DISPATCH_RUN_ID: cleanup-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Resolve PR deployment identity
