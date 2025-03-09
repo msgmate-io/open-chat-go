@@ -99,17 +99,32 @@ jobs:
             -d "$payload"
 
       - name: Wait for dispatched CI cleanup workflow
+        timeout-minutes: 6
         run: |
           set -euo pipefail
-          expected_title="Cleanup ${{ steps.context.outputs.namespace }} ${DISPATCH_RUN_ID}"
-          ci_repo="${{ steps.context.outputs.ci_repository }}"
+          trap 'echo "::notice::Cancelled — exiting cleanup wait loop."; exit 130' INT TERM
 
-          for attempt in $(seq 1 80); do
-            runs_json="$(curl -fsSL \
+          interruptible_sleep() {
+            local remaining="$1"
+            while [ "$remaining" -gt 0 ]; do
+              sleep 1
+              remaining=$((remaining - 1))
+            done
+          }
+
+          github_api_get() {
+            curl -fsSL --connect-timeout 10 --max-time 30 \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/cleanup-pr-deployment.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+              "$1"
+          }
+
+          expected_title="Cleanup ${{ steps.context.outputs.namespace }} ${DISPATCH_RUN_ID}"
+          ci_repo="${{ steps.context.outputs.ci_repository }}"
+
+          for attempt in $(seq 1 20); do
+            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/cleanup-pr-deployment.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
 
             run_line="$(jq -r --arg title "$expected_title" '
               [
@@ -121,15 +136,15 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for cleanup workflow run '$expected_title' to appear."
-              sleep 15
+              echo "Attempt $attempt/20: waiting for cleanup workflow run '$expected_title' to appear."
+              interruptible_sleep 15
               continue
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/80: cleanup status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt $attempt/20: cleanup status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              sleep 15
+              interruptible_sleep 15
               continue
             fi
             if [ "$run_conclusion" = "success" ]; then
