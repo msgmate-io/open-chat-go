@@ -3,6 +3,7 @@ package tools
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/queue"
 	"backend/server/util"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hibiken/asynq"
 )
 
 // ToolExecutionRequest represents the request to execute a tool
@@ -23,6 +26,13 @@ type ToolExecutionResponse struct {
 	Result  string                 `json:"result,omitempty"`
 	Error   string                 `json:"error,omitempty"`
 	Tool    map[string]interface{} `json:"tool_info,omitempty"`
+}
+
+type ToolEnqueueResponse struct {
+	Success bool   `json:"success"`
+	TaskID  string `json:"task_id"`
+	Queue   string `json:"queue"`
+	State   string `json:"state"`
 }
 
 // ToolsHandler handles tool execution requests
@@ -191,6 +201,81 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// EnqueueTool handles asynchronous tool execution requests from bot users.
+func (h *ToolsHandler) EnqueueTool(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	queueClient, err := util.GetAsynqClient(r)
+	if err != nil {
+		http.Error(w, "Unable to get queue client", http.StatusInternalServerError)
+		return
+	}
+
+	if !isBotUser(user) {
+		http.Error(w, "Access denied: Only bot users can execute tools", http.StatusForbidden)
+		return
+	}
+
+	chatUuid := r.PathValue("chat_uuid")
+	if chatUuid == "" {
+		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
+	}
+
+	toolName := r.PathValue("tool_name")
+	if toolName == "" {
+		http.Error(w, "Invalid tool name", http.StatusBadRequest)
+		return
+	}
+
+	var chat database.Chat
+	if err := DB.Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).First(&chat).Error; err != nil {
+		http.Error(w, "Chat not found or access denied", http.StatusNotFound)
+		return
+	}
+
+	var request ToolExecutionRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	taskWithPayload, err := queue.NewToolExecutionTask(queue.ToolExecutionPayload{
+		ChatUUID:        chatUuid,
+		ToolName:        toolName,
+		UserID:          user.ID,
+		InputParameters: request.InputParameters,
+	})
+	if err != nil {
+		http.Error(w, "Failed to build task payload", http.StatusInternalServerError)
+		return
+	}
+
+	info, err := queueClient.Enqueue(
+		taskWithPayload.Task,
+		asynq.Queue(queue.QueueDefault),
+		asynq.MaxRetry(10),
+		asynq.Timeout(2*time.Minute),
+		asynq.Retention(24*time.Hour),
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to enqueue task: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ToolEnqueueResponse{
+		Success: true,
+		TaskID:  info.ID,
+		Queue:   info.Queue,
+		State:   info.State.String(),
+	})
 }
 
 // GetAvailableTools returns the list of available tools for a chat
