@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/hibiken/asynq"
+	"github.com/hibiken/asynqmon"
 	"github.com/urfave/cli/v3"
 	"gorm.io/gorm"
 )
@@ -274,6 +275,12 @@ func ServerCli() *cli.Command {
 			defer queueClient.Close()
 
 			queueInspector := asynq.NewInspector(redisConnOpt)
+			asynqUIHandler := asynqmon.New(asynqmon.Options{
+				RootPath:     "/admin/asynq/ui",
+				RedisConnOpt: redisConnOpt,
+				ReadOnly:     false,
+			})
+			defer asynqUIHandler.Close()
 
 			DB := database.SetupDatabase(database.DBConfig{
 				Backend:  c.String("db-backend"),
@@ -293,6 +300,7 @@ func ServerCli() *cli.Command {
 				DB,
 				queueClient,
 				queueInspector,
+				asynqUIHandler,
 				c.String("host"),
 				c.Int("port"),
 				c.Bool("debug"),

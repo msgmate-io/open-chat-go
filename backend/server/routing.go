@@ -155,6 +155,7 @@ func BackendRouting(
 	DB *gorm.DB,
 	queueClient *asynq.Client,
 	queueInspector *asynq.Inspector,
+	asynqUIHandler http.Handler,
 	debug bool,
 	frontendProxy string,
 	storybookProxy string,
@@ -231,6 +232,8 @@ func BackendRouting(
 	mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
 	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
+	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
+	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
 	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
 
