@@ -2,23 +2,30 @@ package queue
 
 import (
 	"backend/api/msgmate"
+	wsapi "backend/api/websocket"
+	"backend/client"
 	"backend/database"
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
 type Processor struct {
-	DB *gorm.DB
+	DB          *gorm.DB
+	BackendHost string
+	WSHandler   *wsapi.WebSocketHandler
 }
 
 func (p *Processor) NewServeMux() *asynq.ServeMux {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(TypeToolExecution, p.handleToolExecution)
+	mux.HandleFunc(TypeBotReply, p.handleBotReply)
 	return mux
 }
 
@@ -41,7 +48,7 @@ func (p *Processor) handleToolExecution(_ context.Context, task *asynq.Task) err
 		return fmt.Errorf("%w: user not found", asynq.SkipRetry)
 	}
 
-	if !isBotUser(user.Name) {
+	if !IsAutomatedUser(user.Name) {
 		return fmt.Errorf("%w: only bot users can execute tools", asynq.SkipRetry)
 	}
 
@@ -108,6 +115,115 @@ func (p *Processor) handleToolExecution(_ context.Context, task *asynq.Task) err
 	return p.writeResult(task, ToolExecutionResult{Success: true, Result: toolResult})
 }
 
+func (p *Processor) handleBotReply(ctx context.Context, task *asynq.Task) error {
+	if p.DB == nil {
+		return fmt.Errorf("%w: database unavailable", asynq.SkipRetry)
+	}
+
+	var payload BotReplyPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return fmt.Errorf("%w: invalid payload: %v", asynq.SkipRetry, err)
+	}
+
+	if payload.ChatUUID == "" || payload.MessageUUID == "" || payload.BotUserID == 0 {
+		return fmt.Errorf("%w: chat_uuid, message_uuid and bot_user_id are required", asynq.SkipRetry)
+	}
+
+	var botUser database.User
+	if err := p.DB.First(&botUser, "id = ?", payload.BotUserID).Error; err != nil {
+		return fmt.Errorf("%w: bot user not found", asynq.SkipRetry)
+	}
+	if !IsAutomatedUser(botUser.Name) {
+		return fmt.Errorf("%w: receiver is not an automated user", asynq.SkipRetry)
+	}
+
+	var incomingMessage database.Message
+	if err := p.DB.Where("uuid = ?", payload.MessageUUID).First(&incomingMessage).Error; err != nil {
+		return fmt.Errorf("%w: source message not found", asynq.SkipRetry)
+	}
+
+	var senderUser database.User
+	if err := p.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
+		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
+	}
+
+	token := uuid.NewString()
+	session := database.Session{
+		UserId: botUser.ID,
+		Token:  token,
+		Expiry: time.Now().Add(15 * time.Minute),
+	}
+	if err := p.DB.Create(&session).Error; err != nil {
+		return fmt.Errorf("%w: failed to create bot session", asynq.SkipRetry)
+	}
+	defer p.DB.Where("token = ?", token).Delete(&database.Session{})
+
+	host := p.BackendHost
+	if host == "" {
+		host = "http://127.0.0.1:1984"
+	}
+
+	ocClient := client.NewClient(host)
+	ocClient.SetSessionId(token)
+	ocClient.User = botUser
+
+	wsHandler := p.WSHandler
+	if wsHandler == nil {
+		wsHandler = wsapi.NewWebSocketHandler()
+	}
+
+	botContext := &msgmate.BotContext{
+		Client:       ocClient,
+		BotUser:      botUser,
+		WSHandler:    wsHandler,
+		ChatCanceler: msgmate.NewChatCanceler(),
+	}
+
+	message := wsapi.NewMessage{Type: "new_message"}
+	message.Content.ChatUUID = payload.ChatUUID
+	message.Content.SenderUUID = senderUser.UUID
+	if incomingMessage.Text != nil {
+		message.Content.Text = *incomingMessage.Text
+	}
+	if incomingMessage.Reasoning != nil {
+		message.Content.Reasoning = *incomingMessage.Reasoning
+	}
+
+	if len(incomingMessage.MetaData) > 0 {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(incomingMessage.MetaData, &meta); err == nil {
+			message.Content.MetaData = &meta
+			if rawAttachments, ok := meta["attachments"].([]interface{}); ok {
+				attachments := make([]wsapi.FileAttachment, 0, len(rawAttachments))
+				for _, rawAttachment := range rawAttachments {
+					attachmentMap, ok := rawAttachment.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					attachment := wsapi.FileAttachment{}
+					if fileID, ok := attachmentMap["file_id"].(string); ok {
+						attachment.FileID = fileID
+					}
+					if mimeType, ok := attachmentMap["mime_type"].(string); ok {
+						attachment.MimeType = mimeType
+					}
+					attachments = append(attachments, attachment)
+				}
+				if len(attachments) > 0 {
+					message.Content.Attachments = &attachments
+				}
+			}
+		}
+	}
+
+	aiHandler := msgmate.NewAIHandler(botContext)
+	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
+		return p.writeResult(task, ToolExecutionResult{Success: false, Error: err.Error()})
+	}
+
+	return p.writeResult(task, ToolExecutionResult{Success: true, Result: "bot reply generated"})
+}
+
 func (p *Processor) writeResult(task *asynq.Task, result ToolExecutionResult) error {
 	if task.ResultWriter() == nil {
 		return nil
@@ -120,19 +236,6 @@ func (p *Processor) writeResult(task *asynq.Task, result ToolExecutionResult) er
 
 	_, err = task.ResultWriter().Write(resultBytes)
 	return err
-}
-
-func isBotUser(userName string) bool {
-	botNames := []string{"signal", "bot", "msgmate"}
-	normalizedUserName := strings.ToLower(userName)
-
-	for _, botName := range botNames {
-		if normalizedUserName == botName {
-			return true
-		}
-	}
-
-	return false
 }
 
 func convertMapToJSON(data map[string]interface{}) string {
