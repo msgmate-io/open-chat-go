@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -40,17 +39,7 @@ type ToolsHandler struct{}
 
 // isBotUser checks if the given user is a bot user
 func isBotUser(user *database.User) bool {
-	// Bot users are identified by specific name patterns
-	fmt.Println("user.Name", user.Name)
-	botNames := []string{"signal", "bot", "msgmate"}
-	userName := strings.ToLower(user.Name)
-
-	for _, botName := range botNames {
-		if userName == botName {
-			return true
-		}
-	}
-	return false
+	return user != nil && user.IsAutomated
 }
 
 // ExecuteTool handles tool execution requests from bot users
