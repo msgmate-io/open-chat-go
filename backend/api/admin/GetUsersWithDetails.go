@@ -19,6 +19,7 @@ type UserDetails struct {
 	Email        string    `json:"email"`
 	ContactToken string    `json:"contact_token"`
 	IsAdmin      bool      `json:"is_admin"`
+	IsAutomated  bool      `json:"is_automated"`
 	UserType     string    `json:"user_type"`
 
 	// Activity details
@@ -90,6 +91,7 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 			Email:        u.Email,
 			ContactToken: u.ContactToken,
 			IsAdmin:      u.IsAdmin,
+			IsAutomated:  u.IsAutomated,
 			UserType:     "regular",
 		}
 
@@ -102,6 +104,10 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 		var latestSession database.Session
 		if err := DB.Where("user_id = ?", u.ID).Order("created_at DESC").First(&latestSession).Error; err == nil {
 			details.LastLogin = &latestSession.CreatedAt
+		}
+
+		if u.IsAutomated {
+			details.UserType = "automated"
 		}
 
 		// Get chat counts (as participant in User1Id or User2Id)

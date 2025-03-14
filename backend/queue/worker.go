@@ -48,7 +48,7 @@ func (p *Processor) handleToolExecution(_ context.Context, task *asynq.Task) err
 		return fmt.Errorf("%w: user not found", asynq.SkipRetry)
 	}
 
-	if !IsAutomatedUser(user.Name) {
+	if !user.IsAutomated {
 		return fmt.Errorf("%w: only bot users can execute tools", asynq.SkipRetry)
 	}
 
@@ -133,7 +133,7 @@ func (p *Processor) handleBotReply(ctx context.Context, task *asynq.Task) error 
 	if err := p.DB.First(&botUser, "id = ?", payload.BotUserID).Error; err != nil {
 		return fmt.Errorf("%w: bot user not found", asynq.SkipRetry)
 	}
-	if !IsAutomatedUser(botUser.Name) {
+	if !botUser.IsAutomated {
 		return fmt.Errorf("%w: receiver is not an automated user", asynq.SkipRetry)
 	}
 
