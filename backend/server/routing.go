@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
@@ -61,6 +62,16 @@ func websocketMiddleware(ch *websocket.WebSocketHandler) func(next http.Handler)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := context.WithValue(r.Context(), "websocket", ch)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func queueMiddleware(queueClient *asynq.Client, queueInspector *asynq.Inspector) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), "asynq_client", queueClient)
+			ctx = context.WithValue(ctx, "asynq_inspector", queueInspector)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -142,6 +153,9 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 
 func BackendRouting(
 	DB *gorm.DB,
+	queueClient *asynq.Client,
+	queueInspector *asynq.Inspector,
+	asynqUIHandler http.Handler,
 	debug bool,
 	frontendProxy string,
 	storybookProxy string,
@@ -173,6 +187,7 @@ func BackendRouting(
 
 	// Tool execution endpoints (bot users only)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}", toolsHandler.ExecuteTool)
+	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}/enqueue", toolsHandler.EnqueueTool)
 	v1PrivateApis.HandleFunc("GET /interactions/{chat_uuid}/tools", toolsHandler.GetAvailableTools)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/init", toolsHandler.StoreToolInitData)
 
@@ -195,6 +210,10 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /admin/delete_all_entries/{table_name}", admin.DeleteAllEntries)
 	v1PrivateApis.HandleFunc("GET /admin/tables", admin.GetAllTables)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
+	v1PrivateApis.HandleFunc("GET /admin/schema/sql", admin.GetSchemaSQL)
+	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks", admin.ListAsynqTasks)
+	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks/{task_id}", admin.GetAsynqTask)
+	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/stats", admin.GetAsynqQueueStats)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
 
@@ -207,12 +226,15 @@ func BackendRouting(
 	commonMiddlewares := CreateStack(
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
+		queueMiddleware(queueClient, queueInspector),
 	)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
 	mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
 	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
+	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
+	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
 	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
 
