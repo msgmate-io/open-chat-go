@@ -5,8 +5,10 @@ import (
 	wsapi "backend/api/websocket"
 	"backend/client"
 	"backend/database"
+	"backend/workqueue"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,7 +27,7 @@ type Processor struct {
 func (p *Processor) NewServeMux() *asynq.ServeMux {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(TypeToolExecution, p.handleToolExecution)
-	mux.HandleFunc(TypeBotReply, p.handleBotReply)
+	mux.HandleFunc(workqueue.TypeBotReply, p.handleBotReply)
 	return mux
 }
 
@@ -120,7 +122,7 @@ func (p *Processor) handleBotReply(ctx context.Context, task *asynq.Task) error 
 		return fmt.Errorf("%w: database unavailable", asynq.SkipRetry)
 	}
 
-	var payload BotReplyPayload
+	var payload workqueue.BotReplyPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("%w: invalid payload: %v", asynq.SkipRetry, err)
 	}
@@ -218,6 +220,9 @@ func (p *Processor) handleBotReply(ctx context.Context, task *asynq.Task) error 
 
 	aiHandler := msgmate.NewAIHandler(botContext)
 	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
+		}
 		return p.writeResult(task, ToolExecutionResult{Success: false, Error: err.Error()})
 	}
 
