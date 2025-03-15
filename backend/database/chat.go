@@ -22,6 +22,9 @@ type Message struct {
 	MetaData   json.RawMessage    `json:"meta_data" gorm:"type:jsonb"`
 }
 
+// SharedChatConfig stores the shared LLM/tool configuration for a chat.
+// It is created from the `shared_config` payload when a chat is created and is
+// loaded for both chat participants when listing/opening chats and when tools run.
 type SharedChatConfig struct {
 	Model
 	ChatId     uint            `json:"-" gorm:"index"`
@@ -42,8 +45,12 @@ type Chat struct {
 	ChatType        string            `json:"chat_type" gorm:"default:'conversation'"`
 }
 
+// ChatSettings stores per-chat settings owned by the backend for server-side
+// behavior/state, separate from shared user-visible chat config. It is scoped
+// to a chat and currently not exposed directly through chat APIs.
 type ChatSettings struct {
 	Model
-	ChatId uint `json:"ChatId" gorm:"index"`
-	Chat   Chat `json:"Chat" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	ChatId     uint            `json:"ChatId" gorm:"index"`
+	Chat       Chat            `json:"Chat" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	ConfigData json.RawMessage `json:"config_data" gorm:"type:jsonb"`
 }

@@ -1022,7 +1022,6 @@ jobs:
               --arg deploymentName "${{ needs.resolve-merged-deployment.outputs.deployment_name }}" \
               --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
               --arg sourceRepository "${{ github.repository }}" \
-              --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
               --arg botUser "$BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
               '{
@@ -1031,12 +1030,13 @@ jobs:
                   DEPLOYMENT_NAME: $deploymentName,
                   TARGET_REF: $targetRef,
                   SOURCE_REPOSITORY: $sourceRepository,
-                  SOURCE_PR_NUMBER: $sourcePrNumber,
+                  SOURCE_PR_NUMBER: "",
                   BOT_USER: $botUser,
                   DISPATCH_RUN_ID: $dispatchRunId
                 }
               }'
           )"
+          echo "Dispatching CI deploy with run id suffix: ${DISPATCH_RUN_ID}"
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -1046,7 +1046,7 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
-        timeout-minutes: 6
+        timeout-minutes: 25
         env:
           DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
         run: |
@@ -1071,29 +1071,33 @@ jobs:
 
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
+          expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
 
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 40); do
             runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
 
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
               [
                 .workflow_runs[]
-                | select((.display_title // "") | endswith($dispatch_id))
-                | select((.display_title // "") | startswith("Deploy " + $deployment))
-                | select((.display_title // "") | contains("PR#") | not)
-                | [.status, (.conclusion // ""), .html_url]
+                | select((.display_title // .name // "") | endswith($dispatch_id))
+                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              echo "Attempt $attempt/40: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
+              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
+                echo "Recent CI workflow titles:"
+                jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
+              fi
               interruptible_sleep 15
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/20: CI status=$run_status conclusion=${run_conclusion:-none}"
+            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            echo "Attempt $attempt/40: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep 15
               continue
