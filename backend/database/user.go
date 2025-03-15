@@ -14,6 +14,7 @@ type User struct {
 	PasswordHash     string `json:"-"`
 	ContactToken     string `json:"contact_token"`
 	IsAdmin          bool   `json:"is_admin"`
+	IsAutomated      bool   `json:"is_automated" gorm:"default:false"`
 	TwoFactorEnabled bool   `json:"two_factor_enabled" gorm:"default:false"`
 	TwoFactorSecret  string `json:"-"`
 }

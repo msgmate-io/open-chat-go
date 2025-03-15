@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
 func BackendServer(
 	DB *gorm.DB,
+	queueClient *asynq.Client,
+	queueInspector *asynq.Inspector,
+	asynqUIHandler http.Handler,
 	host string,
 	port int64,
 	debug bool,
@@ -19,7 +23,7 @@ func BackendServer(
 	sessionCookieDomain string,
 ) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	fullHost := fmt.Sprintf("http://%s:%d", host, port)
-	router, websocketHandler := BackendRouting(DB, debug, frontendProxy, storybookProxy, sessionCookieDomain)
+	router, websocketHandler := BackendRouting(DB, queueClient, queueInspector, asynqUIHandler, debug, frontendProxy, storybookProxy, sessionCookieDomain)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", host, port),
 		Handler: router,

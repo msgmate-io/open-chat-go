@@ -3,6 +3,7 @@ package cmd
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/queue"
 	"backend/server"
 	"backend/server/util"
 	"context"
@@ -13,6 +14,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/hibiken/asynq"
+	"github.com/hibiken/asynqmon"
 	"github.com/urfave/cli/v3"
 	"gorm.io/gorm"
 )
@@ -101,7 +104,7 @@ func validatePasswordStrength(password string) error {
 }
 
 func GetServerFlags() []cli.Flag {
-	return []cli.Flag{
+	flags := []cli.Flag{
 		&cli.StringFlag{
 			Sources: cli.EnvVars("DB_BACKEND"),
 			Name:    "db-backend",
@@ -185,7 +188,23 @@ func GetServerFlags() []cli.Flag {
 			Value:   true,
 			Usage:   "If the in-build msgmate bot should be started",
 		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("START_WORKER"),
+			Name:    "start-worker",
+			Aliases: []string{"sw"},
+			Value:   true,
+			Usage:   "Start embedded asynq worker in server process",
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("ASYNQ_CONCURRENCY"),
+			Name:    "asynq-concurrency",
+			Usage:   "Number of concurrent worker goroutines",
+			Value:   10,
+		},
 	}
+
+	flags = append(flags, GetRedisFlags()...)
+	return flags
 }
 
 func parseCredentials(raw, label string) (string, string, error) {
@@ -234,6 +253,7 @@ func ensureDefaultBotUser(DB *gorm.DB, username, password string) (*database.Use
 	if err != nil {
 		return nil, err
 	}
+	botUser.IsAutomated = true
 	DB.Save(&botUser)
 	if err := msgmate.CreateOrUpdateBotProfile(DB, *botUser); err != nil {
 		return nil, err
@@ -247,6 +267,22 @@ func ServerCli() *cli.Command {
 		Usage: "start the Open Chat server",
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
+			redisConnOpt, err := resolveRedisConnOpt(c)
+			if err != nil {
+				return err
+			}
+
+			queueClient := asynq.NewClient(redisConnOpt)
+			defer queueClient.Close()
+
+			queueInspector := asynq.NewInspector(redisConnOpt)
+			asynqUIHandler := asynqmon.New(asynqmon.Options{
+				RootPath:     "/admin/asynq/ui",
+				RedisConnOpt: redisConnOpt,
+				ReadOnly:     false,
+			})
+			defer asynqUIHandler.Close()
+
 			DB := database.SetupDatabase(database.DBConfig{
 				Backend:  c.String("db-backend"),
 				FilePath: c.String("db-path"),
@@ -263,6 +299,9 @@ func ServerCli() *cli.Command {
 			// Initialize HTTP server and websocket handler.
 			s, ch, _, err := server.BackendServer(
 				DB,
+				queueClient,
+				queueInspector,
+				asynqUIHandler,
 				c.String("host"),
 				c.Int("port"),
 				c.Bool("debug"),
@@ -305,6 +344,30 @@ func ServerCli() *cli.Command {
 					time.Sleep(1 * time.Second)
 					log.Printf("Starting bot with restart capability...")
 					msgmate.StartBotWithRestart(fullHost, ch, botUsername, botPassword)
+				}()
+			}
+
+			if c.Bool("start-worker") {
+				workerServer := asynq.NewServer(
+					redisConnOpt,
+					asynq.Config{
+						Concurrency: int(c.Int("asynq-concurrency")),
+						Queues: map[string]int{
+							queue.QueueDefault: 1,
+						},
+					},
+				)
+
+				processor := &queue.Processor{
+					DB:          DB,
+					BackendHost: fullHost,
+					WSHandler:   ch,
+				}
+				go func() {
+					log.Printf("Starting embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
+					if workerErr := workerServer.Run(processor.NewServeMux()); workerErr != nil {
+						log.Printf("Embedded asynq worker failed: %v", workerErr)
+					}
 				}()
 			}
 
