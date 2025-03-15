@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/hibiken/asynq"
@@ -182,13 +181,6 @@ func GetServerFlags() []cli.Flag {
 			Value:   "",
 		},
 		&cli.BoolFlag{
-			Sources: cli.EnvVars("START_BOT"),
-			Name:    "start-bot",
-			Aliases: []string{"sb"},
-			Value:   true,
-			Usage:   "If the in-build msgmate bot should be started",
-		},
-		&cli.BoolFlag{
 			Sources: cli.EnvVars("START_WORKER"),
 			Name:    "start-worker",
 			Aliases: []string{"sw"},
@@ -337,14 +329,6 @@ func ServerCli() *cli.Command {
 
 			if err := server.SetupBaseConnections(DB, adminUser.ID, botUser.ID); err != nil {
 				return err
-			}
-
-			if c.Bool("start-bot") {
-				go func() {
-					time.Sleep(1 * time.Second)
-					log.Printf("Starting bot with restart capability...")
-					msgmate.StartBotWithRestart(fullHost, ch, botUsername, botPassword)
-				}()
 			}
 
 			if c.Bool("start-worker") {
