@@ -4,8 +4,18 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"gorm.io/gorm"
 	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
 )
 
 type FieldInfo struct {
@@ -18,8 +28,114 @@ type FieldInfo struct {
 }
 
 type TableInfo struct {
-	Name   string      `json:"name"`
-	Fields []FieldInfo `json:"fields"`
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	SourceURL   string      `json:"source_url,omitempty"`
+	Fields      []FieldInfo `json:"fields"`
+}
+
+type modelDocMeta struct {
+	Description string
+	SourceURL   string
+}
+
+var (
+	modelDescriptionOnce  sync.Once
+	modelDescriptionCache map[string]modelDocMeta
+)
+
+func loadModelDescriptions(DB *gorm.DB) map[string]modelDocMeta {
+	modelDescriptionOnce.Do(func() {
+		modelDescriptionCache = make(map[string]modelDocMeta)
+		fset := token.NewFileSet()
+		_, thisFile, _, ok := runtime.Caller(0)
+		if !ok {
+			return
+		}
+
+		databaseDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "database")
+		backendDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+		repoRoot := filepath.Clean(filepath.Join(backendDir, ".."))
+		repoSourceBaseURL := "https://github.com/msgmate-io/open-chat-go/blob/main"
+		databaseDir = filepath.Clean(databaseDir)
+		if stat, err := os.Stat(databaseDir); err != nil || !stat.IsDir() {
+			return
+		}
+
+		pattern := filepath.Join(databaseDir, "*.go")
+		files, err := filepath.Glob(pattern)
+		if err != nil {
+			return
+		}
+
+		metaByType := make(map[string]modelDocMeta)
+		for _, filePath := range files {
+			parsed, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+			if err != nil {
+				continue
+			}
+
+			for _, decl := range parsed.Decls {
+				genDecl, ok := decl.(*ast.GenDecl)
+				if !ok || genDecl.Tok != token.TYPE {
+					continue
+				}
+
+				for _, spec := range genDecl.Specs {
+					typeSpec, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					if _, ok := typeSpec.Type.(*ast.StructType); !ok {
+						continue
+					}
+
+					position := fset.Position(typeSpec.Pos())
+					repoRelativePath, err := filepath.Rel(repoRoot, position.Filename)
+					if err != nil {
+						continue
+					}
+					repoRelativePath = filepath.ToSlash(repoRelativePath)
+
+					commentGroup := typeSpec.Doc
+					if commentGroup == nil {
+						commentGroup = genDecl.Doc
+					}
+
+					description := ""
+					if commentGroup != nil {
+						description = strings.TrimSpace(commentGroup.Text())
+					}
+
+					metaByType[typeSpec.Name.Name] = modelDocMeta{
+						Description: description,
+						SourceURL:   fmt.Sprintf("%s/%s#L%d", repoSourceBaseURL, repoRelativePath, position.Line),
+					}
+				}
+			}
+		}
+
+		for _, model := range database.Tabels {
+			stmt := &gorm.Statement{DB: DB}
+			if err := stmt.Parse(model); err != nil || stmt.Schema == nil {
+				continue
+			}
+
+			t := reflect.TypeOf(model)
+			if t.Kind() == reflect.Ptr {
+				t = t.Elem()
+			}
+			if t.Kind() != reflect.Struct {
+				continue
+			}
+
+			if meta, ok := metaByType[t.Name()]; ok {
+				modelDescriptionCache[stmt.Schema.Table] = meta
+			}
+		}
+	})
+
+	return modelDescriptionCache
 }
 
 type TableInfoConfig struct {
@@ -96,8 +212,26 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 	stmt := &gorm.Statement{DB: DB}
 	stmt.Parse(model)
 
+	exhaustive := r.URL.Query().Get("full") == "1" || r.URL.Query().Get("full") == "true"
+
 	fields := make([]FieldInfo, 0)
 	for _, field := range stmt.Schema.Fields {
+		if exhaustive {
+			fieldType := string(field.DataType)
+			if fieldType == "" {
+				fieldType = "unknown"
+			}
+			fields = append(fields, FieldInfo{
+				Name:       field.Name,
+				NameRaw:    field.DBName,
+				Type:       fieldType,
+				IsPrimary:  field.PrimaryKey,
+				IsNullable: !field.NotNull,
+				Tag:        string(field.TagSettings["JSON"]),
+			})
+			continue
+		}
+
 		// Check if we have a configuration for this table
 		if config, exists := tableConfigurations[tableName]; exists {
 			// Only include field if it's in the IncludeFields list
@@ -121,6 +255,10 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			if fieldType == "" {
+				fieldType = "unknown"
+			}
+
 			fields = append(fields, FieldInfo{
 				Name:       field.Name,
 				NameRaw:    field.DBName,
@@ -130,10 +268,14 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 				Tag:        string(field.TagSettings["JSON"]),
 			})
 		} else {
+			fieldType := string(field.DataType)
+			if fieldType == "" {
+				fieldType = "unknown"
+			}
 			fields = append(fields, FieldInfo{
 				Name:       field.Name,
 				NameRaw:    field.DBName,
-				Type:       string(field.DataType),
+				Type:       fieldType,
 				IsPrimary:  field.PrimaryKey,
 				IsNullable: !field.NotNull,
 				Tag:        string(field.TagSettings["JSON"]),
@@ -142,29 +284,35 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add preloaded fields to the result
-	if config, exists := tableConfigurations[tableName]; exists && len(config.Preloads) > 0 {
-		for _, preload := range config.Preloads {
-			// Get the JSON key from the mapping or use the preload name
-			nameRaw := preload
-			if mapping, ok := config.PreloadMappings[preload]; ok {
-				nameRaw = mapping
-			}
+	if !exhaustive {
+		if config, exists := tableConfigurations[tableName]; exists && len(config.Preloads) > 0 {
+			for _, preload := range config.Preloads {
+				// Get the JSON key from the mapping or use the preload name
+				nameRaw := preload
+				if mapping, ok := config.PreloadMappings[preload]; ok {
+					nameRaw = mapping
+				}
 
-			// Add the preload field to the fields list
-			fields = append(fields, FieldInfo{
-				Name:       preload,
-				NameRaw:    nameRaw,
-				Type:       "object", // Preloaded fields are typically objects
-				IsPrimary:  false,
-				IsNullable: true,
-				Tag:        "",
-			})
+				// Add the preload field to the fields list
+				fields = append(fields, FieldInfo{
+					Name:       preload,
+					NameRaw:    nameRaw,
+					Type:       "object", // Preloaded fields are typically objects
+					IsPrimary:  false,
+					IsNullable: true,
+					Tag:        "",
+				})
+			}
 		}
 	}
 
+	docMeta := loadModelDescriptions(DB)[tableName]
+
 	tableInfo := TableInfo{
-		Name:   tableName,
-		Fields: fields,
+		Name:        tableName,
+		Description: docMeta.Description,
+		SourceURL:   docMeta.SourceURL,
+		Fields:      fields,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
