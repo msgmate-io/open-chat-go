@@ -15,6 +15,7 @@ type ListedContact struct {
 	Name         string                 `json:"name"`
 	UserUUID     string                 `json:"user_uuid"`
 	IsOnline     bool                   `json:"is_online"`
+	IsAutomated  bool                   `json:"is_automated"`
 	ProfileData  map[string]interface{} `json:"profile_data"`
 }
 
@@ -54,6 +55,7 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 				Name:         partner.Name,
 				UserUUID:     partner.UUID,
 				IsOnline:     true,
+				IsAutomated:  partner.IsAutomated,
 			}
 		} else {
 			listedContacts[i] = ListedContact{
@@ -61,6 +63,7 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 				Name:         partner.Name,
 				UserUUID:     partner.UUID,
 				IsOnline:     false,
+				IsAutomated:  partner.IsAutomated,
 			}
 		}
 	}
@@ -185,6 +188,7 @@ func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Reques
 		Name:         user.Name,
 		UserUUID:     user.UUID,
 		IsOnline:     isSubscriber(subscribers, user.UUID),
+		IsAutomated:  user.IsAutomated,
 		ProfileData:  profileData,
 	}
 
@@ -256,6 +260,7 @@ func (h *ContactsHander) GetContactByChatUUID(w http.ResponseWriter, r *http.Req
 		Name:         contactUser.Name,
 		UserUUID:     contactUser.UUID,
 		IsOnline:     isSubscriber(subscribers, contactUser.UUID),
+		IsAutomated:  contactUser.IsAutomated,
 		ProfileData:  profileData,
 	}
 

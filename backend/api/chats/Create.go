@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/database"
 	"backend/server/util"
+	"backend/workqueue"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -97,6 +98,8 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB.Create(&chat)
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 
+	var createdMessage *database.Message
+
 	if data.FirstMessage != "" {
 		// Prepare metadata for attachments if any
 		var metaData []byte
@@ -131,6 +134,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			MetaData:   metaData,
 		}
 		DB.Create(&message)
+		createdMessage = &message
 		chat.LatestMessageId = &message.ID
 		DB.Save(&chat)
 
@@ -182,17 +186,33 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if data.FirstMessage != "" {
-		// Prepare attachments for websocket message
-		var wsAttachments *[]FileAttachment
-		if len(data.Attachments) > 0 {
-			wsAttachments = &data.Attachments
-			log.Printf("Sending websocket message with %d attachments", len(data.Attachments))
-		}
+		if otherUser.IsAutomated && createdMessage != nil {
+			queueClient, clientErr := util.GetAsynqClient(r)
+			queueInspector, inspectorErr := util.GetAsynqInspector(r)
+			if clientErr != nil || inspectorErr != nil {
+				log.Printf("Failed to access async queue for initial bot reply: clientErr=%v inspectorErr=%v", clientErr, inspectorErr)
+			} else {
+				if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+					ChatUUID:    chat.UUID,
+					MessageUUID: createdMessage.UUID,
+					BotUserID:   otherUser.ID,
+				}); enqueueErr != nil {
+					log.Printf("Failed to enqueue initial bot reply for chat %s: %v", chat.UUID, enqueueErr)
+				}
+			}
+		} else {
+			// Prepare attachments for websocket message
+			var wsAttachments *[]FileAttachment
+			if len(data.Attachments) > 0 {
+				wsAttachments = &data.Attachments
+				log.Printf("Sending websocket message with %d attachments", len(data.Attachments))
+			}
 
-		SendWebsocketMessage(ch, otherUser.UUID, chat.UUID, *user, SendMessage{
-			Text:        data.FirstMessage,
-			Attachments: wsAttachments,
-		})
+			SendWebsocketMessage(ch, otherUser.UUID, chat.UUID, *user, SendMessage{
+				Text:        data.FirstMessage,
+				Attachments: wsAttachments,
+			})
+		}
 	}
 
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
