@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -124,17 +125,58 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	aiHandler := msgmate.NewAIHandler(botContext)
 	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
+		failureMessage := botReplyFailureMessage(err)
+		if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
+			failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
+		}
+
 		if errors.Is(err, context.Canceled) {
-			persistTaskResult(deps.DB, task, ToolExecutionResult{Success: false, Error: err.Error()})
+			failure := ToolExecutionResult{Success: false, Error: failureMessage}
+			_ = writeResult(task, failure)
+			persistTaskResult(deps.DB, task, failure)
 			return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
 		}
-		failure := ToolExecutionResult{Success: false, Error: err.Error()}
+		failure := ToolExecutionResult{Success: false, Error: failureMessage}
 		_ = writeResult(task, failure)
 		persistTaskResult(deps.DB, task, failure)
-		return fmt.Errorf("bot reply generation failed: %w", err)
+		return fmt.Errorf("bot reply generation failed: %w", asynq.SkipRetry)
 	}
 
 	success := ToolExecutionResult{Success: true, Result: "bot reply generated"}
 	persistTaskResult(deps.DB, task, success)
 	return writeResult(task, success)
+}
+
+func botReplyFailureMessage(err error) string {
+	if err == nil {
+		return "I ran into an error while generating a reply. Please try again in a moment."
+	}
+
+	if errors.Is(err, context.Canceled) {
+		return "I paused this reply. Send another message when you want me to continue."
+	}
+
+	errLower := strings.ToLower(err.Error())
+	if strings.Contains(errLower, "connection refused") ||
+		strings.Contains(errLower, "no such host") ||
+		strings.Contains(errLower, "timeout") ||
+		strings.Contains(errLower, "api key") ||
+		strings.Contains(errLower, "unauthorized") ||
+		strings.Contains(errLower, "forbidden") {
+		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
+	}
+
+	return "I ran into an error while generating a reply. Please try again in a moment."
+}
+
+func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string) error {
+	metadata := map[string]interface{}{
+		"finished": true,
+		"error":    true,
+	}
+
+	return ocClient.SendChatMessage(chatUUID, client.SendMessage{
+		Text:     text,
+		MetaData: &metadata,
+	})
 }
