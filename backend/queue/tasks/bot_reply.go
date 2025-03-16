@@ -125,10 +125,16 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	aiHandler := msgmate.NewAIHandler(botContext)
 	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
 		if errors.Is(err, context.Canceled) {
+			persistTaskResult(deps.DB, task, ToolExecutionResult{Success: false, Error: err.Error()})
 			return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
 		}
-		return writeResult(task, ToolExecutionResult{Success: false, Error: err.Error()})
+		failure := ToolExecutionResult{Success: false, Error: err.Error()}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("bot reply generation failed: %w", err)
 	}
 
-	return writeResult(task, ToolExecutionResult{Success: true, Result: "bot reply generated"})
+	success := ToolExecutionResult{Success: true, Result: "bot reply generated"}
+	persistTaskResult(deps.DB, task, success)
+	return writeResult(task, success)
 }
