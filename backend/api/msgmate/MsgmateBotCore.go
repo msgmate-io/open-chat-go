@@ -25,54 +25,6 @@ type BotContext struct {
 	SessionMu    sync.Mutex
 }
 
-// BotInterface defines the core interface for bot operations
-type BotInterface interface {
-	// Start starts the bot with automatic restart capability
-	Start(ctx context.Context) error
-
-	// Stop gracefully stops the bot
-	Stop() error
-
-	// IsRunning returns true if the bot is currently running
-	IsRunning() bool
-}
-
-// MessageProcessor defines the interface for processing incoming messages
-type MessageProcessor interface {
-	// ProcessMessage processes a single incoming message
-	ProcessMessage(ctx context.Context, rawMessage []byte) error
-
-	// PreProcessMessage extracts message metadata
-	PreProcessMessage(rawMessage []byte) (messageType, chatUUID, senderUUID string, err error)
-}
-
-// WebSocketManager defines the interface for WebSocket connection management
-type WebSocketManager interface {
-	// Connect establishes a WebSocket connection
-	Connect(ctx context.Context) error
-
-	// Disconnect closes the WebSocket connection
-	Disconnect() error
-
-	// ReadMessages continuously reads messages from the WebSocket
-	ReadMessages(ctx context.Context) error
-
-	// IsConnected returns true if the WebSocket is connected
-	IsConnected() bool
-}
-
-// SessionManager defines the interface for session management
-type SessionManager interface {
-	// RefreshSession refreshes the bot's session
-	RefreshSession() error
-
-	// GetSessionID returns the current session ID
-	GetSessionID() string
-
-	// StartSessionRefresh starts the background session refresh routine
-	StartSessionRefresh(ctx context.Context) <-chan struct{}
-}
-
 // AIHandler defines the interface for AI response generation
 type AIHandler interface {
 	// GenerateResponse generates an AI response for a message
@@ -92,15 +44,6 @@ type FileHandler interface {
 
 	// UploadToOpenAI uploads a file to OpenAI's API
 	UploadToOpenAI(fileID, mimeType string) (openAIFileID string, err error)
-}
-
-// RestartManager defines the interface for bot restart management
-type RestartManager interface {
-	// StartWithRestart starts the bot with automatic restart capability
-	StartWithRestart(ctx context.Context, bot BotInterface) error
-
-	// LogError logs an error to disk
-	LogError(err error, attempt int, username string)
 }
 
 // ChatCanceler manages cancellation contexts for different chats

@@ -3,6 +3,8 @@
   "/chat/new/{contact_token}",
   "/chat/new",
   "/chat",
+  "/docs",
+  "/admin/queues",
   "/admin/{table_name}/{id}",
   "/admin/{table_name}",
   "/admin",
