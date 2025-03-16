@@ -4,12 +4,14 @@ import (
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/queue"
+	"backend/runtimecfg"
 	"backend/server"
 	"backend/server/util"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"unicode"
 
@@ -102,6 +104,15 @@ func validatePasswordStrength(password string) error {
 	return nil
 }
 
+// @doc:open-chat-server-command-options
+// The `open-chat server` command controls API startup, database configuration,
+// bootstrap credentials, frontend proxying, and embedded Asynq worker behavior.
+//
+// Runtime behavior is driven by CLI flags and environment variables:
+// - DB backend/path and debug/reset toggles
+// - host/port binding and root/default bot bootstrap credentials
+// - Redis connection options used by Asynq and Asynqmon
+// - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
 func GetServerFlags() []cli.Flag {
 	flags := []cli.Flag{
 		&cli.StringFlag{
@@ -259,6 +270,30 @@ func ServerCli() *cli.Command {
 		Usage: "start the Open Chat server",
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
+			runtimecfg.SetAll(map[string]runtimecfg.Value{
+				"DB_BACKEND":               {Value: c.String("db-backend"), Sensitive: false},
+				"DB_PATH":                  {Value: c.String("db-path"), Sensitive: false},
+				"DEBUG":                    {Value: fmt.Sprintf("%t", c.Bool("debug")), Sensitive: false},
+				"SETUP_TEST_USERS":         {Value: fmt.Sprintf("%t", c.Bool("setup-test-users")), Sensitive: false},
+				"RESET_DB":                 {Value: fmt.Sprintf("%t", c.Bool("reset-db")), Sensitive: false},
+				"HOST":                     {Value: c.String("host"), Sensitive: false},
+				"PORT":                     {Value: fmt.Sprintf("%d", c.Int("port")), Sensitive: false},
+				"ROOT_CREDENTIALS":         {Value: c.String("root-credentials"), Sensitive: true},
+				"DEFAULT_BOT_CREDENTIALS":  {Value: c.String("default-bot"), Sensitive: true},
+				"FRONTEND_PROXY":           {Value: c.String("frontend-proxy"), Sensitive: false},
+				"STORYBOOK_FRONTEND_PROXY": {Value: c.String("storybook-frontend-proxy"), Sensitive: false},
+				"START_WORKER":             {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
+				"ASYNQ_CONCURRENCY":        {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
+				"REDIS_URL":                {Value: c.String("redis-url"), Sensitive: true},
+				"REDIS_ADDR":               {Value: c.String("redis-addr"), Sensitive: false},
+				"REDIS_PASSWORD":           {Value: c.String("redis-password"), Sensitive: true},
+				"REDIS_DB":                 {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+				"OPENAI_API_KEY":           {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
+				"DEEPINFRA_API_KEY":        {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
+				"GROQ_API_KEY":             {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
+				"OPEN_CHAT_SEAL_KEY":       {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+			})
+
 			redisConnOpt, err := resolveRedisConnOpt(c)
 			if err != nil {
 				return err
