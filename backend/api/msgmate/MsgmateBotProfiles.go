@@ -3,6 +3,8 @@ package msgmate
 import (
 	"backend/database"
 	"encoding/json"
+	"fmt"
+
 	"gorm.io/gorm"
 )
 
@@ -27,116 +29,28 @@ type BotModel struct {
 	Configuration BotProfileConfig `json:"configuration"`
 }
 
-// GetDefaultBotModels returns the default bot model configurations
-func GetDefaultBotModels() []BotModel {
-	deepinfraTools := []string{"get_current_time", "get_weather", "get_random_number"}
-	return []BotModel{
-		{
-			Title:       "moonshotai/Kimi-K2.6",
-			Description: "Kimi K2.6 is an open-source, native multimodal agentic model that advances practical capabilities in long-horizon coding, coding-driven design, proactive autonomous execution, and swarm-based task orchestration.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Tools:        deepinfraTools,
-				Model:        "moonshotai/Kimi-K2.6",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "Qwen/Qwen3.6-27B",
-			Description: "Following the February release of the Qwen3.5 series, we're pleased to share the first open-weight variant of Qwen3.6. Built on direct feedback from the community, Qwen3.6 prioritizes stability and real-world utility, offering developers a more intuitive, responsive, and genuinely productive coding experience.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Reasoning:    boolPtr(true),
-				Tools:        deepinfraTools,
-				Model:        "Qwen/Qwen3.6-27B",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "Qwen/Qwen3.6-35B-A3B",
-			Description: "Qwen3.6-35B-A3B is Alibaba's latest flagship Mixture-of-Experts model, with 35B total parameters and only 3B activated per token (256 experts, 8 routed + 1 shared). Built on direct feedback from the community, Qwen3.6 prioritizes stability and real-world utility, offering developers a more intuitive, responsive, and genuinely productive coding experience.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Tools:        deepinfraTools,
-				Model:        "Qwen/Qwen3.6-35B-A3B",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning",
-			Description: "Nemotron 3 Nano Omni is an open multimodal model built on a hybrid Mixture-of-Experts (MoE) architecture, engineered for high efficiency and strong accuracy across image, video, audio, and text inputs. It powers always-on sub-agents for computer use, document intelligence, and audio-video understanding—replacing fragmented vision, speech, and language pipelines with a single unified inference pass.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Reasoning:    boolPtr(true),
-				Tools:        deepinfraTools,
-				Model:        "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "google/gemma-4-26B-A4B-it",
-			Description: "Efficient, MoE variant of Gemma 4. Gemma is a family of open models built by Google DeepMind. Gemma 4 models are multimodal, handling text and image input and generating text output.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Tools:        deepinfraTools,
-				Model:        "google/gemma-4-26B-A4B-it",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "deepseek-ai/DeepSeek-V4-Flash",
-			Description: "DeepSeek V4 Flash is an efficiency-focused MoE model with 284B total parameters (13B active) and a 1M-token context window. It's tuned for fast inference and high-throughput use cases while still holding up on reasoning and coding tasks.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Reasoning:    boolPtr(true),
-				Tools:        deepinfraTools,
-				Model:        "deepseek-ai/DeepSeek-V4-Flash",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "meta-llama/Llama-3.2-11B-Vision-Instruct",
-			Description: "Llama 3.2 11B Vision is a multimodal model with 11 billion parameters, designed to handle tasks combining visual and textual data. It excels in tasks such as image captioning and visual question answering, bridging the gap between language generation and visual reasoning. Pre-trained on a massive dataset of image-text pairs, it performs well in complex, high-accuracy image analysis. Its ability to integrate visual understanding with language processing makes it an ideal solution for industries requiring comprehensive visual-linguistic AI applications, such as content creation, AI-driven customer service, and research.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Model:        "meta-llama/Llama-3.2-11B-Vision-Instruct",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
+// GetBotModels returns bot model configurations from the database.
+func GetBotModels(DB *gorm.DB) ([]BotModel, error) {
+	var configs []database.ModelConfig
+	if err := DB.Order("id ASC").Find(&configs).Error; err != nil {
+		return nil, err
 	}
-}
 
-// boolPtr returns a pointer to a boolean value
-func boolPtr(b bool) *bool {
-	return &b
+	models := make([]BotModel, 0, len(configs))
+	for _, cfg := range configs {
+		var profileConfig BotProfileConfig
+		if err := json.Unmarshal(cfg.Configuration, &profileConfig); err != nil {
+			return nil, fmt.Errorf("failed to parse configuration for model %q: %w", cfg.ModelID, err)
+		}
+
+		models = append(models, BotModel{
+			Title:         cfg.Title,
+			Description:   cfg.Description,
+			Configuration: profileConfig,
+		})
+	}
+
+	return models, nil
 }
 
 // HasTag checks if a configuration has a specific tag
@@ -164,8 +78,10 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		DB.Unscoped().Delete(&botProfile)
 	}
 
-	// Get default bot models
-	models := GetDefaultBotModels()
+	models, err := GetBotModels(DB)
+	if err != nil {
+		return err
+	}
 
 	// Convert to interface{} slice for JSON marshaling
 	modelsInterface := make([]interface{}, len(models))
