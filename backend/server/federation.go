@@ -198,9 +198,10 @@ func CreateFederationHost(
 	scheme := "http"
 	if useSsl {
 		scheme = "https"
-	} else {
-		domain = "http://" + host
 	}
+	/** else {
+		//domain = "http://" + host
+	} */
 
 	StartRequestReceivingPeer(context.Background(), h, federationHandler.CreateIncomingRequestStreamHandler(scheme, host, domain, hostPort, []string{
 		"/api/v1/federation/networks/",
@@ -325,7 +326,7 @@ func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host strin
 	if useSsl {
 		scheme = "https"
 	} else {
-		domain = "http://" + host
+		// domain = "http://" + host
 	}
 	log.Println("Initializing networks")
 	networks := []database.Network{}
