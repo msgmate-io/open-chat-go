@@ -131,6 +131,7 @@ var Tabels []interface{} = []interface{}{
 	&UploadedFile{},
 	&FileAccess{},
 	&TaskResult{},
+	&ModelConfig{},
 }
 
 var Migrations []Migration = []Migration{
@@ -144,4 +145,5 @@ var Migrations []Migration = []Migration{
 	FileUploadMigration{},
 	TableMigration{&ToolInitData{}},
 	TableMigration{&TaskResult{}},
+	TableMigration{&ModelConfig{}},
 }
