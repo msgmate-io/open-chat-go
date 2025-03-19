@@ -3,6 +3,8 @@ package msgmate
 import (
 	"backend/database"
 	"encoding/json"
+	"fmt"
+
 	"gorm.io/gorm"
 )
 
@@ -27,127 +29,28 @@ type BotModel struct {
 	Configuration BotProfileConfig `json:"configuration"`
 }
 
-// GetDefaultBotModels returns the default bot model configurations
-func GetDefaultBotModels() []BotModel {
-	return []BotModel{
-		{
-			Title:       "gpt-4o",
-			Description: "OpenAI's GPT-4o, optimized for specific applications with advanced tool and function support.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Tools:        []string{"get_weather", "get_current_time"},
-				Model:        "gpt-4o",
-				Endpoint:     "https://api.openai.com/v1/",
-				Backend:      "openai",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "o3-mini-2025-01-31",
-			Description: "OpenAI's O3 Mini, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Model:        "o3-mini-2025-01-31",
-				Endpoint:     "https://api.openai.com/v1/",
-				Backend:      "openai",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-			Description: "Meta's Llama 3.3, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Model:        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Tools:        []string{"get_current_time", "get_weather", "get_random_number"},
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-			Description: "Meta's Llama 3.1, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Model:        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Tools:        []string{"get_current_time", "get_weather", "get_random_number"},
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "deepseek-ai/DeepSeek-V3",
-			Description: "DeepSeek's DeepSeek V3, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Model:        "deepseek-ai/DeepSeek-V3",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "deepseek-ai/DeepSeek-R1",
-			Description: "DeepSeek's DeepSeek Coder, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Reasoning:    boolPtr(true),
-				Model:        "deepseek-ai/DeepSeek-R1",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "meta-llama/Meta-Llama-3.1-405B-Instruct",
-			Description: "Meta's Llama 3.1, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Reasoning:    boolPtr(false),
-				Tools:        []string{"get_current_time", "get_weather", "get_random_number"},
-				Model:        "meta-llama/Meta-Llama-3.1-405B-Instruct",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
-		{
-			Title:       "meta-llama/Meta-Llama-3.1-8B-Instruct",
-			Description: "Meta's Llama 3.1, a powerful and efficient language model.",
-			Configuration: BotProfileConfig{
-				Temperature:  0.7,
-				MaxTokens:    4096,
-				Reasoning:    boolPtr(false),
-				Tools:        []string{"get_current_time", "get_weather", "get_random_number"},
-				Model:        "meta-llama/Meta-Llama-3.1-8B-Instruct",
-				Endpoint:     "https://api.deepinfra.com/v1/openai",
-				Backend:      "deepinfra",
-				Context:      10,
-				SystemPrompt: "You are a helpful assistant.",
-			},
-		},
+// GetBotModels returns bot model configurations from the database.
+func GetBotModels(DB *gorm.DB) ([]BotModel, error) {
+	var configs []database.ModelConfig
+	if err := DB.Order("id ASC").Find(&configs).Error; err != nil {
+		return nil, err
 	}
-}
 
-// boolPtr returns a pointer to a boolean value
-func boolPtr(b bool) *bool {
-	return &b
+	models := make([]BotModel, 0, len(configs))
+	for _, cfg := range configs {
+		var profileConfig BotProfileConfig
+		if err := json.Unmarshal(cfg.Configuration, &profileConfig); err != nil {
+			return nil, fmt.Errorf("failed to parse configuration for model %q: %w", cfg.ModelID, err)
+		}
+
+		models = append(models, BotModel{
+			Title:         cfg.Title,
+			Description:   cfg.Description,
+			Configuration: profileConfig,
+		})
+	}
+
+	return models, nil
 }
 
 // HasTag checks if a configuration has a specific tag
@@ -175,8 +78,10 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		DB.Unscoped().Delete(&botProfile)
 	}
 
-	// Get default bot models
-	models := GetDefaultBotModels()
+	models, err := GetBotModels(DB)
+	if err != nil {
+		return err
+	}
 
 	// Convert to interface{} slice for JSON marshaling
 	modelsInterface := make([]interface{}, len(models))
