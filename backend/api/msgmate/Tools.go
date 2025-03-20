@@ -54,7 +54,7 @@ func NewToolByName(name string) (Tool, bool) {
 		return NewLittleWorldRetrieveMatchOverviewTool(), true
 	case "little_world__resolve_match":
 		return NewLittleWorldResolveMatchTool(), true
-	case "rwth_aachen_seminar_tims_auto_paper_include_exclude_agent":
+	case "rwth_aachen_seminar_tims_auto_paper_include_exclude", "rwth_aachen_seminar_tims_auto_paper_include_exclude_agent":
 		return NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(), true
 	case "run_callback_function":
 		return NewRunCallbackFunctionTool(), true
