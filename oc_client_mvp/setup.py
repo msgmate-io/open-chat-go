@@ -11,7 +11,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "oc_client=oc_client_mvp.client:main",
+            "oc_client=client.client:main",
         ],
     },
     classifiers=[
