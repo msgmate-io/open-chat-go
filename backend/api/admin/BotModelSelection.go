@@ -6,6 +6,8 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"net/http"
+
+	"gorm.io/gorm"
 )
 
 type botModelSelectionRequest struct {
@@ -32,9 +34,9 @@ func UpdateBotModelSelection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	botUUID := r.PathValue("bot_uuid")
-	if botUUID == "" {
-		http.Error(w, "bot_uuid is required", http.StatusBadRequest)
+	botIdentifier := r.PathValue("bot_uuid")
+	if botIdentifier == "" {
+		http.Error(w, "bot_uuid (or bot contact token) is required", http.StatusBadRequest)
 		return
 	}
 
@@ -56,8 +58,8 @@ func UpdateBotModelSelection(w http.ResponseWriter, r *http.Request) {
 		selectedSet[modelID] = struct{}{}
 	}
 
-	var botUser database.User
-	if err := DB.Where("uuid = ? AND is_automated = ?", botUUID, true).First(&botUser).Error; err != nil {
+	botUser, err := resolveAutomatedBotByIdentifier(DB, botIdentifier)
+	if err != nil {
 		http.Error(w, "Bot not found", http.StatusNotFound)
 		return
 	}
@@ -99,10 +101,26 @@ func UpdateBotModelSelection(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(botModelSelectionResponse{
-		BotUUID:       botUUID,
+		BotUUID:       botUser.UUID,
 		Action:        req.Action,
 		AddedCount:    addedCount,
 		RemovedCount:  removedCount,
 		CurrentModels: len(currentModels),
 	})
+}
+
+func resolveAutomatedBotByIdentifier(DB *gorm.DB, identifier string) (database.User, error) {
+	var botUser database.User
+	if err := DB.Where("uuid = ? AND is_automated = ?", identifier, true).First(&botUser).Error; err == nil {
+		return botUser, nil
+	}
+
+	var contact database.Contact
+	if err := DB.Preload("ContactUser").Where("contact_token = ?", identifier).First(&contact).Error; err != nil {
+		return database.User{}, err
+	}
+	if !contact.ContactUser.IsAutomated {
+		return database.User{}, gorm.ErrRecordNotFound
+	}
+	return contact.ContactUser, nil
 }
