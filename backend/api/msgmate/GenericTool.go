@@ -1,21 +1,13 @@
 package msgmate
 
 import (
+	tooldefs "backend/api/msgmate/tools"
 	"encoding/json"
 	"fmt"
 	"reflect"
 )
 
-// ToolDefinition represents a complete tool definition in a single JSON-friendly structure
-type ToolDefinition struct {
-	Name           string                 `json:"name"`
-	Description    string                 `json:"description"`
-	RequiresInit   bool                   `json:"requires_init"`
-	InputType      interface{}            `json:"input_type"`
-	RequiredParams []string               `json:"required_params"`
-	Parameters     map[string]interface{} `json:"parameters"`
-	RunFunction    func(input interface{}, init map[string]interface{}) (string, error)
-}
+type ToolDefinition = tooldefs.ToolDefinition
 
 // GenericTool is a simplified tool implementation that uses the ToolDefinition
 type GenericTool struct {
@@ -24,7 +16,11 @@ type GenericTool struct {
 }
 
 func (t *GenericTool) RunTool(input interface{}) (string, error) {
-	return t.Definition.RunFunction(input, t.ToolInit.(map[string]interface{}))
+	initData, ok := t.ToolInit.(map[string]interface{})
+	if !ok || initData == nil {
+		initData = map[string]interface{}{}
+	}
+	return t.Definition.RunFunction(input, initData)
 }
 
 func (t *GenericTool) ParseArguments(input string) (interface{}, error) {
@@ -66,6 +62,7 @@ func NewToolFromDefinition(def ToolDefinition) Tool {
 		Definition: def,
 	}
 	tool.BaseTool = BaseTool{
+		AdminOnly:       def.AdminOnly,
 		RequiresInit:    def.RequiresInit,
 		ToolName:        def.Name,
 		ToolType:        "function",
