@@ -13,6 +13,7 @@ type LittleWorldChatReplyToolInput struct {
 var LittleWorldChatReplyToolDef = ToolDefinition{
 	Name:           "little_world__chat_reply",
 	Description:    "Reply to a user's message in a Little World support chat.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      LittleWorldChatReplyToolInput{},
 	RequiredParams: []string{"message"},

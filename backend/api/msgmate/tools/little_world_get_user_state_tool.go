@@ -7,6 +7,7 @@ type LittleWorldGetUserStateToolInput struct{}
 var LittleWorldGetUserStateToolDef = ToolDefinition{
 	Name:           "little_world__get_user_state",
 	Description:    "Get the current state of a user in Little World.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      LittleWorldGetUserStateToolInput{},
 	RequiredParams: []string{},
