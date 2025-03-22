@@ -13,6 +13,7 @@ type Tool interface {
 	GetToolType() string
 	GetToolName() string
 	GetToolParameters() map[string]interface{}
+	GetAdminOnly() bool
 	GetRequiresInit() bool
 	ConstructTool() interface{}
 	SetInitData(data interface{})
@@ -81,6 +82,7 @@ func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool
 }
 
 type BaseTool struct {
+	AdminOnly       bool
 	RequiresInit    bool
 	ToolName        string
 	ToolType        string
@@ -122,6 +124,10 @@ func (t *BaseTool) ParseArguments(input string) (interface{}, error) {
 
 func (t *BaseTool) GetRequiresInit() bool {
 	return t.RequiresInit
+}
+
+func (t *BaseTool) GetAdminOnly() bool {
+	return t.AdminOnly
 }
 
 func (t *BaseTool) Run(input string) (string, error) {
