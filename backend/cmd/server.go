@@ -258,9 +258,6 @@ func ensureDefaultBotUser(DB *gorm.DB, username, password string) (*database.Use
 	}
 	botUser.IsAutomated = true
 	DB.Save(&botUser)
-	if err := msgmate.CreateOrUpdateBotProfile(DB, *botUser); err != nil {
-		return nil, err
-	}
 	return botUser, nil
 }
 
@@ -363,6 +360,10 @@ func ServerCli() *cli.Command {
 			}
 			botUser, err := ensureDefaultBotUser(DB, botUsername, botPassword)
 			if err != nil {
+				return err
+			}
+
+			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err
 			}
 
