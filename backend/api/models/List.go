@@ -61,6 +61,21 @@ func parseSource(modelID string) string {
 	return parts[0]
 }
 
+// List returns the platform model catalog for both guests and authenticated users.
+//
+//	@Summary		List models
+//	@Description	List model configurations with pagination and filters. Guests receive restricted fields, admins receive extended metadata.
+//	@Tags			models
+//	@Produce		json
+//	@Param			page query int false "Page number" minimum(1)
+//	@Param			page_size query int false "Page size" minimum(1) maximum(100)
+//	@Param			hoster query string false "Filter by backend hoster"
+//	@Param			source query string false "Filter by model source prefix"
+//	@Param			q query string false "Search by title/model/description"
+//	@Param			bot query string false "Admin only: filter by assigned bot name"
+//	@Param			bot_uuid query string false "Admin only: filter by assigned bot UUID"
+//	@Success		200 {object} ModelsListResponse
+//	@Router			/api/v1/models/list [get]
 func (h *ModelsHandler) List(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {

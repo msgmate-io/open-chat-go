@@ -59,6 +59,19 @@ type ToolsListResponse struct {
 	Filters    toolsFilters   `json:"filters"`
 }
 
+// List returns the platform tool catalog for guests and authenticated users.
+//
+//	@Summary		List tools
+//	@Description	List callable tools with pagination and filters. Admin-only tools are only visible to admin users.
+//	@Tags			tools
+//	@Produce		json
+//	@Param			page query int false "Page number" minimum(1)
+//	@Param			page_size query int false "Page size" minimum(1) maximum(100)
+//	@Param			type query string false "Filter by tool type"
+//	@Param			q query string false "Search by tool name or description"
+//	@Param			requires_init query string false "Authenticated only: true/false filter"
+//	@Success		200 {object} ToolsListResponse
+//	@Router			/api/v1/tools/list [get]
 func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 	toolMetadataOnce.Do(func() {
 		toolMetadataMap = loadToolMetadataFromSource()
@@ -66,6 +79,7 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	user, _ := r.Context().Value("user").(*database.User)
 	isAuthenticated := user != nil
+	isAdmin := user != nil && user.IsAdmin
 
 	page := 1
 	pageSize := 12
@@ -88,6 +102,10 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 	typesSet := make(map[string]struct{})
 
 	for _, tool := range msgmate.AllTools {
+		if tool.GetAdminOnly() && !isAdmin {
+			continue
+		}
+
 		typeValue := strings.TrimSpace(tool.GetToolType())
 		if typeValue != "" {
 			typesSet[typeValue] = struct{}{}
