@@ -1,4 +1,4 @@
-from client.client import OpenChatPythonClient
+from clients.oc_python_client.client.client import OpenChatPythonClient
 
 BOT_CONFIG = {
     "temperature": 0.7,
