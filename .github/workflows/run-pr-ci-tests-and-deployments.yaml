@@ -19,6 +19,34 @@ on:
         description: GitHub username that owns the bot comments
         required: false
         default: cur1ousdude
+      callback_action:
+        description: Optional callback mode for post-release comment updates
+        required: false
+        default: ""
+      source_repository:
+        description: Source repository for callback operations
+        required: false
+        default: msgmate-io/open-chat-go
+      source_pr_number:
+        description: Source PR number for callback operations
+        required: false
+        default: ""
+      release_tag:
+        description: Release tag emitted by build workflow
+        required: false
+        default: ""
+      release_version:
+        description: Release version emitted by build workflow
+        required: false
+        default: ""
+      client_repository:
+        description: Python client repository used in install instructions
+        required: false
+        default: msgmate-io/open-chat-go-python-client
+      binary_name:
+        description: Binary asset filename used in install instructions
+        required: false
+        default: ""
   pull_request:
     types:
       - opened
@@ -54,6 +82,69 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  update-pr-comment-after-release:
+    name: Update PR Comment After Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == 'release_comment' && github.event.inputs.source_pr_number != ''
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+    steps:
+      - name: Update PR progress comment with release details
+        run: |
+          set -euo pipefail
+          SOURCE_REPOSITORY="${{ github.event.inputs.source_repository || github.repository }}"
+          SOURCE_PR_NUMBER="${{ github.event.inputs.source_pr_number }}"
+          RELEASE_TAG="${{ github.event.inputs.release_tag }}"
+          RELEASE_VERSION="${{ github.event.inputs.release_version }}"
+          CLIENT_REPOSITORY="${{ github.event.inputs.client_repository || 'msgmate-io/open-chat-go-python-client' }}"
+          BINARY_NAME="${{ github.event.inputs.binary_name }}"
+
+          if [ -z "$BINARY_NAME" ] && [ -n "$RELEASE_VERSION" ]; then
+            BINARY_NAME="open-chat-${RELEASE_VERSION}-linux-amd64"
+          fi
+
+          body="$(cat <<EOF
+          Running PR CI orchestration.
+
+          <!-- open-chat-pr-ci-progress -->
+
+          - [x] \`(1) setup\` [\`run\`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
+          - [x] \`(2) build\`
+          - [x] \`(3) deploy\`
+          - [x] \`(4) test\` \`passed\`
+          - [x] \`(5) release build\` \`released: ${RELEASE_TAG}\`
+
+          <details>
+          <summary>Install Commands</summary>
+
+          \`\`\`bash
+          pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${RELEASE_TAG}
+          wget -O open-chat "https://github.com/${SOURCE_REPOSITORY}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
+          \`\`\`
+          </details>
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          })"
+          if [ -z "$comment_id" ]; then
+            echo "::error::Could not find existing progress comment to update."
+            exit 1
+          fi
+          curl -fsSL -X PATCH \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
+            -d "$payload" >/dev/null
+
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
@@ -139,7 +230,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build')))
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -672,6 +763,7 @@ jobs:
               --arg targetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
               --arg sourceBranch "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
+              --arg botUser "$BOT_USER" \
               '{
                 ref: $ref,
                 inputs: {
@@ -679,6 +771,7 @@ jobs:
                   release_kind: "pr-alpha",
                   source_pr_number: $sourcePrNumber,
                   source_branch: $sourceBranch,
+                  bot_user: $botUser,
                   prerelease: "true"
                 }
               }'
@@ -1148,6 +1241,7 @@ jobs:
               --arg releaseKind "$RELEASE_KIND" \
               --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
               --arg sourceBranch "${{ github.event.pull_request.base.ref }}" \
+              --arg botUser "$BOT_USER" \
               '{
                 ref: $ref,
                 inputs: {
@@ -1155,6 +1249,7 @@ jobs:
                   release_kind: $releaseKind,
                   source_pr_number: $sourcePrNumber,
                   source_branch: $sourceBranch,
+                  bot_user: $botUser,
                   prerelease: "true"
                 }
               }'
