@@ -19,6 +19,10 @@ on:
         description: Source branch name (for metadata)
         required: false
         default: ""
+      bot_user:
+        description: GitHub username that owns bot comments
+        required: false
+        default: cur1ousdude
       release_tag:
         description: Explicit release tag override
         required: false
@@ -37,6 +41,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -253,3 +258,41 @@ jobs:
             code.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dispatch PR comment update callback
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.source_pr_number != ''
+        env:
+          CALLBACK_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+        run: |
+          set -euo pipefail
+          payload="$(
+            jq -n \
+              --arg ref "${{ github.event.inputs.target_ref || 'main' }}" \
+              --arg callbackAction "release_comment" \
+              --arg sourceRepository "${{ github.repository }}" \
+              --arg sourcePrNumber "${{ github.event.inputs.source_pr_number }}" \
+              --arg releaseTag "${{ steps.release_meta.outputs.tag_name }}" \
+              --arg releaseVersion "${{ steps.release_meta.outputs.version }}" \
+              --arg clientRepository "msgmate-io/open-chat-go-python-client" \
+              --arg binaryName "open-chat-${{ steps.release_meta.outputs.version }}-linux-amd64" \
+              --arg botUser "${{ github.event.inputs.bot_user || 'cur1ousdude' }}" \
+              '{
+                ref: $ref,
+                inputs: {
+                  callback_action: $callbackAction,
+                  source_repository: $sourceRepository,
+                  source_pr_number: $sourcePrNumber,
+                  release_tag: $releaseTag,
+                  release_version: $releaseVersion,
+                  client_repository: $clientRepository,
+                  binary_name: $binaryName,
+                  BOT_USER: $botUser
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CALLBACK_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-pr-ci-tests-and-deployments.yaml/dispatches" \
+            -d "$payload"
