@@ -42,6 +42,7 @@ on:
 permissions:
   contents: write
   actions: write
+  issues: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -259,41 +260,47 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Dispatch PR comment update callback
+      - name: Update PR progress comment from template
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.source_pr_number != ''
         env:
-          CALLBACK_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
-          CALLBACK_REF: ${{ vars.CI_REF || 'main' }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          BOT_USER: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+          SOURCE_PR_NUMBER: ${{ github.event.inputs.source_pr_number }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag_name }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          CLIENT_REPOSITORY: msgmate-io/open-chat-go-python-client
+          BINARY_NAME: open-chat-${{ steps.release_meta.outputs.version }}-linux-amd64
         run: |
           set -euo pipefail
-          payload="$(
-            jq -n \
-              --arg ref "$CALLBACK_REF" \
-              --arg callbackAction "release_comment" \
-              --arg sourceRepository "${{ github.repository }}" \
-              --arg sourcePrNumber "${{ github.event.inputs.source_pr_number }}" \
-              --arg releaseTag "${{ steps.release_meta.outputs.tag_name }}" \
-              --arg releaseVersion "${{ steps.release_meta.outputs.version }}" \
-              --arg clientRepository "msgmate-io/open-chat-go-python-client" \
-              --arg binaryName "open-chat-${{ steps.release_meta.outputs.version }}-linux-amd64" \
-              --arg botUser "${{ github.event.inputs.bot_user || 'cur1ousdude' }}" \
-              '{
-                ref: $ref,
-                inputs: {
-                  callback_action: $callbackAction,
-                  source_repository: $sourceRepository,
-                  source_pr_number: $sourcePrNumber,
-                  release_tag: $releaseTag,
-                  release_version: $releaseVersion,
-                  client_repository: $clientRepository,
-                  binary_name: $binaryName,
-                  BOT_USER: $botUser
-                }
-              }'
-          )"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CALLBACK_TOKEN}" \
+          comments_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-pr-ci-tests-and-deployments.yaml/dispatches" \
-            -d "$payload"
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments")"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""' <<< "$comments_json")"
+          if [ -z "$comment_id" ]; then
+            echo "::error::Could not find existing PR progress comment to update."
+            exit 1
+          fi
+
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_RELEASE_TAG="$RELEASE_TAG"
+          TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
+          TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
+          TPL_BINARY_NAME="$BINARY_NAME"
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME
+          python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md > /tmp/pr_comment_body.md
+
+          payload="$(jq -Rs '{body: .}' < /tmp/pr_comment_body.md)"
+          status_code="$(curl -s -o /tmp/pr_comment_update.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
+            -d "$payload")"
+          if [ "$status_code" != "200" ]; then
+            echo "::error::Failed to update PR progress comment (status $status_code)."
+            cat /tmp/pr_comment_update.json || true
+            exit 1
+          fi
