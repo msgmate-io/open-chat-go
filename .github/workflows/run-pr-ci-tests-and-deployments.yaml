@@ -87,9 +87,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == 'release_comment' && github.event.inputs.source_pr_number != ''
     env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Update PR progress comment with release details
         run: |
           set -euo pipefail
@@ -136,9 +143,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build')
     steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Delete previous workflow comments
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
@@ -160,7 +174,7 @@ jobs:
 
       - name: Post no-label guidance comment
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
@@ -192,7 +206,7 @@ jobs:
 
       - name: Add default test label
         env:
-          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
         run: |
           set -euo pipefail
           curl -fsSL -X POST \
@@ -222,8 +236,8 @@ jobs:
       image_url: ${{ steps.image.outputs.image_url }}
       dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
@@ -336,6 +350,13 @@ jobs:
           echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
           echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} build=${SHOULD_BUILD:-false}"
 
+      - name: Checkout source repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.context.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
         env:
@@ -398,14 +419,6 @@ jobs:
               -d "$payload"
           fi
 
-      - name: Checkout source repository
-        if: steps.context.outputs.should_deploy != '' || steps.context.outputs.should_test != ''
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.context.outputs.target_ref }}
-          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
-          submodules: recursive
-
       - name: Resolve build image metadata
         if: steps.context.outputs.should_deploy != ''
         id: image
@@ -425,7 +438,7 @@ jobs:
         if: steps.context.outputs.should_deploy != ''
         run: |
           set -euo pipefail
-          echo "${{ secrets.BOT_TOKEN || secrets.BOT_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.BOT_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Build and push temporary deployment image
         if: steps.context.outputs.should_deploy != ''
@@ -582,7 +595,7 @@ jobs:
     needs: [run-pr-ci-tests-and-deployments]
     if: github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
       - name: Update progress comment when approval gate opens
         env:
@@ -636,8 +649,8 @@ jobs:
     environment:
       name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -947,7 +960,7 @@ jobs:
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
     env:
-      PR_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       REPOSITORY: ${{ github.repository }}
       REPO_OWNER: ${{ github.repository_owner }}
     steps:
@@ -1048,7 +1061,7 @@ jobs:
     needs: [resolve-merged-deployment]
     if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
     env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
       - name: Comment deployment approval link on merged PR
         env:
@@ -1105,7 +1118,7 @@ jobs:
     environment:
       name: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
