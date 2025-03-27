@@ -728,12 +728,17 @@ jobs:
                 }
               }'
           )"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
-            -d "$payload"
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch CI deploy workflow (status $status_code)."
+            cat /tmp/ci_deploy_dispatch.json || true
+            exit 1
+          fi
 
       - name: Dispatch build and release workflow in source repository
         if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != ''
@@ -741,7 +746,7 @@ jobs:
           set -euo pipefail
           payload="$(
             jq -n \
-              --arg ref "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
+              --arg ref "$CI_REF" \
               --arg targetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
               --arg sourceBranch "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
@@ -758,12 +763,17 @@ jobs:
                 }
               }'
           )"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/build_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/build.yaml/dispatches" \
-            -d "$payload"
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch build workflow (status $status_code)."
+            cat /tmp/build_dispatch.json || true
+            exit 1
+          fi
 
       - name: Dispatch python client tagging workflow
         if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != ''
@@ -1196,12 +1206,17 @@ jobs:
               }'
           )"
           echo "Dispatching CI deploy with run id suffix: ${DISPATCH_RUN_ID}"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/merged_ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.resolve-merged-deployment.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
-            -d "$payload"
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged CI deploy workflow (status $status_code)."
+            cat /tmp/merged_ci_deploy_dispatch.json || true
+            exit 1
+          fi
 
       - name: Dispatch build and release workflow for merged deployment
         env:
@@ -1234,12 +1249,17 @@ jobs:
                 }
               }'
           )"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/merged_build_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build.yaml/dispatches" \
-            -d "$payload"
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged build workflow (status $status_code)."
+            cat /tmp/merged_build_dispatch.json || true
+            exit 1
+          fi
 
       - name: Dispatch python client tagging workflow for merged deployment
         env:
@@ -1286,12 +1306,17 @@ jobs:
                 }
               }'
           )"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/merged_py_tag_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
-            -d "$payload"
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged python tag workflow (status $status_code)."
+            cat /tmp/merged_py_tag_dispatch.json || true
+            exit 1
+          fi
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
