@@ -746,7 +746,7 @@ jobs:
           set -euo pipefail
           payload="$(
             jq -n \
-              --arg ref "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
+              --arg ref "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
               --arg targetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
               --arg sourceBranch "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
