@@ -1183,7 +1183,7 @@ jobs:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
           APPROVAL_RUN_URL: ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}
-          APPROVAL_PENDING_URL: ${{ format('https://github.com/{0}/actions/runs/{1}/pending_deployments', github.repository, github.run_id) }}
+          APPROVAL_REVIEW_URL: ${{ format('https://github.com/{0}/actions/runs/{1}?check_suite_focus=true', github.repository, github.run_id) }}
         run: |
           set -euo pipefail
           marker="<!-- open-chat-merged-deploy-approval-issue run:${GITHUB_RUN_ID} -->"
@@ -1193,7 +1193,7 @@ jobs:
 
           Deployment approval is waiting for **${DEPLOYMENT_NAME}**.
 
-          - Approval page: ${APPROVAL_PENDING_URL}
+          - Approval page: ${APPROVAL_REVIEW_URL}
           - Workflow run: ${APPROVAL_RUN_URL}
           - Source PR: #${MERGED_PR_NUMBER} (${MERGED_PR_URL})
           - Deployment URL: ${DEPLOYMENT_URL}
