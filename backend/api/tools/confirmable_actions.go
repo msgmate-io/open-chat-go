@@ -1,0 +1,260 @@
+package tools
+
+import (
+	"backend/api/msgmate"
+	"backend/database"
+	"backend/server/util"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type ConfirmableActionExecuteRequest struct {
+	Input map[string]interface{} `json:"input,omitempty"`
+}
+
+type ConfirmableActionExecuteResponse struct {
+	Success       bool                   `json:"success"`
+	Status        string                 `json:"status"`
+	ActionID      string                 `json:"action_id"`
+	TargetTool    string                 `json:"target_tool_name"`
+	ToolResult    string                 `json:"tool_result,omitempty"`
+	Error         string                 `json:"error,omitempty"`
+	UpdatedAction map[string]interface{} `json:"updated_action,omitempty"`
+}
+
+func getToolInitForChat(chat database.Chat, toolName string) map[string]interface{} {
+	toolInitData := map[string]interface{}{}
+	if chat.SharedConfig == nil || chat.SharedConfig.ConfigData == nil {
+		return toolInitData
+	}
+
+	var configData map[string]interface{}
+	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err != nil {
+		return toolInitData
+	}
+	toolInitRaw, exists := configData["tool_init"]
+	if !exists {
+		return toolInitData
+	}
+	toolInitMap, ok := toolInitRaw.(map[string]interface{})
+	if !ok {
+		return toolInitData
+	}
+	initRaw, exists := toolInitMap[toolName]
+	if !exists {
+		return toolInitData
+	}
+	initMap, ok := initRaw.(map[string]interface{})
+	if !ok {
+		return toolInitData
+	}
+	return initMap
+}
+
+func findBotAndReceiver(chat database.Chat, user database.User) (uint, uint) {
+	if chat.User1.IsAutomated {
+		return chat.User1.ID, chat.User2.ID
+	}
+	if chat.User2.IsAutomated {
+		return chat.User2.ID, chat.User1.ID
+	}
+	if chat.User1.ID == user.ID {
+		return chat.User2.ID, chat.User1.ID
+	}
+	return chat.User1.ID, chat.User2.ID
+}
+
+func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	chatUUID := r.PathValue("chat_uuid")
+	messageUUID := r.PathValue("message_uuid")
+	actionID := r.PathValue("action_id")
+	if chatUUID == "" || messageUUID == "" || actionID == "" {
+		http.Error(w, "Invalid confirmable action path", http.StatusBadRequest)
+		return
+	}
+
+	var req ConfirmableActionExecuteRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	var chat database.Chat
+	if err := DB.Preload("User1").
+		Preload("User2").
+		Preload("SharedConfig").
+		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, user.ID, user.ID).
+		First(&chat).Error; err != nil {
+		http.Error(w, "Chat not found or access denied", http.StatusNotFound)
+		return
+	}
+
+	var sourceMessage database.Message
+	if err := DB.Where("uuid = ? AND chat_id = ?", messageUUID, chat.ID).First(&sourceMessage).Error; err != nil {
+		http.Error(w, "Message not found", http.StatusNotFound)
+		return
+	}
+
+	messageMeta := map[string]interface{}{}
+	if len(sourceMessage.MetaData) > 0 {
+		_ = json.Unmarshal(sourceMessage.MetaData, &messageMeta)
+	}
+	actionsRaw, ok := messageMeta["confirmable_actions"].([]interface{})
+	if !ok || len(actionsRaw) == 0 {
+		http.Error(w, "No confirmable actions in message metadata", http.StatusBadRequest)
+		return
+	}
+
+	actionIndex := -1
+	var selectedAction map[string]interface{}
+	for i, rawAction := range actionsRaw {
+		action, ok := rawAction.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if id, _ := action["action_id"].(string); id == actionID {
+			actionIndex = i
+			selectedAction = action
+			break
+		}
+	}
+	if actionIndex < 0 {
+		http.Error(w, "Confirmable action not found", http.StatusNotFound)
+		return
+	}
+
+	status, _ := selectedAction["status"].(string)
+	if status != "" && status != "pending" {
+		http.Error(w, "Action already handled", http.StatusConflict)
+		return
+	}
+
+	targetToolName, _ := selectedAction["target_tool_name"].(string)
+	if targetToolName == "" {
+		http.Error(w, "Missing target tool name", http.StatusBadRequest)
+		return
+	}
+
+	inputParams := map[string]interface{}{}
+	if suggested, ok := selectedAction["input"].(map[string]interface{}); ok {
+		inputParams = suggested
+	}
+	if req.Input != nil {
+		inputParams = req.Input
+	}
+
+	toolInitData := getToolInitForChat(chat, targetToolName)
+	toolInstance := msgmate.GetNewToolInstanceByName(targetToolName, toolInitData)
+	if toolInstance == nil {
+		http.Error(w, fmt.Sprintf("Tool '%s' not found", targetToolName), http.StatusNotFound)
+		return
+	}
+
+	inputBytes, _ := json.Marshal(inputParams)
+	toolInput, err := toolInstance.ParseArguments(string(inputBytes))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Invalid action input: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	toolResult, execErr := toolInstance.RunTool(toolInput)
+	now := time.Now().UTC().Format(time.RFC3339)
+	selectedAction["approved_by"] = user.UUID
+	selectedAction["approved_at"] = now
+	selectedAction["input"] = inputParams
+
+	response := ConfirmableActionExecuteResponse{
+		Success:    execErr == nil,
+		ActionID:   actionID,
+		TargetTool: targetToolName,
+	}
+
+	if execErr != nil {
+		selectedAction["status"] = "failed"
+		selectedAction["execution_error"] = execErr.Error()
+		response.Status = "failed"
+		response.Error = execErr.Error()
+	} else {
+		selectedAction["status"] = "executed"
+		selectedAction["executed_at"] = now
+		selectedAction["result"] = toolResult
+		response.Status = "executed"
+		response.ToolResult = toolResult
+	}
+
+	actionsRaw[actionIndex] = selectedAction
+	messageMeta["confirmable_actions"] = actionsRaw
+	updatedMetaBytes, _ := json.Marshal(messageMeta)
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
+			return err
+		}
+
+		if execErr != nil {
+			return nil
+		}
+
+		senderID, receiverID := findBotAndReceiver(chat, *user)
+		messageText := fmt.Sprintf("Confirmed action `%s` executed.", targetToolName)
+		if toolResult != "" {
+			messageText = fmt.Sprintf("Confirmed action `%s` executed.\n\n%s", targetToolName, toolResult)
+		}
+
+		execMeta := map[string]interface{}{
+			"finished": true,
+			"confirmable_action_execution": map[string]interface{}{
+				"action_id":           actionID,
+				"target_tool_name":    targetToolName,
+				"approved_by":         user.UUID,
+				"approved_at":         now,
+				"source_message_uuid": sourceMessage.UUID,
+			},
+		}
+		execMetaBytes, _ := json.Marshal(execMeta)
+
+		toolCallRepr := []map[string]interface{}{{
+			"id":        actionID,
+			"name":      targetToolName,
+			"arguments": inputParams,
+			"result":    toolResult,
+		}}
+		toolCallBytes, _ := json.Marshal(toolCallRepr)
+		var toolCalls []json.RawMessage
+		_ = json.Unmarshal(toolCallBytes, &toolCalls)
+
+		msg := database.Message{
+			ChatId:     chat.ID,
+			SenderId:   senderID,
+			ReceiverId: receiverID,
+			Text:       &messageText,
+			MetaData:   execMetaBytes,
+			ToolCalls:  &toolCalls,
+		}
+
+		if err := tx.Create(&msg).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&chat).Update("latest_message_id", msg.ID).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		http.Error(w, "Failed to persist confirmable action state", http.StatusInternalServerError)
+		return
+	}
+
+	response.UpdatedAction = selectedAction
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
