@@ -22,8 +22,8 @@ jobs:
     name: Cleanup PR Deployment
     runs-on: ubuntu-latest
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       DISPATCH_RUN_ID: cleanup-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Resolve PR deployment identity

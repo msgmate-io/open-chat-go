@@ -1,0 +1,197 @@
+name: Tag Python Client Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_kind:
+        description: Release type (pr-alpha, staging, production)
+        required: false
+        default: pr-alpha
+      source_repository:
+        description: Source repository containing version file
+        required: false
+        default: msgmate-io/open-chat-go
+      source_pr_number:
+        description: Source pull request number for comment context
+        required: false
+        default: ""
+      source_target_ref:
+        description: Source target ref/SHA used for version + commit suffix
+        required: false
+        default: main
+      client_repository:
+        description: Python client repository to tag
+        required: false
+        default: msgmate-io/open-chat-go-python-client
+      bot_user:
+        description: GitHub username that owns bot comments
+        required: false
+        default: cur1ousdude
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  tag-python-client:
+    name: Create Python Client Tag
+    runs-on: ubuntu-latest
+    env:
+      API_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+    steps:
+      - name: Resolve source version and commit metadata
+        id: meta
+        env:
+          SOURCE_REPOSITORY: ${{ github.event.inputs.source_repository }}
+          SOURCE_TARGET_REF: ${{ github.event.inputs.source_target_ref }}
+          RELEASE_KIND: ${{ github.event.inputs.release_kind }}
+        run: |
+          set -euo pipefail
+
+          commit_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/commits/${SOURCE_TARGET_REF}")"
+          SOURCE_SHA="$(jq -r '.sha' <<< "$commit_json")"
+          SHORT_SHA="$(printf '%s' "$SOURCE_SHA" | cut -c1-12)"
+
+          content_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/contents/backend/api/metrics/handler.go?ref=${SOURCE_TARGET_REF}")"
+          VERSION_FILE="$(jq -r '.content' <<< "$content_json" | tr -d '\n' | base64 -d)"
+          VERSION="$(printf '%s' "$VERSION_FILE" | sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' | head -n1)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Unable to resolve VERSION from backend/api/metrics/handler.go"
+            exit 1
+          fi
+
+          case "$RELEASE_KIND" in
+            pr-alpha)
+              TAG_NAME="open-chat-pr-alpha-release-${VERSION}-${SHORT_SHA}"
+              ;;
+            staging)
+              TAG_NAME="open-chat-staging-${VERSION}"
+              ;;
+            production)
+              TAG_NAME="open-chat-${VERSION}"
+              ;;
+            *)
+              echo "::error::Unsupported release_kind: ${RELEASE_KIND}"
+              exit 1
+              ;;
+          esac
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve python client default branch SHA
+        id: client_sha
+        env:
+          CLIENT_REPOSITORY: ${{ github.event.inputs.client_repository }}
+        run: |
+          set -euo pipefail
+          repo_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CLIENT_REPOSITORY}")"
+          default_branch="$(jq -r '.default_branch' <<< "$repo_json")"
+          commit_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CLIENT_REPOSITORY}/commits/${default_branch}")"
+          client_sha="$(jq -r '.sha' <<< "$commit_json")"
+          echo "client_sha=${client_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag in python client repository
+        env:
+          CLIENT_REPOSITORY: ${{ github.event.inputs.client_repository }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          CLIENT_SHA: ${{ steps.client_sha.outputs.client_sha }}
+        run: |
+          set -euo pipefail
+          status_code="$(curl -s -o /tmp/client_tag_lookup.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/ref/tags/${TAG_NAME}")"
+
+          if [ "$status_code" = "200" ]; then
+            echo "Tag ${TAG_NAME} already exists in ${CLIENT_REPOSITORY}; skipping create."
+            exit 0
+          fi
+
+          if [ "$status_code" != "404" ]; then
+            echo "::error::Unexpected status checking tag: $status_code"
+            cat /tmp/client_tag_lookup.json || true
+            exit 1
+          fi
+
+          payload="$(jq -n --arg ref "refs/tags/${TAG_NAME}" --arg sha "$CLIENT_SHA" '{ref: $ref, sha: $sha}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/refs" \
+            -d "$payload" >/dev/null
+
+      - name: Comment installation instructions on source PR
+        if: github.event.inputs.source_pr_number != ''
+        env:
+          SOURCE_REPOSITORY: ${{ github.event.inputs.source_repository }}
+          SOURCE_PR_NUMBER: ${{ github.event.inputs.source_pr_number }}
+          BOT_USER: ${{ github.event.inputs.bot_user }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          CLIENT_REPOSITORY: ${{ github.event.inputs.client_repository }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<EOF
+          Python client release tag created.
+
+          - Repo: \`${CLIENT_REPOSITORY}\`
+          - Tag: \`${TAG_NAME}\`
+
+          Install from this specific tag:
+
+          ```bash
+          pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${TAG_NAME}
+          ```
+
+          Repository URL: https://github.com/${CLIENT_REPOSITORY}
+
+          <!-- open-chat-python-client-tag -->
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+
+          comment_id="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-python-client-tag -->")))][0].id // ""'
+          })"
+
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
+              -d "$payload" >/dev/null
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments" \
+              -d "$payload" >/dev/null
+          fi
