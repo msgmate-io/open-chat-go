@@ -178,6 +178,20 @@ var tableConfigurations = map[string]TableInfoConfig{
 			"OwningUser": "owning_user",
 		},
 	},
+	"permissions": {
+		IncludeFields: []string{"UUID", "ID", "CreatedAt", "UpdatedAt", "DeletedAt", "UserId", "Permission"},
+		Preloads:      []string{"User"},
+		PreloadMappings: map[string]string{
+			"User": "user",
+		},
+	},
+	"access_tokens": {
+		IncludeFields: []string{"UUID", "ID", "CreatedAt", "UpdatedAt", "DeletedAt", "UserId", "Name", "TokenPrefix", "LastUsedAt", "ExpiresAt", "RevokedAt"},
+		Preloads:      []string{"User"},
+		PreloadMappings: map[string]string{
+			"User": "user",
+		},
+	},
 }
 
 func GetTableInfo(w http.ResponseWriter, r *http.Request) {
