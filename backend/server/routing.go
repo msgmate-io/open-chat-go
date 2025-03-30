@@ -202,6 +202,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /contacts/{contact_token}", contactsHandler.GetContactByToken)
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
+	v1PrivateApis.HandleFunc("GET /user/permissions", userHandler.ListPermissions)
+	v1PrivateApis.HandleFunc("POST /user/access-tokens", userHandler.CreateAccessToken)
+	v1PrivateApis.HandleFunc("GET /user/access-tokens/list", userHandler.ListAccessTokens)
 	v1PrivateApis.HandleFunc("POST /user/2fa/setup", userHandler.SetupTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
