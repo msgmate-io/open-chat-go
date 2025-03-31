@@ -53,6 +53,14 @@ func (u *User) AddContact(
 	return &contact, nil
 }
 
+func (u *User) AfterCreate(tx *gorm.DB) error {
+	permission := Permission{UserId: u.ID, Permission: PermissionCreateAPITokens}
+	if err := tx.Where("user_id = ? AND permission = ?", u.ID, PermissionCreateAPITokens).FirstOrCreate(&permission).Error; err != nil {
+		return err
+	}
+	return EnsureDefaultAccessTokenForUser(tx, u.ID)
+}
+
 func RegisterUser(
 	DB *gorm.DB,
 	name string,
