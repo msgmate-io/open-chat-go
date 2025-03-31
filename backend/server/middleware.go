@@ -4,6 +4,8 @@ package server
 import (
 	"backend/database"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"gorm.io/gorm"
 	"log"
 	"net/http"
@@ -63,11 +65,51 @@ func UserFromContext(ctx context.Context) *database.User {
 	return user
 }
 
+func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, bool) {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader == "" || !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		return nil, false
+	}
+	rawToken := strings.TrimSpace(authHeader[7:])
+	if rawToken == "" {
+		return nil, false
+	}
+	h := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(h[:])
+
+	var accessToken database.AccessToken
+	if err := DB.Where("token_hash = ?", tokenHash).First(&accessToken).Error; err != nil {
+		return nil, false
+	}
+	if accessToken.RevokedAt != nil {
+		return nil, false
+	}
+	if accessToken.ExpiresAt != nil && accessToken.ExpiresAt.Before(time.Now()) {
+		return nil, false
+	}
+
+	var user database.User
+	if err := DB.First(&user, "id = ?", accessToken.UserId).Error; err != nil {
+		return nil, false
+	}
+
+	now := time.Now()
+	DB.Model(&database.AccessToken{}).Where("id = ?", accessToken.ID).Update("last_used_at", &now)
+
+	return &user, true
+}
+
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		DB, ok := r.Context().Value("db").(*gorm.DB)
 		if !ok {
 			http.Error(w, "Unable to get database", http.StatusBadRequest)
+			return
+		}
+
+		if user, ok := resolveUserFromBearerToken(DB, r); ok {
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
@@ -114,6 +156,12 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 		DB, ok := r.Context().Value("db").(*gorm.DB)
 		if !ok {
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		if user, ok := resolveUserFromBearerToken(DB, r); ok {
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
