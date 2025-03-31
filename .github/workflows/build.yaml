@@ -19,6 +19,10 @@ on:
         description: Source branch name (for metadata)
         required: false
         default: ""
+      source_run_url:
+        description: Source orchestration run URL for PR progress comment
+        required: false
+        default: ""
       deploy_url:
         description: Deployment URL for final PR progress comment
         required: false
@@ -288,7 +292,12 @@ jobs:
             exit 1
           fi
 
-          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          SOURCE_RUN_URL="${{ github.event.inputs.source_run_url || '' }}"
+          if [ -n "$SOURCE_RUN_URL" ]; then
+            TPL_RUN_URL="$SOURCE_RUN_URL"
+          else
+            TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          fi
           TPL_RELEASE_TAG="$RELEASE_TAG"
           TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
           TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
