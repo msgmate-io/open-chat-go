@@ -110,7 +110,7 @@ func validatePasswordStrength(password string) error {
 //
 // Runtime behavior is driven by CLI flags and environment variables:
 // - DB backend/path and debug/reset toggles
-// - host/port binding and root/default bot bootstrap credentials
+// - host/port binding and bootstrap credentials for root, bot, and extra users
 // - Redis connection options used by Asynq and Asynqmon
 // - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
 func GetServerFlags() []cli.Flag {
@@ -177,6 +177,11 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "bot login credentials",
 			Value:   GetBuildTimeDefaultBot(),
 		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("CREATE_EXTRA_USER"),
+			Name:    "create-extra-user",
+			Usage:   "optional extra users in username:password format; can be repeated",
+		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("FRONTEND_PROXY"),
 			Name:    "frontend-proxy",
@@ -218,47 +223,82 @@ func parseCredentials(raw, label string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func ensureRootUser(DB *gorm.DB, username, password string, debug bool) (*database.User, error) {
-	var (
-		err  error
-		user *database.User
-	)
-
-	if password == "random" {
-		generatedPassword, genErr := generateRandomPassword()
-		if genErr != nil {
-			return nil, fmt.Errorf("failed to generate random password: %w", genErr)
-		}
-		password = generatedPassword
-		fmt.Printf("Generated random root password: %s\n", password)
-		fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
-	} else if !debug {
-		if err := validatePasswordStrength(password); err != nil {
-			return nil, fmt.Errorf("password does not meet security requirements: %w", err)
-		}
-	}
-
-	// Hashed passwords always pass the strength validation due to prefix.
-	if strings.HasPrefix(password, "hashed_") {
-		hashedPassword := strings.TrimPrefix(password, "hashed_")
-		err, user = util.CreateUserPwPreHashed(DB, username, hashedPassword, true)
-	} else {
-		err, user = util.CreateRootUser(DB, username, password)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return user, nil
+type bootstrapUserSpec struct {
+	Label            string
+	Credentials      string
+	IsAdmin          bool
+	IsAutomated      bool
+	SingletonAdmin   bool
+	ValidateStrength bool
 }
 
-func ensureDefaultBotUser(DB *gorm.DB, username, password string) (*database.User, error) {
-	err, botUser := util.CreateUser(DB, username, password, false)
+func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string) (string, error) {
+	if rawPassword == "random" {
+		generatedPassword, genErr := generateRandomPassword()
+		if genErr != nil {
+			return "", fmt.Errorf("failed to generate random password for %s: %w", label, genErr)
+		}
+		fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
+		fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		return generatedPassword, nil
+	}
+
+	if strings.HasPrefix(rawPassword, "hashed_") {
+		return rawPassword, nil
+	}
+
+	if validateStrength {
+		if err := validatePasswordStrength(rawPassword); err != nil {
+			return "", fmt.Errorf("password for %s does not meet security requirements: %w", label, err)
+		}
+	}
+
+	return rawPassword, nil
+}
+
+func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, error) {
+	username, rawPassword, err := parseCredentials(spec.Credentials, spec.Label)
 	if err != nil {
 		return nil, err
 	}
-	botUser.IsAutomated = true
-	DB.Save(&botUser)
-	return botUser, nil
+
+	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label)
+	if err != nil {
+		return nil, err
+	}
+
+	if spec.SingletonAdmin {
+		var existingAdmin database.User
+		q := DB.First(&existingAdmin, "is_admin = ?", true)
+		if q.Error == nil {
+			if spec.IsAutomated && !existingAdmin.IsAutomated {
+				existingAdmin.IsAutomated = true
+				DB.Save(&existingAdmin)
+			}
+			return &existingAdmin, nil
+		}
+		if q.Error != nil && q.Error != gorm.ErrRecordNotFound {
+			return nil, q.Error
+		}
+	}
+
+	var user *database.User
+	if strings.HasPrefix(password, "hashed_") {
+		hashedPassword := strings.TrimPrefix(password, "hashed_")
+		err, user = util.CreateUserPwPreHashed(DB, username, hashedPassword, spec.IsAdmin)
+	} else {
+		err, user = util.CreateUser(DB, username, password, spec.IsAdmin)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if spec.IsAutomated && user != nil && !user.IsAutomated {
+		user.IsAutomated = true
+		DB.Save(user)
+	}
+
+	return user, nil
 }
 
 func ServerCli() *cli.Command {
@@ -277,6 +317,7 @@ func ServerCli() *cli.Command {
 				"PORT":                     {Value: fmt.Sprintf("%d", c.Int("port")), Sensitive: false},
 				"ROOT_CREDENTIALS":         {Value: c.String("root-credentials"), Sensitive: true},
 				"DEFAULT_BOT_CREDENTIALS":  {Value: c.String("default-bot"), Sensitive: true},
+				"CREATE_EXTRA_USER":        {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
 				"FRONTEND_PROXY":           {Value: c.String("frontend-proxy"), Sensitive: false},
 				"STORYBOOK_FRONTEND_PROXY": {Value: c.String("storybook-frontend-proxy"), Sensitive: false},
 				"START_WORKER":             {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
@@ -344,23 +385,41 @@ func ServerCli() *cli.Command {
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
-			rootUsername, rootPassword, err := parseCredentials(c.String("root-credentials"), "root-credentials")
+			adminUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+				Label:            "root-credentials",
+				Credentials:      c.String("root-credentials"),
+				IsAdmin:          true,
+				SingletonAdmin:   true,
+				ValidateStrength: !c.Bool("debug"),
+			})
 			if err != nil {
 				return err
 			}
 
-			adminUser, err := ensureRootUser(DB, rootUsername, rootPassword, c.Bool("debug"))
+			botUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+				Label:            "default-bot",
+				Credentials:      c.String("default-bot"),
+				IsAdmin:          false,
+				IsAutomated:      true,
+				ValidateStrength: !c.Bool("debug"),
+			})
 			if err != nil {
 				return err
 			}
 
-			botUsername, botPassword, err := parseCredentials(c.String("default-bot"), "default-bot")
-			if err != nil {
-				return err
-			}
-			botUser, err := ensureDefaultBotUser(DB, botUsername, botPassword)
-			if err != nil {
-				return err
+			for i, extra := range c.StringSlice("create-extra-user") {
+				if strings.TrimSpace(extra) == "" {
+					continue
+				}
+				extraLabel := fmt.Sprintf("create-extra-user[%d]", i)
+				if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+					Label:            extraLabel,
+					Credentials:      extra,
+					IsAdmin:          false,
+					ValidateStrength: !c.Bool("debug"),
+				}); err != nil {
+					return err
+				}
 			}
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {

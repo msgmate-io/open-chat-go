@@ -218,6 +218,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 	v1PrivateApis.HandleFunc("GET /admin/schema/sql", admin.GetSchemaSQL)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
+	v1PrivateApis.HandleFunc("GET /admin/tests/go", admin.GetGoTestsOverview)
 	v1PrivateApis.HandleFunc("GET /admin/server/config", admin.GetServerRuntimeConfig)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/stats", admin.GetDocsSnapshotStatsByTag)
 	v1PrivateApis.HandleFunc("POST /admin/docs/snapshots/{snapshot}/refresh", admin.RefreshDocsSnapshotByTag)
@@ -250,6 +251,7 @@ func BackendRouting(
 	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
 	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
+	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
 	mux.Handle("GET /api/v1/models/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
 	mux.Handle("GET /api/v1/tools/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
 	mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
