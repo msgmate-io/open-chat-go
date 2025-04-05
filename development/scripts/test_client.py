@@ -41,7 +41,10 @@ chat = client.create_interaction(
 )
 print("Chat UUID:", chat.get("uuid"))
 
-confirmations = client.get_interaction_confirmation_list(chat.get("uuid"), wait_seconds=20)
+stopped_message = client.interaction_wait_for_stop_signal(wait_seconds=20)
+print("Stop signal:", json.dumps(stopped_message, indent=2))
+
+confirmations = client.get_interaction_confirmation_list(chat.get("uuid"))
 print("Confirmations:", json.dumps(confirmations, indent=2))
 
 shared_url = client.get_shared_interaction_url(chat.get("uuid"))
