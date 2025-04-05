@@ -329,6 +329,8 @@ func ServerCli() *cli.Command {
 				"OPENAI_API_KEY":           {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
 				"DEEPINFRA_API_KEY":        {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
 				"GROQ_API_KEY":             {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
+				"LITELLM_API_KEY":          {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
+				"LITELLM_API_HOST":         {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY":       {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 			})
 
