@@ -305,7 +305,7 @@ jobs:
           DEPLOY_URL="${{ github.event.inputs.deploy_url || '' }}"
           if [ -n "$DEPLOY_URL" ]; then
             TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
-            TPL_TEST_STEP="- [x] \`(4) test\` [\`passed\`](${DEPLOY_URL}/docs#go-tests?test_status=passed)"
+            TPL_TEST_STEP="- [x] \`(4) test\` [\`passed\`](${DEPLOY_URL}/docs#go-tests?test_status=passed&pr_id=${SOURCE_PR_NUMBER})"
           else
             TPL_DEPLOY_STEP="- [x] \`(3) deploy\`"
             TPL_TEST_STEP="- [x] \`(4) test\` \`passed\`"
