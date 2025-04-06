@@ -229,6 +229,15 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	for i := len(paginatedMessages.Rows) - 1; i >= 0; i-- {
 		msg := paginatedMessages.Rows[i]
 
+		if msg.DataType == "event" {
+			continue
+		}
+		if msg.MetaData != nil {
+			if eventType, ok := (*msg.MetaData)["event_type"].(string); ok && eventType == "confirmable_action_execute" {
+				continue
+			}
+		}
+
 		// Check if message has attachments
 		var attachments []interface{}
 		if msg.MetaData != nil {
@@ -240,7 +249,84 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 		}
 
 		if msg.SenderUUID == aih.botContext.Client.User.UUID {
-			openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
+			if msg.ToolCalls != nil && len(*msg.ToolCalls) > 0 {
+				toolCallsPayload := make([]map[string]interface{}, 0, len(*msg.ToolCalls))
+				for _, rawToolCall := range *msg.ToolCalls {
+					toolCallMap, ok := rawToolCall.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					toolCallID, _ := toolCallMap["id"].(string)
+					toolName, _ := toolCallMap["name"].(string)
+					if toolCallID == "" || toolName == "" {
+						continue
+					}
+
+					argumentsText := "{}"
+					switch typedArguments := toolCallMap["arguments"].(type) {
+					case string:
+						if strings.TrimSpace(typedArguments) != "" {
+							argumentsText = typedArguments
+						}
+					default:
+						if encodedArguments, err := json.Marshal(typedArguments); err == nil {
+							argumentsText = string(encodedArguments)
+						}
+					}
+
+					toolCallsPayload = append(toolCallsPayload, map[string]interface{}{
+						"type": "function",
+						"id":   toolCallID,
+						"function": map[string]interface{}{
+							"name":      toolName,
+							"arguments": argumentsText,
+						},
+					})
+				}
+
+				if len(toolCallsPayload) > 0 {
+					openAiMessages = append(openAiMessages, map[string]interface{}{
+						"role":       "assistant",
+						"content":    "",
+						"tool_calls": toolCallsPayload,
+					})
+
+					for _, rawToolCall := range *msg.ToolCalls {
+						toolCallMap, ok := rawToolCall.(map[string]interface{})
+						if !ok {
+							continue
+						}
+						toolCallID, _ := toolCallMap["id"].(string)
+						if toolCallID == "" {
+							continue
+						}
+
+						resultText := ""
+						switch typedResult := toolCallMap["result"].(type) {
+						case string:
+							resultText = typedResult
+						default:
+							if encodedResult, err := json.Marshal(typedResult); err == nil {
+								resultText = string(encodedResult)
+							}
+						}
+
+						if strings.TrimSpace(resultText) == "" {
+							continue
+						}
+
+						openAiMessages = append(openAiMessages, map[string]interface{}{
+							"role":         "tool",
+							"tool_call_id": toolCallID,
+							"content":      resultText,
+						})
+					}
+				}
+			}
+
+			if strings.TrimSpace(msg.Text) != "" {
+				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
+			}
 		} else {
 			// Handle user messages with potential attachments
 			contentArray := aih.processMessageAttachments(msg.Text, attachments, backend)
@@ -266,11 +352,13 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 				})
 			}
 		}
-		contentArray := aih.processCurrentMessageAttachments(message.Content.Text, attachments, backend)
-		openAiMessages = append(openAiMessages, map[string]interface{}{
-			"role":    "user",
-			"content": contentArray,
-		})
+		if strings.TrimSpace(message.Content.Text) != "" || len(attachments) > 0 {
+			contentArray := aih.processCurrentMessageAttachments(message.Content.Text, attachments, backend)
+			openAiMessages = append(openAiMessages, map[string]interface{}{
+				"role":    "user",
+				"content": contentArray,
+			})
+		}
 	}
 
 	return openAiMessages
@@ -378,6 +466,7 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 					}
 					toolsData = append(toolsData, tool.ConstructTool())
 					toolMap[toolName] = tool
+					toolMap[tool.GetToolFunctionName()] = tool
 					if tool.GetRequiresInit() {
 						if _, ok := toolInit[toolName]; ok {
 							log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)

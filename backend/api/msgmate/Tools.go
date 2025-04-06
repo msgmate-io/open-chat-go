@@ -97,6 +97,7 @@ type BaseTool struct {
 	StopOnFirstConfirmableToolCall bool
 	ConfirmationBlockMessage       string
 	ToolName                       string
+	ToolFunctionName               string
 	ToolType                       string
 	ToolDescription                string
 	ToolInput                      interface{}
@@ -176,6 +177,9 @@ func (t *BaseTool) GetToolType() string {
 }
 
 func (t *BaseTool) GetToolFunctionName() string {
+	if t.ToolFunctionName != "" {
+		return t.ToolFunctionName
+	}
 	return t.ToolName
 }
 
