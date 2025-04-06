@@ -16,6 +16,8 @@ type Tool interface {
 	GetAdminOnly() bool
 	GetRequiresInit() bool
 	GetRequiresConfirmation() bool
+	GetStopOnFirstConfirmableToolCall() bool
+	GetConfirmationBlockMessage() string
 	ConstructTool() interface{}
 	SetInitData(data interface{})
 }
@@ -23,6 +25,7 @@ type Tool interface {
 var AllTools = []Tool{
 	NewWeatherTool(),
 	NewCurrentTimeTool(),
+	NewCurrentTimeConfirmedTool(),
 	NewRandomNumberTool(),
 	NewLittleWorldChatReplyTool(),
 	NewLittleWorldGetUserStateTool(),
@@ -43,6 +46,8 @@ func NewToolByName(name string) (Tool, bool) {
 		return NewWeatherTool(), true
 	case "get_current_time":
 		return NewCurrentTimeTool(), true
+	case "get_current_time_confirmed":
+		return NewCurrentTimeConfirmedTool(), true
 	case "get_random_number":
 		return NewRandomNumberTool(), true
 	case "little_world__chat_reply":
@@ -86,29 +91,26 @@ func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool
 }
 
 type BaseTool struct {
-	AdminOnly            bool
-	RequiresInit         bool
-	RequiresConfirmation bool
-	ToolName             string
-	ToolType             string
-	ToolDescription      string
-	ToolInput            interface{}
-	ToolInit             interface{}
-	RequiredParams       []string
-	Parameters           map[string]interface{}
+	AdminOnly                      bool
+	RequiresInit                   bool
+	RequiresConfirmation           bool
+	StopOnFirstConfirmableToolCall bool
+	ConfirmationBlockMessage       string
+	ToolName                       string
+	ToolType                       string
+	ToolDescription                string
+	ToolInput                      interface{}
+	ToolInit                       interface{}
+	RequiredParams                 []string
+	Parameters                     map[string]interface{}
 }
 
 func (t *BaseTool) ConstructTool() interface{} {
-	description := t.GetToolDescription()
-	if t.GetRequiresConfirmation() {
-		description += " This tool requires human confirmation before execution. Calling it creates an action suggestion only."
-	}
-
 	return map[string]interface{}{
 		"type": t.ToolType,
 		"function": map[string]interface{}{
 			"name":        t.GetToolFunctionName(),
-			"description": description,
+			"description": t.GetToolDescription(),
 			"parameters": map[string]interface{}{
 				"type":        "object",
 				"properties":  t.GetToolParameters(),
@@ -138,6 +140,14 @@ func (t *BaseTool) GetRequiresInit() bool {
 
 func (t *BaseTool) GetRequiresConfirmation() bool {
 	return t.RequiresConfirmation
+}
+
+func (t *BaseTool) GetStopOnFirstConfirmableToolCall() bool {
+	return t.StopOnFirstConfirmableToolCall
+}
+
+func (t *BaseTool) GetConfirmationBlockMessage() string {
+	return t.ConfirmationBlockMessage
 }
 
 func (t *BaseTool) GetAdminOnly() bool {

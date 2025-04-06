@@ -19,19 +19,21 @@ import (
 )
 
 type ToolListItem struct {
-	Name                 string                 `json:"name"`
-	FunctionName         string                 `json:"function_name"`
-	Description          string                 `json:"description"`
-	Type                 string                 `json:"type"`
-	SourcePath           string                 `json:"source_path,omitempty"`
-	SourceLine           int                    `json:"source_line,omitempty"`
-	SourceURL            string                 `json:"source_url,omitempty"`
-	RequiresInit         bool                   `json:"requires_init,omitempty"`
-	RequiresConfirmation bool                   `json:"requires_confirmation,omitempty"`
-	Parameters           map[string]interface{} `json:"parameters,omitempty"`
-	Required             []string               `json:"required,omitempty"`
-	CallSchema           map[string]interface{} `json:"call_schema,omitempty"`
-	InitSchema           map[string]interface{} `json:"init_schema,omitempty"`
+	Name                           string                 `json:"name"`
+	FunctionName                   string                 `json:"function_name"`
+	Description                    string                 `json:"description"`
+	Type                           string                 `json:"type"`
+	SourcePath                     string                 `json:"source_path,omitempty"`
+	SourceLine                     int                    `json:"source_line,omitempty"`
+	SourceURL                      string                 `json:"source_url,omitempty"`
+	RequiresInit                   bool                   `json:"requires_init,omitempty"`
+	RequiresConfirmation           bool                   `json:"requires_confirmation,omitempty"`
+	StopOnFirstConfirmableToolCall bool                   `json:"stop_on_first_confirmable_tool_call,omitempty"`
+	ConfirmationBlockMessage       string                 `json:"confirmation_block_message,omitempty"`
+	Parameters                     map[string]interface{} `json:"parameters,omitempty"`
+	Required                       []string               `json:"required,omitempty"`
+	CallSchema                     map[string]interface{} `json:"call_schema,omitempty"`
+	InitSchema                     map[string]interface{} `json:"init_schema,omitempty"`
 }
 
 type toolStaticMetadata struct {
@@ -184,6 +186,8 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 		if isAuthenticated {
 			item.RequiresInit = requiresInit
 			item.RequiresConfirmation = requiresConfirmation
+			item.StopOnFirstConfirmableToolCall = tool.GetStopOnFirstConfirmableToolCall()
+			item.ConfirmationBlockMessage = strings.TrimSpace(tool.GetConfirmationBlockMessage())
 			item.Parameters = tool.GetToolParameters()
 			item.CallSchema = map[string]interface{}{
 				"type":       "object",
