@@ -13,9 +13,9 @@ BOT_CONFIG = {
         "get_current_time",
         "create_confirmable_action_suggestion",
     ],
-    "model": "deepseek-ai/DeepSeek-V4-Flash",
-    "endpoint": "https://api.deepinfra.com/v1/openai",
-    "backend": "deepinfra",
+    "model": "qwen3-8b-instruct_vllm",
+    "endpoint": "https://litellm.t1m.me/v1",
+    "backend": "litellm",
     "context": 10,
     "system_prompt": "You are a helpful assistant.",
 }
