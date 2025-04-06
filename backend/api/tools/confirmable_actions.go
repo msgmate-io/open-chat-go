@@ -72,6 +72,51 @@ func findBotAndReceiver(chat database.Chat, user database.User) (uint, uint) {
 	return chat.User1.ID, chat.User2.ID
 }
 
+func updateSourceMessageToolCallResult(tx *gorm.DB, sourceMessage database.Message, actionID, toolResult string) error {
+	if sourceMessage.ToolCalls == nil || len(*sourceMessage.ToolCalls) == 0 {
+		return nil
+	}
+
+	updatedToolCalls := make([]json.RawMessage, 0, len(*sourceMessage.ToolCalls))
+	updated := false
+	for _, rawToolCall := range *sourceMessage.ToolCalls {
+		var toolCall map[string]interface{}
+		if err := json.Unmarshal(rawToolCall, &toolCall); err != nil {
+			updatedToolCalls = append(updatedToolCalls, rawToolCall)
+			continue
+		}
+
+		toolCallID, _ := toolCall["id"].(string)
+		if toolCallID == actionID {
+			toolCall["result"] = toolResult
+			if confirmationMeta, ok := toolCall["confirmation"].(map[string]interface{}); ok {
+				confirmationMeta["status"] = "executed"
+				confirmationMeta["executed"] = true
+				toolCall["confirmation"] = confirmationMeta
+			}
+			updated = true
+		}
+
+		encoded, err := json.Marshal(toolCall)
+		if err != nil {
+			updatedToolCalls = append(updatedToolCalls, rawToolCall)
+			continue
+		}
+		updatedToolCalls = append(updatedToolCalls, encoded)
+	}
+
+	if !updated {
+		return nil
+	}
+
+	encodedToolCalls, err := json.Marshal(updatedToolCalls)
+	if err != nil {
+		return err
+	}
+
+	return tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("tool_calls", string(encodedToolCalls)).Error
+}
+
 func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -215,6 +260,11 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
 			return err
+		}
+		if execErr == nil {
+			if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolResult); err != nil {
+				return err
+			}
 		}
 
 		eventRequestedMeta := map[string]interface{}{

@@ -68,6 +68,7 @@ func NewToolFromDefinition(def ToolDefinition) Tool {
 		StopOnFirstConfirmableToolCall: def.StopOnFirstConfirmableToolCall,
 		ConfirmationBlockMessage:       def.ConfirmationBlockMessage,
 		ToolName:                       def.Name,
+		ToolFunctionName:               def.FunctionName,
 		ToolType:                       "function",
 		ToolDescription:                def.Description,
 		ToolInput:                      def.InputType,
