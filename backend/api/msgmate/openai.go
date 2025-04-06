@@ -44,7 +44,7 @@ func printToolDefinition(tool Tool) {
 	fmt.Println("=====================")
 }
 
-func buildConfirmationSuggestion(toolName string, toolInput interface{}) string {
+func buildConfirmationSuggestion(toolName string, toolInput interface{}, continueAfterExecute bool) string {
 	payload := map[string]interface{}{
 		"type":                  "confirm-action",
 		"requires_confirmation": true,
@@ -52,8 +52,14 @@ func buildConfirmationSuggestion(toolName string, toolInput interface{}) string 
 		"tool_input":            toolInput,
 		"status":                "pending_confirmation",
 	}
+	if continueAfterExecute {
+		payload["continue_after_execute"] = true
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
+		if continueAfterExecute {
+			return "{\"type\":\"confirm-action\",\"requires_confirmation\":true,\"status\":\"pending_confirmation\",\"continue_after_execute\":true}"
+		}
 		return "{\"type\":\"confirm-action\",\"requires_confirmation\":true,\"status\":\"pending_confirmation\"}"
 	}
 	return string(encoded)
@@ -430,6 +436,11 @@ func streamChatCompletion(
 
 			fmt.Println("Called tool: ", toolCallResult.toolName, "with result: ", toolCallResult.result)
 
+			if toolCallResult.stopAfterTool {
+				log.Printf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
+				return
+			}
+
 			// Increment retry counter when a tool is used
 			retryCount++
 
@@ -480,6 +491,7 @@ func streamChatCompletion(
 
 type toolCallResult struct {
 	usedTool        bool
+	stopAfterTool   bool
 	id              string
 	toolName        string
 	toolCallMessage map[string]string
@@ -661,11 +673,21 @@ func processStreamingRequest(
 
 							var toolResult string
 							if tool.GetRequiresConfirmation() {
+								continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
 								executedResult, err := tool.RunTool(toolInput)
 								if err == nil && isConfirmActionPayload(executedResult) {
 									toolResult = executedResult
 								} else {
-									toolResult = buildConfirmationSuggestion(currentToolCall.name, toolInput)
+									toolResult = buildConfirmationSuggestion(currentToolCall.name, toolInput, continueAfterExecute)
+								}
+
+								modelResult := toolResult
+								if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
+									modelResult = blockMessage
+								}
+								result.result = modelResult
+								if tool.GetStopOnFirstConfirmableToolCall() {
+									result.stopAfterTool = true
 								}
 							} else {
 								// Execute the tool and get the result
@@ -676,9 +698,8 @@ func processStreamingRequest(
 									break
 								}
 								toolResult = executedResult
+								result.result = toolResult
 							}
-
-							result.result = toolResult
 
 							// Send tool call notification with complete information
 							toolChan <- ToolCall{
