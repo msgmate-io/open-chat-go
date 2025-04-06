@@ -2,6 +2,7 @@ package tools
 
 type ToolDefinition struct {
 	Name                           string
+	FunctionName                   string
 	Description                    string
 	AdminOnly                      bool
 	RequiresInit                   bool
