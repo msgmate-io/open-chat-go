@@ -533,7 +533,13 @@ jobs:
           OPEN_CHAT_PASSWORD: password
         run: |
           set -euo pipefail
-          python -m pytest development/ci/ai_process_tests/mocked -q
+          test_root="${GITHUB_WORKSPACE}/development/ci/ai_process_tests"
+          if [ ! -d "$test_root/mocked" ]; then
+            echo "::error::Expected mocked AI process tests directory at $test_root/mocked"
+            ls -la "${GITHUB_WORKSPACE}/development/ci" || true
+            exit 1
+          fi
+          python -m pytest "$test_root/mocked" -q
 
       - name: Run real AI process tests
         if: steps.context.outputs.should_ai_test_real != ''
@@ -547,7 +553,13 @@ jobs:
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
         run: |
           set -euo pipefail
-          python -m pytest development/ci/ai_process_tests/real -q
+          test_root="${GITHUB_WORKSPACE}/development/ci/ai_process_tests"
+          if [ ! -d "$test_root/real" ]; then
+            echo "::error::Expected real AI process tests directory at $test_root/real"
+            ls -la "${GITHUB_WORKSPACE}/development/ci" || true
+            exit 1
+          fi
+          python -m pytest "$test_root/real" -q
 
       - name: Update progress comment after build
         if: github.event_name == 'pull_request'
