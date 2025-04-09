@@ -484,6 +484,130 @@ jobs:
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml build backend
           DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml push backend
 
+      - name: Tests run in parallel job
+        run: echo "Go and AI tests run in parallel run-pr-ci-tests job."
+
+      - name: Update progress comment after build
+        if: github.event_name == 'pull_request'
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ (steps.context.outputs.should_test != '' || steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != '') && format('- [ ] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', steps.context.outputs.pr_deploy_url, github.run_id, github.job, steps.context.outputs.pr_number, steps.context.outputs.should_test != '' && 'running' || 'skipped', steps.context.outputs.should_ai_test_mock != '' && 'running' || 'skipped', steps.context.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
+
+      - name: Skip deploy dispatch when deploy label is missing
+        if: steps.context.outputs.should_deploy == ''
+        run: echo "Deploy label not present; skipping deploy dispatch."
+
+      - name: Update progress comment after dispatch
+        if: github.event_name == 'pull_request'
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ (steps.context.outputs.should_test != '' || steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', steps.context.outputs.pr_deploy_url, github.run_id, github.job, steps.context.outputs.pr_number, steps.context.outputs.should_test != '' && 'running' || 'skipped', steps.context.outputs.should_ai_test_mock != '' && 'running' || 'skipped', steps.context.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
+
+  run-pr-ci-tests:
+    name: Run PR CI Tests
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real')))
+    outputs:
+      should_test: ${{ steps.context.outputs.should_test }}
+      should_ai_test_mock: ${{ steps.context.outputs.should_ai_test_mock }}
+      should_ai_test_real: ${{ steps.context.outputs.should_ai_test_real }}
+      go_status: ${{ steps.finalize.outputs.go_status }}
+      ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
+      ai_real_status: ${{ steps.finalize.outputs.ai_real_status }}
+    env:
+      AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
+      AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
+    steps:
+      - name: Resolve context and label actions
+        id: context
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
+            SHOULD_AI_TEST_REAL="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-real' || true)"
+          else
+            SHOULD_TEST=""
+            SHOULD_AI_TEST_MOCK=""
+            SHOULD_AI_TEST_REAL=""
+          fi
+          echo "should_test=$SHOULD_TEST" >> "$GITHUB_OUTPUT"
+          echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
+          echo "should_ai_test_real=$SHOULD_AI_TEST_REAL" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Set up Go for tests
         if: steps.context.outputs.should_test != ''
         uses: actions/setup-go@v5
@@ -492,7 +616,9 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Run Go tests
+        id: go_tests
         if: steps.context.outputs.should_test != ''
+        continue-on-error: true
         working-directory: backend
         run: |
           set -euo pipefail
@@ -549,7 +675,9 @@ jobs:
           exit 1
 
       - name: Run mocked AI process tests
+        id: ai_mock_tests
         if: steps.context.outputs.should_ai_test_mock != ''
+        continue-on-error: true
         env:
           OPEN_CHAT_HOST: http://127.0.0.1:1984
           OPEN_CHAT_USERNAME: admin
@@ -567,7 +695,9 @@ jobs:
           docker compose -f docker-compose.yaml down -v || true
 
       - name: Run real AI process tests
+        id: ai_real_tests
         if: steps.context.outputs.should_ai_test_real != ''
+        continue-on-error: true
         env:
           OPEN_CHAT_HOST: ${{ env.AI_TEST_API_HOST }}
           OPEN_CHAT_USERNAME: admin
@@ -581,92 +711,106 @@ jobs:
           set -euo pipefail
           ./development/ci/ai_process_tests/run_suite.sh real
 
-      - name: Update progress comment after build
-        if: github.event_name == 'pull_request'
-        env:
-          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
-          BOT_USER: ${{ env.BOT_USER }}
+      - name: Finalize test status
+        id: finalize
         run: |
           set -euo pipefail
-          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
-          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
-          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
-          TPL_STEP_TEST='${{ (steps.context.outputs.should_test != '' || steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != '') && format('- [ ] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', steps.context.outputs.pr_deploy_url, github.run_id, github.job, steps.context.outputs.pr_number, steps.context.outputs.should_test != '' && 'running' || 'skipped', steps.context.outputs.should_ai_test_mock != '' && 'running' || 'skipped', steps.context.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
-          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
-          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comment_id="$(
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
-          )"
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
-              -d "$payload"
-          else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              -d "$payload"
+          go_status="skipped"
+          ai_mock_status="skipped"
+          ai_real_status="skipped"
+          failed=0
+
+          if [ "${{ steps.context.outputs.should_test }}" != "" ]; then
+            if [ "${{ steps.go_tests.outcome }}" = "success" ]; then
+              go_status="passed"
+            else
+              go_status="failed"
+              failed=1
+            fi
           fi
 
-      - name: Skip deploy dispatch when deploy label is missing
-        if: steps.context.outputs.should_deploy == ''
-        run: echo "Deploy label not present; skipping deploy dispatch."
+          if [ "${{ steps.context.outputs.should_ai_test_mock }}" != "" ]; then
+            if [ "${{ steps.ai_mock_tests.outcome }}" = "success" ]; then
+              ai_mock_status="passed"
+            else
+              ai_mock_status="failed"
+              failed=1
+            fi
+          fi
 
-      - name: Update progress comment after dispatch
-        if: github.event_name == 'pull_request'
-        env:
-          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
-          BOT_USER: ${{ env.BOT_USER }}
+          if [ "${{ steps.context.outputs.should_ai_test_real }}" != "" ]; then
+            if [ "${{ steps.ai_real_tests.outcome }}" = "success" ]; then
+              ai_real_status="passed"
+            else
+              ai_real_status="failed"
+              failed=1
+            fi
+          fi
+
+          echo "go_status=$go_status" >> "$GITHUB_OUTPUT"
+          echo "ai_mock_status=$ai_mock_status" >> "$GITHUB_OUTPUT"
+          echo "ai_real_status=$ai_real_status" >> "$GITHUB_OUTPUT"
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more requested test suites failed."
+            exit 1
+          fi
+
+  update-progress-comment-after-tests:
+    name: Update Progress Comment After Tests
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-tests]
+    if: always() && github.event_name == 'pull_request' && github.event.action != 'closed'
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      BOT_USER: ${{ env.BOT_USER }}
+    steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Render test-complete progress comment
         run: |
           set -euo pipefail
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
-          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
-          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
-          TPL_STEP_TEST='${{ (steps.context.outputs.should_test != '' || steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', steps.context.outputs.pr_deploy_url, github.run_id, github.job, steps.context.outputs.pr_number, steps.context.outputs.should_test != '' && 'passed' || 'skipped', steps.context.outputs.should_ai_test_mock != '' && 'passed' || 'skipped', steps.context.outputs.should_ai_test_real != '' && 'passed' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
-          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests.outputs.should_test != '' || needs.run-pr-ci-tests.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, github.run_id, github.job, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests.outputs.go_status, needs.run-pr-ci-tests.outputs.ai_mock_status, needs.run-pr-ci-tests.outputs.ai_real_status) || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comment_id="$(
+          comment_id="$({
             curl -fsSL \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
-          )"
+          })"
           if [ -n "$comment_id" ]; then
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
               -d "$payload"
           fi
 
   pr-test-merge-requirement:
     name: PR Test Merge Requirement
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
+    needs: [run-pr-ci-tests]
     if: |
       always() &&
       github.event_name == 'pull_request' &&
@@ -679,7 +823,7 @@ jobs:
             echo "::error::PR is missing the required 'test' label."
             exit 1
           fi
-          case "${{ needs.run-pr-ci-tests-and-deployments.result }}" in
+          case "${{ needs.run-pr-ci-tests.result }}" in
             success) ;;
             skipped)
               echo "::error::PR CI did not run for this commit with the test label."
@@ -694,11 +838,11 @@ jobs:
               exit 1
               ;;
             *)
-              echo "::error::PR CI ended with unexpected result: ${{ needs.run-pr-ci-tests-and-deployments.result }}"
+              echo "::error::PR CI ended with unexpected result: ${{ needs.run-pr-ci-tests.result }}"
               exit 1
               ;;
           esac
-          if [ -z "${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test }}" ]; then
+          if [ -z "${{ needs.run-pr-ci-tests.outputs.should_test }}" ]; then
             echo "::error::Tests were not executed despite the test label."
             exit 1
           fi
@@ -707,8 +851,8 @@ jobs:
   post-deploy-approval-link:
     name: Post Deploy Approval Link
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
-    if: github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
+    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-tests]
+    if: always() && github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
@@ -727,7 +871,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}'
-          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, github.run_id, github.job, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && 'passed' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' && 'passed' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && 'passed' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests.outputs.should_test != '' || needs.run-pr-ci-tests.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, github.run_id, github.job, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests.outputs.go_status, needs.run-pr-ci-tests.outputs.ai_mock_status, needs.run-pr-ci-tests.outputs.ai_real_status) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/005-progress-approval-open.md)"
@@ -759,12 +903,13 @@ jobs:
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, post-deploy-approval-link]
+    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-tests, post-deploy-approval-link]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
-      (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
+      (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped') &&
+      (needs.run-pr-ci-tests.result == 'success' || needs.run-pr-ci-tests.result == 'failure' || needs.run-pr-ci-tests.result == 'skipped')
     concurrency:
       group: pr-deploy-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -1095,7 +1240,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='- [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})'
-          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, steps.wait_ci_deploy.outputs.ci_run_id, github.job, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && 'passed' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' && 'passed' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && 'passed' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests.outputs.should_test != '' || needs.run-pr-ci-tests.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests.outputs.should_ai_test_real != '') && format('- [x] `(4) test` [`go={4}`]({0}/docs#go-tests?action_run_id={1}&action_job_id={2}&test_status={4}&pr_id={3}) [`ai-mock={5}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={5}&suite=mocked&pr_id={3}) [`ai-real={6}`]({0}/docs#ai-process-tests?action_run_id={1}&action_job_id={2}&test_status={6}&suite=real&pr_id={3})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, steps.wait_ci_deploy.outputs.ci_run_id, github.job, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests.outputs.go_status, needs.run-pr-ci-tests.outputs.ai_mock_status, needs.run-pr-ci-tests.outputs.ai_real_status) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
