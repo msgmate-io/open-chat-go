@@ -763,7 +763,7 @@ jobs:
     if: always() && github.event_name == 'pull_request' && github.event.action != 'closed'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ env.BOT_USER }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
