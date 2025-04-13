@@ -76,3 +76,25 @@ func NewN8NTriggerWorkflowWebhookTool() Tool {
 func NewCreateConfirmableActionSuggestionTool() Tool {
 	return NewToolFromDefinition(tooldefs.CreateConfirmableActionSuggestionToolDef)
 }
+
+func registerBuiltinTools() {
+	registerToolConstructor("get_weather", nil, NewWeatherTool)
+	registerToolConstructor("get_current_time", nil, NewCurrentTimeTool)
+	registerToolConstructor("get_current_time_confirmed", nil, NewCurrentTimeConfirmedTool)
+	registerToolConstructor("get_current_time_confirmed_testing", nil, NewCurrentTimeConfirmedTestingTool)
+	registerToolConstructor("get_random_number", nil, NewRandomNumberTool)
+	registerToolConstructor("little_world__chat_reply", nil, NewLittleWorldChatReplyTool)
+	registerToolConstructor("little_world__get_user_state", nil, NewLittleWorldGetUserStateTool)
+	registerToolConstructor("little_world__set_user_searching_state", nil, NewLittleWorldSetUserSearchingStateTool)
+	registerToolConstructor("little_world__get_past_messages", nil, NewLittleWorldGetPastMessagesWithUserTool)
+	registerToolConstructor("little_world__retrieve_match_overview", nil, NewLittleWorldRetrieveMatchOverviewTool)
+	registerToolConstructor("little_world__resolve_match", nil, NewLittleWorldResolveMatchTool)
+	registerToolConstructor(
+		"rwth_aachen_seminar_tims_auto_paper_include_exclude",
+		[]string{"rwth_aachen_seminar_tims_auto_paper_include_exclude_agent"},
+		NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent,
+	)
+	registerToolConstructor("run_callback_function", nil, NewRunCallbackFunctionTool)
+	registerToolConstructor("n8n_trigger_workflow_webhook", nil, NewN8NTriggerWorkflowWebhookTool)
+	registerToolConstructor("create_confirmable_action_suggestion", nil, NewCreateConfirmableActionSuggestionTool)
+}
