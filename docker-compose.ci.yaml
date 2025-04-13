@@ -1,0 +1,36 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/msgmate-io/open-chat-go:ci-image-not-set}
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "1984:1984"
+    environment:
+      ROOT_CREDENTIALS: "admin:password"
+      HOST: "0.0.0.0"
+      PORT: 1984
+      REDIS_URL: "redis://redis:6379/0"
+      LITELLM_API_HOST: ${LITELLM_API_HOST}
+      LITELLM_API_KEY: ${LITELLM_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
