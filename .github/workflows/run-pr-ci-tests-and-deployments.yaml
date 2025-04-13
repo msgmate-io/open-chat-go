@@ -457,7 +457,7 @@ jobs:
           fi
 
       - name: Resolve build image metadata
-        if: steps.context.outputs.should_deploy != ''
+        if: steps.context.outputs.should_deploy != '' || steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != ''
         id: image
         run: |
           set -euo pipefail
@@ -470,24 +470,6 @@ jobs:
           fi
           IMAGE_URL="ghcr.io/${IMAGE_REPO}:${IMAGE_TAG}"
           echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Login to GHCR for temporary image push
-        if: steps.context.outputs.should_deploy != ''
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.BOT_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Build and push temporary deployment image
-        if: steps.context.outputs.should_deploy != ''
-        run: |
-          set -euo pipefail
-          cat > docker-compose.deploy.yaml <<EOF
-          services:
-            backend:
-              image: ${{ steps.image.outputs.image_url }}
-          EOF
-          DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml build backend
-          DOCKER_BUILDKIT=1 docker compose -f docker-compose.pro.yaml -f docker-compose.deploy.yaml push backend
 
       - name: Tests run in parallel job
         run: echo "Go and AI tests run in parallel run-pr-ci-tests job."
@@ -574,11 +556,73 @@ jobs:
               -d "$payload"
           fi
 
+  build-backend-image-once:
+    name: Build Backend Image Once
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      (needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' ||
+       needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' ||
+       needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '')
+    outputs:
+      image_url: ${{ steps.image.outputs.image_url }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Resolve image metadata
+        id: image
+        run: |
+          set -euo pipefail
+          IMAGE_URL="${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url }}"
+          if [ -z "$IMAGE_URL" ]; then
+            echo "::error::image_url output is empty."
+            exit 1
+          fi
+          echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: prod-alpine
+          push: true
+          tags: ${{ steps.image.outputs.image_url }}
+
+      - name: Print built image provenance
+        run: |
+          set -euo pipefail
+          echo "Built image: ${{ steps.image.outputs.image_url }}"
+          echo "Image digest: ${{ steps.build.outputs.digest }}"
+
   run-pr-ci-tests:
     name: Run PR CI Tests
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real')))
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
+      ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+      (contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real'))))
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
       should_deploy: ${{ steps.context.outputs.should_deploy }}
@@ -668,12 +712,19 @@ jobs:
       - name: Start backend for AI process tests
         if: steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != ''
         env:
+          BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
           LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.yaml up -d redis
-          docker compose -f docker-compose.yaml up -d --build --no-deps backend
+          if [ -z "${BACKEND_IMAGE:-}" ]; then
+            echo "::error::BACKEND_IMAGE output is empty for AI process tests."
+            exit 1
+          fi
+          echo "Using prebuilt backend image: ${BACKEND_IMAGE}"
+          docker pull "${BACKEND_IMAGE}"
+          docker compose -f docker-compose.ci.yaml up -d redis
+          docker compose -f docker-compose.ci.yaml up -d --no-deps backend
 
           for i in $(seq 1 90); do
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
@@ -685,7 +736,7 @@ jobs:
           done
 
           echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
-          docker compose -f docker-compose.yaml logs backend || true
+          docker compose -f docker-compose.ci.yaml logs backend || true
           exit 1
 
       - name: Run mocked AI process tests
@@ -705,8 +756,8 @@ jobs:
         if: (steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != '') && always()
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.yaml logs backend || true
-          docker compose -f docker-compose.yaml down -v || true
+          docker compose -f docker-compose.ci.yaml logs backend || true
+          docker compose -f docker-compose.ci.yaml down -v || true
 
       - name: Finalize test status
         id: finalize
@@ -843,7 +894,7 @@ jobs:
   post-deploy-approval-link:
     name: Post Deploy Approval Link
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-tests]
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, run-pr-ci-tests]
     if: always() && github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -895,10 +946,11 @@ jobs:
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, post-deploy-approval-link]
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, post-deploy-approval-link]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      needs.build-backend-image-once.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
       (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
     concurrency:
@@ -1227,10 +1279,11 @@ jobs:
   run-pr-ci-ai-real-after-deploy:
     name: Run AI Real Tests After Deploy Approval
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, approve-and-dispatch-deploy]
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, approve-and-dispatch-deploy]
     if: |
       always() &&
       github.event_name == 'pull_request' &&
+      needs.build-backend-image-once.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
       needs.approve-and-dispatch-deploy.result == 'success'
@@ -1269,10 +1322,15 @@ jobs:
 
       - name: Start backend for real AI process tests
         env:
+          BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
           LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${BACKEND_IMAGE:-}" ]; then
+            echo "::error::BACKEND_IMAGE output is empty for real AI tests."
+            exit 1
+          fi
           if [ -z "${LITELLM_API_HOST:-}" ]; then
             echo "::error::AI_TEST_API_HOST/LITELLM_API_HOST is empty for real AI tests."
             exit 1
@@ -1292,8 +1350,10 @@ jobs:
             "${provider_models_url}" || true)"
           echo "Provider probe from runner: GET ${provider_models_url} -> HTTP ${provider_http_code}"
 
-          docker compose -f docker-compose.yaml up -d redis
-          docker compose -f docker-compose.yaml up -d --build --no-deps backend
+          echo "Using prebuilt backend image: ${BACKEND_IMAGE}"
+          docker pull "${BACKEND_IMAGE}"
+          docker compose -f docker-compose.ci.yaml up -d redis
+          docker compose -f docker-compose.ci.yaml up -d --no-deps backend
 
           backend_ready="0"
           for i in $(seq 1 90); do
@@ -1308,12 +1368,12 @@ jobs:
 
           if [ "$backend_ready" != "1" ]; then
             echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
-            docker compose -f docker-compose.yaml logs backend || true
+            docker compose -f docker-compose.ci.yaml logs backend || true
             exit 1
           fi
 
           echo "Verifying provider env inside backend container..."
-          docker compose -f docker-compose.yaml exec -T backend sh -lc '
+          docker compose -f docker-compose.ci.yaml exec -T backend sh -lc '
             set -eu
             if [ -z "${LITELLM_API_HOST:-}" ]; then
               echo "::error::backend container missing LITELLM_API_HOST"
@@ -1343,7 +1403,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.yaml logs -f backend &
+          docker compose -f docker-compose.ci.yaml logs -f backend &
           BACKEND_LOG_PID=$!
           cleanup() {
             kill "$BACKEND_LOG_PID" >/dev/null 2>&1 || true
@@ -1355,8 +1415,8 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          docker compose -f docker-compose.yaml logs backend || true
-          docker compose -f docker-compose.yaml down -v || true
+          docker compose -f docker-compose.ci.yaml logs backend || true
+          docker compose -f docker-compose.ci.yaml down -v || true
 
       - name: Finalize AI real status
         id: finalize
