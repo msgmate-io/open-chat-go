@@ -2,3 +2,5 @@
 !backend
 !Dockerfile
 !frontend
+!clients
+!clients/go_tool_interface
