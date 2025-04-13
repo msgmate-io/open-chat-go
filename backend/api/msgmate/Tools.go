@@ -1,7 +1,12 @@
 package msgmate
 
 import (
+	_ "backend/api/msgmate/externaltools"
+	tooldefs "backend/api/msgmate/tools"
 	"encoding/json"
+	"strings"
+
+	extiface "github.com/msgmate-io/go-tool-interface/toolinterface"
 )
 
 type Tool interface {
@@ -22,60 +27,92 @@ type Tool interface {
 	SetInitData(data interface{})
 }
 
-var AllTools = []Tool{
-	NewWeatherTool(),
-	NewCurrentTimeTool(),
-	NewCurrentTimeConfirmedTool(),
-	NewCurrentTimeConfirmedTestingTool(),
-	NewRandomNumberTool(),
-	NewLittleWorldChatReplyTool(),
-	NewLittleWorldGetUserStateTool(),
-	NewLittleWorldSetUserSearchingStateTool(),
-	NewLittleWorldGetPastMessagesWithUserTool(),
-	NewLittleWorldRetrieveMatchOverviewTool(),
-	NewLittleWorldResolveMatchTool(),
-	NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(),
-	NewRunCallbackFunctionTool(),
-	NewN8NTriggerWorkflowWebhookTool(),
-	NewCreateConfirmableActionSuggestionTool(),
+type ToolConstructor func() Tool
+
+var (
+	AllTools         []Tool
+	toolConstructors = map[string]ToolConstructor{}
+	toolAliases      = map[string]string{}
+	toolNames        []string
+)
+
+func init() {
+	registerBuiltinTools()
+	registerExternalTools()
+	refreshAllTools()
+}
+
+func registerToolConstructor(name string, aliases []string, constructor ToolConstructor) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		panic("tool name cannot be empty")
+	}
+	if constructor == nil {
+		panic("tool constructor cannot be nil")
+	}
+	if _, exists := toolConstructors[name]; exists {
+		panic("tool constructor already registered for: " + name)
+	}
+
+	toolConstructors[name] = constructor
+	toolNames = append(toolNames, name)
+
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if _, exists := toolConstructors[alias]; exists {
+			panic("tool alias conflicts with registered tool name: " + alias)
+		}
+		toolAliases[alias] = name
+	}
+}
+
+func registerExternalTools() {
+	for _, externalDef := range extiface.List() {
+		def := tooldefs.ToolDefinition{
+			Name:                           externalDef.Name,
+			FunctionName:                   externalDef.FunctionName,
+			Description:                    externalDef.Description,
+			AdminOnly:                      externalDef.AdminOnly,
+			RequiresInit:                   externalDef.RequiresInit,
+			RequiresConfirmation:           externalDef.RequiresConfirmation,
+			StopOnFirstConfirmableToolCall: externalDef.StopOnFirstConfirmableToolCall,
+			ConfirmationBlockMessage:       externalDef.ConfirmationBlockMessage,
+			InputType:                      externalDef.InputType,
+			RequiredParams:                 externalDef.RequiredParams,
+			Parameters:                     externalDef.Parameters,
+			RunFunction:                    externalDef.Run,
+		}
+
+		registerToolConstructor(def.Name, nil, func() Tool {
+			return NewToolFromDefinition(def)
+		})
+	}
+}
+
+func refreshAllTools() {
+	AllTools = make([]Tool, 0, len(toolNames))
+	for _, name := range toolNames {
+		if constructor, exists := toolConstructors[name]; exists {
+			AllTools = append(AllTools, constructor())
+		}
+	}
 }
 
 // NewToolByName maps tool names to their constructor functions
 func NewToolByName(name string) (Tool, bool) {
-	switch name {
-	case "get_weather":
-		return NewWeatherTool(), true
-	case "get_current_time":
-		return NewCurrentTimeTool(), true
-	case "get_current_time_confirmed":
-		return NewCurrentTimeConfirmedTool(), true
-	case "get_current_time_confirmed_testing":
-		return NewCurrentTimeConfirmedTestingTool(), true
-	case "get_random_number":
-		return NewRandomNumberTool(), true
-	case "little_world__chat_reply":
-		return NewLittleWorldChatReplyTool(), true
-	case "little_world__get_user_state":
-		return NewLittleWorldGetUserStateTool(), true
-	case "little_world__set_user_searching_state":
-		return NewLittleWorldSetUserSearchingStateTool(), true
-	case "little_world__get_past_messages":
-		return NewLittleWorldGetPastMessagesWithUserTool(), true
-	case "little_world__retrieve_match_overview":
-		return NewLittleWorldRetrieveMatchOverviewTool(), true
-	case "little_world__resolve_match":
-		return NewLittleWorldResolveMatchTool(), true
-	case "rwth_aachen_seminar_tims_auto_paper_include_exclude", "rwth_aachen_seminar_tims_auto_paper_include_exclude_agent":
-		return NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(), true
-	case "run_callback_function":
-		return NewRunCallbackFunctionTool(), true
-	case "n8n_trigger_workflow_webhook":
-		return NewN8NTriggerWorkflowWebhookTool(), true
-	case "create_confirmable_action_suggestion":
-		return NewCreateConfirmableActionSuggestionTool(), true
-	default:
-		return nil, false
+	name = strings.TrimSpace(name)
+	if constructor, found := toolConstructors[name]; found {
+		return constructor(), true
 	}
+	if canonical, found := toolAliases[name]; found {
+		if constructor, exists := toolConstructors[canonical]; exists {
+			return constructor(), true
+		}
+	}
+	return nil, false
 }
 
 func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool {
