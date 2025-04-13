@@ -20,6 +20,7 @@ WORKDIR /backend
 RUN apk add --no-cache gcc musl-dev bash libc6-compat
 COPY backend/go.mod ./
 COPY backend/go.sum ./
+COPY clients/go_tool_interface /clients/go_tool_interface
 RUN CGO_ENABLED=1 go mod download
 
 FROM basebuilder AS builder
