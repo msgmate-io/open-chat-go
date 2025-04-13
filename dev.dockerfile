@@ -18,6 +18,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Pre-download modules first; this layer only re-runs when go.mod/go.sum change.
 # Baked into the image (no cache mount) so the module cache survives to runtime.
 COPY ./backend/go.mod ./backend/go.sum ./
+COPY ./clients/go_tool_interface /clients/go_tool_interface
 RUN go mod download
 
 # Copy the source and pre-compile once at build time. The resulting module cache
