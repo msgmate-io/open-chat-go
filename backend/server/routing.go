@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -97,21 +98,10 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 	if err != nil {
 		log.Fatal(err)
 	}
-	fs := http.FileServer(http.FS(fsys))
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		accept := r.Header.Get("Accept")
-		if !strings.Contains(accept, "text/html") {
-			// serve all other assets normally
-			fs.ServeHTTP(w, r)
-			return
-		}
-
-		// e.g.: route = "/star-wars/{id}"
-		// the html file we have to server is at 'route/index.html'
-		// but we also need to match all possible '{}' paths in the route
-		// e.g.: for /star-wars/{id} we need to replace {id} in the html file with r.PathValue("id")
-		// and then serve the html file
+		// e.g.: route = "/star-wars/{id}" and pathEnding = "/index.html"
+		// we serve `star-wars/{id}/index.html` and replace `{id}` with the path value.
 		regMatch := regexp.MustCompile(`{(.*?)}`)
 		pathValues := make(map[string]string)
 		matches := regMatch.FindAllStringSubmatch(route, -1)
@@ -147,8 +137,13 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 			content = bytes.Replace(content, []byte(fmt.Sprintf("{%s}", key)), []byte(value), -1)
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(content))
+		contentType := "text/html; charset=utf-8"
+		if strings.HasSuffix(pathEnding, ".json") {
+			contentType = "application/json; charset=utf-8"
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		http.ServeContent(w, r, filepath.Base(pathEnding), time.Time{}, bytes.NewReader(content))
 	}
 }
 
@@ -287,6 +282,8 @@ func BackendRouting(
 		for _, route := range routes {
 			fmt.Printf("Serving route: %s\n", route)
 			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
+			mux.Handle(route+"/index.pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
+			mux.Handle(route+".pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
 		}
 		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
