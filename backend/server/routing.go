@@ -283,7 +283,9 @@ func BackendRouting(
 			fmt.Printf("Serving route: %s\n", route)
 			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
 			mux.Handle(route+"/index.pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
-			mux.Handle(route+".pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
+			if !strings.Contains(route, "{") {
+				mux.Handle(route+".pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
+			}
 		}
 		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
