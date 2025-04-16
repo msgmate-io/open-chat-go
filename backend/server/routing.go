@@ -94,11 +94,6 @@ func getFrontendRoutes() ([]string, error) {
 }
 
 func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWriter, *http.Request) {
-	fsys, err := fs.Sub(frontendFS, "frontend")
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		// e.g.: route = "/star-wars/{id}" and pathEnding = "/index.html"
 		// we serve `star-wars/{id}/index.html` and replace `{id}` with the path value.
@@ -113,38 +108,148 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 				pathValues[match[1]] = match[1]
 			}
 		}
-
-		// Remove the leading slash from the route when accessing the filesystem
-		cleanRoute := strings.TrimPrefix(route, "/")
-		staticFile := fmt.Sprintf("%s%s", cleanRoute, pathEnding)
-		indexFile, err := fsys.Open(staticFile)
-		if err != nil {
-			log.Printf("Error opening index.html for route %s: %v", cleanRoute, err)
-			http.Error(w, "Page Not Found", http.StatusNotFound)
-			return
-		}
-		defer indexFile.Close()
-
-		content, err := io.ReadAll(indexFile)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		// Replace all the path values in the html file
-		for key, value := range pathValues {
-			content = bytes.Replace(content, []byte(fmt.Sprintf("{%s}", key)), []byte(value), -1)
-		}
-
-		contentType := "text/html; charset=utf-8"
-		if strings.HasSuffix(pathEnding, ".json") {
-			contentType = "application/json; charset=utf-8"
-		}
-
-		w.Header().Set("Content-Type", contentType)
-		http.ServeContent(w, r, filepath.Base(pathEnding), time.Time{}, bytes.NewReader(content))
+		serveFrontendRouteFile(route, pathEnding, pathValues, w, r)
 	}
+}
+
+func serveFrontendRouteFile(route string, pathEnding string, pathValues map[string]string, w http.ResponseWriter, r *http.Request) bool {
+	fsys, err := fs.Sub(frontendFS, "frontend")
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
+	}
+
+	cleanRoute := strings.TrimPrefix(route, "/")
+	staticFile := fmt.Sprintf("%s%s", cleanRoute, pathEnding)
+	indexFile, err := fsys.Open(staticFile)
+	if err != nil {
+		log.Printf("Error opening %s for route %s: %v", pathEnding, cleanRoute, err)
+		http.Error(w, "Page Not Found", http.StatusNotFound)
+		return false
+	}
+	defer indexFile.Close()
+
+	content, err := io.ReadAll(indexFile)
+	if err != nil {
+		log.Println(err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
+	}
+
+	for key, value := range pathValues {
+		content = bytes.Replace(content, []byte(fmt.Sprintf("{%s}", key)), []byte(value), -1)
+	}
+
+	contentType := "text/html; charset=utf-8"
+	if strings.HasSuffix(pathEnding, ".json") {
+		contentType = "application/json; charset=utf-8"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	http.ServeContent(w, r, filepath.Base(pathEnding), time.Time{}, bytes.NewReader(content))
+	return true
+}
+
+func tryServeFrontendPageContext(routes []string, w http.ResponseWriter, r *http.Request) bool {
+	requestPath := r.URL.Path
+	if !strings.HasSuffix(requestPath, ".pageContext.json") {
+		return false
+	}
+
+	logicalPath := strings.TrimSuffix(requestPath, ".pageContext.json")
+	logicalPath = strings.TrimSuffix(logicalPath, "/index")
+	if logicalPath == "" {
+		logicalPath = "/"
+	}
+
+	type routeCandidate struct {
+		route      string
+		pathValues map[string]string
+	}
+
+	best := routeCandidate{}
+	found := false
+	for _, route := range routes {
+		pathValues, ok := matchRequestPathToRoute(route, logicalPath)
+		if !ok {
+			continue
+		}
+		if !found || isRouteMoreSpecific(route, best.route) {
+			best = routeCandidate{route: route, pathValues: pathValues}
+			found = true
+		}
+	}
+
+	if !found {
+		return false
+	}
+
+	return serveFrontendRouteFile(best.route, "/index.pageContext.json", best.pathValues, w, r)
+}
+
+func matchRequestPathToRoute(routePattern string, requestPath string) (map[string]string, bool) {
+	patternSegments := routeSegments(routePattern)
+	pathSegments := routeSegments(requestPath)
+	if len(patternSegments) != len(pathSegments) {
+		return nil, false
+	}
+
+	pathValues := map[string]string{}
+	for i := range patternSegments {
+		routeSegment := patternSegments[i]
+		pathSegment := pathSegments[i]
+
+		if strings.HasPrefix(routeSegment, "{") && strings.HasSuffix(routeSegment, "}") {
+			param := strings.TrimSuffix(strings.TrimPrefix(routeSegment, "{"), "}")
+			if param != "" {
+				pathValues[param] = pathSegment
+			}
+			continue
+		}
+
+		if routeSegment != pathSegment {
+			return nil, false
+		}
+	}
+
+	return pathValues, true
+}
+
+func routeSegments(path string) []string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return []string{}
+	}
+	return strings.Split(trimmed, "/")
+}
+
+func isRouteMoreSpecific(a string, b string) bool {
+	aSeg := routeSegments(a)
+	bSeg := routeSegments(b)
+
+	aDynamic := 0
+	for _, segment := range aSeg {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			aDynamic++
+		}
+	}
+	bDynamic := 0
+	for _, segment := range bSeg {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			bDynamic++
+		}
+	}
+
+	if aDynamic != bDynamic {
+		return aDynamic < bDynamic
+	}
+
+	if len(aSeg) != len(bSeg) {
+		return len(aSeg) > len(bSeg)
+	}
+
+	return a < b
 }
 
 func BackendRouting(
@@ -282,14 +387,12 @@ func BackendRouting(
 		for _, route := range routes {
 			fmt.Printf("Serving route: %s\n", route)
 			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
-			mux.Handle(route+"/index.pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
-			if !strings.Contains(route, "{") {
-				mux.Handle(route+".pageContext.json", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.pageContext.json")))))
-			}
 		}
 		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				ServeFrontendRoute("/", "index.html")(w, r)
+			} else if tryServeFrontendPageContext(routes, w, r) {
+				return
 			} else {
 				ServeFrontendRoute("/404", ".html")(w, r)
 			}
