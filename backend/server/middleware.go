@@ -99,6 +99,54 @@ func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, b
 	return &user, true
 }
 
+func sessionTokensFromRequest(r *http.Request) []string {
+	if r == nil {
+		return nil
+	}
+
+	tokens := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, cookie := range r.Cookies() {
+		if cookie.Name != "session_id" {
+			continue
+		}
+		token := strings.TrimSpace(cookie.Value)
+		if token == "" {
+			continue
+		}
+		if _, exists := seen[token]; exists {
+			continue
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+
+	return tokens
+}
+
+func resolveValidSessionFromRequest(DB *gorm.DB, r *http.Request) (*database.Session, bool, error) {
+	if DB == nil {
+		return nil, false, nil
+	}
+
+	now := time.Now()
+	for _, token := range sessionTokensFromRequest(r) {
+		var session database.Session
+		if err := DB.First(&session, "token = ?", token).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				continue
+			}
+			return nil, false, err
+		}
+		if session.Expiry.Before(now) {
+			continue
+		}
+		return &session, true, nil
+	}
+
+	return nil, false, nil
+}
+
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		DB, ok := r.Context().Value("db").(*gorm.DB)
@@ -113,30 +161,20 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		cookie, err := r.Cookie("session_id")
-		// log.Println(cookie)
-		if err != nil {
+		tokens := sessionTokensFromRequest(r)
+		if len(tokens) == 0 {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 
-		token := strings.TrimSpace(cookie.Value)
-
-		var session database.Session
-		if err := DB.First(&session, "token = ?", token).Error; err != nil {
-
-			if err == gorm.ErrRecordNotFound {
-				http.Error(w, "Invalid token", http.StatusForbidden)
-				return
-			}
-
+		session, found, err := resolveValidSessionFromRequest(DB, r)
+		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			log.Println(err)
 			return
 		}
-
-		if session.Expiry.Before(time.Now()) {
-			http.Error(w, "Session expired", http.StatusForbidden)
+		if !found {
+			http.Error(w, "Invalid token", http.StatusForbidden)
 			return
 		}
 
@@ -165,24 +203,18 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		cookie, err := r.Cookie("session_id")
+		tokens := sessionTokensFromRequest(r)
+		if len(tokens) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		session, found, err := resolveValidSessionFromRequest(DB, r)
 		if err != nil {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		token := strings.TrimSpace(cookie.Value)
-		if token == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		var session database.Session
-		if err := DB.First(&session, "token = ?", token).Error; err != nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if session.Expiry.Before(time.Now()) {
+		if !found {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -217,8 +249,9 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		cookie, err := r.Cookie("session_id")
-		if err != nil {
+		DB, _ := r.Context().Value("db").(*gorm.DB)
+		_, authorized, _ := resolveValidSessionFromRequest(DB, r)
+		if !authorized {
 			http.SetCookie(w, &http.Cookie{
 				Name:     "is_authorized",
 				Value:    "false",
@@ -240,24 +273,18 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if cookie.Expires.Before(time.Now()) {
-			http.SetCookie(w, &http.Cookie{
-				Name:     "is_authorized",
-				Value:    "true",
-				Path:     "/",
-				MaxAge:   0,
-				HttpOnly: false,
-				Secure:   false,
-				SameSite: http.SameSiteStrictMode,
-			})
+		http.SetCookie(w, &http.Cookie{
+			Name:     "is_authorized",
+			Value:    "true",
+			Path:     "/",
+			MaxAge:   0,
+			HttpOnly: false,
+			Secure:   false,
+			SameSite: http.SameSiteStrictMode,
+		})
 
-			if r.URL.Path == "/login" {
-				// autorized user on the login page can be redirected to /chat
-				http.Redirect(w, r, "/chat", http.StatusFound)
-				return
-			}
-
-			next.ServeHTTP(w, r)
+		if r.URL.Path == "/login" {
+			http.Redirect(w, r, "/chat", http.StatusFound)
 			return
 		}
 
