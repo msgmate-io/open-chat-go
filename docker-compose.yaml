@@ -13,6 +13,7 @@ services:
       - "1984:1984"
     volumes:
       - ./backend:/backend
+      - ./clients/go_tool_interface:/clients/go_tool_interface
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
