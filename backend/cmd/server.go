@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"unicode"
@@ -223,6 +224,24 @@ func parseCredentials(raw, label string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
+func normalizeSessionCookieDomain(host string) string {
+	host = strings.TrimSpace(host)
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return ""
+	}
+
+	if host == "0.0.0.0" || host == "::" || host == "localhost" {
+		return ""
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return ""
+	}
+
+	return host
+}
+
 type bootstrapUserSpec struct {
 	Label            string
 	Credentials      string
@@ -366,6 +385,7 @@ func ServerCli() *cli.Command {
 			}
 
 			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Int("port"))
+			sessionCookieDomain := normalizeSessionCookieDomain(c.String("host"))
 
 			// Initialize HTTP server and websocket handler.
 			s, ch, _, err := server.BackendServer(
@@ -378,7 +398,7 @@ func ServerCli() *cli.Command {
 				c.Bool("debug"),
 				c.String("frontend-proxy"),
 				c.String("storybook-frontend-proxy"),
-				c.String("host"),
+				sessionCookieDomain,
 			)
 			if err != nil {
 				return err
