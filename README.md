@@ -61,8 +61,3 @@ We release all versions always ( after admin confirmation ):
 - PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
-
-### TODO:
-
-- Make default bot creatds `random`
-DEFAULT_BOT_CREDENTIALScurrent: bo••••rd
