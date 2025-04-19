@@ -3,6 +3,7 @@ package server
 // Some stuff stolen from 'https://github.com/dreamsofcode-io/nethttp'
 import (
 	"backend/database"
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,6 +31,34 @@ func CreateStack(xs ...Middleware) Middleware {
 type wrappedWriter struct {
 	http.ResponseWriter
 	statusCode int
+}
+
+func (w *wrappedWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *wrappedWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *wrappedWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+
+	return hijacker.Hijack()
+}
+
+func (w *wrappedWriter) Push(target string, opts *http.PushOptions) error {
+	pusher, ok := w.ResponseWriter.(http.Pusher)
+	if !ok {
+		return http.ErrNotSupported
+	}
+
+	return pusher.Push(target, opts)
 }
 
 func (w *wrappedWriter) WriteHeader(statusCode int) {
