@@ -77,6 +77,10 @@ func NewCreateConfirmableActionSuggestionTool() Tool {
 	return NewToolFromDefinition(tooldefs.CreateConfirmableActionSuggestionToolDef)
 }
 
+func NewToolInitTestToolPassThrough() Tool {
+	return NewToolFromDefinition(tooldefs.ToolInitTestToolPassThroughDef)
+}
+
 func registerBuiltinTools() {
 	registerToolConstructor("get_weather", nil, NewWeatherTool)
 	registerToolConstructor("get_current_time", nil, NewCurrentTimeTool)
@@ -97,4 +101,5 @@ func registerBuiltinTools() {
 	registerToolConstructor("run_callback_function", nil, NewRunCallbackFunctionTool)
 	registerToolConstructor("n8n_trigger_workflow_webhook", nil, NewN8NTriggerWorkflowWebhookTool)
 	registerToolConstructor("create_confirmable_action_suggestion", nil, NewCreateConfirmableActionSuggestionTool)
+	registerToolConstructor("tool_init_test_tool_pass_through", nil, NewToolInitTestToolPassThrough)
 }
