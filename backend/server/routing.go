@@ -331,7 +331,6 @@ func BackendRouting(
 	asynqUIHandler http.Handler,
 	debug bool,
 	frontendProxy string,
-	storybookProxy string,
 	sessionCookieDomain string,
 ) (*http.ServeMux, *websocket.WebSocketHandler) {
 	mux := http.NewServeMux()
@@ -416,6 +415,7 @@ func BackendRouting(
 	)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
+	mux.Handle("GET /ws/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(websocketHandler.ConnectSharedInteraction))))
 	mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
 	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
@@ -472,22 +472,11 @@ func BackendRouting(
 			}
 		}))))
 	} else {
-		proxies := []FrontendProxy{}
-		// Dev-only: front a Storybook dev server under /storybook (see docker-compose).
-		if storybookProxy != "" {
-			proxies = append(proxies, FrontendProxy{
-				Name:     "storybook",
-				Target:   storybookProxy,
-				Prefixes: storybookProxyPrefixes,
-				Public:   true,
-			})
-		}
-		// The app frontend is the catch-all.
-		proxies = append(proxies, FrontendProxy{
+		proxies := []FrontendProxy{{
 			Name:     "frontend",
 			Target:   frontendProxy,
 			Prefixes: []string{"/"},
-		})
+		}}
 
 		if err := registerFrontendProxies(mux, proxies, commonMiddlewares); err != nil {
 			log.Fatal(err)
