@@ -119,7 +119,11 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 	}
 
 	partner := chat.User2
-	if partner.ID == 0 {
+	if chat.User1.IsAutomated {
+		partner = chat.User1
+	} else if chat.User2.IsAutomated {
+		partner = chat.User2
+	} else if partner.ID == 0 {
 		partner = chat.User1
 	}
 

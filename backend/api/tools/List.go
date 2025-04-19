@@ -188,14 +188,21 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 			item.RequiresConfirmation = requiresConfirmation
 			item.StopOnFirstConfirmableToolCall = tool.GetStopOnFirstConfirmableToolCall()
 			item.ConfirmationBlockMessage = strings.TrimSpace(tool.GetConfirmationBlockMessage())
-			item.Parameters = tool.GetToolParameters()
-			item.CallSchema = map[string]interface{}{
-				"type":       "object",
-				"properties": tool.GetToolParameters(),
+			item.CallSchema = tool.GetToolInputSchema()
+			if properties, ok := item.CallSchema["properties"].(map[string]interface{}); ok {
+				item.Parameters = properties
 			}
-			if baseTool, ok := tool.(*msgmate.BaseTool); ok {
-				item.Required = append([]string(nil), baseTool.GetRequiredParams()...)
-				item.CallSchema["required"] = append([]string(nil), baseTool.GetRequiredParams()...)
+			if required, ok := item.CallSchema["required"].([]string); ok {
+				item.Required = append([]string(nil), required...)
+			} else if required, ok := item.CallSchema["required"].([]interface{}); ok {
+				parsedRequired := make([]string, 0, len(required))
+				for _, field := range required {
+					name, ok := field.(string)
+					if ok && strings.TrimSpace(name) != "" {
+						parsedRequired = append(parsedRequired, name)
+					}
+				}
+				item.Required = parsedRequired
 			}
 			if item.InitSchema == nil && requiresInit {
 				item.InitSchema = map[string]interface{}{
