@@ -9,14 +9,15 @@ import (
 )
 
 type ListedMessage struct {
-	UUID       string                  `json:"uuid"`
-	SendAt     string                  `json:"send_at"`
-	SenderUUID string                  `json:"sender_uuid"`
-	DataType   string                  `json:"data_type"`
-	Text       string                  `json:"text"`
-	Reasoning  *[]string               `json:"reasoning"`
-	ToolCalls  *[]interface{}          `json:"tool_calls"`
-	MetaData   *map[string]interface{} `json:"meta_data"`
+	UUID              string                  `json:"uuid"`
+	SendAt            string                  `json:"send_at"`
+	SenderUUID        string                  `json:"sender_uuid"`
+	SenderIsAutomated bool                    `json:"sender_is_automated"`
+	DataType          string                  `json:"data_type"`
+	Text              string                  `json:"text"`
+	Reasoning         *[]string               `json:"reasoning"`
+	ToolCalls         *[]interface{}          `json:"tool_calls"`
+	MetaData          *map[string]interface{} `json:"meta_data"`
 }
 
 func convertMessageToListedMessage(message database.Message) ListedMessage {
@@ -33,14 +34,15 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 	}
 
 	return ListedMessage{
-		UUID:       message.UUID,
-		SendAt:     message.CreatedAt.String(),
-		SenderUUID: message.Sender.UUID,
-		DataType:   message.DataType,
-		Text:       *message.Text,
-		Reasoning:  message.Reasoning,
-		ToolCalls:  &toolCalls,
-		MetaData:   &messageMetaData,
+		UUID:              message.UUID,
+		SendAt:            message.CreatedAt.String(),
+		SenderUUID:        message.Sender.UUID,
+		SenderIsAutomated: message.Sender.IsAutomated,
+		DataType:          message.DataType,
+		Text:              *message.Text,
+		Reasoning:         message.Reasoning,
+		ToolCalls:         &toolCalls,
+		MetaData:          &messageMetaData,
 	}
 }
 
