@@ -146,6 +146,20 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		}
 	}
 
+	if backend == "anthropic" {
+		anthropicHost := strings.TrimSpace(os.Getenv("ANTHROPIC_API_HOST"))
+		if anthropicHost != "" {
+			endpoint = anthropicHost
+		} else if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://api.anthropic.com/v1"
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return fmt.Errorf("missing API host for anthropic provider")
+		}
+	}
+
 	// Check for skip-core tag
 	if aih.hasSkipCoreTag(tags) {
 		log.Printf("Chat %s has skip-core tag, executing tools only", message.Content.ChatUUID)
