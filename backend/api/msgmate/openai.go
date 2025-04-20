@@ -762,13 +762,13 @@ func buildTestBackendStreamingReader(
 			map[string]interface{}{
 				"choices": []map[string]interface{}{{
 					"index": 0,
-					"delta": map[string]interface{}{"content": "The tool returned: "},
+					"delta": map[string]interface{}{"content": "<think>I should inspect the tool output before replying.</think>"},
 				}},
 			},
 			map[string]interface{}{
 				"choices": []map[string]interface{}{{
 					"index": 0,
-					"delta": map[string]interface{}{"content": "Request completed successfully."},
+					"delta": map[string]interface{}{"content": "The tool returned: Request completed successfully."},
 				}},
 				"usage": map[string]interface{}{"prompt_tokens": 32, "completion_tokens": 12, "total_tokens": 44},
 			},
