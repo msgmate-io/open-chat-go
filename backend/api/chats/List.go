@@ -90,19 +90,30 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		chatTypes := strings.Split(chatTypesParam, ",")
 		if len(chatTypes) > 0 {
 
-			// Check if we need wildcard matching for "integration"
+			// Check if we need wildcard matching for namespaced chat types
 			hasIntegration := false
+			hasInteraction := false
 			for _, chatType := range chatTypes {
 				if chatType == "integration" {
 					hasIntegration = true
-					break
+				}
+				if chatType == "interaction" {
+					hasInteraction = true
 				}
 			}
 
 			// Build the query conditions
-			if hasIntegration {
-				// Use pattern matching to find both exact "integration" and "integration:*"
+			if hasIntegration && hasInteraction {
+				query = query.Where(
+					"chat_type IN ? OR chat_type LIKE ? OR chat_type LIKE ?",
+					chatTypes,
+					"integration:%",
+					"interaction:%",
+				)
+			} else if hasIntegration {
 				query = query.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "integration:%")
+			} else if hasInteraction {
+				query = query.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "interaction:%")
 			} else {
 				// Use the original exact matching
 				query = query.Where("chat_type IN ?", chatTypes)
