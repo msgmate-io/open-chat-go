@@ -16,6 +16,8 @@ type ListedChat struct {
 	LatestMessage *database.Message `json:"latest_message"`
 	ChatType      string            `json:"chat_type"`
 	Config        interface{}       `json:"config"`
+	ChatShareUUID string            `json:"chat_share_uuid,omitempty"`
+	SharedChatURL string            `json:"shared_interaction_url,omitempty"`
 }
 
 func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat {
