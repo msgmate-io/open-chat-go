@@ -98,6 +98,18 @@ func extractUserInitData(initData map[string]interface{}) (string, string, strin
 	return sessionID, csrfToken, apiHost, userID, nil
 }
 
+func extractSupportTaskInitData(initData map[string]interface{}) (string, string, string, string, error) {
+	sessionID, csrfToken, apiHost, err := extractInitData(initData)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	taskPK, _ := initData["task_pk"].(string)
+	if taskPK == "" {
+		return "", "", "", "", fmt.Errorf("missing task_pk in initialization data")
+	}
+	return sessionID, csrfToken, apiHost, taskPK, nil
+}
+
 func extractPaperCategorizationInitData(initData map[string]interface{}) (string, string, string, error) {
 	paperID, _ := initData["paper_id"].(string)
 	apiHost, _ := initData["api_host"].(string)
