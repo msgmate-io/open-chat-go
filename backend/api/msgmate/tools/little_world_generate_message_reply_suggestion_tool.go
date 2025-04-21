@@ -7,13 +7,12 @@ import (
 )
 
 type LittleWorldGenerateMessageReplySuggestionToolInput struct {
-	ActionID string `json:"action_id"`
-	Message  string `json:"message"`
+	Message string `json:"message"`
 }
 
 var LittleWorldGenerateMessageReplySuggestionToolDef = ToolDefinition{
 	Name:         "little_world__generate_message_reply_suggestion",
-	Description:  "Update an open Little World support task action draft message suggestion.",
+	Description:  "Persist the final support reply suggestion by calling this tool; this tool must be called for the draft to be saved.",
 	AdminOnly:    true,
 	RequiresInit: true,
 	InitSchema: map[string]interface{}{
@@ -39,45 +38,51 @@ var LittleWorldGenerateMessageReplySuggestionToolDef = ToolDefinition{
 				"description": "Primary key of the support task that owns the action draft.",
 				"minLength":   1,
 			},
-		},
-		"required":             []string{"session_id", "csrf_token", "api_host", "task_pk"},
-		"additionalProperties": false,
-		"description":          "Initialization data required to authenticate and target the Little World support task action API.",
-	},
-	InputType: LittleWorldGenerateMessageReplySuggestionToolInput{},
-	InputSchema: map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
 			"action_id": map[string]interface{}{
 				"type":        "string",
 				"description": "Identifier of the open support task action to update.",
 				"minLength":   1,
 			},
+			"mock_run": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Optional testing flag. If true, skip the API request and return a mocked success result.",
+			},
+		},
+		"required":             []string{"session_id", "csrf_token", "api_host", "task_pk", "action_id"},
+		"additionalProperties": false,
+		"description":          "Initialization data required to authenticate and target one specific Little World support task action.",
+	},
+	InputType: LittleWorldGenerateMessageReplySuggestionToolInput{},
+	InputSchema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
 			"message": map[string]interface{}{
 				"type":        "string",
-				"description": "Updated draft support reply text.",
+				"description": "Final draft support reply text that will be persisted when this tool is called.",
 				"minLength":   1,
 			},
 		},
-		"required":             []string{"action_id", "message"},
+		"required":             []string{"message"},
 		"additionalProperties": false,
-		"description":          "Payload for updating one support action draft message suggestion.",
+		"description":          "Payload for persisting the support action message suggestion; calling this tool performs the save.",
 	},
-	RequiredParams: []string{"action_id", "message"},
+	RequiredParams: []string{"message"},
 	Parameters: map[string]interface{}{
-		"action_id": map[string]interface{}{"type": "string", "description": "Identifier of the open support task action to update"},
-		"message":   map[string]interface{}{"type": "string", "description": "The updated draft message suggestion"},
+		"message": map[string]interface{}{"type": "string", "description": "The updated draft message suggestion to persist"},
 	},
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
 		toolInput := input.(LittleWorldGenerateMessageReplySuggestionToolInput)
-		sessionID, csrfToken, apiHost, taskPK, err := extractSupportTaskInitData(initData)
+		sessionID, csrfToken, apiHost, taskPK, actionID, err := extractSupportTaskActionInitData(initData)
 		if err != nil {
 			return "", err
+		}
+		if mockRun, _ := initData["mock_run"].(bool); mockRun {
+			return "Message reply suggestion updated successfully (mock run)", nil
 		}
 
 		body := new(bytes.Buffer)
 		if err := json.NewEncoder(body).Encode(map[string]interface{}{
-			"action_id": toolInput.ActionID,
+			"action_id": actionID,
 			"parameters": map[string]interface{}{
 				"message": toolInput.Message,
 			},
@@ -85,7 +90,7 @@ var LittleWorldGenerateMessageReplySuggestionToolDef = ToolDefinition{
 			return "", fmt.Errorf("error encoding request body: %w", err)
 		}
 
-		fullURL := fmt.Sprintf("%s/api/support_task/%s/action/", apiHost, taskPK)
+		fullURL := buildAPIURL(apiHost, fmt.Sprintf("/api/support_task/%s/action/", taskPK))
 		if _, err := makeAPIRequest("PATCH", fullURL, body, sessionID, csrfToken); err != nil {
 			return fmt.Sprintf("error updating message reply suggestion: %s", err), err
 		}
