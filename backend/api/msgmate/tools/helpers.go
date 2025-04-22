@@ -4,9 +4,73 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 )
+
+const defaultAPITimeout = 30 * time.Second
+
+func normalizeAPIHost(apiHost string) string {
+	host := strings.TrimSpace(apiHost)
+	return strings.TrimRight(host, "/")
+}
+
+func buildAPIURL(apiHost, path string) string {
+	return fmt.Sprintf("%s%s", normalizeAPIHost(apiHost), path)
+}
+
+func newAPIHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: defaultAPITimeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+}
+
+func applyAPIAuthHeaders(req *http.Request, sessionID, csrfToken string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", fmt.Sprintf("sessionid=%s; csrftoken=%s", sessionID, csrfToken))
+	req.Header.Set("X-CSRFToken", csrfToken)
+}
+
+func executeAPIRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		attemptReq := req
+		if attempt > 1 {
+			if req.GetBody == nil {
+				break
+			}
+			body, err := req.GetBody()
+			if err != nil {
+				lastErr = err
+				break
+			}
+			attemptReq = req.Clone(req.Context())
+			attemptReq.Body = body
+		}
+
+		resp, err := client.Do(attemptReq)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if attempt == maxAttempts {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+	}
+	return nil, lastErr
+}
 
 func extractUserID(userIDRaw interface{}) string {
 	if userIDRaw == nil {
@@ -31,11 +95,9 @@ func makeAPIRequest(method, url string, body io.Reader, sessionID, csrfToken str
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", fmt.Sprintf("sessionid=%s; csrftoken=%s", sessionID, csrfToken))
-	req.Header.Set("X-CSRFToken", csrfToken)
+	applyAPIAuthHeaders(req, sessionID, csrfToken)
 
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := executeAPIRequest(newAPIHTTPClient(), req)
 	if err != nil {
 		return nil, fmt.Errorf("error making request: %w", err)
 	}
@@ -67,7 +129,8 @@ func makeRequestSimple(method, url string, body io.Reader) ([]byte, error) {
 func extractInitData(initData map[string]interface{}) (string, string, string, error) {
 	sessionID, _ := initData["session_id"].(string)
 	csrfToken, _ := initData["csrf_token"].(string)
-	apiHost, _ := initData["api_host"].(string)
+	apiHostRaw, _ := initData["api_host"].(string)
+	apiHost := normalizeAPIHost(apiHostRaw)
 	if sessionID == "" || csrfToken == "" || apiHost == "" {
 		return "", "", "", fmt.Errorf("missing required initialization data")
 	}
@@ -96,6 +159,22 @@ func extractUserInitData(initData map[string]interface{}) (string, string, strin
 		return "", "", "", "", fmt.Errorf("missing user_id in initialization data")
 	}
 	return sessionID, csrfToken, apiHost, userID, nil
+}
+
+func extractSupportTaskActionInitData(initData map[string]interface{}) (string, string, string, string, string, error) {
+	sessionID, csrfToken, apiHost, err := extractInitData(initData)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	taskPK, _ := initData["task_pk"].(string)
+	if taskPK == "" {
+		return "", "", "", "", "", fmt.Errorf("missing task_pk in initialization data")
+	}
+	actionID, _ := initData["action_id"].(string)
+	if actionID == "" {
+		return "", "", "", "", "", fmt.Errorf("missing action_id in initialization data")
+	}
+	return sessionID, csrfToken, apiHost, taskPK, actionID, nil
 }
 
 func extractPaperCategorizationInitData(initData map[string]interface{}) (string, string, string, error) {
