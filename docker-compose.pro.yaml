@@ -12,6 +12,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - HOST=0.0.0.0
       - PORT=1984
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_HOST=${ANTHROPIC_API_HOST}
     depends_on:
       db:
         condition: service_healthy
