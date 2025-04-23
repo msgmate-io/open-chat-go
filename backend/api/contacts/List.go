@@ -56,6 +56,7 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 				UserUUID:     partner.UUID,
 				IsOnline:     true,
 				IsAutomated:  partner.IsAutomated,
+				ProfileData:  profileData,
 			}
 		} else {
 			listedContacts[i] = ListedContact{
@@ -64,6 +65,7 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 				UserUUID:     partner.UUID,
 				IsOnline:     false,
 				IsAutomated:  partner.IsAutomated,
+				ProfileData:  profileData,
 			}
 		}
 	}
@@ -82,9 +84,10 @@ type PaginatedContacts struct {
 // @Tags         contacts
 // @Accept       json
 // @Produce      json
+// @Security     SessionAuth
 // @Param        page  query  int  false  "Page number"  default(1)
 // @Param        limit query  int  false  "Page size"     default(10)
-// @Success      200 {array}  contacts.PaginatedContacts "List of contacts"
+// @Success      200 {object} contacts.PaginatedContacts "Paginated contacts"
 // @Failure      400 {string} string "Invalid user ID"
 // @Failure      500 {string} string "Internal server error"
 // @Router       /api/v1/contacts/list [get]
@@ -144,7 +147,8 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 // @Tags         contacts
 // @Accept       json
 // @Produce      json
-// @Param        token path string true "Contact Token"
+// @Security     SessionAuth
+// @Param        contact_token path string true "Contact token"
 // @Success      200 {object} contacts.ListedContact
 // @Failure      400 {string} string "Invalid request"
 // @Failure      404 {string} string "Contact not found"
@@ -180,6 +184,9 @@ func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Reques
 	// Now parse the profile data
 	var profileData map[string]interface{}
 	json.Unmarshal(publicProfile.ProfileData, &profileData)
+	if profileData == nil {
+		profileData = map[string]interface{}{}
+	}
 	// fmt.Println("profileData", profileData)
 
 	subscribers := ch.GetSubscribers()
@@ -253,6 +260,9 @@ func (h *ContactsHander) GetContactByChatUUID(w http.ResponseWriter, r *http.Req
 	// Parse the profile data
 	var profileData map[string]interface{}
 	json.Unmarshal(publicProfile.ProfileData, &profileData)
+	if profileData == nil {
+		profileData = map[string]interface{}{}
+	}
 
 	subscribers := ch.GetSubscribers()
 	listedContact := ListedContact{

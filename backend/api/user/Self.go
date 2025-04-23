@@ -13,9 +13,10 @@ import (
 //	@Tags         users
 //	@Accept       json
 //	@Produce      json
+//	@Security     SessionAuth
 //	@Success      200 {object} database.User "Current user details"
 //	@Failure      400 {string} string "Invalid user ID"
-//	@Router       /api/v1/users/self [get]
+//	@Router       /api/v1/user/self [get]
 func (h *UserHandler) Self(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value("user").(*database.User)
 
