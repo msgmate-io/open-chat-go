@@ -11,6 +11,8 @@ import (
 type ListedMessage struct {
 	UUID              string                  `json:"uuid"`
 	SendAt            string                  `json:"send_at"`
+	SenderID          uint                    `json:"sender_id"`
+	ReceiverID        uint                    `json:"receiver_id"`
 	SenderUUID        string                  `json:"sender_uuid"`
 	SenderIsAutomated bool                    `json:"sender_is_automated"`
 	DataType          string                  `json:"data_type"`
@@ -18,6 +20,13 @@ type ListedMessage struct {
 	Reasoning         *[]string               `json:"reasoning"`
 	ToolCalls         *[]interface{}          `json:"tool_calls"`
 	MetaData          *map[string]interface{} `json:"meta_data"`
+}
+
+type ListedMessagesPage struct {
+	Limit      int             `json:"limit"`
+	Page       int             `json:"page"`
+	TotalPages int             `json:"total_pages"`
+	Rows       []ListedMessage `json:"rows"`
 }
 
 func convertMessageToListedMessage(message database.Message) ListedMessage {
@@ -36,6 +45,8 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 	return ListedMessage{
 		UUID:              message.UUID,
 		SendAt:            message.CreatedAt.String(),
+		SenderID:          message.SenderId,
+		ReceiverID:        message.ReceiverId,
 		SenderUUID:        message.Sender.UUID,
 		SenderIsAutomated: message.Sender.IsAutomated,
 		DataType:          message.DataType,
@@ -56,7 +67,7 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 //	@Param        page  query  int  false  "Page number"  default(1)
 //	@Param        limit query  int  false  "Page size"     default(10)
 //	@Param        chat_uuid path string true "Chat UUID"
-//	@Success      200 {object} database.Pagination "Paginated list of messages"
+//	@Success      200 {object} chats.ListedMessagesPage "Paginated list of messages"
 //	@Failure      400 {string} string "Invalid user ID"
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/{chat_uuid}/messages/list [get]
@@ -115,9 +126,14 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		listedMessages[i] = convertMessageToListedMessage(message)
 	}
 
-	pagination.Rows = listedMessages
+	response := ListedMessagesPage{
+		Limit:      pagination.Limit,
+		Page:       pagination.Page,
+		TotalPages: pagination.TotalPages,
+		Rows:       listedMessages,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(pagination)
+	json.NewEncoder(w).Encode(response)
 
 }
