@@ -58,6 +58,10 @@ func (u *User) AfterCreate(tx *gorm.DB) error {
 	if err := tx.Where("user_id = ? AND permission = ?", u.ID, PermissionCreateAPITokens).FirstOrCreate(&permission).Error; err != nil {
 		return err
 	}
+	createBotsPermission := Permission{UserId: u.ID, Permission: PermissionCreateBots}
+	if err := tx.Where("user_id = ? AND permission = ?", u.ID, PermissionCreateBots).FirstOrCreate(&createBotsPermission).Error; err != nil {
+		return err
+	}
 	return EnsureDefaultAccessTokenForUser(tx, u.ID)
 }
 
