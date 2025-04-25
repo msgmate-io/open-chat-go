@@ -22,6 +22,9 @@ import (
 //	@tag.name						users
 //	@tag.description				Everything user management related, users are also used to abstract access permissions. Chats have users as participants, only users share each others contact may create a shared chat.
 //
+//	@tag.name					bots
+//	@tag.description				Owner-scoped automated bot management and interaction creation.
+//
 //	@securityDefinitions.apikey		SessionAuth
 //	@in								cookie
 //	@name							session_id
