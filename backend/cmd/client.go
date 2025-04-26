@@ -953,18 +953,27 @@ func GetClientCmd(action string) *cli.Command {
 				}
 
 				if !c.Bool("no-connect") {
-					// fmt.Println("Random password:", randomPassword)
-					// fmt.Println("Random SSH port:", randomSSHPort)
-					// wait few seconds for the proxies to be created
+					// Provide both SSH connection options
 					fmt.Println("Connecting to ssh server...")
 					time.Sleep(1 * time.Second)
 
+					// Provide web terminal URL
+					webTerminalURL := fmt.Sprintf("http://%s/terminal.html?port=%s&password=%s",
+						c.String("host"), randomSSHPort, randomPassword)
+					fmt.Println("Web Terminal URL:", webTerminalURL)
+
+					// Connect via traditional SSH
 					federation.SSHSession("localhost", randomSSHPort, "tim", randomPassword)
 				} else {
 					fmt.Println("Proxies created, but not connecting to ssh server")
 					fmt.Println("You can connect to the ssh server by running:")
 					fmt.Println("ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p", randomSSHPort, "tim@"+"localhost")
 					fmt.Println("Using the password:", randomPassword)
+
+					// Provide web terminal URL
+					webTerminalURL := fmt.Sprintf("http://%s/terminal.html?port=%s&password=%s",
+						c.String("host"), randomSSHPort, randomPassword)
+					fmt.Println("Or access via web terminal:", webTerminalURL)
 				}
 
 				return nil
@@ -1141,7 +1150,7 @@ func GetClientCmd(action string) *cli.Command {
 				},
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
-				fmt.Println("Update a node")
+				fmt.Println("Fetching metrics for node", c.String("node"))
 				ocClient := client.NewClient(c.String("host"))
 				ocClient.SetSessionId(c.String("session-id"))
 
