@@ -66,6 +66,7 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	result := DB.Preload("User1").
 		Preload("User2").
 		Preload("SharedConfig").
+		Preload("LatestMessage").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
 
