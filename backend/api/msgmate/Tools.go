@@ -15,12 +15,17 @@ type Tool interface {
 	GetToolParameters() map[string]interface{}
 	GetRequiresInit() bool
 	ConstructTool() interface{}
+	SetInitData(data interface{})
 }
 
 var AllTools = []Tool{
 	NewWeatherTool(),
 	NewCurrentTimeTool(),
 	NewRandomNumberTool(),
+	NewLittleWorldChatReplyTool(),
+	NewLittleWorldGetUserStateTool(),
+	NewLittleWorldSetUserSearchingStateTool(),
+	NewLittleWorldGetPastMessagesWithUserTool(),
 }
 
 type BaseTool struct {
@@ -102,4 +107,8 @@ func (t *BaseTool) GetToolParameters() map[string]interface{} {
 
 func (t *BaseTool) GetRequiredParams() []string {
 	return t.RequiredParams
+}
+
+func (t *BaseTool) SetInitData(data interface{}) {
+	t.ToolInit = data
 }
