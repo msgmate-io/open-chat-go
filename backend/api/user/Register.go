@@ -25,9 +25,7 @@ type UserRegister struct {
 //	@Tags         accounts
 //	@Accept       json
 //	@Produce      json
-//	@Param        name body string true "Name"
-//	@Param        email body string true "Email"
-//	@Param        password body string true "Password"
+//	@Param        request body UserRegister true "User registration request"
 //	@Success      201  {string}  string	"User created"
 //	@Failure      400  {string}  string	"Invalid email"
 //	@Failure      400  {string}  string	"Email already in use"

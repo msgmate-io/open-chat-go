@@ -36,6 +36,18 @@ func requestBaseURL(r *http.Request) string {
 	return scheme + "://" + host
 }
 
+// GetChat returns details for a single chat owned by the authenticated user.
+//
+//	@Summary      Get chat details
+//	@Description  Retrieve a single chat by UUID for the authenticated user
+//	@Tags         chats
+//	@Accept       json
+//	@Produce      json
+//	@Security     SessionAuth
+//	@Param        chat_uuid path string true "Chat UUID"
+//	@Success      200 {object} ListedChat "Chat details"
+//	@Failure      400 {string} string "Invalid chat UUID"
+//	@Router       /api/v1/chats/{chat_uuid} [get]
 func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 
@@ -54,6 +66,7 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	result := DB.Preload("User1").
 		Preload("User2").
 		Preload("SharedConfig").
+		Preload("LatestMessage").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
 
