@@ -20,6 +20,13 @@ type ListedChat struct {
 	SharedChatURL string            `json:"shared_interaction_url,omitempty"`
 }
 
+type ListedChatsPage struct {
+	Limit      int          `json:"limit"`
+	Page       int          `json:"page"`
+	TotalPages int          `json:"total_pages"`
+	Rows       []ListedChat `json:"rows"`
+}
+
 func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat {
 	var partner database.User
 	if chat.User1Id == user.ID {
@@ -55,7 +62,7 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 //	@Param        page  query  int  false  "Page number"  default(1)
 //	@Param        limit query  int  false  "Page size"     default(40)
 //	@Param        chat_types query string false "Chat types to filter by"
-//	@Success      200 {object} database.Pagination "Paginated list of chats"
+//	@Success      200 {object} chats.ListedChatsPage "Paginated list of chats"
 //	@Failure      400 {string} string "Unable to get database or user"
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/list [get]
@@ -139,8 +146,13 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		listedChats[i] = convertChatToListedChat(user, chat)
 	}
 
-	pagination.Rows = listedChats
+	response := ListedChatsPage{
+		Limit:      pagination.Limit,
+		Page:       pagination.Page,
+		TotalPages: pagination.TotalPages,
+		Rows:       listedChats,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(pagination)
+	json.NewEncoder(w).Encode(response)
 }
