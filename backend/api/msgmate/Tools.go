@@ -13,19 +13,23 @@ type Tool interface {
 	GetToolType() string
 	GetToolName() string
 	GetToolParameters() map[string]interface{}
+	GetRequiresInit() bool
 	ConstructTool() interface{}
 }
 
 var AllTools = []Tool{
 	NewWeatherTool(),
 	NewCurrentTimeTool(),
+	NewRandomNumberTool(),
 }
 
 type BaseTool struct {
+	RequiresInit    bool
 	ToolName        string
 	ToolType        string
 	ToolDescription string
 	ToolInput       interface{}
+	ToolInit        interface{}
 	RequiredParams  []string
 	Parameters      map[string]interface{}
 }
@@ -57,6 +61,10 @@ func (t *BaseTool) ParseArguments(input string) (interface{}, error) {
 		return nil, err
 	}
 	return toolInput, nil
+}
+
+func (t *BaseTool) GetRequiresInit() bool {
+	return t.RequiresInit
 }
 
 func (t *BaseTool) Run(input string) (string, error) {
