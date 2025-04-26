@@ -26,6 +26,7 @@ var AllTools = []Tool{
 	NewLittleWorldGetUserStateTool(),
 	NewLittleWorldSetUserSearchingStateTool(),
 	NewLittleWorldGetPastMessagesWithUserTool(),
+	NewLittleWorldRetrieveMatchOverviewTool(),
 }
 
 type BaseTool struct {
