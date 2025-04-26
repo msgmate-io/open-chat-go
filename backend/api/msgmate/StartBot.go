@@ -241,6 +241,8 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
 		context := mapGetOrDefault[int64](configMap, "context", 10)
 		tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
+		toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
+		systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 
 		// Load the past messages
 		err, paginatedMessages := ocClient.GetMessages(message.Content.ChatUUID, 1, context)
@@ -250,6 +252,8 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		// fmt.Println("paginatedMessages", paginatedMessages)
 		openAiMessages := []map[string]interface{}{}
 		currentMessageIncluded := false
+
+		openAiMessages = append(openAiMessages, map[string]interface{}{"role": "system", "content": systemPrompt})
 
 		for i := len(paginatedMessages.Rows) - 1; i >= 0; i-- {
 			msg := paginatedMessages.Rows[i]
@@ -277,9 +281,12 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				if slices.Contains(tools, tool.GetToolName()) {
 					toolsData = append(toolsData, tool.ConstructTool())
 					toolMap[tool.GetToolName()] = tool
-					// TODO: check if that tool required init
 					if tool.GetRequiresInit() {
-						// Try to initalize the chat based on the shared config
+						if _, ok := toolInit[tool.GetToolName()]; ok {
+							tool.SetInitData(toolInit[tool.GetToolName()])
+						} else {
+							log.Printf("Tool init data not found for tool %s", tool.GetToolName())
+						}
 					}
 				}
 			}
