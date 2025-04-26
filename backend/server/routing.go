@@ -156,6 +156,7 @@ func BackendRouting(
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
 	websocketMux := http.NewServeMux()
+	terminalMux := http.NewServeMux()
 
 	userHandler := &user.UserHandler{
 		DB:           DB,
@@ -215,8 +216,9 @@ func BackendRouting(
 	)
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
+	terminalMux.HandleFunc("/terminal", federationHandler.WebTerminalHandler)
 	mux.Handle("/ws/", http.StripPrefix("/ws", providerMiddlewares(AuthMiddleware(websocketMux))))
-
+	mux.Handle("/federation/", http.StripPrefix("/federation", providerMiddlewares(terminalMux)))
 	mux.Handle("POST /api/v1/user/login", providerMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", providerMiddlewares(http.HandlerFunc(userHandler.Logout)))
 
