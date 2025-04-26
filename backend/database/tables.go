@@ -130,6 +130,10 @@ func (GrantDefaultPermissionsMigration) Migrate(db *gorm.DB) error {
 		if err := db.Where("user_id = ? AND permission = ?", user.ID, PermissionCreateAPITokens).FirstOrCreate(&permission).Error; err != nil {
 			return err
 		}
+		createBotsPermission := Permission{UserId: user.ID, Permission: PermissionCreateBots}
+		if err := db.Where("user_id = ? AND permission = ?", user.ID, PermissionCreateBots).FirstOrCreate(&createBotsPermission).Error; err != nil {
+			return err
+		}
 		if err := EnsureDefaultAccessTokenForUser(db, user.ID); err != nil {
 			return err
 		}
@@ -152,6 +156,7 @@ var Tabels []interface{} = []interface{}{
 	&FileAccess{},
 	&TaskResult{},
 	&ModelConfig{},
+	&BotRuntimeConfig{},
 	&Permission{},
 	&AccessToken{},
 }
@@ -169,6 +174,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ToolInitData{}},
 	TableMigration{&TaskResult{}},
 	TableMigration{&ModelConfig{}},
+	TableMigration{&BotRuntimeConfig{}},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
 	GrantDefaultPermissionsMigration{},
