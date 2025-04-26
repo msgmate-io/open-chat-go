@@ -41,12 +41,16 @@ class OpenChatPythonClient:
     username = None
     password = None
     session = None
-    
+    bot_config = default_bot_config["configuration"]
+
     def __init__(self, host="http://localhost:1984", username="admin", password="password"):
         self.host = host
         self.username = username
         self.password = password
         self.session = requests.Session()
+        
+    def setup_bot_config(self, bot_config):
+        self.bot_config = bot_config
         
     def ensure_session_initialized(self):
         if (self.session_id is not None) and (self.session is not None):
@@ -68,7 +72,7 @@ class OpenChatPythonClient:
             "contact_token" : contact_token,
             "first_message" : message,
             "shared_config" : {
-                **default_bot_config["configuration"],
+                **self.bot_config,
                 "tool_init" : tool_init
             }
         }
