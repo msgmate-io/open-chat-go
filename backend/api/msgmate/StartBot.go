@@ -277,6 +277,10 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 				if slices.Contains(tools, tool.GetToolName()) {
 					toolsData = append(toolsData, tool.ConstructTool())
 					toolMap[tool.GetToolName()] = tool
+					// TODO: check if that tool required init
+					if tool.GetRequiresInit() {
+						// Try to initalize the chat based on the shared config
+					}
 				}
 			}
 		}
@@ -568,11 +572,11 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	var botProfile database.PublicProfile
 	DB.Where("user_id = ?", botUser.ID).First(&botProfile)
 	if botProfile.ID != 0 {
-		// Delete the old profile
-		DB.Delete(&botProfile)
-		// and overwrite it with the new one
+		// Hard delete the old profile
+		DB.Unscoped().Delete(&botProfile)
 	}
 
+	// Create profile data and new profile instance
 	botProfileInfo := map[string]interface{}{
 		"name":        "Bot",
 		"description": "This is a bot user",
@@ -613,6 +617,21 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 					"model":         "meta-llama/Llama-3.3-70B-Instruct-Turbo",
 					"endpoint":      "https://api.deepinfra.com/v1/openai",
 					"backend":       "deepinfra",
+					"tools":         []string{"get_current_time", "get_weather", "get_random_number"},
+					"context":       10,
+					"system_prompt": "You are a helpful assistant.",
+				},
+			},
+			map[string]interface{}{
+				"title":       "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+				"description": "Meta's Llama 3.1, a powerful and efficient language model.",
+				"configuration": map[string]interface{}{
+					"temperature":   0.7,
+					"max_tokens":    4096,
+					"model":         "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+					"endpoint":      "https://api.deepinfra.com/v1/openai",
+					"backend":       "deepinfra",
+					"tools":         []string{"get_current_time", "get_weather", "get_random_number"},
 					"context":       10,
 					"system_prompt": "You are a helpful assistant.",
 				},
@@ -651,7 +670,7 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 					"temperature":   0.7,
 					"max_tokens":    4096,
 					"reasoning":     false,
-					"tools":         []string{"get_current_time", "get_weather"},
+					"tools":         []string{"get_current_time", "get_weather", "get_random_number"},
 					"model":         "meta-llama/Meta-Llama-3.1-405B-Instruct",
 					"endpoint":      "https://api.deepinfra.com/v1/openai",
 					"backend":       "deepinfra",
@@ -666,7 +685,7 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 					"temperature":   0.7,
 					"max_tokens":    4096,
 					"reasoning":     false,
-					"tools":         []string{"get_current_time", "get_weather"},
+					"tools":         []string{"get_current_time", "get_weather", "get_random_number"},
 					"model":         "meta-llama/Meta-Llama-3.1-8B-Instruct",
 					"endpoint":      "https://api.deepinfra.com/v1/openai",
 					"backend":       "deepinfra",
@@ -676,19 +695,23 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 			},
 		},
 	}
-	// create default public profile for bot user
+
 	botProfileBytes, err := json.Marshal(botProfileInfo)
 	if err != nil {
 		return err
 	}
-	botProfile = database.PublicProfile{
+
+	// Create a new profile instance
+	newBotProfile := database.PublicProfile{
 		ProfileData: botProfileBytes,
 		UserId:      botUser.ID,
 	}
-	q := DB.Create(&botProfile)
+
+	q := DB.Create(&newBotProfile)
 	if q.Error != nil {
 		return q.Error
 	}
+
 	return nil
 }
 
