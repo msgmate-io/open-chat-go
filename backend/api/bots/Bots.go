@@ -64,10 +64,65 @@ type CreateBotInteractionRequest struct {
 	Message         string                 `json:"message"`
 	ToolInit        map[string]interface{} `json:"tool_init,omitempty"`
 	ConfigOverrides map[string]interface{} `json:"config_overrides,omitempty"`
+	AutoShare       bool                   `json:"auto_share,omitempty"`
+}
+
+type BotInteractionChatShare struct {
+	ChatUUID      string `json:"chat_uuid"`
+	ChatShareUUID string `json:"chat_share_uuid"`
 }
 
 type BotInteractionResponse struct {
-	ChatUUID string `json:"chat_uuid"`
+	ChatUUID             string                   `json:"chat_uuid"`
+	ChatShareUUID        string                   `json:"chat_share_uuid,omitempty"`
+	ChatShare            *BotInteractionChatShare `json:"chat_share,omitempty"`
+	SharedInteractionURL string                   `json:"shared_interaction_url,omitempty"`
+}
+
+func requestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if commaIdx := strings.Index(host, ","); commaIdx >= 0 {
+		host = strings.TrimSpace(host[:commaIdx])
+	}
+	if host == "" {
+		return ""
+	}
+
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+
+	return scheme + "://" + host
+}
+
+func ensureOwnedChatShare(DB *gorm.DB, chatID uint, owningUserID uint) (database.SharedChatInstance, error) {
+	var share database.SharedChatInstance
+	err := DB.Where("chat_id = ? AND owning_user_id = ?", chatID, owningUserID).First(&share).Error
+	if err == nil {
+		return share, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return database.SharedChatInstance{}, err
+	}
+
+	share = database.SharedChatInstance{
+		ChatId:        chatID,
+		OwningUserId:  owningUserID,
+		ChatShareUUID: uuid.NewString(),
+	}
+	if err := DB.Create(&share).Error; err != nil {
+		return database.SharedChatInstance{}, err
+	}
+
+	return share, nil
 }
 
 func hasPermission(DB *gorm.DB, user *database.User, permission database.PermissionName) bool {
@@ -819,6 +874,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 
 	var chat database.Chat
 	var message database.Message
+	var share database.SharedChatInstance
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if user.ID < runtime.BotUserId {
 			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction"}
@@ -849,6 +905,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		if err := tx.Model(&chat).Update("latest_message_id", message.ID).Error; err != nil {
 			return err
 		}
+
+		if req.AutoShare {
+			createdShare, shareErr := ensureOwnedChatShare(tx, chat.ID, user.ID)
+			if shareErr != nil {
+				return shareErr
+			}
+			share = createdShare
+		}
 		return nil
 	})
 	if err != nil {
@@ -865,6 +929,19 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	response := BotInteractionResponse{ChatUUID: chat.UUID}
+	if req.AutoShare {
+		response.ChatShareUUID = share.ChatShareUUID
+		response.ChatShare = &BotInteractionChatShare{
+			ChatUUID:      chat.UUID,
+			ChatShareUUID: share.ChatShareUUID,
+		}
+		baseURL := requestBaseURL(r)
+		if baseURL != "" {
+			response.SharedInteractionURL = baseURL + "/interaction/" + share.ChatShareUUID
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(BotInteractionResponse{ChatUUID: chat.UUID})
+	json.NewEncoder(w).Encode(response)
 }
