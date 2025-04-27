@@ -17,6 +17,7 @@ type CreateChat struct {
 	Attachments  []FileAttachment       `json:"attachments,omitempty"`
 	SharedConfig map[string]interface{} `json:"shared_config,omitempty"`
 	ChatType     string                 `json:"chat_type,omitempty"`
+	AutoShare    bool                   `json:"auto_share,omitempty"`
 }
 
 // Create a chat
@@ -59,6 +60,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	log.Printf("  FirstMessage: %s", data.FirstMessage)
 	log.Printf("  Attachments: %+v", data.Attachments)
 	log.Printf("  ChatType: %s", data.ChatType)
+	log.Printf("  AutoShare: %v", data.AutoShare)
 	log.Printf("  SharedConfig keys: %d", len(data.SharedConfig))
 
 	// Security check: Only allow known public chat types for non-admin users.
@@ -224,6 +226,18 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 	listedChat := convertChatToListedChat(user, chat)
+	if data.AutoShare {
+		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID)
+		if shareErr != nil {
+			http.Error(w, "Failed to auto-share chat", http.StatusInternalServerError)
+			return
+		}
+		listedChat.ChatShareUUID = share.ChatShareUUID
+		baseURL := requestBaseURL(r)
+		if baseURL != "" {
+			listedChat.SharedChatURL = baseURL + "/interaction/" + share.ChatShareUUID
+		}
+	}
 
 	log.Printf("=== ChatsHandler.Create END ===")
 	w.Header().Set("Content-Type", "application/json")
