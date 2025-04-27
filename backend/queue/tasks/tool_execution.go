@@ -42,21 +42,7 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("%w: chat not found or access denied", asynq.SkipRetry)
 	}
 
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
-		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			if toolInit, exists := configData["tool_init"]; exists {
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					if initData, exists := toolInitMap[payload.ToolName]; exists {
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					}
-				}
-			}
-		}
-	}
+	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
 
 	toolInstance := msgmate.GetNewToolInstanceByName(payload.ToolName, toolInitData)
 	if toolInstance == nil {

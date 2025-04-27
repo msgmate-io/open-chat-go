@@ -63,6 +63,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	log.Printf("  AutoShare: %v", data.AutoShare)
 	log.Printf("  SharedConfig keys: %d", len(data.SharedConfig))
 
+
 	// Security check: Only allow known public chat types for non-admin users.
 	// Admins may use custom chat types.
 	if !user.IsAdmin {

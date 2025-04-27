@@ -157,6 +157,7 @@ var Tabels []interface{} = []interface{}{
 	&TaskResult{},
 	&ModelConfig{},
 	&BotRuntimeConfig{},
+	&DynamicRESTTool{},
 	&Permission{},
 	&AccessToken{},
 }
@@ -175,6 +176,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&TaskResult{}},
 	TableMigration{&ModelConfig{}},
 	TableMigration{&BotRuntimeConfig{}},
+	TableMigration{&DynamicRESTTool{}},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
 	GrantDefaultPermissionsMigration{},
