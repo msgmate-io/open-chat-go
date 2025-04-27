@@ -11,6 +11,14 @@ func TestValidateSharedConfigStructureValid(t *testing.T) {
 		"max_tokens":  8000.0,
 		"context":     8000.0,
 		"tools":       []interface{}{"little_world__chat_reply"},
+		"tool_init": map[string]interface{}{
+			"little_world__chat_reply": map[string]interface{}{
+				"session_id": "s",
+				"csrf_token": "c",
+				"api_host":   "https://example.com",
+				"chat_uuid":  "abc",
+			},
+		},
 	}
 
 	if err := validateSharedConfigStructure(config); err != nil {
