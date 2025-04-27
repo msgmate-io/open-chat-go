@@ -30,33 +30,8 @@ type ConfirmableActionExecuteResponse struct {
 	UpdatedAction        map[string]interface{} `json:"updated_action,omitempty"`
 }
 
-func getToolInitForChat(chat database.Chat, toolName string) map[string]interface{} {
-	toolInitData := map[string]interface{}{}
-	if chat.SharedConfig == nil || chat.SharedConfig.ConfigData == nil {
-		return toolInitData
-	}
-
-	var configData map[string]interface{}
-	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err != nil {
-		return toolInitData
-	}
-	toolInitRaw, exists := configData["tool_init"]
-	if !exists {
-		return toolInitData
-	}
-	toolInitMap, ok := toolInitRaw.(map[string]interface{})
-	if !ok {
-		return toolInitData
-	}
-	initRaw, exists := toolInitMap[toolName]
-	if !exists {
-		return toolInitData
-	}
-	initMap, ok := initRaw.(map[string]interface{})
-	if !ok {
-		return toolInitData
-	}
-	return initMap
+func getToolInitForChat(DB *gorm.DB, chat database.Chat, toolName string) map[string]interface{} {
+	return database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
 }
 
 func findBotAndReceiver(chat database.Chat, user database.User) (uint, uint) {
@@ -209,7 +184,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		continueAfterExecute = *req.ContinueAfterExecute
 	}
 
-	toolInitData := getToolInitForChat(chat, targetToolName)
+	toolInitData := getToolInitForChat(DB, chat, targetToolName)
 	toolInstance := msgmate.GetNewToolInstanceByName(targetToolName, toolInitData)
 	if toolInstance == nil {
 		http.Error(w, fmt.Sprintf("Tool '%s' not found", targetToolName), http.StatusNotFound)

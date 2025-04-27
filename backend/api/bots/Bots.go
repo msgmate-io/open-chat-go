@@ -1,6 +1,7 @@
 package bots
 
 import (
+	"backend/api/msgmate"
 	"backend/database"
 	"backend/server/util"
 	"backend/workqueue"
@@ -256,6 +257,9 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 
 	if err := validateStringArray(config, "tools"); err != nil {
 		return err
+	}
+	if err := msgmate.ValidateToolsAndInitConfig(config["tools"], config["tool_init"]); err != nil {
+		return fmt.Errorf("default_shared_config invalid tools/tool_init: %w", err)
 	}
 
 	return nil
@@ -866,6 +870,10 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		effectiveConfig[k] = v
 	}
 	effectiveConfig["tool_init"] = req.ToolInit
+	if err := msgmate.ValidateToolsAndInitConfig(effectiveConfig["tools"], effectiveConfig["tool_init"]); err != nil {
+		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
+		return
+	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		http.Error(w, "Failed to process config", http.StatusBadRequest)
