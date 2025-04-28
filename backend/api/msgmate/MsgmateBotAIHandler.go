@@ -132,6 +132,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	context := mapGetOrDefault[int64](configMap, "context", 10)
 	tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
+	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
 
@@ -164,7 +165,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	// Check for skip-core tag
 	if aih.hasSkipCoreTag(tags) {
 		log.Printf("Chat %s has skip-core tag, executing tools only", message.Content.ChatUUID)
-		return aih.executeToolsOnly(ctx, message, tools, toolInit)
+		return aih.executeToolsOnly(ctx, message, tools, toolInit, dynamicTools)
 	}
 
 	// Load the past messages
@@ -177,7 +178,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	openAiMessages := aih.buildOpenAIMessages(&paginatedMessages, message, systemPrompt, backend)
 
 	// Setup tools
-	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit)
+	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit, dynamicTools)
 
 	// Add run_callback_function to tools
 	tools = append(tools, "run_callback_function")
@@ -438,7 +439,7 @@ func (aih *AIHandlerImpl) processCurrentMessageAttachments(text string, attachme
 }
 
 // setupTools sets up the tools for the AI response
-func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interface{}) ([]interface{}, map[string]Tool, []string, []string) {
+func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interface{}, dynamicTools map[string]interface{}) ([]interface{}, map[string]Tool, []string, []string) {
 	var toolsData []interface{}
 	toolMap := map[string]Tool{}
 	var interactionStartTools []string
@@ -478,8 +479,16 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 				toolFound = true
 			}
 			if !toolFound || tool == nil {
-				log.Printf("====> WARNING: Tool %s NOT FOUND!", actualToolName)
-				continue
+				dynamicTool, dynamicFound, dynamicErr := NewDynamicRESTToolFromSnapshot(actualToolName, dynamicTools)
+				if dynamicErr != nil {
+					log.Printf("====> WARNING: Dynamic tool %s failed to load: %v", actualToolName, dynamicErr)
+					continue
+				}
+				if !dynamicFound || dynamicTool == nil {
+					log.Printf("====> WARNING: Tool %s NOT FOUND!", actualToolName)
+					continue
+				}
+				tool = dynamicTool
 			}
 			log.Printf("====> Registered tool instance %s (RequiresInit: %v)", actualToolName, tool.GetRequiresInit())
 			toolsData = append(toolsData, tool.ConstructTool())
@@ -968,12 +977,12 @@ func (aih *AIHandlerImpl) hasSkipCoreTag(tags []string) bool {
 }
 
 // executeToolsOnly executes only the before and after tools without AI completion
-func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.NewMessage, tools []string, toolInit map[string]interface{}) error {
+func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.NewMessage, tools []string, toolInit map[string]interface{}, dynamicTools map[string]interface{}) error {
 	startTime := time.Now()
 	partialSessionID := fmt.Sprintf("%s-skip-core-%d", message.Content.ChatUUID, time.Now().UnixNano())
 
 	// Setup tools
-	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit)
+	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit, dynamicTools)
 
 	// Add run_callback_function to tools
 	tools = append(tools, "run_callback_function")
