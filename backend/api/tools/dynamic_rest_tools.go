@@ -34,13 +34,13 @@ func (h *ToolsHandler) ListDynamicRESTTools(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
-	if user == nil || !user.IsAdmin {
+	if user == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var rows []database.DynamicRESTTool
-	if err := DB.Order("name asc").Find(&rows).Error; err != nil {
+	if err := DB.Where("owner_user_id = ?", user.ID).Order("name asc").Find(&rows).Error; err != nil {
 		http.Error(w, "Failed to list dynamic tools", http.StatusInternalServerError)
 		return
 	}
@@ -54,7 +54,7 @@ func (h *ToolsHandler) UpsertDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
-	if user == nil || !user.IsAdmin {
+	if user == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -91,6 +91,7 @@ func (h *ToolsHandler) UpsertDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 	}
 
 	row := database.DynamicRESTTool{
+		OwnerUserId:                     user.ID,
 		Name:                            req.Name,
 		FunctionName:                    req.FunctionName,
 		Description:                     req.Description,
@@ -114,11 +115,12 @@ func (h *ToolsHandler) UpsertDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 	}
 
 	var existing database.DynamicRESTTool
-	query := DB.Where("name = ?", req.Name)
+	query := DB.Where("owner_user_id = ? AND name = ?", user.ID, req.Name)
 	if nameFromPath != "" {
-		query = DB.Where("name = ?", nameFromPath)
+		query = DB.Where("owner_user_id = ? AND name = ?", user.ID, nameFromPath)
 	}
 	if err := query.First(&existing).Error; err == nil {
+		existing.OwnerUserId = user.ID
 		existing.Name = row.Name
 		existing.FunctionName = row.FunctionName
 		existing.Description = row.Description
@@ -145,11 +147,6 @@ func (h *ToolsHandler) UpsertDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	if err := msgmate.LoadDynamicRESTTools(DB); err != nil {
-		http.Error(w, "failed to reload dynamic rest tools", http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "name": req.Name})
 }
@@ -160,7 +157,7 @@ func (h *ToolsHandler) DeleteDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
-	if user == nil || !user.IsAdmin {
+	if user == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -169,29 +166,21 @@ func (h *ToolsHandler) DeleteDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "tool_name is required", http.StatusBadRequest)
 		return
 	}
-	if err := DB.Where("name = ?", toolName).Delete(&database.DynamicRESTTool{}).Error; err != nil {
+	if err := DB.Where("owner_user_id = ? AND name = ?", user.ID, toolName).Delete(&database.DynamicRESTTool{}).Error; err != nil {
 		http.Error(w, "failed to delete dynamic rest tool", http.StatusInternalServerError)
-		return
-	}
-	if err := msgmate.LoadDynamicRESTTools(DB); err != nil {
-		http.Error(w, "failed to reload dynamic rest tools", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
 func (h *ToolsHandler) ReloadDynamicRESTTools(w http.ResponseWriter, r *http.Request) {
-	DB, user, err := util.GetDBAndUser(r)
+	_, user, err := util.GetDBAndUser(r)
 	if err != nil {
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
 		return
 	}
-	if user == nil || !user.IsAdmin {
+	if user == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if err := msgmate.LoadDynamicRESTTools(DB); err != nil {
-		http.Error(w, "failed to reload dynamic rest tools", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

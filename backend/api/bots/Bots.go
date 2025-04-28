@@ -258,11 +258,88 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 	if err := validateStringArray(config, "tools"); err != nil {
 		return err
 	}
-	if err := msgmate.ValidateToolsAndInitConfig(config["tools"], config["tool_init"]); err != nil {
+
+	return nil
+}
+
+func validateAndAttachDynamicToolsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) error {
+	if user == nil {
+		return fmt.Errorf("user is required")
+	}
+
+	resolver := func(toolName string) (msgmate.Tool, bool, error) {
+		row, err := msgmate.ResolveUserDynamicRESTToolByName(DB, user.ID, toolName)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		def, err := msgmate.BuildDynamicRESTToolDefinition(*row)
+		if err != nil {
+			return nil, false, err
+		}
+		return msgmate.NewToolFromDefinition(def), true, nil
+	}
+
+	if err := msgmate.ValidateToolsAndInitConfigWithResolver(config["tools"], config["tool_init"], resolver); err != nil {
 		return fmt.Errorf("default_shared_config invalid tools/tool_init: %w", err)
 	}
 
+	toolNames, err := collectToolNames(config["tools"])
+	if err != nil {
+		return err
+	}
+	dynamicTools := map[string]interface{}{}
+	for _, configuredName := range toolNames {
+		actualName := msgmate.NormalizeConfiguredToolName(configuredName)
+		if staticTool, found := msgmate.NewToolByName(actualName); found && staticTool != nil {
+			continue
+		}
+		row, err := msgmate.ResolveUserDynamicRESTToolByName(DB, user.ID, actualName)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		dynamicTools[actualName] = msgmate.BuildDynamicRESTToolSnapshot(*row)
+	}
+	if len(dynamicTools) > 0 {
+		config["dynamic_tools"] = dynamicTools
+	} else {
+		delete(config, "dynamic_tools")
+	}
 	return nil
+}
+
+func collectToolNames(toolsRaw interface{}) ([]string, error) {
+	if toolsRaw == nil {
+		return []string{}, nil
+	}
+	out := []string{}
+	switch typed := toolsRaw.(type) {
+	case []string:
+		out = make([]string, 0, len(typed))
+		for idx, name := range typed {
+			if strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("tools[%d] must be a non-empty string", idx)
+			}
+			out = append(out, strings.TrimSpace(name))
+		}
+	case []interface{}:
+		out = make([]string, 0, len(typed))
+		for idx, raw := range typed {
+			name, ok := raw.(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("tools[%d] must be a non-empty string", idx)
+			}
+			out = append(out, strings.TrimSpace(name))
+		}
+	default:
+		return nil, fmt.Errorf("tools must be an array of strings")
+	}
+	return out, nil
 }
 
 func resolveByBotUsername(DB *gorm.DB, user *database.User, username string) (database.BotRuntimeConfig, error) {
@@ -454,6 +531,10 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -663,6 +744,10 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
@@ -757,6 +842,10 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateSharedConfigStructure(config); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachDynamicToolsForUser(DB, user, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -870,7 +959,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		effectiveConfig[k] = v
 	}
 	effectiveConfig["tool_init"] = req.ToolInit
-	if err := msgmate.ValidateToolsAndInitConfig(effectiveConfig["tools"], effectiveConfig["tool_init"]); err != nil {
+	if err := validateAndAttachDynamicToolsForUser(DB, user, effectiveConfig); err != nil {
 		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
 		return
 	}
