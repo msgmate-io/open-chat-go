@@ -48,11 +48,13 @@ type compiledBinding struct {
 }
 
 type dynamicRESTToolSpec struct {
-	Method   string
-	Path     string
-	BaseURL  string
-	Bindings []compiledBinding
-	Safety   restToolSafetyPolicy
+	Method           string
+	Path             string
+	BaseURL          string
+	BaseURLSource    string
+	BaseURLInputName string
+	Bindings         []compiledBinding
+	Safety           restToolSafetyPolicy
 }
 
 func ResolveUserDynamicRESTToolByName(db *gorm.DB, ownerUserID uint, toolName string) (*database.DynamicRESTTool, error) {
@@ -88,6 +90,8 @@ func BuildDynamicRESTToolSnapshot(row database.DynamicRESTTool) map[string]inter
 		"operation_id":                       row.OperationID,
 		"http_method":                        row.HTTPMethod,
 		"path":                               row.Path,
+		"base_url_source":                    row.BaseURLSource,
+		"base_url_input_name":                row.BaseURLInputName,
 		"param_bindings":                     parseJSONArrayOrEmpty(row.ParamBindings),
 		"safety_policy":                      parseJSONObjectOrEmpty(row.SafetyPolicy),
 	}
@@ -156,6 +160,8 @@ func dynamicRESTToolFromMap(input map[string]interface{}) (database.DynamicRESTT
 	row.OperationID, _ = input["operation_id"].(string)
 	row.HTTPMethod, _ = input["http_method"].(string)
 	row.Path, _ = input["path"].(string)
+	row.BaseURLSource, _ = input["base_url_source"].(string)
+	row.BaseURLInputName, _ = input["base_url_input_name"].(string)
 
 	paramBindingsJSON, err := json.Marshal(input["param_bindings"])
 	if err != nil {
@@ -218,6 +224,36 @@ func BuildDynamicRESTToolDefinition(row database.DynamicRESTTool) (tools.ToolDef
 	callRequired := []string{}
 	initRequired := []string{}
 
+	baseURLSource := strings.ToLower(strings.TrimSpace(row.BaseURLSource))
+	baseURLInputName := strings.TrimSpace(row.BaseURLInputName)
+	if baseURLSource == "" && baseURLInputName != "" {
+		baseURLSource = "init"
+	}
+	if baseURLSource != "" && baseURLSource != "init" && baseURLSource != "call" {
+		return tools.ToolDefinition{}, fmt.Errorf("base_url_source must be 'init' or 'call'")
+	}
+	if baseURLSource != "" && baseURLInputName == "" {
+		return tools.ToolDefinition{}, fmt.Errorf("base_url_input_name is required when base_url_source is set")
+	}
+	if baseURLInputName != "" {
+		baseURLSchema := map[string]interface{}{
+			"type":        "string",
+			"description": "Base URL override for this REST tool",
+		}
+		baseURLRequired := strings.TrimSpace(baseURL) == ""
+		if baseURLSource == "init" {
+			initProps[baseURLInputName] = baseURLSchema
+			if baseURLRequired {
+				initRequired = append(initRequired, baseURLInputName)
+			}
+		} else {
+			callProps[baseURLInputName] = baseURLSchema
+			if baseURLRequired {
+				callRequired = append(callRequired, baseURLInputName)
+			}
+		}
+	}
+
 	for _, binding := range bindings {
 		prop := map[string]interface{}{"type": "string"}
 		if schema := bindingSchema(params, binding.In, binding.Name); schema != nil {
@@ -241,7 +277,7 @@ func BuildDynamicRESTToolDefinition(row database.DynamicRESTTool) (tools.ToolDef
 	callSchema["required"] = callRequired
 	initSchema["required"] = initRequired
 
-	spec := dynamicRESTToolSpec{Method: method, Path: path, BaseURL: baseURL, Bindings: bindings, Safety: safety}
+	spec := dynamicRESTToolSpec{Method: method, Path: path, BaseURL: baseURL, BaseURLSource: baseURLSource, BaseURLInputName: baseURLInputName, Bindings: bindings, Safety: safety}
 
 	functionName := strings.TrimSpace(row.FunctionName)
 	if functionName == "" {
@@ -273,7 +309,22 @@ func runDynamicRESTTool(spec dynamicRESTToolSpec) func(input interface{}, init m
 			initInput = map[string]interface{}{}
 		}
 
-		if err := validateOutboundURL(spec.BaseURL, spec.Safety); err != nil {
+		baseURL := strings.TrimSpace(spec.BaseURL)
+		if spec.BaseURLInputName != "" {
+			var source map[string]interface{}
+			if spec.BaseURLSource == "call" {
+				source = callInput
+			} else {
+				source = initInput
+			}
+			if raw, exists := source[spec.BaseURLInputName]; exists {
+				if resolved := strings.TrimSpace(fmt.Sprintf("%v", raw)); resolved != "" {
+					baseURL = resolved
+				}
+			}
+		}
+
+		if err := validateOutboundURL(baseURL, spec.Safety); err != nil {
 			return "", err
 		}
 
@@ -312,7 +363,7 @@ func runDynamicRESTTool(spec dynamicRESTToolSpec) func(input interface{}, init m
 			}
 		}
 
-		requestURL := strings.TrimRight(spec.BaseURL, "/") + path
+		requestURL := strings.TrimRight(baseURL, "/") + path
 		if encoded := query.Encode(); encoded != "" {
 			requestURL += "?" + encoded
 		}
