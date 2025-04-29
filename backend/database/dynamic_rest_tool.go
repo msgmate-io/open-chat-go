@@ -21,6 +21,8 @@ type DynamicRESTTool struct {
 	OperationID                    string          `json:"operation_id" gorm:"size:255"`
 	HTTPMethod                     string          `json:"http_method" gorm:"size:16"`
 	Path                           string          `json:"path" gorm:"size:1024"`
+	BaseURLSource                  string          `json:"base_url_source" gorm:"size:16"`
+	BaseURLInputName               string          `json:"base_url_input_name" gorm:"size:128"`
 	ParamBindings                  json.RawMessage `json:"param_bindings" gorm:"type:jsonb"`
 	SafetyPolicy                   json.RawMessage `json:"safety_policy" gorm:"type:jsonb"`
 }
