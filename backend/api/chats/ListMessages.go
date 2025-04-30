@@ -33,6 +33,11 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 	messageMetaData := map[string]interface{}{}
 	json.Unmarshal(message.MetaData, &messageMetaData)
 
+	text := ""
+	if message.Text != nil {
+		text = *message.Text
+	}
+
 	toolCalls := []interface{}{}
 	if message.ToolCalls != nil {
 		for _, toolCall := range *message.ToolCalls {
@@ -50,7 +55,7 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 		SenderUUID:        message.Sender.UUID,
 		SenderIsAutomated: message.Sender.IsAutomated,
 		DataType:          message.DataType,
-		Text:              *message.Text,
+		Text:              text,
 		Reasoning:         message.Reasoning,
 		ToolCalls:         &toolCalls,
 		MetaData:          &messageMetaData,
@@ -108,6 +113,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	if result.Error != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
 	}
 
 	// Now list the messages paginated
@@ -119,6 +125,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	if result.Error != nil {
 		http.Error(w, "Couldn't find messages", http.StatusBadRequest)
+		return
 	}
 
 	listedMessages := make([]ListedMessage, len(messages))
