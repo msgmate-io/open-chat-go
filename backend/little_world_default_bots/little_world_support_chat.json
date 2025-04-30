@@ -1,0 +1,20 @@
+{
+  "owner": {
+    "username": "littleworld"
+  },
+  "bot": {
+    "username": "little_world_support_chat_bot",
+    "name": "little_world_support_chat",
+    "description": "Little World live support chat bot"
+  },
+  "default_shared_config": {
+    "model": "qwen3-8b-instruct_vllm",
+    "endpoint": "https://litellm.t1m.me/v1",
+    "backend": "litellm",
+    "temperature": 0.2,
+    "max_tokens": 2048,
+    "context": 20,
+    "tools": [],
+    "system_prompt": "You are a concise support assistant. Respond clearly and politely."
+  }
+}
