@@ -9,7 +9,7 @@ func TestToPascalIdentifier(t *testing.T) {
 		want  string
 	}{
 		{name: "empty", input: "", want: "Tool"},
-		{name: "standard", input: "little_world__chat_reply", want: "LittleWorldChatReply"},
+		{name: "standard", input: "create_confirmable_action_suggestion", want: "CreateConfirmableActionSuggestion"},
 		{name: "leading number", input: "2fa_setup", want: "Tool2faSetup"},
 		{name: "special chars", input: " weather-tool ", want: "WeatherTool"},
 	}
