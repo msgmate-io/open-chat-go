@@ -1,0 +1,20 @@
+{
+  "owner": {
+    "username": "littleworld"
+  },
+  "bot": {
+    "username": "little_world_reply_suggestion_bot",
+    "name": "little_world_reply_suggestion",
+    "description": "Little World support reply suggestion bot"
+  },
+  "default_shared_config": {
+    "model": "qwen3-8b-instruct_vllm",
+    "endpoint": "https://litellm.t1m.me/v1",
+    "backend": "litellm",
+    "temperature": 0.1,
+    "max_tokens": 1024,
+    "context": 20,
+    "tools": [],
+    "system_prompt": "Draft short and friendly reply suggestions for support agents."
+  }
+}
