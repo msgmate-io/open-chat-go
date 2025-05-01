@@ -258,6 +258,9 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 	if err := validateStringArray(config, "tools"); err != nil {
 		return err
 	}
+	if err := validateStringArray(config, "integrations"); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -282,7 +285,11 @@ func validateAndAttachDynamicToolsForUser(DB *gorm.DB, user *database.User, conf
 		return msgmate.NewToolFromDefinition(def), true, nil
 	}
 
-	if err := msgmate.ValidateToolsAndInitConfigWithResolver(config["tools"], config["tool_init"], resolver); err != nil {
+	toolsForValidation, err := filterOutMCPConfiguredTools(config["tools"])
+	if err != nil {
+		return err
+	}
+	if err := msgmate.ValidateToolsAndInitConfigWithResolver(toolsForValidation, config["tool_init"], resolver); err != nil {
 		return fmt.Errorf("default_shared_config invalid tools/tool_init: %w", err)
 	}
 
@@ -313,6 +320,21 @@ func validateAndAttachDynamicToolsForUser(DB *gorm.DB, user *database.User, conf
 	return nil
 }
 
+func filterOutMCPConfiguredTools(toolsRaw interface{}) ([]string, error) {
+	names, err := collectToolNames(toolsRaw)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "mcp:") {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered, nil
+}
+
 func collectToolNames(toolsRaw interface{}) ([]string, error) {
 	if toolsRaw == nil {
 		return []string{}, nil
@@ -340,6 +362,105 @@ func collectToolNames(toolsRaw interface{}) ([]string, error) {
 		return nil, fmt.Errorf("tools must be an array of strings")
 	}
 	return out, nil
+}
+
+func collectIntegrationNames(integrationsRaw interface{}) ([]string, error) {
+	if integrationsRaw == nil {
+		return []string{}, nil
+	}
+	out := []string{}
+	switch typed := integrationsRaw.(type) {
+	case []string:
+		out = make([]string, 0, len(typed))
+		for idx, name := range typed {
+			trimmed := strings.ToLower(strings.TrimSpace(name))
+			if trimmed == "" {
+				return nil, fmt.Errorf("integrations[%d] must be a non-empty string", idx)
+			}
+			out = append(out, trimmed)
+		}
+	case []interface{}:
+		out = make([]string, 0, len(typed))
+		for idx, raw := range typed {
+			name, ok := raw.(string)
+			trimmed := strings.ToLower(strings.TrimSpace(name))
+			if !ok || trimmed == "" {
+				return nil, fmt.Errorf("integrations[%d] must be a non-empty string", idx)
+			}
+			out = append(out, trimmed)
+		}
+	default:
+		return nil, fmt.Errorf("integrations must be an array of strings")
+	}
+	return out, nil
+}
+
+func mergeToolNames(existing interface{}, additional []string) ([]string, error) {
+	merged, err := collectToolNames(existing)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for _, name := range merged {
+		seen[name] = struct{}{}
+	}
+	for _, name := range additional {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		merged = append(merged, name)
+		seen[name] = struct{}{}
+	}
+	return merged, nil
+}
+
+func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) error {
+	if user == nil {
+		return fmt.Errorf("user is required")
+	}
+	integrationNames, err := collectIntegrationNames(config["integrations"])
+	if err != nil {
+		return err
+	}
+	if len(integrationNames) == 0 {
+		delete(config, "mcp_tools")
+		toolNames, err := collectToolNames(config["tools"])
+		if err == nil {
+			filtered := make([]string, 0, len(toolNames))
+			for _, name := range toolNames {
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "mcp:") {
+					continue
+				}
+				filtered = append(filtered, name)
+			}
+			config["tools"] = filtered
+		}
+		return nil
+	}
+	rows := []database.MCPIntegrationConfig{}
+	if err := DB.Where("owner_user_id = ? AND enabled = ? AND name IN ?", user.ID, true, integrationNames).Find(&rows).Error; err != nil {
+		return err
+	}
+	found := map[string]struct{}{}
+	for _, row := range rows {
+		found[row.Name] = struct{}{}
+	}
+	for _, name := range integrationNames {
+		if _, ok := found[name]; !ok {
+			return fmt.Errorf("integration %q not found or not enabled", name)
+		}
+	}
+	mcpTools, mcpToolNames, err := msgmate.BuildMCPToolsSnapshotFromIntegrations(rows)
+	if err != nil {
+		return fmt.Errorf("failed to attach integrations: %w", err)
+	}
+	config["mcp_tools"] = mcpTools
+	mergedTools, err := mergeToolNames(config["tools"], mcpToolNames)
+	if err != nil {
+		return err
+	}
+	config["tools"] = mergedTools
+	return nil
 }
 
 func resolveByBotUsername(DB *gorm.DB, user *database.User, username string) (database.BotRuntimeConfig, error) {
@@ -535,6 +656,10 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -748,6 +873,10 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
@@ -846,6 +975,10 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateAndAttachDynamicToolsForUser(DB, user, config); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, user, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -961,6 +1094,10 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	effectiveConfig["tool_init"] = req.ToolInit
 	if err := validateAndAttachDynamicToolsForUser(DB, user, effectiveConfig); err != nil {
 		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, user, effectiveConfig); err != nil {
+		http.Error(w, fmt.Sprintf("invalid integrations: %v", err), http.StatusBadRequest)
 		return
 	}
 	configJSON, err := json.Marshal(effectiveConfig)
