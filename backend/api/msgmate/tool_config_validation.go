@@ -12,11 +12,14 @@ func NormalizeConfiguredToolName(toolName string) string {
 	if !strings.Contains(trimmed, ":") {
 		return trimmed
 	}
-	parts := strings.SplitN(trimmed, ":", 2)
-	if len(parts) != 2 {
-		return trimmed
+	if strings.HasPrefix(trimmed, "interaction_start:") || strings.HasPrefix(trimmed, "interaction_complete:") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) != 2 {
+			return trimmed
+		}
+		return strings.TrimSpace(parts[1])
 	}
-	return strings.TrimSpace(parts[1])
+	return trimmed
 }
 
 func ValidateToolsAndInitConfig(toolsRaw interface{}, toolInitRaw interface{}) error {

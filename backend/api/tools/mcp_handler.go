@@ -193,8 +193,8 @@ func (h *MCPHandler) handleToolsList(w http.ResponseWriter, request *MCPRequest,
 	mcpTools := make([]MCPTool, 0, len(toolsList))
 
 	for _, toolName := range toolsList {
-	toolInstance, _ := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, map[string]interface{}{}, map[string]interface{}{})
-	if toolInstance != nil {
+		toolInstance, _ := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{})
+		if toolInstance != nil {
 			toolInfo := toolInstance.ConstructTool().(map[string]interface{})
 
 			mcpTool := MCPTool{
@@ -224,8 +224,8 @@ func (h *MCPHandler) handleToolsListStreamable(w http.ResponseWriter, request *M
 	mcpTools := make([]MCPTool, 0, len(toolsList))
 
 	for _, toolName := range toolsList {
-	toolInstance, _ := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, map[string]interface{}{}, map[string]interface{}{})
-	if toolInstance != nil {
+		toolInstance, _ := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{})
+		if toolInstance != nil {
 			toolInfo := toolInstance.ConstructTool().(map[string]interface{})
 
 			mcpTool := MCPTool{
@@ -286,17 +286,21 @@ func (h *MCPHandler) handleToolsCall(w http.ResponseWriter, request *MCPRequest,
 
 	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(*chat, toolName)
 	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
 		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
 			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
 				dynamicTools = raw
 			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
+			}
 		}
 	}
 
 	// Get the tool instance
-	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools, mcpTools)
 	if dynamicErr != nil {
 		h.sendMCPError(w, request.ID, MCPErrorInvalidParams, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), nil)
 		return
@@ -395,17 +399,21 @@ func (h *MCPHandler) handleToolsCallStreamable(w http.ResponseWriter, request *M
 
 	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(*chat, toolName)
 	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
 		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
 			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
 				dynamicTools = raw
 			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
+			}
 		}
 	}
 
 	// Get the tool instance
-	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools, mcpTools)
 	if dynamicErr != nil {
 		h.sendMCPErrorNDJSON(w, request.ID, MCPErrorInvalidParams, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), nil)
 		return
