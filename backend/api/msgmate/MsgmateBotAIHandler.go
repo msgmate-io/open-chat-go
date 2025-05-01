@@ -654,7 +654,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	}
 
 	// Helper function to send final message and cleanup
-	sendFinalMessage := func(isCancelled bool) {
+	sendFinalMessage := func(isCancelled bool, streamErr error) {
 		// If we're still thinking when finishing, add the final thinking time
 		totalTime := time.Since(startTime)
 
@@ -668,11 +668,26 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				reasoningEntries = append(reasoningEntries, "Response paused.")
 			}
 		}
+		if streamErr != nil {
+			text = strings.TrimSpace(text)
+			if text == "" {
+				text = "I ran into an error while generating a reply. Please try again in a moment."
+			} else {
+				text += "\n\nI ran into an error while finishing this reply."
+			}
+			if reasoning {
+				reasoningEntries = append(reasoningEntries, "Response stopped due to an upstream provider error.")
+			}
+		}
 
 		metadata := map[string]interface{}{
 			"total_time": totalTime.Round(time.Millisecond).String(),
 			"cancelled":  isCancelled,
 			"finished":   true,
+		}
+		if streamErr != nil {
+			metadata["error"] = true
+			metadata["error_detail"] = streamErr.Error()
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
@@ -848,7 +863,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		select {
 		case <-ctx.Done():
 			log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
-			sendFinalMessage(true)
+			sendFinalMessage(true, nil)
 			return ctx.Err()
 		case chunk, ok := <-chunks:
 			if !ok {
@@ -941,8 +956,8 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		case err, ok := <-errs:
 			if ok && err != nil {
 				log.Printf("streamChatCompletion error: %v", err)
-				finalizePartial()
-				return err
+				sendFinalMessage(false, err)
+				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
 			}
 			errs = nil
 		}
@@ -971,7 +986,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 	}
 
-	sendFinalMessage(false)
+	sendFinalMessage(false, nil)
 	return nil
 }
 
