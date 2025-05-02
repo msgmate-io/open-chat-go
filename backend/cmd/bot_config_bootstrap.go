@@ -184,17 +184,6 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 			if err := tx.Create(&runtime).Error; err != nil {
 				return err
 			}
-		} else {
-			updates := map[string]interface{}{
-				"bot_user_id":           botUser.ID,
-				"description":           cfg.Bot.Description,
-				"default_shared_config": configData,
-				"is_public":             isPublic,
-				"is_active":             isActive,
-			}
-			if err := tx.Model(&runtime).Updates(updates).Error; err != nil {
-				return err
-			}
 		}
 
 		if err := ensureOwnerConnectedToBot(tx, *owner, *botUser); err != nil {
