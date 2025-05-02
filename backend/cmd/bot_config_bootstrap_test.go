@@ -178,6 +178,84 @@ func TestApplyBotBootstrapConfigFilesIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	initialPath := writeBotConfigFile(t, map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": "owner_user",
+		},
+		"bot": map[string]interface{}{
+			"username":    "owner_support_bot",
+			"password":    "BotPass1!",
+			"name":        "support_bot",
+			"description": "Initial description",
+			"is_public":   false,
+			"is_active":   true,
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "qwen3-8b-instruct_vllm",
+		},
+	})
+
+	overwriteAttemptPath := writeBotConfigFile(t, map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": "owner_user",
+		},
+		"bot": map[string]interface{}{
+			"username":    "owner_support_bot",
+			"password":    "BotPass1!",
+			"name":        "support_bot",
+			"description": "Overwritten description",
+			"is_public":   true,
+			"is_active":   false,
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "gpt-4.1",
+		},
+	})
+
+	if err := applyBotBootstrapConfigFiles(DB, []string{initialPath}, false); err != nil {
+		t.Fatalf("first apply failed: %v", err)
+	}
+	if err := applyBotBootstrapConfigFiles(DB, []string{overwriteAttemptPath}, false); err != nil {
+		t.Fatalf("second apply failed: %v", err)
+	}
+
+	owner, err := findUserByUsername(DB, "owner_user")
+	if err != nil {
+		t.Fatalf("failed to resolve owner user: %v", err)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("owner_user_id = ? AND name = ?", owner.ID, "support_bot").First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load bot runtime config: %v", err)
+	}
+
+	if runtime.Description != "Initial description" {
+		t.Fatalf("expected original description to be preserved, got %q", runtime.Description)
+	}
+	if runtime.IsPublic {
+		t.Fatalf("expected original is_public=false to be preserved")
+	}
+	if !runtime.IsActive {
+		t.Fatalf("expected original is_active=true to be preserved")
+	}
+
+	var shared map[string]interface{}
+	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
+		t.Fatalf("failed to decode default_shared_config: %v", err)
+	}
+	if shared["model"] != "qwen3-8b-instruct_vllm" {
+		t.Fatalf("expected original model to be preserved, got %v", shared["model"])
+	}
+}
+
 func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *testing.T) {
 	config := setupBotConfigTestDB(t)
 	DB := database.SetupDatabase(*config)
