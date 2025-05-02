@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,10 +29,11 @@ type restToolParamBinding struct {
 }
 
 type restToolSafetyPolicy struct {
-	AllowHosts      []string `json:"allow_hosts,omitempty"`
-	AllowPrivateIPs bool     `json:"allow_private_ips,omitempty"`
-	TimeoutSeconds  int      `json:"timeout_seconds,omitempty"`
-	MaxResponseBody int64    `json:"max_response_body_bytes,omitempty"`
+	AllowHosts          []string `json:"allow_hosts,omitempty"`
+	AllowPrivateIPs     bool     `json:"allow_private_ips,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	MaxResponseBody     int64    `json:"max_response_body_bytes,omitempty"`
+	ResponseCensorPaths []string `json:"response_censor_paths,omitempty"`
 }
 
 type operationParam struct {
@@ -423,7 +425,12 @@ func runDynamicRESTTool(spec dynamicRESTToolSpec) func(input interface{}, init m
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return "", fmt.Errorf("received non-success status %d: %s", resp.StatusCode, string(data))
 		}
-		return string(data), nil
+
+		filteredResult, err := applyResponseCensorPaths(data, spec.Safety.ResponseCensorPaths)
+		if err != nil {
+			return "", err
+		}
+		return filteredResult, nil
 	}
 }
 
@@ -477,7 +484,123 @@ func compileBindingsAndPolicy(params []operationParam, bindingsRaw json.RawMessa
 	for i, host := range policy.AllowHosts {
 		policy.AllowHosts[i] = strings.ToLower(strings.TrimSpace(host))
 	}
+
+	validatedCensorPaths := make([]string, 0, len(policy.ResponseCensorPaths))
+	for idx, rawPath := range policy.ResponseCensorPaths {
+		path := strings.TrimSpace(rawPath)
+		if path == "" {
+			return nil, restToolSafetyPolicy{}, fmt.Errorf("safety_policy.response_censor_paths[%d] must not be empty", idx)
+		}
+		if err := validateResponseCensorPath(path); err != nil {
+			return nil, restToolSafetyPolicy{}, fmt.Errorf("safety_policy.response_censor_paths[%d] %w", idx, err)
+		}
+		validatedCensorPaths = append(validatedCensorPaths, path)
+	}
+	policy.ResponseCensorPaths = validatedCensorPaths
+
 	return out, policy, nil
+}
+
+func validateResponseCensorPath(path string) error {
+	segments := strings.Split(path, ".")
+	if len(segments) == 0 {
+		return fmt.Errorf("is invalid")
+	}
+
+	for idx, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			return fmt.Errorf("contains an empty path segment")
+		}
+		if strings.Contains(segment, "*") && segment != "*" {
+			return fmt.Errorf("contains unsupported wildcard segment %q", segment)
+		}
+		if segment == "*" && idx == len(segments)-1 {
+			return fmt.Errorf("cannot end with wildcard '*' segment")
+		}
+	}
+
+	return nil
+}
+
+func applyResponseCensorPaths(data []byte, censorPaths []string) (string, error) {
+	if len(censorPaths) == 0 {
+		return string(data), nil
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", fmt.Errorf("response_censor_paths requires JSON response body: %w", err)
+	}
+
+	for _, path := range censorPaths {
+		segments := strings.Split(path, ".")
+		removeCensoredPath(payload, segments)
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode censored response body: %w", err)
+	}
+
+	return string(encoded), nil
+}
+
+func removeCensoredPath(node interface{}, segments []string) {
+	if len(segments) == 0 {
+		return
+	}
+
+	segment := segments[0]
+	lastSegment := len(segments) == 1
+
+	switch typed := node.(type) {
+	case map[string]interface{}:
+		if segment == "*" {
+			if lastSegment {
+				return
+			}
+			for _, child := range typed {
+				removeCensoredPath(child, segments[1:])
+			}
+			return
+		}
+
+		if lastSegment {
+			delete(typed, segment)
+			return
+		}
+
+		child, exists := typed[segment]
+		if !exists {
+			return
+		}
+		removeCensoredPath(child, segments[1:])
+
+	case []interface{}:
+		if segment == "*" {
+			if lastSegment {
+				return
+			}
+			for _, child := range typed {
+				removeCensoredPath(child, segments[1:])
+			}
+			return
+		}
+
+		index, err := strconv.Atoi(segment)
+		if err != nil {
+			return
+		}
+		if index < 0 || index >= len(typed) {
+			return
+		}
+		if lastSegment {
+			typed[index] = nil
+			return
+		}
+		removeCensoredPath(typed[index], segments[1:])
+	}
 }
 
 func loadOpenAPIDocument(sourceType string, source string) (map[string]interface{}, error) {
