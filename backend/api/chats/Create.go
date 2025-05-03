@@ -193,6 +193,19 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		chat.SharedConfigId = &sharedConfig.ID
 		chat.SharedConfig = &sharedConfig
 		DB.Save(&chat)
+	} else if otherUser.IsAutomated {
+		var runtime database.BotRuntimeConfig
+		if err := DB.Where("bot_user_id = ? AND is_active = ?", otherUser.ID, true).Order("id desc").First(&runtime).Error; err == nil && len(runtime.DefaultSharedConfig) > 0 {
+			sharedConfig := database.SharedChatConfig{
+				ChatId:     chat.ID,
+				ConfigData: runtime.DefaultSharedConfig,
+			}
+			if err := DB.Create(&sharedConfig).Error; err == nil {
+				chat.SharedConfigId = &sharedConfig.ID
+				chat.SharedConfig = &sharedConfig
+				DB.Save(&chat)
+			}
+		}
 	}
 
 	if data.FirstMessage != "" {
