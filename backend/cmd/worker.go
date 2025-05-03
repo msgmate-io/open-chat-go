@@ -62,7 +62,6 @@ func WorkerCli() *cli.Command {
 				Debug:    c.Bool("debug"),
 				ResetDB:  false,
 			})
-
 			processor := &queue.Processor{
 				DB:          DB,
 				BackendHost: c.String("backend-host"),

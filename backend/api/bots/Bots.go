@@ -1,6 +1,7 @@
 package bots
 
 import (
+	"backend/api/msgmate"
 	"backend/database"
 	"backend/server/util"
 	"backend/workqueue"
@@ -64,10 +65,65 @@ type CreateBotInteractionRequest struct {
 	Message         string                 `json:"message"`
 	ToolInit        map[string]interface{} `json:"tool_init,omitempty"`
 	ConfigOverrides map[string]interface{} `json:"config_overrides,omitempty"`
+	AutoShare       bool                   `json:"auto_share,omitempty"`
+}
+
+type BotInteractionChatShare struct {
+	ChatUUID      string `json:"chat_uuid"`
+	ChatShareUUID string `json:"chat_share_uuid"`
 }
 
 type BotInteractionResponse struct {
-	ChatUUID string `json:"chat_uuid"`
+	ChatUUID             string                   `json:"chat_uuid"`
+	ChatShareUUID        string                   `json:"chat_share_uuid,omitempty"`
+	ChatShare            *BotInteractionChatShare `json:"chat_share,omitempty"`
+	SharedInteractionURL string                   `json:"shared_interaction_url,omitempty"`
+}
+
+func requestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if commaIdx := strings.Index(host, ","); commaIdx >= 0 {
+		host = strings.TrimSpace(host[:commaIdx])
+	}
+	if host == "" {
+		return ""
+	}
+
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+
+	return scheme + "://" + host
+}
+
+func ensureOwnedChatShare(DB *gorm.DB, chatID uint, owningUserID uint) (database.SharedChatInstance, error) {
+	var share database.SharedChatInstance
+	err := DB.Where("chat_id = ? AND owning_user_id = ?", chatID, owningUserID).First(&share).Error
+	if err == nil {
+		return share, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return database.SharedChatInstance{}, err
+	}
+
+	share = database.SharedChatInstance{
+		ChatId:        chatID,
+		OwningUserId:  owningUserID,
+		ChatShareUUID: uuid.NewString(),
+	}
+	if err := DB.Create(&share).Error; err != nil {
+		return database.SharedChatInstance{}, err
+	}
+
+	return share, nil
 }
 
 func hasPermission(DB *gorm.DB, user *database.User, permission database.PermissionName) bool {
@@ -202,7 +258,208 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 	if err := validateStringArray(config, "tools"); err != nil {
 		return err
 	}
+	if err := validateStringArray(config, "integrations"); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func validateAndAttachDynamicToolsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) error {
+	if user == nil {
+		return fmt.Errorf("user is required")
+	}
+
+	resolver := func(toolName string) (msgmate.Tool, bool, error) {
+		row, err := msgmate.ResolveUserDynamicRESTToolByName(DB, user.ID, toolName)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		def, err := msgmate.BuildDynamicRESTToolDefinition(*row)
+		if err != nil {
+			return nil, false, err
+		}
+		return msgmate.NewToolFromDefinition(def), true, nil
+	}
+
+	toolsForValidation, err := filterOutMCPConfiguredTools(config["tools"])
+	if err != nil {
+		return err
+	}
+	if err := msgmate.ValidateToolsAndInitConfigWithResolver(toolsForValidation, config["tool_init"], resolver); err != nil {
+		return fmt.Errorf("default_shared_config invalid tools/tool_init: %w", err)
+	}
+
+	toolNames, err := collectToolNames(config["tools"])
+	if err != nil {
+		return err
+	}
+	dynamicTools := map[string]interface{}{}
+	for _, configuredName := range toolNames {
+		actualName := msgmate.NormalizeConfiguredToolName(configuredName)
+		if staticTool, found := msgmate.NewToolByName(actualName); found && staticTool != nil {
+			continue
+		}
+		row, err := msgmate.ResolveUserDynamicRESTToolByName(DB, user.ID, actualName)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			return err
+		}
+		dynamicTools[actualName] = msgmate.BuildDynamicRESTToolSnapshot(*row)
+	}
+	if len(dynamicTools) > 0 {
+		config["dynamic_tools"] = dynamicTools
+	} else {
+		delete(config, "dynamic_tools")
+	}
+	return nil
+}
+
+func filterOutMCPConfiguredTools(toolsRaw interface{}) ([]string, error) {
+	names, err := collectToolNames(toolsRaw)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "mcp:") {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered, nil
+}
+
+func collectToolNames(toolsRaw interface{}) ([]string, error) {
+	if toolsRaw == nil {
+		return []string{}, nil
+	}
+	out := []string{}
+	switch typed := toolsRaw.(type) {
+	case []string:
+		out = make([]string, 0, len(typed))
+		for idx, name := range typed {
+			if strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("tools[%d] must be a non-empty string", idx)
+			}
+			out = append(out, strings.TrimSpace(name))
+		}
+	case []interface{}:
+		out = make([]string, 0, len(typed))
+		for idx, raw := range typed {
+			name, ok := raw.(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("tools[%d] must be a non-empty string", idx)
+			}
+			out = append(out, strings.TrimSpace(name))
+		}
+	default:
+		return nil, fmt.Errorf("tools must be an array of strings")
+	}
+	return out, nil
+}
+
+func collectIntegrationNames(integrationsRaw interface{}) ([]string, error) {
+	if integrationsRaw == nil {
+		return []string{}, nil
+	}
+	out := []string{}
+	switch typed := integrationsRaw.(type) {
+	case []string:
+		out = make([]string, 0, len(typed))
+		for idx, name := range typed {
+			trimmed := strings.ToLower(strings.TrimSpace(name))
+			if trimmed == "" {
+				return nil, fmt.Errorf("integrations[%d] must be a non-empty string", idx)
+			}
+			out = append(out, trimmed)
+		}
+	case []interface{}:
+		out = make([]string, 0, len(typed))
+		for idx, raw := range typed {
+			name, ok := raw.(string)
+			trimmed := strings.ToLower(strings.TrimSpace(name))
+			if !ok || trimmed == "" {
+				return nil, fmt.Errorf("integrations[%d] must be a non-empty string", idx)
+			}
+			out = append(out, trimmed)
+		}
+	default:
+		return nil, fmt.Errorf("integrations must be an array of strings")
+	}
+	return out, nil
+}
+
+func mergeToolNames(existing interface{}, additional []string) ([]string, error) {
+	merged, err := collectToolNames(existing)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for _, name := range merged {
+		seen[name] = struct{}{}
+	}
+	for _, name := range additional {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		merged = append(merged, name)
+		seen[name] = struct{}{}
+	}
+	return merged, nil
+}
+
+func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) error {
+	if user == nil {
+		return fmt.Errorf("user is required")
+	}
+	integrationNames, err := collectIntegrationNames(config["integrations"])
+	if err != nil {
+		return err
+	}
+	if len(integrationNames) == 0 {
+		delete(config, "mcp_tools")
+		toolNames, err := collectToolNames(config["tools"])
+		if err == nil {
+			filtered := make([]string, 0, len(toolNames))
+			for _, name := range toolNames {
+				if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "mcp:") {
+					continue
+				}
+				filtered = append(filtered, name)
+			}
+			config["tools"] = filtered
+		}
+		return nil
+	}
+	rows := []database.MCPIntegrationConfig{}
+	if err := DB.Where("owner_user_id = ? AND enabled = ? AND name IN ?", user.ID, true, integrationNames).Find(&rows).Error; err != nil {
+		return err
+	}
+	found := map[string]struct{}{}
+	for _, row := range rows {
+		found[row.Name] = struct{}{}
+	}
+	for _, name := range integrationNames {
+		if _, ok := found[name]; !ok {
+			return fmt.Errorf("integration %q not found or not enabled", name)
+		}
+	}
+	mcpTools, mcpToolNames, err := msgmate.BuildMCPToolsSnapshotFromIntegrations(rows)
+	if err != nil {
+		return fmt.Errorf("failed to attach integrations: %w", err)
+	}
+	config["mcp_tools"] = mcpTools
+	mergedTools, err := mergeToolNames(config["tools"], mcpToolNames)
+	if err != nil {
+		return err
+	}
+	config["tools"] = mergedTools
 	return nil
 }
 
@@ -395,6 +652,14 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -604,6 +869,14 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
@@ -698,6 +971,14 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateSharedConfigStructure(config); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachDynamicToolsForUser(DB, user, config); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, user, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -811,6 +1092,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		effectiveConfig[k] = v
 	}
 	effectiveConfig["tool_init"] = req.ToolInit
+	if err := validateAndAttachDynamicToolsForUser(DB, user, effectiveConfig); err != nil {
+		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
+		return
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, user, effectiveConfig); err != nil {
+		http.Error(w, fmt.Sprintf("invalid integrations: %v", err), http.StatusBadRequest)
+		return
+	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		http.Error(w, "Failed to process config", http.StatusBadRequest)
@@ -819,6 +1108,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 
 	var chat database.Chat
 	var message database.Message
+	var share database.SharedChatInstance
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if user.ID < runtime.BotUserId {
 			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction"}
@@ -849,6 +1139,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		if err := tx.Model(&chat).Update("latest_message_id", message.ID).Error; err != nil {
 			return err
 		}
+
+		if req.AutoShare {
+			createdShare, shareErr := ensureOwnedChatShare(tx, chat.ID, user.ID)
+			if shareErr != nil {
+				return shareErr
+			}
+			share = createdShare
+		}
 		return nil
 	})
 	if err != nil {
@@ -865,6 +1163,19 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	response := BotInteractionResponse{ChatUUID: chat.UUID}
+	if req.AutoShare {
+		response.ChatShareUUID = share.ChatShareUUID
+		response.ChatShare = &BotInteractionChatShare{
+			ChatUUID:      chat.UUID,
+			ChatShareUUID: share.ChatShareUUID,
+		}
+		baseURL := requestBaseURL(r)
+		if baseURL != "" {
+			response.SharedInteractionURL = baseURL + "/interaction/" + share.ChatShareUUID
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(BotInteractionResponse{ChatUUID: chat.UUID})
+	json.NewEncoder(w).Encode(response)
 }
