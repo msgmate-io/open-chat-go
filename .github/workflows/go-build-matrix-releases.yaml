@@ -1,0 +1,37 @@
+name: Open-Chat Go Build Matrix
+on: 
+  workflow_dispatch:
+jobs:
+  example:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-latest,  os: darwin,  arch: amd64, tags: netcgo        }
+          - { runner: macos-latest,  os: darwin,  arch: arm64, tags: netcgo        }
+          - { runner: ubuntu-latest, os: linux,   arch: amd64, env:  CGO_ENABLED=0 }
+          - { runner: ubuntu-latest, os: linux,   arch: amd64, env:  CGO_ENABLED=0 }
+          - { runner: ubuntu-latest, os: windows, arch: amd64, env:  CGO_ENABLED=0 }
+    steps:
+      - uses: actions/checkout@main
+      - name: Build
+        uses: hashicorp/actions-go-build@main
+        with:
+          product_name: open-chat-go
+          product_version: 1.0.60
+          go_version: 1.22
+          os: ${{ matrix.os }}
+          arch: ${{ matrix.arch }}
+          work_dir: ./backend
+          instructions: |-
+            ${{ matrix.env }} \
+              go build \
+                -o "$BIN_PATH" \
+                -trimpath \
+                -buildvcs=false \
+                -tags="${{ matrix.tags }}" \
+                -ldflags "
+                  -X 'main.Version=$PRODUCT_VERSION'
+                  -X 'main.Revision=$PRODUCT_REVISION'
+                  -X 'main.RevisionTime=$PRODUCT_REVISION_TIME'
+                "
