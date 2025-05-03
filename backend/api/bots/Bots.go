@@ -3,6 +3,7 @@ package bots
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/integrations"
 	"backend/server/util"
 	"backend/workqueue"
 	"crypto/rand"
@@ -417,6 +418,12 @@ func mergeToolNames(existing interface{}, additional []string) ([]string, error)
 func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) error {
 	if user == nil {
 		return fmt.Errorf("user is required")
+	}
+	if !integrations.Has("mcp") {
+		if names, _ := collectIntegrationNames(config["integrations"]); len(names) > 0 {
+			return fmt.Errorf("integration %q is not available in this build", "mcp")
+		}
+		return nil
 	}
 	integrationNames, err := collectIntegrationNames(config["integrations"])
 	if err != nil {
