@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
-	"github.com/go-acme/lego/v4/challenge/http01"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/registration"
 	"gorm.io/gorm"
@@ -59,8 +58,9 @@ func SolveACMEChallenge(hostname string) (certPEM, keyPEM, issuerPEM []byte, err
 		return nil, nil, nil, fmt.Errorf("failed to create lego client: %w", err)
 	}
 
-	httpProvider := http01.NewProviderServer("", "80")
-	err = client.Challenge.SetHTTP01Provider(httpProvider)
+	// Use our custom HTTP-01 provider instead of starting a new server
+	customProvider := &CustomHTTP01Provider{}
+	err = client.Challenge.SetHTTP01Provider(customProvider)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to set HTTP-01 provider: %w", err)
 	}
@@ -83,18 +83,7 @@ func SolveACMEChallenge(hostname string) (certPEM, keyPEM, issuerPEM []byte, err
 		return nil, nil, nil, fmt.Errorf("could not obtain certificate: %w", err)
 	}
 
-	if err := shutdownHTTP01Server(httpProvider); err != nil {
-		log.Printf("Warning: challenge server shutdown failed: %v", err)
-	}
-
 	return certRes.Certificate, certRes.PrivateKey, certRes.IssuerCertificate, nil
-}
-
-func shutdownHTTP01Server(provider *http01.ProviderServer) error {
-	if c, ok := interface{}(provider).(interface{ Cleanup() error }); ok {
-		return c.Cleanup()
-	}
-	return nil
 }
 
 func SolveACMEChallengeStoreResult(hostname string, keyPrefix string, DB *gorm.DB) error {

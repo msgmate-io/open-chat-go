@@ -1,9 +1,11 @@
 package cmd
 
 import (
-	"backend/api/federation"
+	"backend/api"
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/federation_factory"
+	"backend/scheduler"
 	"backend/server"
 	"backend/server/util"
 	"context"
@@ -101,7 +103,7 @@ func GetServerFlags() []cli.Flag {
 			Name:    "default-bot",
 			Aliases: []string{"botc"},
 			Usage:   "bot login credentials",
-			Value:   "bot:password",
+			Value:   GetBuildTimeDefaultBot(),
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("FRONTEND_PROXY"),
@@ -115,14 +117,14 @@ func GetServerFlags() []cli.Flag {
 			Name:    "default-network-credentials",
 			Aliases: []string{"dnc"},
 			// If empty default network is disabled
-			Value: "",
+			Value: GetBuildTimeDefaultNetworkCredentials(),
 			Usage: "default network credentials",
 		},
 		&cli.StringSliceFlag{
 			Sources: cli.EnvVars("NET_BOOTSTRAP_PEERS"),
 			Name:    "network-bootstrap-peers",
 			Aliases: []string{"bs"},
-			Value:   []string{},
+			Value:   GetBuildTimeNetworkBootstrapPeersSlice(),
 			Usage:   "List of bootstrap peers to connect to on startup",
 		},
 		&cli.BoolFlag{
@@ -146,6 +148,20 @@ func GetServerFlags() []cli.Flag {
 			Value:   "",
 			Usage:   "port for the http redirect",
 		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("HTTP_FALLBACK_ENABLED"),
+			Name:    "http-fallback-enabled",
+			Aliases: []string{"hfe"},
+			Value:   true,
+			Usage:   "enable HTTP fallback server when TLS is enabled (for local access)",
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("HTTP_FALLBACK_PORT"),
+			Name:    "http-fallback-port",
+			Aliases: []string{"hfp"},
+			Value:   0,
+			Usage:   "port for HTTP fallback server (0 = auto, uses main port + 1)",
+		},
 	}
 }
 
@@ -167,27 +183,63 @@ func ServerCli() *cli.Command {
 				database.SetupTestUsers(DB)
 			}
 
-			/**
-			var pageHost string
-			if c.Bool("ssl") {
-				pageHost = "https://" + c.String("host-domain")
-			} else {
-				pageHost = "http://" + c.String("host") + ":" + strconv.Itoa(int(c.Int("port")))
-			} */
-
 			// start channels to other nodes
-			_, federationHandler, err := server.CreateFederationHost(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"))
+			var fallbackPort int
+			if c.Bool("http-fallback-enabled") {
+				fallbackPort = int(c.Int("port")) + 1
+				if c.Int("http-fallback-port") != 0 {
+					fallbackPort = int(c.Int("http-fallback-port"))
+				}
+			}
+			factory := &federation_factory.FederationFactory{}
+			federationHandler, err := factory.NewFederationHandler(DB, c.String("host"), int(c.Int("p2pport")), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"), c.Bool("http-fallback-enabled"), fallbackPort)
 
 			if err != nil {
 				return err
 			}
 
-			s, ch, fullHost, err := server.BackendServer(DB, federationHandler, c.String("host"), c.Int("port"), c.Bool("debug"), c.Bool("ssl"), c.String("tls-key-prefix"), c.String("frontend-proxy"), c.String("host-domain"))
+			// First, determine both external and local fullHost values
+			var externalFullHost string
+			if c.Bool("ssl") {
+				externalFullHost = fmt.Sprintf("https://%s", c.String("host-domain"))
+				if c.Int("port") != 443 {
+					externalFullHost = fmt.Sprintf("%s:%d", externalFullHost, c.Int("port"))
+				}
+			} else {
+				externalFullHost = fmt.Sprintf("http://%s:%d", c.String("host"), c.Int("port"))
+			}
+
+			// Local fullHost should use fallback when available (SSL + fallback)
+			localFullHost := externalFullHost
+			if c.Bool("ssl") && c.Bool("http-fallback-enabled") {
+				localFullHost = fmt.Sprintf("http://localhost:%d", fallbackPort)
+			}
+
+			// Initialize the scheduler service with the localFullHost (so it always reaches the node even if TLS is broken)
+			schedulerService := scheduler.NewSchedulerService(DB, federationHandler, localFullHost)
+			schedulerService.RegisterTasks()
+			schedulerService.Start()
+			defer schedulerService.Stop()
+
+			// Pass external settings to BackendServer (serves HTTPS if enabled)
+			s, ch, signalService, _, err := server.BackendServer(
+				DB,
+				federationHandler,
+				schedulerService,
+				c.String("host"),
+				c.Int("port"),
+				c.Bool("debug"),
+				c.Bool("ssl"),
+				c.String("tls-key-prefix"),
+				c.String("frontend-proxy"),
+				c.String("host-domain"),
+			)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Starting server on %s\n", fullHost)
-			fmt.Printf("Find API reference at %s/reference\n", fullHost)
+
+			fmt.Printf("Starting server on %s\n", externalFullHost)
+			fmt.Printf("Find API reference at %s/reference\n", externalFullHost)
 
 			rootCredentials := strings.Split(c.String("root-credentials"), ":")
 			username := rootCredentials[0]
@@ -242,52 +294,58 @@ func ServerCli() *cli.Command {
 			}
 
 			// we must assure that the own node is in the meers store
-			ownPeerId := federationHandler.Host.ID().String()
-			var ownNode database.Node
 			ownIdentity := federationHandler.GetIdentity()
-			DB.Where("peer_id = ?", ownPeerId).First(&ownNode)
 			hostname, err := os.Hostname()
 			if err != nil {
 				fmt.Println("Error:", err)
 			}
-			if ownNode.ID == 0 {
-				log.Println("Own node not found, creating it")
 
-				now := time.Now()
-				_, err = federation.RegisterNodeRaw(
-					DB,
-					federationHandler,
-					federation.RegisterNode{
-						Name:         hostname,
-						Addresses:    ownIdentity.ConnectMultiadress,
-						AddToNetwork: usernameNetwork,
-						LastChanged:  &now,
-					},
-					&now,
-				)
-				if err != nil {
-					log.Println("Error registering own node", err)
+			// Only try to register own node if federation is enabled
+			if federationHandler.Host() != nil {
+				ownPeerId := federationHandler.Host().ID().String()
+				var ownNode database.Node
+				DB.Where("peer_id = ?", ownPeerId).First(&ownNode)
+
+				if ownNode.ID == 0 {
+					log.Println("Own node not found, creating it")
+
+					now := time.Now()
+					_, err = factory.RegisterNodeRaw(
+						DB,
+						federationHandler,
+						api.RegisterNode{
+							Name:         hostname,
+							Addresses:    ownIdentity.ConnectMultiadress,
+							AddToNetwork: usernameNetwork,
+							LastChanged:  &now,
+						},
+						&now,
+					)
+					if err != nil {
+						log.Println("Error registering own node", err)
+					}
+				} else {
+					log.Println("Own node already existed updating it!")
+					// first delete all existing adresses
+					DB.Where("node_id = ?", ownNode.ID).Delete(&database.NodeAddress{})
+					// then add the new ones
+					adresses := []database.NodeAddress{}
+					for _, address := range ownIdentity.ConnectMultiadress {
+						adresses = append(adresses, database.NodeAddress{
+							Address: address,
+							NodeID:  ownNode.ID,
+						})
+						DB.Create(&adresses)
+					}
+					ownNode.NodeName = hostname
+					ownNode.Addresses = adresses
+					ownNode.LastChanged = time.Now()
+					ownNode.PeerID = ownPeerId
+					DB.Save(&ownNode)
 				}
-			} else {
-				log.Println("Own node already existed updating it!")
-				// first delete all existing adresses
-				DB.Where("node_id = ?", ownNode.ID).Delete(&database.NodeAddress{})
-				// then add the new ones
-				adresses := []database.NodeAddress{}
-				for _, address := range ownIdentity.ConnectMultiadress {
-					adresses = append(adresses, database.NodeAddress{
-						Address: address,
-						NodeID:  ownNode.ID,
-					})
-					DB.Create(&adresses)
-				}
-				ownNode.NodeName = hostname
-				ownNode.Addresses = adresses
-				ownNode.LastChanged = time.Now()
-				ownNode.PeerID = ownPeerId
-				DB.Save(&ownNode)
 			}
-			server.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"))
+			// reuse computed fallbackPort
+			factory.InitializeNetworks(DB, federationHandler, c.String("host"), int(c.Int("port")), c.Bool("ssl"), c.String("host-domain"), c.Bool("http-fallback-enabled"), fallbackPort)
 			// Now we also have to register the bootstrap peers!
 			for _, peer := range c.StringSlice("network-bootstrap-peers") {
 				log.Println("Registering bootstrap peer", peer)
@@ -295,19 +353,19 @@ func ServerCli() *cli.Command {
 				if err != nil {
 					return fmt.Errorf("failed to decode bootstrap peer b64: %w", err)
 				}
-				var nodeInfo federation.NodeInfo
+				var nodeInfo api.NodeInfo
 				err = json.Unmarshal(decoded, &nodeInfo)
 				if err != nil {
 					return fmt.Errorf("failed to unmarshal bootstrap peer: %w", err)
 				}
 
 				begginningOfTime := time.Time{}
-				var registerNode federation.RegisterNode
+				var registerNode api.RegisterNode
 				registerNode.Name = nodeInfo.Name
 				registerNode.Addresses = nodeInfo.Addresses
 				registerNode.AddToNetwork = usernameNetwork
 				registerNode.LastChanged = &begginningOfTime
-				_, err = federation.RegisterNodeRaw(
+				_, err = factory.RegisterNodeRaw(
 					DB,
 					federationHandler,
 					registerNode,
@@ -321,20 +379,18 @@ func ServerCli() *cli.Command {
 			if c.Bool("start-bot") {
 				go func() {
 					time.Sleep(1 * time.Second)
-					log.Printf("Starting bot ...")
-					err := msgmate.StartBot(fullHost, ch, usernameBot, passwordBot)
-					if err != nil {
-						log.Printf("Error starting bot: %v", err)
-					}
+					log.Printf("Starting bot with restart capability...")
+					// Use localFullHost so bot login works via HTTP fallback if TLS is expired
+					msgmate.StartBotWithRestart(localFullHost, ch, usernameBot, passwordBot)
 				}()
 			}
 
-			err = server.PreloadPeerstore(DB, federationHandler)
+			err = factory.PreloadPeerstore(DB, federationHandler)
 			if err != nil {
 				return err
 			}
 
-			server.StartProxies(DB, federationHandler)
+			factory.StartProxies(DB, federationHandler)
 
 			if c.String("http-redirect-port") != "" {
 				// Start HTTP redirect server
@@ -345,7 +401,13 @@ func ServerCli() *cli.Command {
 				go func() {
 					redirectMux := http.NewServeMux()
 					redirectMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-						target := fmt.Sprintf("%s://%s", protocol, c.String("host-domain"))
+						// Preserve the original domain from the request instead of always using host-domain
+						host := r.Host
+						if i := strings.Index(host, ":"); i != -1 {
+							host = host[:i] // Remove port if present
+						}
+
+						target := fmt.Sprintf("%s://%s", protocol, host)
 						if c.Int("port") != 443 {
 							target += fmt.Sprintf(":%d", c.Int("port"))
 						}
@@ -353,6 +415,8 @@ func ServerCli() *cli.Command {
 						if r.URL.RawQuery != "" {
 							target += "?" + r.URL.RawQuery
 						}
+
+						log.Printf("HTTP to HTTPS redirect: %s -> %s", r.URL.String(), target)
 						http.Redirect(w, r, target, http.StatusMovedPermanently)
 					})
 					redirectServer := &http.Server{
@@ -363,6 +427,43 @@ func ServerCli() *cli.Command {
 						log.Printf("HTTP redirect server error: %v", err)
 					}
 				}()
+			}
+
+			if signalService != nil {
+				log.Println("Starting all active Signal integrations...")
+				signalService.StartAllActiveIntegrations()
+			} else {
+				log.Println("No Signal integration service found")
+			}
+
+			// Start HTTP fallback server when TLS is enabled for local access
+			if c.Bool("ssl") && c.Bool("http-fallback-enabled") {
+				fallbackPort := c.Int("port") + 1
+				if c.Int("http-fallback-port") != 0 {
+					fallbackPort = c.Int("http-fallback-port")
+				}
+				log.Println("Starting HTTP fallback server for local access on port", fallbackPort)
+				httpFallbackServer, err := server.CreateHTTPFallbackServer(
+					DB,
+					federationHandler,
+					schedulerService,
+					"localhost", // Use localhost to match federation configuration
+					int64(fallbackPort),
+					c.Bool("debug"),
+					c.String("frontend-proxy"),
+					c.String("host-domain"),
+					externalFullHost, // Pass main server URL for signalService
+				)
+				if err != nil {
+					log.Printf("Warning: Failed to create HTTP fallback server: %v", err)
+				} else {
+					go func() {
+						if err := httpFallbackServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+							log.Printf("HTTP fallback server error: %v", err)
+						}
+					}()
+					log.Printf("HTTP fallback server started on localhost:%d", fallbackPort)
+				}
 			}
 
 			if c.Bool("ssl") {

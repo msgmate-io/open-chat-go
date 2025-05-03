@@ -1,28 +1,40 @@
 package chats
 
 import (
-	"backend/api/websocket"
+	wsapi "backend/api/websocket"
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"log"
 	"net/http"
+	"time"
 
 	"gorm.io/gorm"
 )
 
 // TODO: allow different message types
 type SendMessage struct {
-	Text      string                  `json:"text"`
-	Reasoning *[]string               `json:"reasoning,omitempty"`
-	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
-	ToolCalls *[]interface{}          `json:"tool_calls,omitempty"`
+	Text        string                  `json:"text"`
+	Reasoning   *[]string               `json:"reasoning,omitempty"`
+	MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
+	Attachments *[]FileAttachment       `json:"attachments,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
-	Text      string                  `json:"text"`
-	Reasoning []string                `json:"reasoning"`
-	MetaData  *map[string]interface{} `json:"meta_data,omitempty"`
-	ToolCalls *[]interface{}          `json:"tool_calls,omitempty"`
+	Text        string                  `json:"text"`
+	Reasoning   []string                `json:"reasoning"`
+	MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
+	Attachments *[]FileAttachment       `json:"attachments,omitempty"`
+}
+
+type FileAttachment struct {
+	FileID      string `json:"file_id"`
+	DisplayName string `json:"display_name,omitempty"`
+	FileName    string `json:"file_name,omitempty"`
+	FileSize    int64  `json:"file_size,omitempty"`
+	MimeType    string `json:"mime_type,omitempty"`
 }
 
 // MessageData interface for different message types
@@ -31,6 +43,7 @@ type MessageData interface {
 	GetReasoning() []string
 	GetMetaData() *map[string]interface{}
 	GetToolCalls() *[]interface{}
+	GetAttachments() *[]FileAttachment
 }
 
 // Add GetText and GetReasoning methods to both types
@@ -53,6 +66,10 @@ func (m SendMessage) GetMetaData() *map[string]interface{} {
 	return m.MetaData
 }
 
+func (m SendMessage) GetAttachments() *[]FileAttachment {
+	return m.Attachments
+}
+
 func (m SendMessageWithReasoning) GetText() string {
 	return m.Text
 }
@@ -67,6 +84,10 @@ func (m SendMessageWithReasoning) GetMetaData() *map[string]interface{} {
 
 func (m SendMessageWithReasoning) GetToolCalls() *[]interface{} {
 	return m.ToolCalls
+}
+
+func (m SendMessageWithReasoning) GetAttachments() *[]FileAttachment {
+	return m.Attachments
 }
 
 // Send a message to a chat
@@ -147,6 +168,75 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Handle file attachments
+	if data.Attachments != nil {
+		// Validate that all attachments belong to the user and enrich with file details
+		enrichedAttachments := make([]FileAttachment, len(*data.Attachments))
+		for i, attachment := range *data.Attachments {
+			var uploadedFile database.UploadedFile
+			if err := DB.Where("file_id = ?", attachment.FileID).First(&uploadedFile).Error; err != nil {
+				http.Error(w, "Invalid file attachment", http.StatusBadRequest)
+				return
+			}
+
+			if uploadedFile.OwnerID != user.ID {
+				http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+				return
+			}
+
+			// Share the file with the receiver
+			var existingAccess database.FileAccess
+			result := DB.Where("user_id = ? AND uploaded_file_id = ?", receiverId, uploadedFile.ID).First(&existingAccess)
+			if result.Error != nil {
+				// File access doesn't exist, create it
+				fileAccess := database.FileAccess{
+					UserID:         receiverId,
+					UploadedFileID: uploadedFile.ID,
+					Permission:     "view",
+					CreatedAt:      time.Now(),
+				}
+				if err := DB.Create(&fileAccess).Error; err != nil {
+					log.Printf("Error sharing file %s (ID: %d) with user %d: %v", attachment.FileID, uploadedFile.ID, receiverId, err)
+					// Don't fail the message send if file sharing fails
+				} else {
+					log.Printf("Successfully shared file %s (ID: %d) with user %d", attachment.FileID, uploadedFile.ID, receiverId)
+				}
+			} else {
+				log.Printf("File %s (ID: %d) already shared with user %d", attachment.FileID, uploadedFile.ID, receiverId)
+			}
+
+			// Enrich attachment with file details
+			enrichedAttachments[i] = FileAttachment{
+				FileID:      attachment.FileID,
+				DisplayName: attachment.DisplayName,
+				FileName:    uploadedFile.FileName,
+				FileSize:    uploadedFile.Size,
+				MimeType:    uploadedFile.MIMEType,
+			}
+		}
+
+		// Store enriched attachments in metadata
+		attachmentData := map[string]interface{}{
+			"attachments": enrichedAttachments,
+		}
+
+		// Merge with existing metadata if any
+		if message.MetaData != nil {
+			var existingMeta map[string]interface{}
+			if err := json.Unmarshal(message.MetaData, &existingMeta); err == nil {
+				for k, v := range attachmentData {
+					existingMeta[k] = v
+				}
+				attachmentData = existingMeta
+			}
+		}
+
+		metadataBytes, err := json.Marshal(attachmentData)
+		if err == nil {
+			message.MetaData = metadataBytes
+		}
+	}
+
 	if data.ToolCalls != nil {
 		toolCalls := []json.RawMessage{}
 		for _, toolCall := range *data.ToolCalls {
@@ -165,11 +255,13 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		// Update both the latest_message_id and the LatestMessage association
-		if err := tx.Model(&chat).Updates(map[string]interface{}{
-			"latest_message_id": message.ID,
-			"LatestMessage":     message,
-		}).Error; err != nil {
+		// Update only the latest_message_id field
+		if err := tx.Model(&chat).Update("latest_message_id", message.ID).Error; err != nil {
+			return err
+		}
+
+		// Reload the chat with the latest message for the response
+		if err := tx.Preload("LatestMessage").First(&chat, chat.ID).Error; err != nil {
 			return err
 		}
 
@@ -185,12 +277,33 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListedMessage{
+
+	// Convert the message to ListedMessage format to include metadata
+	messageMetaData := map[string]interface{}{}
+	if message.MetaData != nil {
+		json.Unmarshal(message.MetaData, &messageMetaData)
+	}
+
+	toolCalls := []interface{}{}
+	if message.ToolCalls != nil {
+		for _, toolCall := range *message.ToolCalls {
+			var toolCallData map[string]interface{}
+			json.Unmarshal(toolCall, &toolCallData)
+			toolCalls = append(toolCalls, toolCallData)
+		}
+	}
+
+	listedMessage := ListedMessage{
 		UUID:       message.UUID,
 		SendAt:     message.CreatedAt.String(),
 		SenderUUID: user.UUID,
 		Text:       *message.Text,
-	})
+		Reasoning:  message.Reasoning,
+		ToolCalls:  &toolCalls,
+		MetaData:   &messageMetaData,
+	}
+
+	json.NewEncoder(w).Encode(listedMessage)
 }
 
 func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +365,23 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, chatUuid string, user database.User, data MessageData) {
+func SendWebsocketMessage(ch *wsapi.WebSocketHandler, receiverId string, chatUuid string, user database.User, data MessageData) {
+	// Convert attachments to websocket format
+	var wsAttachments *[]wsapi.FileAttachment
+	if data.GetAttachments() != nil {
+		attachments := make([]wsapi.FileAttachment, len(*data.GetAttachments()))
+		for i, att := range *data.GetAttachments() {
+			attachments[i] = wsapi.FileAttachment{
+				FileID:      att.FileID,
+				DisplayName: att.DisplayName,
+				FileName:    att.FileName,
+				FileSize:    att.FileSize,
+				MimeType:    att.MimeType,
+			}
+		}
+		wsAttachments = &attachments
+	}
+
 	ch.MessageHandler.SendMessage(
 		ch,
 		receiverId,
@@ -263,6 +392,7 @@ func SendWebsocketMessage(ch *websocket.WebSocketHandler, receiverId string, cha
 			data.GetReasoning(),
 			data.GetMetaData(),
 			data.GetToolCalls(),
+			wsAttachments,
 		),
 	)
 }
