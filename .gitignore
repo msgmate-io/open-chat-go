@@ -5,3 +5,5 @@ bin
 # don't commit the generated swagger docs:
 backend/docs
 .env
+backend/dist/
+backend/out/
