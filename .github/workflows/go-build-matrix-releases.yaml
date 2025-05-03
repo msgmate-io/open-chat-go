@@ -1,6 +1,12 @@
 name: Open-Chat Go Build Matrix
 on: 
   workflow_dispatch:
+    inputs:
+      product_version:
+        description: 'Product version to build'
+        required: false
+        default: '1.0.60'
+        type: string
 jobs:
   example:
     runs-on: ${{ matrix.runner }}
@@ -18,7 +24,7 @@ jobs:
         uses: hashicorp/actions-go-build@main
         with:
           product_name: open-chat-go
-          product_version: 1.0.60
+          product_version: ${{ inputs.product_version }}
           go_version: 1.22
           os: ${{ matrix.os }}
           arch: ${{ matrix.arch }}
