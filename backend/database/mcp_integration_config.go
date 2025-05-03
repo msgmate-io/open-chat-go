@@ -3,6 +3,8 @@ package database
 import "encoding/json"
 
 // MCPIntegrationConfig stores owner-scoped external MCP server configuration.
+//
+// Model migration/registration is provided by the compiled MCP integration module.
 type MCPIntegrationConfig struct {
 	Model
 	OwnerUserId uint            `json:"owner_user_id" gorm:"index;uniqueIndex:idx_mcp_integration_owner_name"`
