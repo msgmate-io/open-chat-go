@@ -1,0 +1,89 @@
+{{- if .Values.ingress.use }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chat-ingress
+  namespace: {{ .Values.rootNamespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+    nginx.ingress.kubernetes.io/server-snippets: |
+      location /api/core/ws/ {
+        proxy_http_version 1.1;
+        proxy_redirect off;
+        proxy_buffering off;
+      } 
+    {{- if .Values.certmanager.use }}
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- end }}
+    kubernetes.io/ingress.class: public
+spec:
+  {{- if .Values.certmanager.use }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+        {{- if .Values.hal.use }}
+        - {{ .Values.ingress.halHost }}
+        {{- end }}
+      secretName: chat-ingress-tls
+  {{- end }}
+  rules:
+    {{- if .Values.hal.use }}
+    - host: {{ .Values.ingress.halHost }}
+      http:
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: hal-service
+              port:
+                number: 8000
+    {{- end }}
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 8000
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 8000
+          - path: /accounts
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 8000
+          - path: /flower
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 8000
+          - path: /static
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-service
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 3000
+{{- end }}

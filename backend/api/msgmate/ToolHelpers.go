@@ -58,6 +58,27 @@ func MakeAPIRequest(method, url string, body io.Reader, sessionID, xcsrfToken st
 	return responseBody, nil
 }
 
+func MakeRequestSimple(method, url string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error making request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %w", err)
+	}
+
+	return responseBody, nil
+}
+
 // ExtractInitData extracts common fields from tool initialization data
 func ExtractInitData(initData map[string]interface{}) (string, string, string, string, error) {
 	sessionID, _ := initData["session_id"].(string)
@@ -134,4 +155,18 @@ func ExtractJSONField(responseBody []byte, fieldName string) ([]byte, error) {
 	}
 
 	return fieldJSON, nil
+}
+
+// --- Paper categorization Init
+
+func ExtractPaperCategorizationInitData(initData map[string]interface{}) (string, string, string, error) {
+	paperId, _ := initData["paper_id"].(string)
+	apiHost, _ := initData["api_host"].(string)
+	paperTitle, _ := initData["paper_title"].(string)
+
+	if paperId == "" || apiHost == "" {
+		return "", "", "", fmt.Errorf("missing required initialization data")
+	}
+
+	return paperId, apiHost, paperTitle, nil
 }

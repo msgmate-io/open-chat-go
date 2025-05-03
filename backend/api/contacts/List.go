@@ -70,7 +70,7 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 
 type PaginatedContacts struct {
 	database.Pagination
-	Rows []database.Contact
+	Rows []ListedContact `json:"rows"`
 }
 
 // List Contacts

@@ -4,19 +4,139 @@ import (
 	wsapi "backend/api/websocket"
 	"backend/client"
 	"backend/database"
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"gorm.io/gorm"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 )
+
+// StartBotWithRestart starts the bot with automatic restart capability and error logging
+func StartBotWithRestart(host string, ch *wsapi.WebSocketHandler, username string, password string) {
+	StartBotWithRestartContext(context.Background(), host, ch, username, password)
+}
+
+// StartBotWithRestartContext starts the bot with automatic restart capability, error logging, and context cancellation
+func StartBotWithRestartContext(ctx context.Context, host string, ch *wsapi.WebSocketHandler, username string, password string) {
+	go func() {
+		restartCount := 0
+		maxRestartDelay := 30 * time.Second
+		baseRestartDelay := 5 * time.Second
+		maxRestartAttempts := 1000 // Prevent infinite restarts in case of persistent issues
+
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("Bot restart loop panicked: %v", r)
+				logErrorToDisk(fmt.Errorf("panic: %v", r), restartCount, username)
+			}
+		}()
+
+		for restartCount < maxRestartAttempts {
+			select {
+			case <-ctx.Done():
+				log.Printf("Bot restart loop cancelled: %v", ctx.Err())
+				return
+			default:
+				// Continue with bot restart logic
+			}
+
+			restartCount++
+			log.Printf("Starting bot (attempt %d)...", restartCount)
+
+			// Start the bot and capture any errors
+			err := StartBot(host, ch, username, password)
+
+			// Log the error to disk
+			if err != nil {
+				logErrorToDisk(err, restartCount, username)
+				log.Printf("Bot crashed (attempt %d): %v", restartCount, err)
+			} else {
+				log.Printf("Bot stopped normally (attempt %d)", restartCount)
+				// If the bot stopped normally (no error), we might want to exit the restart loop
+				// For now, we'll continue restarting to handle cases where the bot exits gracefully
+				// but we want it to keep running
+			}
+
+			// Calculate restart delay with exponential backoff (capped at maxRestartDelay)
+			restartDelay := time.Duration(restartCount) * baseRestartDelay
+			if restartDelay > maxRestartDelay {
+				restartDelay = maxRestartDelay
+			}
+
+			log.Printf("Restarting bot in %v (attempt %d)", restartDelay, restartCount+1)
+
+			// Use a timer with context cancellation for the restart delay
+			timer := time.NewTimer(restartDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				log.Printf("Bot restart loop cancelled during delay: %v", ctx.Err())
+				return
+			case <-timer.C:
+				// Continue to next iteration
+			}
+		}
+
+		log.Printf("Bot restart loop stopped after %d attempts (max reached)", maxRestartAttempts)
+		logErrorToDisk(fmt.Errorf("max restart attempts reached (%d)", maxRestartAttempts), restartCount, username)
+	}()
+}
+
+// logErrorToDisk writes bot errors to a log file
+func logErrorToDisk(err error, attempt int, username string) {
+	// Create logs directory if it doesn't exist
+	logsDir := "logs"
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		log.Printf("Failed to create logs directory: %v", err)
+		return
+	}
+
+	// Create log file with timestamp
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	logFileName := filepath.Join(logsDir, fmt.Sprintf("bot_errors_%s.log", timestamp))
+
+	// Open log file in append mode
+	logFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Failed to open log file: %v", err)
+		return
+	}
+	defer logFile.Close()
+
+	// Get current time for logging
+	now := time.Now()
+
+	// Write detailed error entry
+	errorEntry := fmt.Sprintf("[%s] Bot crash (attempt %d) for user '%s':\n",
+		now.Format("2006-01-02 15:04:05"),
+		attempt,
+		username)
+
+	errorEntry += fmt.Sprintf("  Error: %v\n", err)
+	errorEntry += fmt.Sprintf("  Timestamp: %s\n", now.Format(time.RFC3339))
+	errorEntry += fmt.Sprintf("  Attempt: %d\n", attempt)
+	errorEntry += fmt.Sprintf("  User: %s\n", username)
+
+	// Add separator for readability
+	errorEntry += "  " + strings.Repeat("-", 50) + "\n"
+
+	if _, writeErr := logFile.WriteString(errorEntry); writeErr != nil {
+		log.Printf("Failed to write to log file: %v", writeErr)
+	}
+}
 
 func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password string) error {
 	// 'host' e.g.: 'http://localhost:1984'
@@ -41,11 +161,41 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 		cancels: make(map[string]context.CancelFunc),
 	}
 
+	// --- SESSION REFRESH LOGIC ---
+	refreshInterval := 12 * time.Hour        // Refresh session every 12 hours (should be less than session expiry)
+	sessionRefresh := make(chan struct{}, 1) // signal channel for session refresh
+	var sessionMu sync.Mutex                 // mutex to protect session id updates
+
+	go func() {
+		for {
+			time.Sleep(refreshInterval)
+			log.Println("Refreshing bot session...")
+			sessionMu.Lock()
+			err, _ := ocClient.LoginUser(username, password)
+			sessionMu.Unlock()
+			if err != nil {
+				log.Printf("Failed to refresh session: %v", err)
+				continue
+			}
+			// Signal main loop to reconnect WebSocket
+			select {
+			case sessionRefresh <- struct{}{}:
+				log.Println("Session refresh signal sent.")
+			default:
+				// If signal already pending, skip
+			}
+		}
+	}()
+	// --- END SESSION REFRESH LOGIC ---
+
 	for {
 		// TODO: allow also connecting to the websocket via ssl
+		sessionMu.Lock()
+		wsSessionId := ocClient.GetSessionId()
+		sessionMu.Unlock()
 		c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/ws/connect", hostNoProto), &websocket.DialOptions{
 			HTTPHeader: http.Header{
-				"Cookie": []string{fmt.Sprintf("session_id=%s", ocClient.GetSessionId())},
+				"Cookie": []string{fmt.Sprintf("session_id=%s", wsSessionId)},
 			},
 		})
 		if err != nil {
@@ -54,7 +204,18 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 			continue                    // Retry connecting
 		}
 
-		defer c.Close(websocket.StatusNormalClosure, "closing connection") // Ensure connection closed on function termination
+		// Use a channel to close the connection on session refresh
+		closeConn := make(chan struct{})
+		var closeOnce sync.Once
+		// Watch for session refresh
+		go func() {
+			<-sessionRefresh
+			closeOnce.Do(func() {
+				log.Println("Closing WebSocket due to session refresh...")
+				c.Close(websocket.StatusNormalClosure, "session refresh")
+				close(closeConn)
+			})
+		}()
 
 		log.Println("Bot connected to WebSocket")
 
@@ -62,6 +223,15 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 		err = readWebSocketMessages(ocClient, ch, *botUser, ctx, c, &chatCaneler)
 		if err != nil {
 			log.Printf("Error reading from WebSocket: %v", err)
+		}
+		// Wait for closeConn if session refresh triggered, otherwise just loop
+		select {
+		case <-closeConn:
+			log.Println("WebSocket closed for session refresh, reconnecting...")
+			continue
+		default:
+			// Normal error, reconnect after delay
+			time.Sleep(5 * time.Second)
 		}
 	}
 }
@@ -257,11 +427,98 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 
 		for i := len(paginatedMessages.Rows) - 1; i >= 0; i-- {
 			msg := paginatedMessages.Rows[i]
+
+			// Check if message has attachments
+			var attachments []interface{}
+			if msg.MetaData != nil {
+				if attData, ok := (*msg.MetaData)["attachments"]; ok {
+					if attList, ok := attData.([]interface{}); ok {
+						attachments = attList
+					}
+				}
+			}
+
 			if msg.SenderUUID == ocClient.User.UUID {
 				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
 				// also check for possible past tool calls
 			} else {
-				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": msg.Text})
+				// Handle user messages with potential attachments
+				if len(attachments) > 0 {
+					// Create content array with text and file references
+					contentArray := []map[string]interface{}{}
+
+					// Add text content if it exists
+					if msg.Text != "" {
+						contentArray = append(contentArray, map[string]interface{}{
+							"type": "text",
+							"text": msg.Text,
+						})
+					}
+
+					// Add each file attachment
+					for _, att := range attachments {
+						if attMap, ok := att.(map[string]interface{}); ok {
+							if fileID, ok := attMap["file_id"].(string); ok {
+								mimeType, _ := attMap["mime_type"].(string)
+
+								// Check if this is an image
+								if mimeType != "" && strings.HasPrefix(mimeType, "image/") {
+									// For images, convert to base64 and use vision format
+									base64Data, contentType, err := retrieveFileData(ocClient, fileID)
+									if err != nil {
+										log.Printf("Error retrieving image data for %s: %v", fileID, err)
+										continue
+									}
+
+									contentArray = append(contentArray, map[string]interface{}{
+										"type": "image_url",
+										"image_url": map[string]interface{}{
+											"url": fmt.Sprintf("data:%s;base64,%s", contentType, base64Data),
+										},
+									})
+								} else {
+									// For non-images, handle based on backend
+									if backend == "openai" {
+										// For OpenAI backend, use file ID approach
+										openAIFileID, err := getOpenAIFileID(ocClient, fileID)
+										if err != nil {
+											log.Printf("Error getting OpenAI file ID for %s: %v", fileID, err)
+											continue
+										}
+
+										if openAIFileID == "" {
+											// Upload file to OpenAI if not already uploaded
+											openAIFileID, err = uploadFileToOpenAI(ocClient, fileID, mimeType)
+											if err != nil {
+												log.Printf("Error uploading file to OpenAI for %s: %v", fileID, err)
+												continue
+											}
+										}
+
+										// Add file reference to content array
+										contentArray = append(contentArray, map[string]interface{}{
+											"type": "file",
+											"file": map[string]interface{}{
+												"file_id": openAIFileID,
+											},
+										})
+									} else {
+										// For non-OpenAI backends, skip file attachments for now
+										log.Printf("File attachments not supported for backend %s, skipping file %s", backend, fileID)
+									}
+								}
+							}
+						}
+					}
+
+					// Add the message with content array
+					openAiMessages = append(openAiMessages, map[string]interface{}{
+						"role":    "user",
+						"content": contentArray,
+					})
+				} else {
+					openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": msg.Text})
+				}
 			}
 			if msg.Text == message.Content.Text {
 				currentMessageIncluded = true
@@ -269,27 +526,156 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 		}
 
 		if !currentMessageIncluded {
-			openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": message.Content.Text})
+			// Handle current message with potential attachments
+			if message.Content.Attachments != nil && len(*message.Content.Attachments) > 0 {
+				// Create content array with text and file references
+				contentArray := []map[string]interface{}{}
+
+				// Add text content if it exists
+				if message.Content.Text != "" {
+					contentArray = append(contentArray, map[string]interface{}{
+						"type": "text",
+						"text": message.Content.Text,
+					})
+				}
+
+				// Add each file attachment
+				for _, att := range *message.Content.Attachments {
+					// Check if this is an image
+					if att.MimeType != "" && strings.HasPrefix(att.MimeType, "image/") {
+						// For images, convert to base64 and use vision format
+						base64Data, contentType, err := retrieveFileData(ocClient, att.FileID)
+						if err != nil {
+							log.Printf("Error retrieving image data for %s: %v", att.FileID, err)
+							continue
+						}
+
+						contentArray = append(contentArray, map[string]interface{}{
+							"type": "image_url",
+							"image_url": map[string]interface{}{
+								"url": fmt.Sprintf("data:%s;base64,%s", contentType, base64Data),
+							},
+						})
+					} else {
+						// For non-images, handle based on backend
+						if backend == "openai" {
+							// For OpenAI backend, use file ID approach
+							openAIFileID, err := getOpenAIFileID(ocClient, att.FileID)
+							if err != nil {
+								log.Printf("Error getting OpenAI file ID for %s: %v", att.FileID, err)
+								continue
+							}
+
+							if openAIFileID == "" {
+								// Upload file to OpenAI if not already uploaded
+								openAIFileID, err = uploadFileToOpenAI(ocClient, att.FileID, att.MimeType)
+								if err != nil {
+									log.Printf("Error uploading file to OpenAI for %s: %v", att.FileID, err)
+									continue
+								}
+							}
+
+							// Add file reference to content array
+							contentArray = append(contentArray, map[string]interface{}{
+								"type": "file",
+								"file": map[string]interface{}{
+									"file_id": openAIFileID,
+								},
+							})
+						} else {
+							// For non-OpenAI backends, skip file attachments for now
+							log.Printf("File attachments not supported for backend %s, skipping file %s", backend, att.FileID)
+						}
+					}
+				}
+
+				// Add the message with content array
+				openAiMessages = append(openAiMessages, map[string]interface{}{
+					"role":    "user",
+					"content": contentArray,
+				})
+			} else {
+				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "user", "content": message.Content.Text})
+			}
 		}
 
 		fmt.Println("TOOOLS openAiMessages", tools)
 
+		// Pretty print the openAiMessages for debugging
+		prettyMessages, _ := json.MarshalIndent(openAiMessages, "", "  ")
+		fmt.Println("=== OPENAI MESSAGES ===")
+		fmt.Println(string(prettyMessages))
+		fmt.Println("=== END OPENAI MESSAGES ===")
+
 		var toolsData []interface{}
 		toolMap := map[string]Tool{}
+		var interactionStartTools []string
+		var interactionCompleteTools []string
+
 		if len(tools) > 0 {
-			for _, tool := range AllTools {
-				if slices.Contains(tools, tool.GetToolName()) {
-					toolsData = append(toolsData, tool.ConstructTool())
-					toolMap[tool.GetToolName()] = tool
-					if tool.GetRequiresInit() {
-						if _, ok := toolInit[tool.GetToolName()]; ok {
-							tool.SetInitData(toolInit[tool.GetToolName()])
-						} else {
-							log.Printf("Tool init data not found for tool %s", tool.GetToolName())
-						}
+			// Debug: Print all available tools in AllTools
+			log.Printf("=== DEBUG: Available tools in AllTools ===")
+			for i, tool := range AllTools {
+				log.Printf("AllTools[%d]: %s (RequiresInit: %v)", i, tool.GetToolName(), tool.GetRequiresInit())
+			}
+			log.Printf("=== END DEBUG ===")
+
+			for _, toolName := range tools {
+				// Skip tools that contain ':' as they are default bot tools
+				actualToolName := toolName
+				if strings.Contains(toolName, ":") {
+					// Extract special interaction tools
+					if strings.HasPrefix(toolName, "interaction_start:") {
+						interactionStartTools = append(interactionStartTools, toolName)
+					} else if strings.HasPrefix(toolName, "interaction_complete:") {
+						interactionCompleteTools = append(interactionCompleteTools, toolName)
+					}
+					// Extract everything after the colon
+					parts := strings.SplitN(toolName, ":", 2)
+					if len(parts) == 2 {
+						actualToolName = parts[1]
 					}
 				}
+				log.Printf("====> Processing tool registration for %s, with actual tool name %s", toolName, actualToolName)
+
+				// Find the tool in AllTools
+				toolFound := false
+				for _, tool := range AllTools {
+					if tool.GetToolName() == actualToolName {
+						toolFound = true
+						log.Printf("====> Found tool %s in AllTools (RequiresInit: %v)", actualToolName, tool.GetRequiresInit())
+						if tool.GetToolName() == "run_callback_function" {
+							tool = NewRunCallbackFunctionTool()
+						}
+						toolsData = append(toolsData, tool.ConstructTool())
+						toolMap[toolName] = tool
+						if tool.GetRequiresInit() {
+							if _, ok := toolInit[toolName]; ok {
+								log.Printf("Setting init data for tool %s", tool.GetToolName())
+								tool.SetInitData(toolInit[toolName])
+								log.Printf("Init data set for tool %s", tool.GetToolName())
+							} else {
+								log.Printf("Tool init data not found for tool %s", tool.GetToolName())
+								tool.SetInitData(map[string]interface{}{})
+							}
+						}
+						break
+					}
+				}
+				if !toolFound {
+					log.Printf("====> WARNING: Tool %s NOT FOUND in AllTools!", actualToolName)
+				}
 			}
+		}
+
+		tools = append(tools, "run_callback_function")
+
+		// Log the extracted interaction tools for debugging
+		if len(interactionStartTools) > 0 {
+			log.Printf("Found interaction_start tools: %v", interactionStartTools)
+		}
+		if len(interactionCompleteTools) > 0 {
+			log.Printf("Found interaction_complete tools: %v", interactionCompleteTools)
 		}
 
 		chunks, usage, toolCalls, errs := streamChatCompletion(
@@ -300,9 +686,13 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			toolsData,
 			toolMap,
 			ocClient.GetApiKey(backend),
+			interactionStartTools,
+			interactionCompleteTools,
+			GetGlobalMsgmateHandler(),
 		)
 
 		var allToolCalls []interface{}
+		var processedToolCallIds = make(map[string]bool) // Track processed tool call IDs
 		var fullText, thoughtText, thoughtBuffer strings.Builder
 		var isThinking bool
 		var currentBuffer strings.Builder
@@ -347,6 +737,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 			metadata := map[string]interface{}{
 				"total_time": totalTime.Round(time.Millisecond).String(),
 				"cancelled":  isCancelled,
+				"finished":   true,
 			}
 			if tokenUsage != nil {
 				metadata["token_usage"] = tokenUsage
@@ -405,6 +796,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 									"total_time":    totalTime.Round(time.Millisecond).String(),
 								},
 								nil,
+								nil,
 							),
 						)
 					} else {
@@ -422,6 +814,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 									"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 									"total_time":    totalTime.Round(time.Millisecond).String(),
 								},
+								nil,
 								nil,
 							),
 						)
@@ -441,6 +834,7 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 						&map[string]interface{}{
 							"total_time": totalTime.Round(time.Millisecond).String(),
 						},
+						nil,
 						nil,
 					),
 				)
@@ -470,42 +864,52 @@ func respondMsgmate(ocClient *client.Client, ctx context.Context, ch *wsapi.WebS
 					toolCalls = nil
 				} else {
 					fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
-					toolCallRepr := map[string]interface{}{
-						"id":        toolCall.Id,
-						"name":      toolCall.ToolName,
-						"arguments": toolCall.ToolInput,
-						"result":    toolCall.Result,
-					}
-					// first check if the tool call is already in the list
-					alreadyInList := false
-					for _, registeredToolCall := range allToolCalls {
-						if registeredToolCall.(map[string]interface{})["id"] == toolCall.Id {
-							alreadyInList = true
-							// then update the result
-							registeredToolCall.(map[string]interface{})["result"] = toolCall.Result
-							break
-						}
-					}
-					if !alreadyInList {
-						allToolCalls = append(allToolCalls, toolCallRepr)
-					}
 
-					totalTime := time.Since(startTime)
-					ch.MessageHandler.SendMessage(
-						ch,
-						message.Content.SenderUUID,
-						ch.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
+					// Check if we've already processed this tool call ID
+					if _, alreadyProcessed := processedToolCallIds[toolCall.Id]; !alreadyProcessed {
+						toolCallRepr := map[string]interface{}{
+							"id":        toolCall.Id,
+							"name":      toolCall.ToolName,
+							"arguments": toolCall.ToolInput,
+							"result":    toolCall.Result,
+						}
+
+						// Add to our processed IDs map
+						processedToolCallIds[toolCall.Id] = true
+
+						// Check if this tool call is already in the list (by ID)
+						alreadyInList := false
+						for i, registeredToolCall := range allToolCalls {
+							if registeredToolCall.(map[string]interface{})["id"] == toolCall.Id {
+								alreadyInList = true
+								// Update the result if it exists
+								allToolCalls[i].(map[string]interface{})["result"] = toolCall.Result
+								break
+							}
+						}
+
+						if !alreadyInList {
+							allToolCalls = append(allToolCalls, toolCallRepr)
+						}
+
+						totalTime := time.Since(startTime)
+						ch.MessageHandler.SendMessage(
+							ch,
 							message.Content.SenderUUID,
-							"",
-							[]string{""},
-							&map[string]interface{}{
-								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
-								"total_time":    totalTime.Round(time.Millisecond).String(),
-							},
-							&allToolCalls,
-						),
-					)
+							ch.MessageHandler.NewPartialMessage(
+								message.Content.ChatUUID,
+								message.Content.SenderUUID,
+								"",
+								[]string{""},
+								&map[string]interface{}{
+									"total_time": totalTime.Round(time.Millisecond).String(),
+									"tool_call":  toolCall.ToolName,
+								},
+								&allToolCalls,
+								nil,
+							),
+						)
+					}
 				}
 			case err, ok := <-errs:
 				if ok && err != nil {
@@ -722,76 +1126,230 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	return nil
 }
 
-func performToolProcessing(
-	ocClient *client.Client,
-	endpoint string,
-	model string,
-	backend string,
-	openAiMessages []map[string]string,
-	tools []string,
-	apiKey string,
-) ([]map[string]string, error) {
-	// first we have to retrieve the tools
-	var toolsInterface []Tool
-	toolsInterface = append(toolsInterface, NewWeatherTool()) // TODO: load tools dynamically based on tool name
-	var toolData []interface{}
-	for _, tool := range toolsInterface {
-		toolData = append(toolData, tool.ConstructTool())
-	}
-	fmt.Println("toolData", toolData)
-	toolCallsChan, usageChan, errChan := toolRequest(endpoint, model, backend, openAiMessages, toolData, apiKey)
-
-	// Process all channels
-	for {
-		select {
-		case toolCallsResult, ok := <-toolCallsChan:
-			if !ok {
-				toolCallsChan = nil
-			} else {
-				// Process tool calls and append results to messages
-				fmt.Println("toolCallsResult", toolCallsResult)
-				for _, toolCall := range toolCallsResult.ToolCalls {
-					// Find the corresponding tool
-					var tool Tool
-					for _, t := range tools {
-						if t == toolCall.ToolName {
-							tool = NewWeatherTool() // TODO: Make this dynamic based on tool name
-							break
-						}
-					}
-
-					if tool != nil {
-						// Execute the tool
-						result, err := tool.RunTool(toolCall.ToolInput)
-						if err != nil {
-							return nil, fmt.Errorf("error executing tool %s: %w", toolCall.ToolName, err)
-						}
-
-						// Append the tool call and result to messages
-						openAiMessages = append(openAiMessages,
-							map[string]string{"role": "assistant", "content": fmt.Sprintf("I'll use the %s to help answer your question.", toolCall.ToolName)},
-							map[string]string{"role": "function", "name": toolCall.ToolName, "content": result},
-						)
-						fmt.Println("openAiMessages", openAiMessages)
-					}
-				}
-			}
-		case _, ok := <-usageChan:
-			if !ok {
-				fmt.Println("usageChan", usageChan)
-				usageChan = nil
-			}
-		case err, ok := <-errChan:
-			if ok && err != nil {
-				return nil, fmt.Errorf("tool processing error: %w", err)
-			}
-			errChan = nil
-		}
-
-		if toolCallsChan == nil && usageChan == nil && errChan == nil {
-			break
-		}
+// retrieveFileData fetches a file by fileID and converts it to base64
+func retrieveFileData(ocClient *client.Client, fileID string) (string, string, error) {
+	// Create request to download the file
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/files/%s", ocClient.GetHost(), fileID), nil)
+	if err != nil {
+		return "", "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	return openAiMessages, nil
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", ocClient.GetSessionId()))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("error downloading file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("file download failed with status: %d", resp.StatusCode)
+	}
+
+	// Read the file content
+	fileData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("error reading file data: %w", err)
+	}
+
+	// Convert to base64
+	base64Data := base64.StdEncoding.EncodeToString(fileData)
+
+	// Get content type from response headers
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	return base64Data, contentType, nil
+}
+
+// getOpenAIFileID retrieves the OpenAI file ID for a given file ID
+func getOpenAIFileID(ocClient *client.Client, fileID string) (string, error) {
+	// Create request to get file info
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/files/%s/info", ocClient.GetHost(), fileID), nil)
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", ocClient.GetSessionId()))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error getting file info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("file info request failed with status: %d", resp.StatusCode)
+	}
+
+	// Parse the response to get file metadata
+	var fileInfo struct {
+		FileID       string                 `json:"file_id"`
+		FileName     string                 `json:"file_name"`
+		Size         int64                  `json:"size"`
+		MimeType     string                 `json:"mime_type"`
+		UploadedAt   string                 `json:"uploaded_at"`
+		OpenAIFileID string                 `json:"openai_file_id,omitempty"`
+		MetaData     map[string]interface{} `json:"meta_data,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&fileInfo); err != nil {
+		return "", fmt.Errorf("error decoding file info: %w", err)
+	}
+
+	// Check if OpenAI file ID is in the response
+	if fileInfo.OpenAIFileID != "" {
+		return fileInfo.OpenAIFileID, nil
+	}
+
+	// Check if OpenAI file ID is in metadata
+	if fileInfo.MetaData != nil {
+		if openAIFileID, ok := fileInfo.MetaData["openai_file_id"].(string); ok && openAIFileID != "" {
+			return openAIFileID, nil
+		}
+	}
+
+	return "", nil
+}
+
+// uploadFileToOpenAI uploads a file to OpenAI's files API
+func uploadFileToOpenAI(ocClient *client.Client, fileID string, mimeType string) (string, error) {
+	// Get OpenAI API key
+	openAIKey := ocClient.GetApiKey("openai")
+	if openAIKey == "" {
+		return "", fmt.Errorf("OPENAI_API_KEY not set")
+	}
+
+	// First, get the file data from our server
+	fileData, _, err := retrieveFileData(ocClient, fileID)
+	if err != nil {
+		return "", fmt.Errorf("error retrieving file data: %w", err)
+	}
+
+	// Decode base64 data back to bytes
+	fileBytes, err := base64.StdEncoding.DecodeString(fileData)
+	if err != nil {
+		return "", fmt.Errorf("error decoding base64 data: %w", err)
+	}
+
+	// Get file info to get the filename
+	fileInfo, err := getFileInfo(ocClient, fileID)
+	if err != nil {
+		return "", fmt.Errorf("error getting file info: %w", err)
+	}
+
+	// Create multipart form data
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Add the file
+	part, err := writer.CreateFormFile("file", fileInfo.FileName)
+	if err != nil {
+		return "", fmt.Errorf("error creating form file: %w", err)
+	}
+
+	_, err = io.Copy(part, bytes.NewReader(fileBytes))
+	if err != nil {
+		return "", fmt.Errorf("error copying file data: %w", err)
+	}
+
+	// Add purpose field
+	err = writer.WriteField("purpose", "assistants")
+	if err != nil {
+		return "", fmt.Errorf("error writing purpose field: %w", err)
+	}
+
+	writer.Close()
+
+	// Create request to OpenAI
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/files", &buf)
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+openAIKey)
+
+	// Send request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OpenAI API error: %d - %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Parse response
+	var openAIResp struct {
+		ID        string `json:"id"`
+		Object    string `json:"object"`
+		Bytes     int    `json:"bytes"`
+		CreatedAt int64  `json:"created_at"`
+		Filename  string `json:"filename"`
+		Purpose   string `json:"purpose"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
+		return "", fmt.Errorf("error decoding response: %w", err)
+	}
+
+	// Note: We don't update the file metadata here since there's no metadata update endpoint
+	// The OpenAI file ID will be retrieved again next time the file is processed
+	log.Printf("Successfully uploaded file %s to OpenAI with ID: %s", fileID, openAIResp.ID)
+
+	return openAIResp.ID, nil
+}
+
+// getFileInfo retrieves file information including filename
+func getFileInfo(ocClient *client.Client, fileID string) (*struct {
+	FileID       string                 `json:"file_id"`
+	FileName     string                 `json:"file_name"`
+	Size         int64                  `json:"size"`
+	MimeType     string                 `json:"mime_type"`
+	UploadedAt   string                 `json:"uploaded_at"`
+	OpenAIFileID string                 `json:"openai_file_id,omitempty"`
+	MetaData     map[string]interface{} `json:"meta_data,omitempty"`
+}, error) {
+	// Create request to get file info
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/files/%s/info", ocClient.GetHost(), fileID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", ocClient.GetSessionId()))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error getting file info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("file info request failed with status: %d", resp.StatusCode)
+	}
+
+	// Parse the response to get file metadata
+	var fileInfo struct {
+		FileID       string                 `json:"file_id"`
+		FileName     string                 `json:"file_name"`
+		Size         int64                  `json:"size"`
+		MimeType     string                 `json:"mime_type"`
+		UploadedAt   string                 `json:"uploaded_at"`
+		OpenAIFileID string                 `json:"openai_file_id,omitempty"`
+		MetaData     map[string]interface{} `json:"meta_data,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&fileInfo); err != nil {
+		return nil, fmt.Errorf("error decoding file info: %w", err)
+	}
+
+	return &fileInfo, nil
 }
