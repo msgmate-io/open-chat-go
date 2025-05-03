@@ -23,7 +23,10 @@ type TableInfo struct {
 }
 
 type TableInfoConfig struct {
-	IncludeFields []string
+	IncludeFields   []string
+	Preloads        []string
+	PreloadMappings map[string]string // Maps preload field names to JSON keys
+	JsonFields      []string          // Fields containing JSON data that should be parsed
 }
 
 var tableConfigurations = map[string]TableInfoConfig{
@@ -32,6 +35,32 @@ var tableConfigurations = map[string]TableInfoConfig{
 	},
 	"messages": {
 		IncludeFields: []string{"UUID", "ID", "CreatedAt", "DeletedAt", "SenderId", "ReceiverId", "DataType", "ChatId", "Text", "Reasoning", "MetaData"},
+	},
+	"chats": {
+		IncludeFields: []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt", "User1Id", "User2Id", "LatestMessageId", "SharedConfigId", "ChatType"},
+		Preloads:      []string{"LatestMessage", "SharedConfig", "User1", "User2"},
+		PreloadMappings: map[string]string{
+			"LatestMessage": "latest_message",
+			"SharedConfig":  "shared_config",
+			"User1":         "user1",
+			"User2":         "user2",
+		},
+	},
+	"shared_chat_configs": {
+		IncludeFields: []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt", "ChatId", "ConfigData"},
+		Preloads:      []string{"Chat"},
+		PreloadMappings: map[string]string{
+			"Chat": "chat",
+		},
+		JsonFields: []string{"ConfigData"},
+	},
+	"integrations": {
+		IncludeFields: []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt", "IntegrationName", "IntegrationType", "Active", "Config", "LastUsed", "UserID"},
+		Preloads:      []string{"User"},
+		PreloadMappings: map[string]string{
+			"User": "user",
+		},
+		JsonFields: []string{"Config"},
 	},
 }
 
@@ -90,16 +119,55 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 			if !include {
 				continue
 			}
-		}
 
-		fields = append(fields, FieldInfo{
-			Name:       field.Name,
-			NameRaw:    field.DBName,
-			Type:       string(field.DataType),
-			IsPrimary:  field.PrimaryKey,
-			IsNullable: !field.NotNull,
-			Tag:        string(field.TagSettings["JSON"]),
-		})
+			// Check if this is a JSON field
+			fieldType := string(field.DataType)
+			for _, jsonField := range config.JsonFields {
+				if field.Name == jsonField {
+					fieldType = "object" // Mark as object type for JSON fields
+					break
+				}
+			}
+
+			fields = append(fields, FieldInfo{
+				Name:       field.Name,
+				NameRaw:    field.DBName,
+				Type:       fieldType,
+				IsPrimary:  field.PrimaryKey,
+				IsNullable: !field.NotNull,
+				Tag:        string(field.TagSettings["JSON"]),
+			})
+		} else {
+			fields = append(fields, FieldInfo{
+				Name:       field.Name,
+				NameRaw:    field.DBName,
+				Type:       string(field.DataType),
+				IsPrimary:  field.PrimaryKey,
+				IsNullable: !field.NotNull,
+				Tag:        string(field.TagSettings["JSON"]),
+			})
+		}
+	}
+
+	// Add preloaded fields to the result
+	if config, exists := tableConfigurations[tableName]; exists && len(config.Preloads) > 0 {
+		for _, preload := range config.Preloads {
+			// Get the JSON key from the mapping or use the preload name
+			nameRaw := preload
+			if mapping, ok := config.PreloadMappings[preload]; ok {
+				nameRaw = mapping
+			}
+
+			// Add the preload field to the fields list
+			fields = append(fields, FieldInfo{
+				Name:       preload,
+				NameRaw:    nameRaw,
+				Type:       "object", // Preloaded fields are typically objects
+				IsPrimary:  false,
+				IsNullable: true,
+				Tag:        "",
+			})
+		}
 	}
 
 	tableInfo := TableInfo{

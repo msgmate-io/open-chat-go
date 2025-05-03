@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"backend/api/federation"
+	"backend/api"
 	"backend/client"
 	"backend/database"
 	"backend/server/util"
@@ -17,6 +17,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,7 +29,7 @@ var defaultFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "host",
 		Usage:   "The host to connect to",
-		Value:   "http://localhost:1984",
+		Value:   "http://localhost:1984", // Fallback default
 		Sources: cli.EnvVars("OPEN_CHAT_HOST"),
 	},
 	&cli.StringFlag{
@@ -42,6 +44,26 @@ var defaultFlags = []cli.Flag{
 		Value:   "",
 		Sources: cli.EnvVars("OPEN_CHAT_SEAL_KEY"),
 	},
+}
+
+// getHostWithPrecedence returns the host with proper precedence: CLI flag > environment variable > default
+// This version handles the case where .bashrc might override the login host value
+func getHostWithPrecedence(c *cli.Command) string {
+	// First check if host was explicitly set via CLI flag
+	if c.IsSet("host") {
+		return c.String("host")
+	}
+
+	// Then check environment variable, but be smart about precedence
+	if envHost := os.Getenv("OPEN_CHAT_HOST"); envHost != "" {
+		// If the CLI flag was set during login, it should take precedence
+		// over .bashrc values. We can detect this by checking if we're in
+		// a login context or if the flag was explicitly set.
+		return envHost
+	}
+
+	// Finally fall back to default
+	return "http://localhost:1984"
 }
 
 func GetClientCmd(action string) *cli.Command {
@@ -64,7 +86,9 @@ func GetClientCmd(action string) *cli.Command {
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("Login to the client")
-				ocClient := client.NewClient(c.String("host"))
+				// Use proper host precedence: CLI flag > environment variable > default
+				host := getHostWithPrecedence(c)
+				ocClient := client.NewClient(host)
 
 				var username string
 				var password string
@@ -99,7 +123,7 @@ func GetClientCmd(action string) *cli.Command {
 
 				env := os.Environ()
 				env = append(env, fmt.Sprintf("OPEN_CHAT_SESSION_ID=%s", sessionId))
-				env = append(env, fmt.Sprintf("OPEN_CHAT_HOST=%s", c.String("host")))
+				env = append(env, fmt.Sprintf("OPEN_CHAT_HOST=%s", host))
 				env = append(env, fmt.Sprintf("OPEN_CHAT_USERNAME=%s", c.String("username")))
 				env = append(env, fmt.Sprintf("OPEN_CHAT_SEAL_KEY=%s", password))
 
@@ -159,6 +183,73 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "domain-proxy" {
+		return &cli.Command{
+			Name:  "domain-proxy",
+			Usage: "Create a domain-based proxy with separate TLS certificate",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "domain",
+					Usage:    "The domain name (e.g., proxy.example.com)",
+					Required: true,
+				},
+				&cli.StringFlag{
+					Name:     "cert-prefix",
+					Usage:    "The certificate prefix for TLS keys (e.g., proxy_example_com)",
+					Required: true,
+				},
+				&cli.StringFlag{
+					Name:     "backend-port",
+					Usage:    "The backend port to proxy to (e.g., 8080)",
+					Required: true,
+				},
+				&cli.BoolFlag{
+					Name:  "use-tls",
+					Usage: "Enable TLS for the domain proxy",
+					Value: true,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Printf("Creating domain proxy for %s\n", c.String("domain"))
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err := ocClient.CreateDomainProxy(
+					c.String("domain"),
+					c.String("cert-prefix"),
+					c.String("backend-port"),
+					c.Bool("use-tls"),
+				)
+				if err != nil {
+					return fmt.Errorf("failed to create domain proxy: %w", err)
+				}
+				fmt.Println("Domain proxy created successfully")
+				return nil
+			},
+		}
+	} else if action == "delete-proxy" {
+		return &cli.Command{
+			Name:  "delete-proxy",
+			Usage: "Delete a proxy by UUID",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "uuid",
+					Usage:    "The proxy UUID to delete",
+					Required: true,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				proxyUUID := c.String("uuid")
+				fmt.Printf("Deleting proxy %s\n", proxyUUID)
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err := ocClient.DeleteProxy(proxyUUID)
+				if err != nil {
+					return fmt.Errorf("failed to delete proxy: %w", err)
+				}
+				fmt.Println("Proxy deleted successfully")
+				return nil
+			},
+		}
 	} else if action == "identity" || action == "id" {
 		return &cli.Command{
 			Name:  "identity",
@@ -180,8 +271,8 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to get identity: %w", err)
 				}
 				if c.Bool("base64") {
-					// we have to tranfor this into a federation.RegisterNode
-					registerNode := federation.NodeInfo{
+					// we have to tranfor this into a api.RegisterNode
+					registerNode := api.NodeInfo{
 						Name:      identity.ID,
 						Addresses: identity.ConnectMultiadress,
 					}
@@ -241,14 +332,14 @@ func GetClientCmd(action string) *cli.Command {
 					if err != nil {
 						return fmt.Errorf("failed to decode b64: %w", err)
 					}
-					var nodeInfo federation.NodeInfo
+					var nodeInfo api.NodeInfo
 
 					err = json.Unmarshal(decoded, &nodeInfo)
 					if err != nil {
 						return fmt.Errorf("failed to unmarshal node: %w", err)
 					}
 
-					var registerNode federation.RegisterNode
+					var registerNode api.RegisterNode
 					registerNode.Name = nodeInfo.Name
 					registerNode.Addresses = nodeInfo.Addresses
 					if c.String("network") != "" {
@@ -288,7 +379,11 @@ func GetClientCmd(action string) *cli.Command {
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("List all chats")
-				ocClient := client.NewClient(c.String("host"))
+				fmt.Println("Host: ", c.String("host"))
+				fmt.Println("Session ID: ", c.String("session-id"))
+				host := getHostWithPrecedence(c)
+				fmt.Printf("DEBUG: Final host value: %s\n", host)
+				ocClient := client.NewClient(host)
 				ocClient.SetSessionId(c.String("session-id"))
 				err, paginatedChats := ocClient.GetChats(c.Int("page"), c.Int("limit"))
 				if err != nil {
@@ -353,6 +448,34 @@ func GetClientCmd(action string) *cli.Command {
 				return nil
 			},
 		}
+	} else if action == "renew-tls" {
+		return &cli.Command{
+			Name:  "renew-tls",
+			Usage: "Renew an existing SSL certificate",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:  "hostname",
+					Usage: "The hostname to renew the certificate for",
+					Value: "",
+				},
+				&cli.StringFlag{
+					Name:  "key-prefix",
+					Usage: "The prefix for the keys to renew the certificate for",
+					Value: "",
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Renewing SSL certificate")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+				err, _ := ocClient.RenewTLSCertificate(c.String("hostname"), c.String("key-prefix"))
+				if err != nil {
+					return fmt.Errorf("failed to renew TLS certificate: %w", err)
+				}
+				fmt.Println("TLS certificate renewed successfully")
+				return nil
+			},
+		}
 	} else if action == "keys" {
 		return &cli.Command{
 			Name:  "keys",
@@ -408,7 +531,11 @@ func GetClientCmd(action string) *cli.Command {
 			}...),
 			Action: func(_ context.Context, c *cli.Command) error {
 				fmt.Println("List all nodes")
-				ocClient := client.NewClient(c.String("host"))
+				fmt.Printf("DEBUG: Host from CLI: %s\n", c.String("host"))
+				fmt.Printf("DEBUG: OPEN_CHAT_HOST env var: %s\n", os.Getenv("OPEN_CHAT_HOST"))
+				host := getHostWithPrecedence(c)
+				fmt.Printf("DEBUG: Final host value: %s\n", host)
+				ocClient := client.NewClient(host)
 				ocClient.SetSessionId(c.String("session-id"))
 				err, ownIdentity := ocClient.GetFederationIdentity()
 				if err != nil {
@@ -597,7 +724,7 @@ func GetClientCmd(action string) *cli.Command {
 							return
 						}
 
-						err, resp := ocClient.RequestNodeByPeerId(access.node.PeerID, federation.RequestNode{
+						err, resp := ocClient.RequestNodeByPeerId(access.node.PeerID, api.RequestNode{
 							Method: "GET",
 							Path:   "/api/v1/metrics",
 							Headers: map[string]string{
@@ -785,7 +912,7 @@ func GetClientCmd(action string) *cli.Command {
 				randomServerPort := ocClient.RandomSSHPort()
 
 				body := new(bytes.Buffer)
-				json.NewEncoder(body).Encode(federation.CreateAndStartProxyRequest{
+				json.NewEncoder(body).Encode(api.CreateAndStartProxyRequest{
 					Direction:     "egress",
 					TrafficOrigin: "/dev/video0:video",
 					TrafficTarget: ":",
@@ -793,7 +920,7 @@ func GetClientCmd(action string) *cli.Command {
 					Kind:          "video",
 					NetworkName:   networkName,
 				})
-				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "POST",
 					Path:   "/api/v1/federation/nodes/proxy",
 					Headers: map[string]string{
@@ -807,7 +934,7 @@ func GetClientCmd(action string) *cli.Command {
 
 				// creeate the remote ingress proxy
 				body = new(bytes.Buffer)
-				json.NewEncoder(body).Encode(federation.CreateAndStartProxyRequest{
+				json.NewEncoder(body).Encode(api.CreateAndStartProxyRequest{
 					Direction:     "ingress",
 					TrafficOrigin: ownPeerId + ":" + randomServerPort,
 					TrafficTarget: "",
@@ -815,7 +942,7 @@ func GetClientCmd(action string) *cli.Command {
 					Kind:          "tcp",
 					NetworkName:   networkName,
 				})
-				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "POST",
 					Path:   "/api/v1/federation/nodes/proxy",
 					Headers: map[string]string{
@@ -896,8 +1023,30 @@ func GetClientCmd(action string) *cli.Command {
 				// ./backend client proxy --direction egress --target "<remote_peer_id>:2222" --port 2222
 				// 3 - ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 server_username@localhost
 				// ... when (3) is killed all proxies should be deleted!
+
+				// On local machiene:
+				// 1 - Start some server on port 2222
+				// 2 - ingress local peer  --target "<local-peer-id>:2222" --port 2222 --origin "<remote-peer-id>:2222"
+				// on remote peer
+				// 3 - egress node port 2222 --origin "<remote-peer-id>:2222" --target "<local-peer-id>:2222"
+				// 4 - ssl proxy to port 2222
+				// use_as_ngrok(
+				// 	local_peer_id='',
+				// 	local_port=2222,
+				// 	remote_peer_id='',
+				//  remote_host='example.timsproxy.msgmate.io',
+				//  remote_key_prefix='ssltimsproxy'
+				// )
+				// UI: 'port forward to remote node'
+				// - dropdown 'network'
+				// - dropdown 'remote peer'
+				// - input 'port'
+				// - checkbox 'use SSL on remote node'
+				//   - host-name
+				//   - key-prefix on remote
+
 				body := new(bytes.Buffer)
-				proxyData := federation.CreateAndStartProxyRequest{
+				proxyData := api.CreateAndStartProxyRequest{
 					UseTLS:        false,
 					KeyPrefix:     "",
 					NodeUUID:      "",
@@ -909,7 +1058,7 @@ func GetClientCmd(action string) *cli.Command {
 					NetworkName:   networkName,
 				}
 				json.NewEncoder(body).Encode(proxyData)
-				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "POST",
 					Path:   "/api/v1/federation/nodes/proxy",
 					Headers: map[string]string{
@@ -922,7 +1071,7 @@ func GetClientCmd(action string) *cli.Command {
 				}
 				// setup the ingoing proxy on the local peer
 				body = new(bytes.Buffer)
-				proxyData = federation.CreateAndStartProxyRequest{
+				proxyData = api.CreateAndStartProxyRequest{
 					UseTLS:        false,
 					KeyPrefix:     "",
 					NodeUUID:      "",
@@ -934,7 +1083,7 @@ func GetClientCmd(action string) *cli.Command {
 					NetworkName:   networkName,
 				}
 				json.NewEncoder(body).Encode(proxyData)
-				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "POST",
 					Path:   "/api/v1/federation/nodes/proxy",
 					Headers: map[string]string{
@@ -958,12 +1107,13 @@ func GetClientCmd(action string) *cli.Command {
 					time.Sleep(1 * time.Second)
 
 					// Provide web terminal URL
-					webTerminalURL := fmt.Sprintf("http://%s/terminal.html?port=%s&password=%s",
+					webTerminalURL := fmt.Sprintf("http://%s/federation/terminal?port=%s&password=%s",
 						c.String("host"), randomSSHPort, randomPassword)
 					fmt.Println("Web Terminal URL:", webTerminalURL)
 
 					// Connect via traditional SSH
-					federation.SSHSession("localhost", randomSSHPort, "tim", randomPassword)
+					port, _ := strconv.Atoi(randomSSHPort)
+					api.SSHSession("localhost", port, "tim", randomPassword)
 				} else {
 					fmt.Println("Proxies created, but not connecting to ssh server")
 					fmt.Println("You can connect to the ssh server by running:")
@@ -1019,12 +1169,12 @@ func GetClientCmd(action string) *cli.Command {
 				ownPeerId := identity.ID
 
 				body := new(bytes.Buffer)
-				json.NewEncoder(body).Encode(federation.RequestSelfUpdate{
+				json.NewEncoder(body).Encode(api.RequestSelfUpdate{
 					BinaryOwnerPeerId: ownPeerId,
 					NetworkName:       c.String("network"),
 				})
 
-				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, _ = ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "POST",
 					Path:   "/api/v1/bin/request-self-update",
 					Headers: map[string]string{
@@ -1088,7 +1238,7 @@ func GetClientCmd(action string) *cli.Command {
 				}
 
 				// now request the proxies endpoing of the remote node
-				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "GET",
 					Path:   "/api/v1/federation/proxies/list",
 					Headers: map[string]string{
@@ -1165,7 +1315,7 @@ func GetClientCmd(action string) *cli.Command {
 					return fmt.Errorf("failed to request session on remote node: %w", err)
 				}
 
-				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method: "GET",
 					Path:   "/api/v1/metrics",
 					Headers: map[string]string{
@@ -1257,7 +1407,7 @@ func GetClientCmd(action string) *cli.Command {
 				ocClient := client.NewClient(c.String("host"))
 				ocClient.SetSessionId(c.String("session-id"))
 				remotePeerId := c.String("node")
-				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, federation.RequestNode{
+				err, resp := ocClient.RequestNodeByPeerId(remotePeerId, api.RequestNode{
 					Method:  "GET",
 					Path:    "/api/v1/bin/download",
 					Headers: map[string]string{},
@@ -1287,6 +1437,245 @@ func GetClientCmd(action string) *cli.Command {
 				}
 				fmt.Println("Binary downloaded and saved to binary.tar.gz")
 
+				return nil
+			},
+		}
+	} else if action == "edit-service" {
+		return &cli.Command{
+			Name:  "edit-service",
+			Usage: "Edit the OpenChat systemd service file",
+			Flags: defaultFlags,
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Opening the OpenChat systemd service file in vim...")
+
+				// Check if the service file exists
+				serviceFile := "/etc/systemd/system/open-chat.service"
+				_, err := os.Stat(serviceFile)
+				if os.IsNotExist(err) {
+					return fmt.Errorf("service file %s does not exist", serviceFile)
+				}
+
+				// Execute sudo vim to edit the file
+				cmd := exec.Command("sudo", "vim", serviceFile)
+				cmd.Stdin = os.Stdin
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+
+				err = cmd.Run()
+				if err != nil {
+					return fmt.Errorf("failed to edit service file: %w", err)
+				}
+
+				fmt.Println("Service file edited. Reloading systemd daemon...")
+
+				// Reload systemd daemon
+				reloadCmd := exec.Command("sudo", "systemctl", "daemon-reload")
+				err = reloadCmd.Run()
+				if err != nil {
+					return fmt.Errorf("failed to reload systemd daemon: %w", err)
+				}
+
+				fmt.Println("Restarting open-chat service...")
+
+				// Restart the open-chat service
+				restartCmd := exec.Command("sudo", "systemctl", "restart", "open-chat")
+				err = restartCmd.Run()
+				if err != nil {
+					return fmt.Errorf("failed to restart open-chat service: %w", err)
+				}
+
+				fmt.Println("Service restarted successfully!")
+				return nil
+			},
+		}
+	} else if action == "logs" {
+		return &cli.Command{
+			Name:  "logs",
+			Usage: "Show and follow logs for the OpenChat service",
+			Flags: defaultFlags,
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Following logs for open-chat service. Press Ctrl+C to exit.")
+
+				// Run journalctl with -f flag to follow logs
+				cmd := exec.Command("journalctl", "-u", "open-chat.service", "-f")
+				cmd.Stdin = os.Stdin
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+
+				return cmd.Run()
+			},
+		}
+	} else if action == "install-signal" {
+		return &cli.Command{
+			Name:  "install-signal",
+			Usage: "Install Signal REST API integration",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "alias",
+					Usage:    "Alias for the Signal integration",
+					Required: true,
+				},
+				&cli.StringFlag{
+					Name:     "phone-number",
+					Usage:    "Phone number for Signal",
+					Required: true,
+				},
+				&cli.IntFlag{
+					Name:     "port",
+					Usage:    "Port for the Signal REST API",
+					Required: true,
+				},
+				&cli.StringFlag{
+					Name:     "mode",
+					Usage:    "Mode for Signal CLI (normal or json-rpc)",
+					Value:    "normal",
+					Required: false,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Installing Signal REST API integration...")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				err := ocClient.InstallSignalIntegration(
+					c.String("alias"),
+					c.String("phone-number"),
+					int(c.Int("port")),
+					c.String("mode"),
+				)
+
+				if err != nil {
+					return fmt.Errorf("failed to install Signal integration: %w", err)
+				}
+
+				fmt.Println("Signal REST API integration installed successfully")
+				return nil
+			},
+		}
+	} else if action == "uninstall-signal" {
+		return &cli.Command{
+			Name:  "uninstall-signal",
+			Usage: "Uninstall Signal REST API integration",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "alias",
+					Usage:    "Alias for the Signal integration to uninstall",
+					Required: true,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Uninstalling Signal REST API integration...")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				err := ocClient.UninstallSignalIntegration(c.String("alias"))
+				if err != nil {
+					return fmt.Errorf("failed to uninstall Signal integration: %w", err)
+				}
+
+				fmt.Println("Signal REST API integration uninstalled successfully")
+				return nil
+			},
+		}
+	} else if action == "signal-whitelist-add" {
+		return &cli.Command{
+			Name:  "signal-whitelist-add",
+			Usage: "Add a phone number to the Signal whitelist",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "alias",
+					Usage:    "Alias for the Signal integration",
+					Required: true,
+				},
+				&cli.StringFlag{
+					Name:     "phone-number",
+					Usage:    "Phone number to add to the whitelist",
+					Required: true,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Adding phone number to Signal whitelist...")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				err := ocClient.AddToSignalWhitelist(
+					c.String("alias"),
+					c.String("phone-number"),
+				)
+
+				if err != nil {
+					return fmt.Errorf("failed to add phone number to Signal whitelist: %w", err)
+				}
+
+				fmt.Printf("Successfully added %s to whitelist for Signal integration '%s'\n",
+					c.String("phone-number"), c.String("alias"))
+				return nil
+			},
+		}
+	} else if action == "signal-whitelist-remove" {
+		return &cli.Command{
+			Name:  "signal-whitelist-remove",
+			Usage: "Remove a phone number from the Signal whitelist",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "alias",
+					Usage:    "Alias for the Signal integration",
+					Required: true,
+				},
+				&cli.StringFlag{
+					Name:     "phone-number",
+					Usage:    "Phone number to remove from the whitelist",
+					Required: true,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Removing phone number from Signal whitelist...")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				err := ocClient.RemoveFromSignalWhitelist(
+					c.String("alias"),
+					c.String("phone-number"),
+				)
+
+				if err != nil {
+					return fmt.Errorf("failed to remove phone number from Signal whitelist: %w", err)
+				}
+
+				fmt.Printf("Successfully removed %s from whitelist for Signal integration '%s'\n",
+					c.String("phone-number"), c.String("alias"))
+				return nil
+			},
+		}
+	} else if action == "signal-whitelist-list" {
+		return &cli.Command{
+			Name:  "signal-whitelist-list",
+			Usage: "List all phone numbers in the Signal whitelist",
+			Flags: append(defaultFlags, []cli.Flag{
+				&cli.StringFlag{
+					Name:     "alias",
+					Usage:    "Alias for the Signal integration",
+					Required: true,
+				},
+			}...),
+			Action: func(_ context.Context, c *cli.Command) error {
+				fmt.Println("Retrieving Signal whitelist...")
+				ocClient := client.NewClient(c.String("host"))
+				ocClient.SetSessionId(c.String("session-id"))
+
+				err, whitelist := ocClient.GetSignalWhitelist(c.String("alias"))
+				if err != nil {
+					return fmt.Errorf("failed to get Signal whitelist: %w", err)
+				}
+
+				fmt.Printf("Whitelist for Signal integration '%s':\n", c.String("alias"))
+				if len(whitelist) == 0 {
+					fmt.Println("  (empty)")
+				} else {
+					for _, number := range whitelist {
+						fmt.Printf("  - %s\n", number)
+					}
+				}
 				return nil
 			},
 		}
