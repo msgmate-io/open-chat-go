@@ -33,15 +33,12 @@ func GetTableDataPaginated(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Table name is required", http.StatusBadRequest)
 		return
 	}
-
 	// Find the corresponding model in the Tabels slice
-	//var model interface{}
 	found := false
 	for _, t := range database.Tabels {
 		stmt := &gorm.Statement{DB: DB}
 		stmt.Parse(t)
 		if stmt.Schema.Table == tableName {
-			//model = t
 			found = true
 			break
 		}
@@ -80,12 +77,19 @@ func GetTableDataPaginated(w http.ResponseWriter, r *http.Request) {
 	var results []map[string]interface{}
 
 	// Query the database with pagination
-	rows, err := DB.Table(tableName).
+	query := DB.Table(tableName).
 		Offset(pagination.GetOffset()).
 		Limit(pagination.GetLimit()).
-		Order(pagination.GetSort()).
-		Rows()
+		Order(pagination.GetSort())
 
+	// Check for preloads in the table configuration
+	if config, exists := tableConfigurations[tableName]; exists {
+		for _, preload := range config.Preloads {
+			query = query.Preload(preload)
+		}
+	}
+
+	rows, err := query.Rows()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error querying table: %v", err), http.StatusInternalServerError)
 		return

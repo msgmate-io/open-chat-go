@@ -164,6 +164,8 @@ func CreateFederationHost(
 	hostPort int,
 	useSsl bool,
 	domain string,
+	fallbackEnabled bool,
+	fallbackPort int,
 ) (*host.Host, *federation.FederationHandler, error) {
 	var r io.Reader
 	r = rand.Reader
@@ -199,9 +201,12 @@ func CreateFederationHost(
 	if useSsl {
 		scheme = "https"
 	}
-	/** else {
-		//domain = "http://" + host
-	} */
+	// If fallback is enabled and SSL is used, force join protocol handler to local HTTP fallback
+	if useSsl && fallbackEnabled && fallbackPort > 0 {
+		scheme = "http"
+		domain = "localhost"
+		hostPort = fallbackPort
+	}
 
 	StartRequestReceivingPeer(context.Background(), h, federationHandler.CreateIncomingRequestStreamHandler(scheme, host, domain, hostPort, []string{
 		"/api/v1/federation/networks/",
@@ -228,12 +233,29 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 
 	log.Println("Starting 'egress' proxies for", len(egressProxies), "nodes")
 	for _, proxy := range egressProxies {
+		// Skip domain proxies - they are handled by domain routing middleware
+		if proxy.Kind == "domain" {
+			log.Printf("Skipping domain proxy for %s (handled by domain routing middleware)", proxy.TrafficOrigin)
+			continue
+		}
+
+		// Parse TrafficOrigin and TrafficTarget for non-domain proxies
 		originData := strings.Split(proxy.TrafficOrigin, ":")
+		if len(originData) < 2 {
+			log.Printf("Invalid TrafficOrigin format for proxy %d: %s", proxy.ID, proxy.TrafficOrigin)
+			continue
+		}
 		originPort := originData[1]
 		originPeerId := originData[0]
+
 		targetData := strings.Split(proxy.TrafficTarget, ":")
+		if len(targetData) < 2 {
+			log.Printf("Invalid TrafficTarget format for proxy %d: %s", proxy.ID, proxy.TrafficTarget)
+			continue
+		}
 		targetPort := targetData[1]
 		targetPeerId := targetData[0]
+
 		if proxy.Kind == "tcp" {
 			node := database.Node{}
 			DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&node)
@@ -270,11 +292,26 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 
 	log.Println("Starting 'ingress' proxies for", len(ingressProxies), "nodes")
 	for _, proxy := range ingressProxies {
+		// Skip domain proxies - they are handled by domain routing middleware
+		if proxy.Kind == "domain" {
+			log.Printf("Skipping domain proxy for %s (handled by domain routing middleware)", proxy.TrafficOrigin)
+			continue
+		}
 
+		// Parse TrafficOrigin and TrafficTarget for non-domain proxies
 		originData := strings.Split(proxy.TrafficOrigin, ":")
+		if len(originData) < 2 {
+			log.Printf("Invalid TrafficOrigin format for proxy %d: %s", proxy.ID, proxy.TrafficOrigin)
+			continue
+		}
 		originPort := originData[1]
 		originPeerId := originData[0]
+
 		targetData := strings.Split(proxy.TrafficTarget, ":")
+		if len(targetData) < 2 {
+			log.Printf("Invalid TrafficTarget format for proxy %d: %s", proxy.ID, proxy.TrafficTarget)
+			continue
+		}
 		targetPort := targetData[1]
 		targetPeerId := targetData[0]
 
@@ -321,12 +358,16 @@ func PreloadPeerstore(DB *gorm.DB, h *federation.FederationHandler) error {
 	return nil
 }
 
-func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host string, hostPort int, useSsl bool, domain string) {
+func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host string, hostPort int, useSsl bool, domain string, fallbackEnabled bool, fallbackPort int) {
 	scheme := "http"
 	if useSsl {
 		scheme = "https"
-	} else {
-		// domain = "http://" + host
+	}
+	// If fallback is enabled and SSL is used, force all incoming federation requests to local HTTP fallback
+	if useSsl && fallbackEnabled && fallbackPort > 0 {
+		scheme = "http"
+		domain = "localhost"
+		hostPort = fallbackPort
 	}
 	log.Println("Initializing networks")
 	networks := []database.Network{}
@@ -336,19 +377,20 @@ func InitializeNetworks(DB *gorm.DB, h *federation.FederationHandler, host strin
 		h.Networks[network.NetworkName] = network
 		h.NetworkPeerIds[network.NetworkName] = map[string]bool{}
 		networkMembers := []database.NetworkMember{}
-		DB.Where("network_id = ?", network.ID).Preload("Node").Find(&networkMembers)
+		DB.Where("network_id = ?", network.ID).Preload("Node").Preload("Node.Addresses").Find(&networkMembers)
 		for _, networkMember := range networkMembers {
 			log.Println("Adding peer", networkMember.Node.PeerID, "to network: '", network.NetworkName, "'")
 			h.AddNetworkPeerId(network.NetworkName, networkMember.Node.PeerID)
 		}
 		h.StartNetworkSyncProcess(DB, network.NetworkName)
-
-		// start the network request protocol that allows querying any local api to network members only!
-		StartRequestReceivingPeer(
-			context.Background(), h.Host, h.CreateIncomingRequestStreamHandler(scheme, host, domain, hostPort, []string{}, network.NetworkName),
-			federation.T1mNetworkRequestProtocolID,
-		)
 	}
+
+	// Create a single handler for all network requests that can dynamically determine the network
+	// This replaces the per-network handlers that were overwriting each other
+	StartRequestReceivingPeer(
+		context.Background(), h.Host, h.CreateIncomingRequestStreamHandler(scheme, host, domain, hostPort, []string{}, ""),
+		federation.T1mNetworkRequestProtocolID,
+	)
 
 	fmt.Println("Network peer ids:", h.NetworkPeerIds)
 }

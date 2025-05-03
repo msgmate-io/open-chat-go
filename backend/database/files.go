@@ -1,6 +1,9 @@
 package database
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type UploadedFile struct {
 	Model
@@ -9,9 +12,10 @@ type UploadedFile struct {
 	Size       int64
 	MIMEType   string
 	StorageURL string
-	OwnerID    uint   // Original uploader
-	Owner      User   `gorm:"foreignKey:OwnerID"`
-	SharedWith []User `gorm:"many2many:file_access;"` // Users with access
+	OwnerID    uint            // Original uploader
+	Owner      User            `gorm:"foreignKey:OwnerID"`
+	SharedWith []User          `gorm:"many2many:file_access;"` // Users with access
+	MetaData   json.RawMessage `gorm:"type:json"`              // Additional metadata (e.g., OpenAI file ID)
 }
 
 // Join table for additional metadata (optional)
