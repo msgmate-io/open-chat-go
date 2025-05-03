@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -206,4 +207,12 @@ func Decrypt(ciphertext []byte, key []byte) ([]byte, error) {
 	stream.XORKeyStream(ciphertext, ciphertext)
 
 	return ciphertext, nil
+}
+
+// ParseJSON parses JSON data into a target interface
+func ParseJSON(data []byte, target interface{}) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, target)
 }

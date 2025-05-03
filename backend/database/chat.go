@@ -39,6 +39,7 @@ type Chat struct {
 	LatestMessage   *Message          `json:"latest_message" gorm:"foreignKey:LatestMessageId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	SharedConfigId  *uint             `json:"-" gorm:"index"`
 	SharedConfig    *SharedChatConfig `json:"config" gorm:"foreignKey:SharedConfigId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
+	ChatType        string            `json:"chat_type" gorm:"default:'conversation'"`
 }
 
 type ChatSettings struct {

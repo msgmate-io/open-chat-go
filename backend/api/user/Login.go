@@ -67,7 +67,14 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cookie := api.CreateSessionToken(w, h.CookieDomain, token, expiry)
-	w.Header().Add("Set-Cookie", cookie.String())
+
+	// Check if x-cookie-header query parameter is set to true
+	if r.URL.Query().Get("x-cookie-header") == "true" {
+		w.Header().Add("X-Set-Cookie", cookie.String())
+	} else {
+		w.Header().Add("Set-Cookie", cookie.String())
+	}
+
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 
 	http.SetCookie(w, &http.Cookie{
@@ -114,7 +121,14 @@ func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cookie := api.CreateSessionToken(w, h.CookieDomain, token, expiry)
-	w.Header().Add("Set-Cookie", cookie.String())
+
+	// Check if x-cookie-header query parameter is set to true
+	if r.URL.Query().Get("x-cookie-header") == "true" {
+		w.Header().Add("X-Set-Cookie", cookie.String())
+	} else {
+		w.Header().Add("Set-Cookie", cookie.String())
+	}
+
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 
 	w.WriteHeader(http.StatusOK)
