@@ -6,12 +6,14 @@ import (
 	"backend/api/chats"
 	"backend/api/contacts"
 	"backend/api/files"
+	apiintegrations "backend/api/integrations"
 	"backend/api/metrics"
 	"backend/api/models"
 	"backend/api/reference"
 	"backend/api/tools"
 	"backend/api/user"
 	"backend/api/websocket"
+	"backend/integrations"
 	"bytes"
 	"context"
 	"embed"
@@ -23,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -347,8 +350,8 @@ func BackendRouting(
 	metricsHandler := &metrics.MetricsHandler{}
 	websocketHandler := websocket.NewWebSocketHandler()
 	filesHandler := &files.FilesHandler{}
+	integrationsHandler := &apiintegrations.IntegrationsHandler{}
 	toolsHandler := &tools.ToolsHandler{}
-	mcpHandler := &tools.MCPHandler{}
 	modelsHandler := &models.ModelsHandler{}
 	botsHandler := &bots.BotsHandler{}
 
@@ -376,9 +379,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /interactions/{chat_uuid}/tools", toolsHandler.GetAvailableTools)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/init", toolsHandler.StoreToolInitData)
 
-	// MCP (Model Context Protocol) endpoints (bot users only)
-	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/mcp", mcpHandler.HandleMCP)
-
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
 	v1PrivateApis.HandleFunc("GET /contacts/{contact_token}", contactsHandler.GetContactByToken)
@@ -399,6 +399,8 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/tables", admin.GetAllTables)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 	v1PrivateApis.HandleFunc("GET /admin/schema/sql", admin.GetSchemaSQL)
+	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
+	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
 	v1PrivateApis.HandleFunc("GET /admin/tests/go", admin.GetGoTestsOverview)
 	v1PrivateApis.HandleFunc("GET /admin/server/config", admin.GetServerRuntimeConfig)
@@ -406,11 +408,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /tools/rest", toolsHandler.CreateDynamicRESTTool)
 	v1PrivateApis.HandleFunc("PUT /tools/rest/{tool_name}", toolsHandler.UpdateDynamicRESTTool)
 	v1PrivateApis.HandleFunc("DELETE /tools/rest/{tool_name}", toolsHandler.DeleteDynamicRESTTool)
-	v1PrivateApis.HandleFunc("GET /tools/mcp/integrations", toolsHandler.ListMCPIntegrations)
-	v1PrivateApis.HandleFunc("POST /tools/mcp/integrations", toolsHandler.CreateMCPIntegration)
-	v1PrivateApis.HandleFunc("PUT /tools/mcp/integrations/{integration_name}", toolsHandler.UpdateMCPIntegration)
-	v1PrivateApis.HandleFunc("DELETE /tools/mcp/integrations/{integration_name}", toolsHandler.DeleteMCPIntegration)
-	v1PrivateApis.HandleFunc("POST /tools/mcp/integrations/{integration_name}/discover", toolsHandler.DiscoverMCPIntegration)
+	integrations.RegisterRoutes(v1PrivateApis, mux)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/stats", admin.GetDocsSnapshotStatsByTag)
 	v1PrivateApis.HandleFunc("POST /admin/docs/snapshots/{snapshot}/refresh", admin.RefreshDocsSnapshotByTag)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/data", admin.GetDocsSnapshotDataByTag)
@@ -450,6 +448,7 @@ func BackendRouting(
 	mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
+	mux.Handle("GET /api/integrations/{integration_name}/overview", commonMiddlewares(Logging(http.HandlerFunc(integrationsHandler.Overview))))
 	mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
 	mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
 	mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
@@ -458,18 +457,41 @@ func BackendRouting(
 
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 
-	// Create swagger reference handler with embedded content
-	swaggerContent, err := frontendFS.ReadFile("swagger.json")
-	if err != nil {
-		log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
-		// Fallback to file-based handler
+	if debug {
+		mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+			content, readErr := os.ReadFile(filepath.Join("docs", "swagger.json"))
+			if readErr != nil {
+				http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(content)
+		})
 		mux.HandleFunc("/reference", reference.ScalarReference)
 		mux.HandleFunc("/api/reference", reference.ScalarReference)
 	} else {
-		// Use embedded content
-		swaggerHandler := reference.ScalarReferenceWithContent(string(swaggerContent))
-		mux.HandleFunc("/reference", swaggerHandler)
-		mux.HandleFunc("/api/reference", swaggerHandler)
+		// Create swagger reference handler with embedded content
+		swaggerContent, err := frontendFS.ReadFile("swagger.json")
+		if err != nil {
+			log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
+			mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
+			})
+			// Fallback to file-based handler
+			mux.HandleFunc("/reference", reference.ScalarReference)
+			mux.HandleFunc("/api/reference", reference.ScalarReference)
+		} else {
+			mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(swaggerContent)
+			})
+			// Use embedded content
+			swaggerHandler := reference.ScalarReferenceWithContent(string(swaggerContent))
+			mux.HandleFunc("/reference", swaggerHandler)
+			mux.HandleFunc("/api/reference", swaggerHandler)
+		}
 	}
 
 	mux.HandleFunc("/api/version", reference.VersionHandler)
