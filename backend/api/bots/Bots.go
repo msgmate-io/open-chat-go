@@ -723,6 +723,10 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		if err := msgmate.CreateOrUpdateBotProfile(tx, botUser); err != nil {
+			return err
+		}
+
 		return tx.Preload("BotUser").First(&runtime, runtime.ID).Error
 	})
 	if err != nil {
@@ -735,8 +739,13 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var responsePassword *string
+	if user.IsAdmin {
+		responsePassword = generatedPassword
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: generatedPassword})
+	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: responsePassword})
 }
 
 // List bots
