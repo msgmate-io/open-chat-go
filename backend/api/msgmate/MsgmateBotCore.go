@@ -5,8 +5,11 @@ import (
 	"backend/client"
 	"backend/database"
 	"context"
+	"errors"
 	"sync"
 )
+
+var ErrResponseAlreadySent = errors.New("ai response already sent")
 
 // BotConfig represents the configuration for a Msgmate bot
 type BotConfig struct {
