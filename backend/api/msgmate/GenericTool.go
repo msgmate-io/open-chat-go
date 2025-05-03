@@ -37,6 +37,9 @@ func (t *GenericTool) ParseArguments(input string) (interface{}, error) {
 		// For pointer types, create a new instance of the pointed-to type
 		newValue := reflect.New(inputType.Elem())
 		inputTypeValue = newValue.Interface()
+	} else if inputType.Kind() == reflect.Map {
+		newValue := reflect.MakeMap(inputType)
+		inputTypeValue = newValue.Interface()
 	} else {
 		return nil, fmt.Errorf("unsupported input type: %v", inputType.Kind())
 	}
@@ -50,6 +53,9 @@ func (t *GenericTool) ParseArguments(input string) (interface{}, error) {
 	// If it's a struct type, we need to dereference the pointer
 	if inputType.Kind() == reflect.Struct {
 		return reflect.ValueOf(inputTypeValue).Elem().Interface(), nil
+	}
+	if inputType.Kind() == reflect.Map {
+		return inputTypeValue, nil
 	}
 
 	// For pointer types, return the dereferenced value

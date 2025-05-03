@@ -472,7 +472,6 @@ func ServerCli() *cli.Command {
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err
 			}
-
 			if err := server.SetupBaseConnections(DB, adminUser.ID, botUser.ID); err != nil {
 				return err
 			}
