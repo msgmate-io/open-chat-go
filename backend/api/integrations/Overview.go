@@ -31,12 +31,21 @@ type IntegrationAPIRouteOverview struct {
 	Parameters   []IntegrationAPIParameterOverview `json:"parameters,omitempty"`
 }
 
+type IntegrationFrontendRouteOverview struct {
+	Route       string `json:"route"`
+	Kind        string `json:"kind"`
+	Public      bool   `json:"public"`
+	Description string `json:"description,omitempty"`
+	AssetPath   string `json:"asset_path,omitempty"`
+}
+
 type IntegrationOverviewResponse struct {
-	Name              string                        `json:"name"`
-	APIRoutes         []string                      `json:"api_routes"`
-	APIRoutesOverview []IntegrationAPIRouteOverview `json:"api_routes_overview"`
-	Models            []IntegrationModelOverview    `json:"models"`
-	Functions         []string                      `json:"functions"`
+	Name              string                             `json:"name"`
+	APIRoutes         []string                           `json:"api_routes"`
+	APIRoutesOverview []IntegrationAPIRouteOverview      `json:"api_routes_overview"`
+	FrontendRoutes    []IntegrationFrontendRouteOverview `json:"frontend_routes"`
+	Models            []IntegrationModelOverview         `json:"models"`
+	Functions         []string                           `json:"functions"`
 }
 
 func pathParamsFromRoute(route string) []IntegrationAPIParameterOverview {
@@ -102,6 +111,28 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		return routeOverview[i].Route < routeOverview[j].Route
 	})
 
+	frontendRoutes := make([]IntegrationFrontendRouteOverview, 0, len(def.FrontendRoutes)+len(def.FrontendPages))
+	for _, route := range def.FrontendRoutes {
+		frontendRoutes = append(frontendRoutes, IntegrationFrontendRouteOverview{
+			Route:       route.Route,
+			Kind:        "handler",
+			Public:      route.Public,
+			Description: route.Description,
+		})
+	}
+	for _, page := range def.FrontendPages {
+		frontendRoutes = append(frontendRoutes, IntegrationFrontendRouteOverview{
+			Route:       page.Route,
+			Kind:        "page",
+			Public:      page.Public,
+			Description: page.Description,
+			AssetPath:   page.AssetPath,
+		})
+	}
+	sort.Slice(frontendRoutes, func(i, j int) bool {
+		return frontendRoutes[i].Route < frontendRoutes[j].Route
+	})
+
 	models := []IntegrationModelOverview{}
 	for _, provider := range def.ModelProviders {
 		if provider == nil {
@@ -141,6 +172,7 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		Name:              def.Name,
 		APIRoutes:         routes,
 		APIRoutesOverview: routeOverview,
+		FrontendRoutes:    frontendRoutes,
 		Models:            models,
 		Functions:         functions,
 	})
