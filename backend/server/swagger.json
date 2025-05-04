@@ -1821,9 +1821,9 @@
                 }
             }
         },
-        "/api/v1/models/list": {
+        "/api/v1/models": {
             "get": {
-                "description": "List model configurations with pagination and filters. Guests receive restricted fields, admins receive extended metadata.",
+                "description": "List public models and caller-owned models. Admin users see all rows.",
                 "produces": [
                     "application/json"
                 ],
@@ -1886,9 +1886,172 @@
                         }
                     }
                 }
+            },
+            "post": {
+                "description": "Create a user-owned model configuration row.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "models"
+                ],
+                "summary": "Create model",
+                "parameters": [
+                    {
+                        "description": "Model create payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.ModelUpsertRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.ModelListItem"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
             }
         },
-        "/api/v1/tools/list": {
+        "/api/v1/models/{model_uuid}": {
+            "get": {
+                "description": "Retrieve one model row by UUID if visible to the caller.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "models"
+                ],
+                "summary": "Get model",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model UUID",
+                        "name": "model_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.ModelListItem"
+                        }
+                    },
+                    "404": {
+                        "description": "Model not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a model row by UUID. Owner or admin only.",
+                "tags": [
+                    "models"
+                ],
+                "summary": "Delete model",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model UUID",
+                        "name": "model_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Model not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Update a model row by UUID. Owner or admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "models"
+                ],
+                "summary": "Patch model",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model UUID",
+                        "name": "model_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Model patch payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/models.ModelPatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.ModelListItem"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Model not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tools": {
             "get": {
                 "description": "List callable tools with pagination and filters. Admin-only tools are only visible to admin users.",
                 "produces": [
@@ -2066,6 +2229,41 @@
                         "description": "Invalid payload",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Tool not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tools/{tool_name}": {
+            "get": {
+                "description": "Get one visible tool by name with metadata and schemas.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tools"
+                ],
+                "summary": "Get tool",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tool name",
+                        "name": "tool_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolListItem"
                         }
                     },
                     "404": {
@@ -3213,13 +3411,71 @@
                 "hoster": {
                     "type": "string"
                 },
-                "id": {
-                    "type": "integer"
+                "is_default": {
+                    "type": "boolean"
+                },
+                "is_owned": {
+                    "type": "boolean"
+                },
+                "is_public": {
+                    "type": "boolean"
                 },
                 "model_id": {
                     "type": "string"
                 },
+                "owner_user_id": {
+                    "type": "integer"
+                },
                 "source": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ModelPatchRequest": {
+            "type": "object",
+            "properties": {
+                "configuration": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "model_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ModelUpsertRequest": {
+            "type": "object",
+            "properties": {
+                "configuration": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "model_id": {
                     "type": "string"
                 },
                 "title": {

@@ -18,11 +18,14 @@ var defaultModelConfigsJSON []byte
 // ModelConfig stores a default LLM model definition that can be assigned to bot profiles.
 type ModelConfig struct {
 	Model
+	OwnerUserId   *uint           `json:"owner_user_id" gorm:"index"`
+	OwnerUser     *User           `json:"-" gorm:"foreignKey:OwnerUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	Title         string          `json:"title"`
 	Description   string          `json:"description"`
-	ModelID       string          `json:"model_id" gorm:"uniqueIndex;not null"`
+	ModelID       string          `json:"model_id" gorm:"index;not null"`
 	Configuration json.RawMessage `json:"configuration" gorm:"type:jsonb"`
 	BotUsernames  StringSliceJSON `json:"bot_usernames" gorm:"type:jsonb"`
+	IsPublic      bool            `json:"is_public" gorm:"default:false;index"`
 	IsDefault     bool            `json:"is_default" gorm:"default:false"`
 }
 
@@ -88,6 +91,7 @@ type modelConfigFileEntry struct {
 	Title         string          `json:"title"`
 	Description   string          `json:"description"`
 	BotUsernames  []string        `json:"bot_usernames"`
+	IsPublic      *bool           `json:"is_public"`
 	Configuration json.RawMessage `json:"configuration"`
 }
 
@@ -97,9 +101,9 @@ type modelConfigID struct {
 
 // AssignBotToModelConfig adds a bot username to a model config assignment.
 // Returns true when the assignment was newly added.
-func AssignBotToModelConfig(db *gorm.DB, modelID, botUsername string) (bool, error) {
+func AssignBotToModelConfig(db *gorm.DB, modelUUID, botUsername string) (bool, error) {
 	var cfg ModelConfig
-	if err := db.Where("model_id = ?", modelID).First(&cfg).Error; err != nil {
+	if err := db.Where("uuid = ?", modelUUID).First(&cfg).Error; err != nil {
 		return false, err
 	}
 	if cfg.AssignedToBot(botUsername) {
@@ -114,9 +118,9 @@ func AssignBotToModelConfig(db *gorm.DB, modelID, botUsername string) (bool, err
 
 // UnassignBotFromModelConfig removes a bot username from a model config assignment.
 // Returns true when the assignment was removed.
-func UnassignBotFromModelConfig(db *gorm.DB, modelID, botUsername string) (bool, error) {
+func UnassignBotFromModelConfig(db *gorm.DB, modelUUID, botUsername string) (bool, error) {
 	var cfg ModelConfig
-	if err := db.Where("model_id = ?", modelID).First(&cfg).Error; err != nil {
+	if err := db.Where("uuid = ?", modelUUID).First(&cfg).Error; err != nil {
 		return false, err
 	}
 	if !cfg.AssignedToBot(botUsername) {
@@ -165,11 +169,18 @@ func SeedModelConfigs(db *gorm.DB) error {
 		}
 
 		var existing ModelConfig
-		result := db.Where("model_id = ?", cfg.Model).First(&existing)
+		result := db.Where("owner_user_id IS NULL AND model_id = ?", cfg.Model).First(&existing)
 		if result.Error == nil {
+			updates := map[string]interface{}{}
 			if !existing.IsDefault {
-				if err := db.Model(&existing).Update("is_default", true).Error; err != nil {
-					return fmt.Errorf("failed to mark model config %q as default: %w", cfg.Model, err)
+				updates["is_default"] = true
+			}
+			if !existing.IsPublic {
+				updates["is_public"] = true
+			}
+			if len(updates) > 0 {
+				if err := db.Model(&existing).Updates(updates).Error; err != nil {
+					return fmt.Errorf("failed to update seeded model config %q: %w", cfg.Model, err)
 				}
 			}
 			continue
@@ -178,12 +189,18 @@ func SeedModelConfigs(db *gorm.DB) error {
 			return result.Error
 		}
 
+		isPublic := true
+		if entry.IsPublic != nil {
+			isPublic = *entry.IsPublic
+		}
+
 		record := ModelConfig{
 			Title:         entry.Title,
 			Description:   entry.Description,
 			ModelID:       cfg.Model,
 			Configuration: entry.Configuration,
 			BotUsernames:  entry.BotUsernames,
+			IsPublic:      isPublic,
 			IsDefault:     true,
 		}
 		if err := db.Create(&record).Error; err != nil {
