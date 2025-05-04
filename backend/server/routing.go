@@ -496,14 +496,19 @@ func BackendRouting(
 
 	mux.HandleFunc("/api/version", reference.VersionHandler)
 
-	integrationFrontendWrapper := func(handler http.Handler, isPublic bool) http.Handler {
-		if isPublic {
-			return commonMiddlewares(handler)
+	registerIntegrationFrontendRoutes := !(debug && strings.TrimSpace(frontendProxy) != "")
+	if registerIntegrationFrontendRoutes {
+		integrationFrontendWrapper := func(handler http.Handler, isPublic bool) http.Handler {
+			if isPublic {
+				return commonMiddlewares(handler)
+			}
+			return commonMiddlewares(FrontendAuthMiddleware(handler))
 		}
-		return commonMiddlewares(FrontendAuthMiddleware(handler))
-	}
-	if err := integrations.RegisterFrontendRoutes(mux, integrationFrontendWrapper); err != nil {
-		log.Fatalf("failed to register integration frontend routes: %v", err)
+		if err := integrations.RegisterFrontendRoutes(mux, integrationFrontendWrapper); err != nil {
+			log.Fatalf("failed to register integration frontend routes: %v", err)
+		}
+	} else {
+		log.Printf("Skipping integration frontend route registration in dev proxy mode")
 	}
 
 	if frontendProxy == "" {

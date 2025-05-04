@@ -82,6 +82,25 @@ func parseMCPAuthHeaders(raw map[string]interface{}) map[string]string {
 	if raw == nil {
 		return headers
 	}
+	if accessTokenRaw, ok := raw["access_token"]; ok {
+		if accessToken, ok := accessTokenRaw.(string); ok {
+			trimmed := strings.TrimSpace(accessToken)
+			if trimmed != "" {
+				tokenType := "Bearer"
+				if tokenTypeRaw, ok := raw["token_type"].(string); ok {
+					tokenTypeCandidate := strings.TrimSpace(tokenTypeRaw)
+					if tokenTypeCandidate != "" {
+						if strings.EqualFold(tokenTypeCandidate, "bearer") {
+							tokenType = "Bearer"
+						} else {
+							tokenType = tokenTypeCandidate
+						}
+					}
+				}
+				headers["Authorization"] = tokenType + " " + trimmed
+			}
+		}
+	}
 	if bearerRaw, ok := raw["bearer_token"]; ok {
 		if bearer, ok := bearerRaw.(string); ok {
 			trimmed := strings.TrimSpace(bearer)
@@ -117,7 +136,7 @@ func mcpCall(config mcpIntegrationConfig, auth map[string]interface{}, method st
 		return mcpRPCResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, application/x-ndjson")
+	req.Header.Set("Accept", "application/json, text/event-stream, application/x-ndjson")
 	for key, value := range parseMCPAuthHeaders(auth) {
 		req.Header.Set(key, value)
 	}
@@ -160,7 +179,10 @@ func parseMCPResponseBody(body []byte) (mcpRPCResponse, error) {
 	lines := strings.Split(trimmed, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "{") {
+		if strings.HasPrefix(line, "data:") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+		if line == "" || line == "[DONE]" || !strings.HasPrefix(line, "{") {
 			continue
 		}
 		var parsed mcpRPCResponse
