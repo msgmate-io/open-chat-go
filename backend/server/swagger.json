@@ -2839,10 +2839,33 @@
                 }
             }
         },
+        "integrations.IntegrationFrontendRouteOverview": {
+            "type": "object",
+            "properties": {
+                "asset_path": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "public": {
+                    "type": "boolean"
+                },
+                "route": {
+                    "type": "string"
+                }
+            }
+        },
         "integrations.IntegrationListRow": {
             "type": "object",
             "properties": {
                 "api_route_count": {
+                    "type": "integer"
+                },
+                "frontend_route_count": {
                     "type": "integer"
                 },
                 "function_count": {
@@ -2883,6 +2906,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/integrations.IntegrationAPIRouteOverview"
+                    }
+                },
+                "frontend_routes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationFrontendRouteOverview"
                     }
                 },
                 "functions": {
