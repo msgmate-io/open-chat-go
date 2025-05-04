@@ -1228,6 +1228,31 @@
                 }
             }
         },
+        "/api/v1/integrations/mcp/auth/callback": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Completes OAuth via provider redirect query params and redirects to integration UI.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Complete MCP OAuth callback",
+                "responses": {
+                    "302": {
+                        "description": "redirect",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/integrations/mcp/servers": {
             "get": {
                 "security": [
@@ -1351,6 +1376,158 @@
                     "integrations"
                 ],
                 "summary": "Delete MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "server_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers/{server_name}/auth/clear": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Clears stored auth_data and pending auth session for a server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Clear MCP server auth data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "server_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers/{server_name}/auth/complete": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Completes authentication flow and stores auth_data server-side.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Complete MCP server auth flow",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "server_name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Auth completion payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/integrations.MCPAuthCompleteRequestDoc"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers/{server_name}/auth/start": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Starts authentication flow for a registered MCP server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Start MCP server auth flow",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "server_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers/{server_name}/auth/status": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Returns current authentication status for a registered MCP server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Get MCP server auth status",
                 "parameters": [
                     {
                         "type": "string",
@@ -2942,6 +3119,20 @@
                 }
             }
         },
+        "integrations.MCPAuthCompleteRequestDoc": {
+            "type": "object",
+            "properties": {
+                "bearer_token": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
         "integrations.MCPServerListResponseDoc": {
             "type": "object",
             "properties": {
@@ -2956,6 +3147,15 @@
         "integrations.MCPServerRowDoc": {
             "type": "object",
             "properties": {
+                "auth_connected": {
+                    "type": "boolean"
+                },
+                "auth_mode": {
+                    "type": "string"
+                },
+                "auth_pending": {
+                    "type": "boolean"
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": true
@@ -2980,10 +3180,6 @@
         "integrations.MCPServerUpsertRequestDoc": {
             "type": "object",
             "properties": {
-                "auth_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
                 "config": {
                     "type": "object",
                     "additionalProperties": true

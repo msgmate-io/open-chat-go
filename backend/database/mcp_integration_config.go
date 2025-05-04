@@ -12,5 +12,6 @@ type MCPIntegrationConfig struct {
 	Name        string          `json:"name" gorm:"size:160;uniqueIndex:idx_mcp_integration_owner_name"`
 	Config      json.RawMessage `json:"config" gorm:"type:jsonb"`
 	AuthData    json.RawMessage `json:"auth_data" gorm:"type:jsonb"`
+	AuthSession json.RawMessage `json:"auth_session" gorm:"type:jsonb"`
 	Enabled     bool            `json:"enabled" gorm:"default:true;index"`
 }
