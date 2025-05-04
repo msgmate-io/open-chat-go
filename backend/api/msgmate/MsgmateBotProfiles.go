@@ -10,16 +10,19 @@ import (
 
 // BotProfileConfig represents the configuration for a bot model
 type BotProfileConfig struct {
-	Temperature  float64  `json:"temperature"`
-	MaxTokens    int      `json:"max_tokens"`
-	Tools        []string `json:"tools,omitempty"`
-	Model        string   `json:"model"`
-	Endpoint     string   `json:"endpoint"`
-	Backend      string   `json:"backend"`
-	Context      int      `json:"context"`
-	SystemPrompt string   `json:"system_prompt"`
-	Reasoning    *bool    `json:"reasoning,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
+	Temperature  float64                `json:"temperature"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Tools        []string               `json:"tools,omitempty"`
+	Integrations []string               `json:"integrations,omitempty"`
+	Model        string                 `json:"model"`
+	Endpoint     string                 `json:"endpoint"`
+	Backend      string                 `json:"backend"`
+	Context      int                    `json:"context"`
+	SystemPrompt string                 `json:"system_prompt"`
+	Reasoning    *bool                  `json:"reasoning,omitempty"`
+	Tags         []string               `json:"tags,omitempty"`
+	MCPTools     map[string]interface{} `json:"mcp_tools,omitempty"`
+	DynamicTools map[string]interface{} `json:"dynamic_tools,omitempty"`
 }
 
 // BotModel represents a bot model configuration
