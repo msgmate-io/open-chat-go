@@ -272,3 +272,86 @@ func TestCreateChatAppliesModelConfigBackendBindingForAutomatedBot(t *testing.T)
 		t.Fatalf("expected endpoint from model config binding, got %v", config["endpoint"])
 	}
 }
+
+func TestCreateChatKeepsTestbackendWithoutModelBindingOverride(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner-testbackend@example.com", false)
+	botUser := createUserForChatsTest(t, DB, "bot-testbackend@example.com", false)
+
+	botUser.IsAutomated = true
+	if err := DB.Save(botUser).Error; err != nil {
+		t.Fatalf("failed to mark bot user automated: %v", err)
+	}
+
+	modelCfg := map[string]interface{}{
+		"model":    "qwen3-8b-instruct_vllm",
+		"backend":  "litellm",
+		"endpoint": "https://litellm.t1m.me/v1",
+	}
+	modelCfgJSON, _ := json.Marshal(modelCfg)
+	if err := DB.Create(&database.ModelConfig{
+		Title:         "Qwen",
+		Description:   "test",
+		ModelID:       "qwen3-8b-instruct_vllm",
+		Configuration: modelCfgJSON,
+		IsPublic:      true,
+		IsDefault:     false,
+	}).Error; err != nil {
+		t.Fatalf("failed creating model config: %v", err)
+	}
+
+	defaultConfig := map[string]interface{}{
+		"model":    "qwen3-8b-instruct_vllm",
+		"backend":  "testbackend",
+		"endpoint": "http://testbackend.local/v1",
+	}
+	defaultConfigJSON, _ := json.Marshal(defaultConfig)
+
+	runtime := database.BotRuntimeConfig{
+		BotUserId:           botUser.ID,
+		OwnerUserId:         owner.ID,
+		Name:                "bot-runtime-testbackend",
+		Description:         "runtime",
+		DefaultSharedConfig: defaultConfigJSON,
+		IsPublic:            false,
+		IsActive:            true,
+	}
+	if err := DB.Create(&runtime).Error; err != nil {
+		t.Fatalf("failed to create bot runtime config: %v", err)
+	}
+
+	bodyPayload := map[string]interface{}{
+		"contact_token": botUser.ContactToken,
+		"chat_type":     "conversation",
+	}
+	body, _ := json.Marshal(bodyPayload)
+	req := httptest.NewRequest("POST", "/api/v1/chats/create", bytes.NewReader(body))
+	ctx := context.WithValue(req.Context(), "db", DB)
+	ctx = context.WithValue(ctx, "user", owner)
+	ctx = context.WithValue(ctx, "websocket", websocket.NewWebSocketHandler())
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h := &ChatsHandler{}
+	h.Create(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode create chat response: %v", err)
+	}
+
+	config, ok := response["config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected config object in response")
+	}
+	if backend, _ := config["backend"].(string); backend != "testbackend" {
+		t.Fatalf("expected testbackend to be preserved, got %v", config["backend"])
+	}
+	if endpoint, _ := config["endpoint"].(string); endpoint != "http://testbackend.local/v1" {
+		t.Fatalf("expected testbackend endpoint to be preserved, got %v", config["endpoint"])
+	}
+}
