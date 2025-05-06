@@ -13,3 +13,9 @@
 [submodule "clients/go_tool_interface"]
 	path = clients/go_tool_interface
 	url = https://github.com/msgmate-io/open-chat-go-tool-interface
+[submodule "clients/go_integration_interface"]
+	path = clients/go_integration_interface
+	url = https://github.com/msgmate-io/open-chat-go-integration-interface.git
+[submodule "clients/integrations/mcp_integration"]
+	path = clients/integrations/mcp_integration
+	url = https://github.com/msgmate-io/open-chat-go-mcp-integration
