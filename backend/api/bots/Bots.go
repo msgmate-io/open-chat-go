@@ -3,6 +3,7 @@ package bots
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/integrations"
 	"backend/server/util"
 	"backend/workqueue"
 	"crypto/rand"
@@ -418,6 +419,12 @@ func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, c
 	if user == nil {
 		return fmt.Errorf("user is required")
 	}
+	if !integrations.Has("mcp") {
+		if names, _ := collectIntegrationNames(config["integrations"]); len(names) > 0 {
+			return fmt.Errorf("integration %q is not available in this build", "mcp")
+		}
+		return nil
+	}
 	integrationNames, err := collectIntegrationNames(config["integrations"])
 	if err != nil {
 		return err
@@ -723,6 +730,10 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
+		if err := msgmate.CreateOrUpdateBotProfile(tx, botUser); err != nil {
+			return err
+		}
+
 		return tx.Preload("BotUser").First(&runtime, runtime.ID).Error
 	})
 	if err != nil {
@@ -735,8 +746,13 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var responsePassword *string
+	if user.IsAdmin {
+		responsePassword = generatedPassword
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: generatedPassword})
+	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: responsePassword})
 }
 
 // List bots
