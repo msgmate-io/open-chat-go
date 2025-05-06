@@ -75,7 +75,7 @@ type ToolsListResponse struct {
 //	@Param			requires_init query string false "Authenticated only: true/false filter"
 //	@Param			requires_confirmation query string false "Authenticated only: true/false filter"
 //	@Success		200 {object} ToolsListResponse
-//	@Router			/api/v1/tools/list [get]
+//	@Router			/api/v1/tools [get]
 func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 	toolMetadataOnce.Do(func() {
 		toolMetadataMap = loadToolMetadataFromSource()
@@ -262,6 +262,113 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+// Get returns one visible tool by name.
+//
+//	@Summary		Get tool
+//	@Description	Get one visible tool by name with metadata and schemas.
+//	@Tags			tools
+//	@Produce		json
+//	@Param			tool_name path string true "Tool name"
+//	@Success		200 {object} ToolListItem
+//	@Failure		404 {string} string "Tool not found"
+//	@Router			/api/v1/tools/{tool_name} [get]
+func (h *ToolsHandler) Get(w http.ResponseWriter, r *http.Request) {
+	toolMetadataOnce.Do(func() {
+		toolMetadataMap = loadToolMetadataFromSource()
+	})
+
+	user, _ := r.Context().Value("user").(*database.User)
+	isAuthenticated := user != nil
+	isAdmin := user != nil && user.IsAdmin
+	toolName := strings.TrimSpace(r.PathValue("tool_name"))
+	if toolName == "" {
+		http.Error(w, "Tool not found", http.StatusNotFound)
+		return
+	}
+
+	for _, tool := range msgmate.AllTools {
+		if tool.GetToolName() != toolName {
+			continue
+		}
+		if tool.GetAdminOnly() && !isAdmin {
+			http.Error(w, "Tool not found", http.StatusNotFound)
+			return
+		}
+
+		typeValue := strings.TrimSpace(tool.GetToolType())
+		requiresInit := tool.GetRequiresInit()
+		requiresConfirmation := tool.GetRequiresConfirmation()
+
+		item := ToolListItem{
+			Name:         tool.GetToolName(),
+			FunctionName: tool.GetToolFunctionName(),
+			Description:  tool.GetToolDescription(),
+			Type:         typeValue,
+		}
+
+		if metadata, ok := toolMetadataMap[item.Name]; ok {
+			if strings.TrimSpace(metadata.Description) != "" {
+				item.Description = metadata.Description
+			}
+			item.SourcePath = metadata.SourcePath
+			item.SourceLine = metadata.SourceLine
+			item.SourceURL = metadata.SourceURL
+			if metadata.InitSchema != nil {
+				item.InitSchema = metadata.InitSchema
+			}
+		}
+
+		if item.SourcePath == "" || item.SourceLine == 0 {
+			if file, line := runtimeLocationForTool(tool); file != "" {
+				item.SourcePath = file
+				item.SourceLine = line
+				item.SourceURL = buildRepoSourceURL(file, line)
+			}
+		}
+
+		if isAuthenticated {
+			item.RequiresInit = requiresInit
+			item.RequiresConfirmation = requiresConfirmation
+			item.StopOnFirstConfirmableToolCall = tool.GetStopOnFirstConfirmableToolCall()
+			item.ConfirmationBlockMessage = strings.TrimSpace(tool.GetConfirmationBlockMessage())
+			item.CallSchema = tool.GetToolInputSchema()
+			if properties, ok := item.CallSchema["properties"].(map[string]interface{}); ok {
+				item.Parameters = properties
+			}
+			if required, ok := item.CallSchema["required"].([]string); ok {
+				item.Required = append([]string(nil), required...)
+			} else if required, ok := item.CallSchema["required"].([]interface{}); ok {
+				parsedRequired := make([]string, 0, len(required))
+				for _, field := range required {
+					name, ok := field.(string)
+					if ok && strings.TrimSpace(name) != "" {
+						parsedRequired = append(parsedRequired, name)
+					}
+				}
+				item.Required = parsedRequired
+			}
+			if requiresInit {
+				if explicitInitSchema := tool.GetToolInitSchema(); explicitInitSchema != nil {
+					item.InitSchema = explicitInitSchema
+				}
+			}
+			if item.InitSchema == nil && requiresInit {
+				item.InitSchema = map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+					"required":   []string{},
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(item)
+		return
+	}
+
+	http.Error(w, "Tool not found", http.StatusNotFound)
 }
 
 func runtimeLocationForTool(tool msgmate.Tool) (string, int) {
