@@ -11,8 +11,8 @@ import (
 )
 
 type botModelSelectionRequest struct {
-	Action   string   `json:"action"`
-	ModelIDs []string `json:"model_ids"`
+	Action     string   `json:"action"`
+	ModelUUIDs []string `json:"model_uuids"`
 }
 
 type botModelSelectionResponse struct {
@@ -51,11 +51,11 @@ func UpdateBotModelSelection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	selectedSet := map[string]struct{}{}
-	for _, modelID := range req.ModelIDs {
-		if modelID == "" {
+	for _, modelUUID := range req.ModelUUIDs {
+		if modelUUID == "" {
 			continue
 		}
-		selectedSet[modelID] = struct{}{}
+		selectedSet[modelUUID] = struct{}{}
 	}
 
 	botUser, err := resolveAutomatedBotByIdentifier(DB, botIdentifier)
@@ -67,9 +67,9 @@ func UpdateBotModelSelection(w http.ResponseWriter, r *http.Request) {
 	addedCount := 0
 	removedCount := 0
 
-	for modelID := range selectedSet {
+	for modelUUID := range selectedSet {
 		if req.Action == "remove_selected" {
-			changed, err := database.UnassignBotFromModelConfig(DB, modelID, botUser.Name)
+			changed, err := database.UnassignBotFromModelConfig(DB, modelUUID, botUser.Name)
 			if err != nil {
 				continue
 			}
@@ -79,7 +79,7 @@ func UpdateBotModelSelection(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		changed, err := database.AssignBotToModelConfig(DB, modelID, botUser.Name)
+		changed, err := database.AssignBotToModelConfig(DB, modelUUID, botUser.Name)
 		if err != nil {
 			continue
 		}
