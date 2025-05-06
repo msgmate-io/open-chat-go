@@ -19,3 +19,6 @@
 [submodule "clients/integrations/mcp_integration"]
 	path = clients/integrations/mcp_integration
 	url = https://github.com/msgmate-io/open-chat-go-mcp-integration
+[submodule "clients/integrations/rest_api_tool_integration"]
+	path = clients/integrations/rest_api_tool_integration
+	url = https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
