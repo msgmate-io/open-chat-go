@@ -16,6 +16,7 @@ services:
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
       - ./clients/integrations/mcp_integration:/clients/integrations/mcp_integration
+      - ./clients/integrations/rest_api_tool_integration:/clients/integrations/rest_api_tool_integration
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
