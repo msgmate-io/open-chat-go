@@ -21,6 +21,8 @@ COPY ./clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
 COPY ./clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
 COPY ./clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
 COPY ./clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
+COPY ./clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
+COPY ./clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
 RUN go mod download
 
 # Copy the source and pre-compile once at build time. The resulting module cache
@@ -30,7 +32,8 @@ RUN go mod download
 ADD ./clients/go_tool_interface /clients/go_tool_interface
 ADD ./clients/go_integration_interface /clients/go_integration_interface
 ADD ./clients/integrations/mcp_integration /clients/integrations/mcp_integration
+ADD ./clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
 ADD ./backend /backend
 RUN go build
 
-ENTRYPOINT /dev_bin/CompileDaemon --build="bash ./scripts/dev_rebuild.sh" --command="./.devbin/backend server --fpx http://frontend:3000 --host 0.0.0.0 --port 1984" --exclude-dir=docs --exclude-dir=.devbin
+ENTRYPOINT /dev_bin/CompileDaemon --build="bash ./scripts/dev_rebuild.sh" --command="./.devbin/backend server --fpx http://frontend:3000 --host 0.0.0.0 --port 1984" --directory=/backend --directory=/clients/go_tool_interface --directory=/clients/go_integration_interface --directory=/clients/integrations/mcp_integration --directory=/clients/integrations/rest_api_tool_integration --exclude-dir=docs --exclude-dir=.devbin --exclude-dir=frontend_assets --exclude="server/swagger.json" --exclude="integrations/externalintegrations/imports_gen.go" --exclude="api/msgmate/externaltools/imports_gen.go" --exclude=".*\\.db$" --exclude=".*\\.db-shm$" --exclude=".*\\.db-wal$"
