@@ -11,8 +11,18 @@ import (
 )
 
 type IntegrationModelOverview struct {
-	TypeName string `json:"type_name"`
-	Kind     string `json:"kind"`
+	TypeName string                          `json:"type_name"`
+	Kind     string                          `json:"kind"`
+	Fields   []IntegrationModelFieldOverview `json:"fields,omitempty"`
+}
+
+type IntegrationModelFieldOverview struct {
+	Name     string                          `json:"name"`
+	JSONName string                          `json:"json_name,omitempty"`
+	Type     string                          `json:"type"`
+	Kind     string                          `json:"kind"`
+	Required bool                            `json:"required"`
+	Fields   []IntegrationModelFieldOverview `json:"fields,omitempty"`
 }
 
 type IntegrationAPIParameterOverview struct {
@@ -41,6 +51,7 @@ type IntegrationFrontendRouteOverview struct {
 
 type IntegrationOverviewResponse struct {
 	Name              string                             `json:"name"`
+	ReadmeMarkdown    string                             `json:"readme_markdown,omitempty"`
 	APIRoutes         []string                           `json:"api_routes"`
 	APIRoutesOverview []IntegrationAPIRouteOverview      `json:"api_routes_overview"`
 	FrontendRoutes    []IntegrationFrontendRouteOverview `json:"frontend_routes"`
@@ -72,6 +83,121 @@ func pathParamsFromRoute(route string) []IntegrationAPIParameterOverview {
 		})
 	}
 	return params
+}
+
+func parseJSONTag(field reflect.StructField) (string, bool, bool) {
+	tag := strings.TrimSpace(field.Tag.Get("json"))
+	if tag == "-" {
+		return "", false, true
+	}
+	if tag == "" {
+		return field.Name, false, false
+	}
+	parts := strings.Split(tag, ",")
+	jsonName := strings.TrimSpace(parts[0])
+	if jsonName == "" {
+		jsonName = field.Name
+	}
+	hasOmitEmpty := false
+	for _, part := range parts[1:] {
+		if strings.TrimSpace(part) == "omitempty" {
+			hasOmitEmpty = true
+			break
+		}
+	}
+	return jsonName, hasOmitEmpty, false
+}
+
+func shouldExpandStruct(t reflect.Type) bool {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	if t.PkgPath() == "time" {
+		return false
+	}
+	return true
+}
+
+func describeStructFields(t reflect.Type, seen map[reflect.Type]struct{}, depth int) []IntegrationModelFieldOverview {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return []IntegrationModelFieldOverview{}
+	}
+	if depth > 5 {
+		return []IntegrationModelFieldOverview{}
+	}
+	if _, exists := seen[t]; exists {
+		return []IntegrationModelFieldOverview{}
+	}
+	seen[t] = struct{}{}
+	defer delete(seen, t)
+
+	fields := make([]IntegrationModelFieldOverview, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+
+		jsonName, hasOmitEmpty, skip := parseJSONTag(field)
+		if skip {
+			continue
+		}
+
+		fieldType := field.Type
+		fieldKind := fieldType.Kind().String()
+		required := !hasOmitEmpty && fieldType.Kind() != reflect.Ptr && fieldType.Kind() != reflect.Map && fieldType.Kind() != reflect.Slice && fieldType.Kind() != reflect.Interface
+
+		entry := IntegrationModelFieldOverview{
+			Name:     field.Name,
+			JSONName: jsonName,
+			Type:     fieldType.String(),
+			Kind:     fieldKind,
+			Required: required,
+		}
+
+		if shouldExpandStruct(fieldType) {
+			entry.Fields = describeStructFields(fieldType, seen, depth+1)
+		}
+
+		fields = append(fields, entry)
+	}
+
+	sort.Slice(fields, func(i, j int) bool {
+		if fields[i].JSONName == fields[j].JSONName {
+			return fields[i].Name < fields[j].Name
+		}
+		return fields[i].JSONName < fields[j].JSONName
+	})
+
+	return fields
+}
+
+func describeModel(model interface{}) (IntegrationModelOverview, bool) {
+	modelType := reflect.TypeOf(model)
+	if modelType == nil {
+		return IntegrationModelOverview{}, false
+	}
+
+	kind := modelType.Kind().String()
+	for modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	typeName := modelType.Name()
+	if typeName == "" {
+		typeName = modelType.String()
+	}
+
+	overview := IntegrationModelOverview{TypeName: typeName, Kind: kind}
+	if modelType.Kind() == reflect.Struct {
+		overview.Fields = describeStructFields(modelType, map[reflect.Type]struct{}{}, 0)
+	}
+	return overview, true
 }
 
 // Overview returns API, model and function overview for one compiled integration.
@@ -139,19 +265,11 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, model := range provider() {
-			modelType := reflect.TypeOf(model)
-			if modelType == nil {
+			overview, ok := describeModel(model)
+			if !ok {
 				continue
 			}
-			kind := modelType.Kind().String()
-			if modelType.Kind() == reflect.Ptr {
-				modelType = modelType.Elem()
-			}
-			typeName := modelType.Name()
-			if typeName == "" {
-				typeName = modelType.String()
-			}
-			models = append(models, IntegrationModelOverview{TypeName: typeName, Kind: kind})
+			models = append(models, overview)
 		}
 	}
 	sort.Slice(models, func(i, j int) bool {
@@ -170,6 +288,7 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(IntegrationOverviewResponse{
 		Name:              def.Name,
+		ReadmeMarkdown:    strings.TrimSpace(def.ReadmeMarkdown),
 		APIRoutes:         routes,
 		APIRoutesOverview: routeOverview,
 		FrontendRoutes:    frontendRoutes,
