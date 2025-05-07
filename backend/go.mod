@@ -12,6 +12,8 @@ require github.com/msgmate-io/go-integration-interface v0.0.0
 
 require github.com/msgmate-io/mcp-integration v0.0.0
 
+require github.com/msgmate-io/rest-api-tool-integration v0.0.0
+
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/uuid v1.6.0
@@ -25,6 +27,8 @@ replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
 replace github.com/msgmate-io/go-integration-interface => ../clients/go_integration_interface
 
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
+
+replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integrations/rest_api_tool_integration
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect

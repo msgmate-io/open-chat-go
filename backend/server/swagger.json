@@ -3257,9 +3257,41 @@
                 }
             }
         },
+        "integrations.IntegrationModelFieldOverview": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationModelFieldOverview"
+                    }
+                },
+                "json_name": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "integrations.IntegrationModelOverview": {
             "type": "object",
             "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationModelFieldOverview"
+                    }
+                },
                 "kind": {
                     "type": "string"
                 },
@@ -3302,6 +3334,9 @@
                     }
                 },
                 "name": {
+                    "type": "string"
+                },
+                "readme_markdown": {
                     "type": "string"
                 }
             }
