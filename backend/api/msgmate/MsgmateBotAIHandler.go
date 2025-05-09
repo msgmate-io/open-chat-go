@@ -130,12 +130,21 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 	reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
 	context := mapGetOrDefault[int64](configMap, "context", 10)
+	toolCallMaxTotal := mapGetOrDefault[int64](configMap, "tool_call_max_total", int64(DefaultToolCallMaxTotal))
+	toolCallMaxFailed := mapGetOrDefault[int64](configMap, "tool_call_max_failed", int64(DefaultToolCallMaxFailed))
 	tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+
+	if toolCallMaxTotal < 1 {
+		toolCallMaxTotal = int64(DefaultToolCallMaxTotal)
+	}
+	if toolCallMaxFailed < 1 {
+		toolCallMaxFailed = int64(DefaultToolCallMaxFailed)
+	}
 
 	if backend == "litellm" {
 		litellmHost := strings.TrimSpace(os.Getenv("LITELLM_API_HOST"))
@@ -197,6 +206,8 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		endpoint,
 		model,
 		backend,
+		int(toolCallMaxTotal),
+		int(toolCallMaxFailed),
 		openAiMessages,
 		toolsData,
 		toolMap,
@@ -529,7 +540,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	TotalTokens      int `json:"total_tokens"`
 }, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
 	var allToolCalls []interface{}
-	var processedToolCallIds = make(map[string]bool) // Track processed tool call IDs
 	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
 	var reasoningEntries []string
 	var thinkingSteps []map[string]string
@@ -890,68 +900,85 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
 
-				// Check if we've already processed this tool call ID
-				if _, alreadyProcessed := processedToolCallIds[toolCall.Id]; !alreadyProcessed {
-					toolCallRepr := map[string]interface{}{
-						"id":        toolCall.Id,
-						"name":      toolCall.ToolName,
-						"arguments": toolCall.ToolInput,
-						"result":    toolCall.Result,
+				toolStatus := strings.TrimSpace(toolCall.Status)
+				if toolStatus == "" {
+					if strings.Contains(strings.ToLower(toolCall.Result), " failed with error:") {
+						toolStatus = ToolCallStatusFailed
+					} else if strings.TrimSpace(toolCall.Result) != "" {
+						toolStatus = ToolCallStatusSucceeded
+					} else {
+						toolStatus = ToolCallStatusOngoing
 					}
-
-					// Add to our processed IDs map
-					processedToolCallIds[toolCall.Id] = true
-
-					// Check if this tool call is already in the list (by ID)
-					alreadyInList := false
-					for i, registeredToolCall := range allToolCalls {
-						if registeredToolCall.(map[string]interface{})["id"] == toolCall.Id {
-							alreadyInList = true
-							// Update the result if it exists
-							allToolCalls[i].(map[string]interface{})["result"] = toolCall.Result
-							break
-						}
-					}
-
-					if tool, found := NewToolByName(toolCall.ToolName); found {
-						if tool.GetRequiresConfirmation() {
-							toolCallRepr["requires_confirmation"] = true
-						}
-						if confirmationMeta, ok := parseConfirmActionPayload(toolCall.Result); ok {
-							toolCallRepr["requires_confirmation"] = true
-							toolCallRepr["confirmation"] = confirmationMeta
-						}
-					}
-
-					if !alreadyInList {
-						allToolCalls = append(allToolCalls, toolCallRepr)
-					}
-
-					totalTime := time.Since(startTime)
-					partialMeta := map[string]interface{}{
-						"total_time":    totalTime.Round(time.Millisecond).String(),
-						"tool_call":     toolCall.ToolName,
-						"partial_phase": "tool_call",
-					}
-					confirmableActions := collectConfirmableActions(allToolCalls)
-					if len(confirmableActions) > 0 {
-						partialMeta["confirmable_actions"] = confirmableActions
-					}
-					aih.botContext.WSHandler.MessageHandler.SendMessage(
-						aih.botContext.WSHandler,
-						message.Content.SenderUUID,
-						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
-							message.Content.SenderUUID,
-							partialSessionID,
-							"",
-							[]string{""},
-							&partialMeta,
-							&allToolCalls,
-							nil,
-						),
-					)
 				}
+
+				toolCallRepr := map[string]interface{}{
+					"id":        toolCall.Id,
+					"name":      toolCall.ToolName,
+					"arguments": toolCall.ToolInput,
+					"result":    toolCall.Result,
+					"status":    toolStatus,
+				}
+				if strings.TrimSpace(toolCall.Error) != "" {
+					toolCallRepr["error"] = toolCall.Error
+				}
+
+				if tool, found := NewToolByName(toolCall.ToolName); found {
+					if tool.GetRequiresConfirmation() {
+						toolCallRepr["requires_confirmation"] = true
+					}
+					if confirmationMeta, ok := parseConfirmActionPayload(toolCall.Result); ok {
+						toolCallRepr["requires_confirmation"] = true
+						toolCallRepr["confirmation"] = confirmationMeta
+					}
+				}
+
+				updated := false
+				for i, registeredToolCall := range allToolCalls {
+					existing, ok := registeredToolCall.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					if existing["id"] == toolCall.Id {
+						for key, value := range toolCallRepr {
+							existing[key] = value
+						}
+						allToolCalls[i] = existing
+						updated = true
+						break
+					}
+				}
+				if !updated {
+					allToolCalls = append(allToolCalls, toolCallRepr)
+				}
+
+				totalTime := time.Since(startTime)
+				partialMeta := map[string]interface{}{
+					"total_time":       totalTime.Round(time.Millisecond).String(),
+					"tool_call":        toolCall.ToolName,
+					"tool_call_status": toolStatus,
+					"partial_phase":    "tool_call",
+				}
+				if strings.TrimSpace(toolCall.Error) != "" {
+					partialMeta["tool_call_error"] = toolCall.Error
+				}
+				confirmableActions := collectConfirmableActions(allToolCalls)
+				if len(confirmableActions) > 0 {
+					partialMeta["confirmable_actions"] = confirmableActions
+				}
+				aih.botContext.WSHandler.MessageHandler.SendMessage(
+					aih.botContext.WSHandler,
+					message.Content.SenderUUID,
+					aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
+						message.Content.ChatUUID,
+						message.Content.SenderUUID,
+						partialSessionID,
+						"",
+						[]string{""},
+						&partialMeta,
+						&allToolCalls,
+						nil,
+					),
+				)
 			}
 		case err, ok := <-errs:
 			if ok && err != nil {

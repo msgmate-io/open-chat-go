@@ -17,7 +17,18 @@ type ToolCall struct {
 	ToolInput interface{}
 	Id        string
 	Result    string
+	Status    string
+	Error     string
 }
+
+const (
+	ToolCallStatusOngoing             = "ongoing"
+	ToolCallStatusSucceeded           = "succeeded"
+	ToolCallStatusFailed              = "failed"
+	ToolCallStatusPendingConfirmation = "pending_confirmation"
+	DefaultToolCallMaxTotal           = 12
+	DefaultToolCallMaxFailed          = 3
+)
 
 type ToolCallsResult struct {
 	ToolCalls []ToolCall
@@ -231,6 +242,8 @@ func streamChatCompletion(
 	host string,
 	model string,
 	backend string,
+	toolCallMaxTotal int,
+	toolCallMaxFailed int,
 	messages []map[string]interface{},
 	tools []interface{},
 	toolMap map[string]Tool,
@@ -294,27 +307,37 @@ func streamChatCompletion(
 		}
 		fmt.Println("=======================")
 
+		if toolCallMaxTotal < 1 {
+			toolCallMaxTotal = DefaultToolCallMaxTotal
+		}
+		if toolCallMaxFailed < 1 {
+			toolCallMaxFailed = DefaultToolCallMaxFailed
+		}
+
 		currentMessages := messages
-		maxRetries := 8 // Maximum number of tool call retries
-		retryCount := 0
+		totalToolCalls := 0
+		failedToolCalls := 0
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
-		executedToolSignatures := make(map[string]bool)
+		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
 
 		for {
-			// Check if we've exceeded max retries
-			if retryCount >= maxRetries {
-				errChan <- fmt.Errorf("exceeded maximum number of tool call retries (%d)", maxRetries)
+			if totalToolCalls >= toolCallMaxTotal {
+				errChan <- fmt.Errorf("exceeded maximum number of tool calls (%d)", toolCallMaxTotal)
+				return
+			}
+			if failedToolCalls >= toolCallMaxFailed {
+				errChan <- fmt.Errorf("exceeded maximum number of failed tool calls (%d)", toolCallMaxFailed)
 				return
 			}
 
 			// Make initial request
 			fmt.Println("\n=== STARTING NEW REQUEST ROUND ===")
-			fmt.Printf("Current retry count: %d/%d\n", retryCount, maxRetries)
+			fmt.Printf("Current tool-call counts: total=%d/%d failed=%d/%d\n", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
 			toolCallResult, err := processStreamingRequest(
 				host, model, backend, currentMessages, tools, toolMap, apiKey,
-				executedToolSignatures,
+				executedToolResults,
 				chunkChan, usageChan, toolChan, errChan,
 			)
 			if err != nil {
@@ -330,11 +353,6 @@ func streamChatCompletion(
 			// If we encountered an error, we're done
 			if toolCallResult.err != nil {
 				log.Printf("Error: %v", toolCallResult.err)
-				return
-			}
-
-			if toolCallResult.duplicateToolCall {
-				log.Printf("Stopping response after duplicate tool call request for %s", toolCallResult.toolName)
 				return
 			}
 
@@ -394,9 +412,10 @@ func streamChatCompletion(
 								}
 							}
 
-							// Add retry information
-							completionData["retry_count"] = retryCount
-							completionData["max_retries"] = maxRetries
+							completionData["tool_call_total_count"] = totalToolCalls
+							completionData["tool_call_failed_count"] = failedToolCalls
+							completionData["tool_call_max_total"] = toolCallMaxTotal
+							completionData["tool_call_max_failed"] = toolCallMaxFailed
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
@@ -430,6 +449,8 @@ func streamChatCompletion(
 					"name":      toolCallResult.toolName,
 					"arguments": toolCallResult.arguments,
 					"result":    toolCallResult.result,
+					"status":    toolCallResult.status,
+					"error":     toolCallResult.error,
 					"timestamp": time.Now().Format(time.RFC3339),
 				}
 				toolCallDetails = append(toolCallDetails, toolCallInfo)
@@ -442,8 +463,10 @@ func streamChatCompletion(
 				return
 			}
 
-			// Increment retry counter when a tool is used
-			retryCount++
+			totalToolCalls++
+			if toolCallResult.status == ToolCallStatusFailed {
+				failedToolCalls++
+			}
 
 			// Add the tool call to the message history
 			toolsCallMessage := map[string]interface{}{
@@ -492,6 +515,8 @@ type toolCallResult struct {
 	toolCallMessage   map[string]string
 	result            string
 	arguments         string
+	status            string
+	error             string
 	err               error
 	aiResponse        string
 }
@@ -502,7 +527,7 @@ func processStreamingRequest(
 	tools []interface{},
 	toolMap map[string]Tool,
 	apiKey string,
-	executedToolSignatures map[string]bool,
+	executedToolResults map[string]string,
 	chunkChan chan<- string,
 	usageChan chan<- *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -517,7 +542,7 @@ func processStreamingRequest(
 		if err != nil {
 			return nil, err
 		}
-		return processStreamingResponseReader(reader, toolMap, executedToolSignatures, chunkChan, usageChan, toolChan)
+		return processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 	}
 
 	normalizedMessages := normalizeMessagesForBackend(messages, backend)
@@ -561,7 +586,7 @@ func processStreamingRequest(
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	return processStreamingResponseReader(reader, toolMap, executedToolSignatures, chunkChan, usageChan, toolChan)
+	return processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 }
 
 func normalizeMessagesForBackend(messages []map[string]interface{}, backend string) []map[string]interface{} {
@@ -595,7 +620,7 @@ func normalizeMessagesForBackend(messages []map[string]interface{}, backend stri
 func processStreamingResponseReader(
 	reader *bufio.Reader,
 	toolMap map[string]Tool,
-	executedToolSignatures map[string]bool,
+	executedToolResults map[string]string,
 	chunkChan chan<- string,
 	usageChan chan<- *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -715,10 +740,32 @@ func processStreamingResponseReader(
 			fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
 
 			contentSignature := fmt.Sprintf("%s:%s", currentToolCall.name, strings.TrimSpace(currentToolCall.arguments))
-			if executedToolSignatures[contentSignature] {
-				log.Printf("Warning: Duplicate tool call detected with content signature: %s, skipping", contentSignature)
-				result.usedTool = false
-				result.duplicateToolCall = true
+			if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
+				log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior result", contentSignature)
+
+				status := ToolCallStatusSucceeded
+				toolErr := ""
+				if strings.Contains(strings.ToLower(cachedResult), " failed with error:") {
+					status = ToolCallStatusFailed
+					toolErr = "duplicate tool call reused prior failure result"
+				}
+
+				result.usedTool = true
+				result.id = currentToolCall.id
+				result.toolName = currentToolCall.name
+				result.arguments = currentToolCall.arguments
+				result.result = cachedResult
+				result.status = status
+				result.error = toolErr
+
+				toolChan <- ToolCall{
+					ToolName:  currentToolCall.name,
+					ToolInput: toolInput,
+					Id:        currentToolCall.id,
+					Result:    cachedResult,
+					Status:    status,
+					Error:     toolErr,
+				}
 				break
 			}
 
@@ -727,7 +774,17 @@ func processStreamingResponseReader(
 			result.toolName = currentToolCall.name
 			result.arguments = currentToolCall.arguments
 
+			toolChan <- ToolCall{
+				ToolName:  currentToolCall.name,
+				ToolInput: toolInput,
+				Id:        currentToolCall.id,
+				Result:    "",
+				Status:    ToolCallStatusOngoing,
+			}
+
 			var toolResult string
+			status := ToolCallStatusSucceeded
+			toolErr := ""
 			if tool.GetRequiresConfirmation() {
 				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
 				executedResult, runErr := tool.RunTool(toolInput)
@@ -736,6 +793,7 @@ func processStreamingResponseReader(
 				} else {
 					toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
 				}
+				status = ToolCallStatusPendingConfirmation
 
 				modelResult := toolResult
 				if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
@@ -751,9 +809,12 @@ func processStreamingResponseReader(
 					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
 					toolResult = buildToolErrorPlaceholder(currentToolCall.name, runErr)
 					result.result = toolResult
+					status = ToolCallStatusFailed
+					toolErr = runErr.Error()
 				} else {
 					toolResult = executedResult
 					result.result = toolResult
+					status = ToolCallStatusSucceeded
 				}
 			}
 
@@ -762,8 +823,12 @@ func processStreamingResponseReader(
 				ToolInput: toolInput,
 				Id:        currentToolCall.id,
 				Result:    toolResult,
+				Status:    status,
+				Error:     toolErr,
 			}
-			executedToolSignatures[contentSignature] = true
+			result.status = status
+			result.error = toolErr
+			executedToolResults[contentSignature] = toolResult
 
 			break
 		}
