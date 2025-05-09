@@ -22,10 +22,12 @@ COPY backend/go.mod ./
 COPY backend/go.sum ./
 COPY clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
 COPY clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
+# BEGIN GENERATED: integration-mod-manifests
 COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
 COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
 COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
 COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
+# END GENERATED: integration-mod-manifests
 RUN test -f /clients/go_tool_interface/go.mod
 RUN test -f /clients/go_integration_interface/go.mod
 RUN test -f /clients/integrations/mcp_integration/go.mod
@@ -36,8 +38,10 @@ FROM basebuilder AS builder
 
 COPY clients/go_tool_interface /clients/go_tool_interface
 COPY clients/go_integration_interface /clients/go_integration_interface
+# BEGIN GENERATED: integration-source-copies
 COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
 COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
+# END GENERATED: integration-source-copies
 COPY backend/ ./
 COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
