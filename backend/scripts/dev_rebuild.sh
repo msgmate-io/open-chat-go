@@ -59,9 +59,9 @@ run_generator_jobs() {
 
 log "generating swagger"
 if command -v swag >/dev/null 2>&1; then
-  swag init --parseDependency --parseInternal --output ./docs --generalInfo ./main.go
+	 swag init --parseDependency --parseDependencyLevel 3 --parseInternal --output ./docs --generalInfo ./main.go
 else
-  go run github.com/swaggo/swag/v2/cmd/swag@latest init --parseDependency --parseInternal --output ./docs --generalInfo ./main.go
+	 go run github.com/swaggo/swag/v2/cmd/swag@latest init --parseDependency --parseDependencyLevel 3 --parseInternal --output ./docs --generalInfo ./main.go
 fi
 
 if [[ -f ./docs/swagger.json ]]; then
