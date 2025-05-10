@@ -3,6 +3,7 @@
 package externalintegrations
 
 import (
+	_ "github.com/msgmate-io/admin-db-managemnt-integration"
 	_ "github.com/msgmate-io/mcp-integration"
 	_ "github.com/msgmate-io/rest-api-tool-integration"
 )

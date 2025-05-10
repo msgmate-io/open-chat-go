@@ -336,14 +336,16 @@ func BackendRouting(
 	debug bool,
 	frontendProxy string,
 	sessionCookieDomain string,
+	signupRequiresAdminApproval bool,
 ) (*http.ServeMux, *websocket.WebSocketHandler) {
 	mux := http.NewServeMux()
 	v1PrivateApis := http.NewServeMux()
 	websocketMux := http.NewServeMux()
 
 	userHandler := &user.UserHandler{
-		DB:           DB,
-		CookieDomain: sessionCookieDomain,
+		DB:                          DB,
+		CookieDomain:                sessionCookieDomain,
+		SignupRequiresAdminApproval: signupRequiresAdminApproval,
 	}
 	chatsHandler := &chats.ChatsHandler{}
 	contactsHandler := &contacts.ContactsHander{}
@@ -394,14 +396,10 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
-	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}", admin.GetTableInfo)
-	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/data", admin.GetTableDataPaginated)
-	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/{id}", admin.GetTableItemById)
-	v1PrivateApis.HandleFunc("DELETE /admin/table/{table_name}/{id}", admin.DeleteTableItemById)
-	v1PrivateApis.HandleFunc("DELETE /admin/delete_all_entries/{table_name}", admin.DeleteAllEntries)
-	v1PrivateApis.HandleFunc("GET /admin/tables", admin.GetAllTables)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
-	v1PrivateApis.HandleFunc("GET /admin/schema/sql", admin.GetSchemaSQL)
+	v1PrivateApis.HandleFunc("GET /admin/registration-requests", admin.GetRegistrationRequests)
+	v1PrivateApis.HandleFunc("POST /admin/registration-requests/{request_uuid}/approve", admin.ApproveRegistrationRequest)
+	v1PrivateApis.HandleFunc("POST /admin/registration-requests/{request_uuid}/reject", admin.RejectRegistrationRequest)
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
