@@ -18,6 +18,7 @@ exec /dev_bin/CompileDaemon \
   -include="integrationdeps.json" \
   -exclude-dir=/backend/docs \
   -exclude-dir=/backend/.devbin \
+  -exclude-dir=/clients/integrations/admin_db_managemnt_integration/frontend_assets \
   -exclude-dir=/clients/integrations/mcp_integration/frontend_assets \
   -exclude-dir=/clients/integrations/rest_api_tool_integration/frontend_assets \
   -exclude="swagger.json" \
