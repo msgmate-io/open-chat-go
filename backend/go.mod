@@ -10,6 +10,8 @@ require github.com/msgmate-io/go-tool-interface v0.0.0
 
 require github.com/msgmate-io/go-integration-interface v0.0.0
 
+require github.com/msgmate-io/admin-db-managemnt-integration v0.0.0
+
 require github.com/msgmate-io/mcp-integration v0.0.0
 
 require github.com/msgmate-io/rest-api-tool-integration v0.0.0
@@ -27,6 +29,8 @@ require (
 replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
 
 replace github.com/msgmate-io/go-integration-interface => ../clients/go_integration_interface
+
+replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integrations/admin_db_managemnt_integration
 
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
 
