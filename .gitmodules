@@ -25,3 +25,6 @@
 [submodule "clients/integrations/admin_db_managemnt_integration"]
 	path = clients/integrations/admin_db_managemnt_integration
 	url = https://github.com/msgmate-io/open-chat-go-admin-db-management-integration
+[submodule "clients/integrations/ssh_integration"]
+	path = clients/integrations/ssh_integration
+	url = https://github.com/msgmate-io/open-chat-go-ssh-integration.git
