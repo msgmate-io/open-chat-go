@@ -14,6 +14,13 @@ if [[ -z "${COMMIT_MESSAGE}" ]]; then
   exit 1
 fi
 
+SUBREPO_PATHS=()
+if [[ -f "${REPO_ROOT}/.gitmodules" ]]; then
+  while read -r _config_key path; do
+    SUBREPO_PATHS+=("${path}")
+  done < <(git -C "${REPO_ROOT}" config -f .gitmodules --get-regexp path || true)
+fi
+
 commit_and_push_subrepo_if_changed() {
   local relative_path="$1"
   local repo_path="${REPO_ROOT}/${relative_path}"
@@ -53,7 +60,11 @@ commit_and_push_root_if_changed() {
   (
     cd "${REPO_ROOT}"
 
-    git add backend development frontend clients/oc_python_client
+    git add backend development
+
+    if (( ${#SUBREPO_PATHS[@]} > 0 )); then
+      git add "${SUBREPO_PATHS[@]}"
+    fi
 
     if git diff --cached --quiet; then
       echo "No root changes to commit in selected paths; skipping"
@@ -65,9 +76,10 @@ commit_and_push_root_if_changed() {
   )
 }
 
-commit_and_push_subrepo_if_changed "frontend"
-commit_and_push_subrepo_if_changed "clients/oc_python_client"
-commit_and_push_subrepo_if_changed "development/ci"
+for subrepo_path in "${SUBREPO_PATHS[@]}"; do
+  commit_and_push_subrepo_if_changed "${subrepo_path}"
+done
+
 commit_and_push_root_if_changed
 
 echo "Done."
