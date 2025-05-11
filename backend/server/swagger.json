@@ -2805,6 +2805,9 @@
                 "name": {
                     "type": "string"
                 },
+                "owner_user_uuid": {
+                    "type": "string"
+                },
                 "uuid": {
                     "type": "string"
                 }
