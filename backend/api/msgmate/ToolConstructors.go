@@ -37,6 +37,10 @@ func NewRandomNumberTool() Tool {
 	return NewToolFromDefinition(tooldefs.RandomNumberToolDef)
 }
 
+func NewRandomNumberSeededTool() Tool {
+	return NewToolFromDefinition(tooldefs.RandomNumberSeededToolDef)
+}
+
 func NewRunCallbackFunctionTool() Tool {
 	return NewToolFromDefinition(tooldefs.RunCallbackFunctionToolDef)
 }
@@ -59,6 +63,7 @@ func registerBuiltinTools() {
 	registerToolConstructor("get_current_time_confirmed", nil, NewCurrentTimeConfirmedTool)
 	registerToolConstructor("get_current_time_confirmed_testing", nil, NewCurrentTimeConfirmedTestingTool)
 	registerToolConstructor("get_random_number", nil, NewRandomNumberTool)
+	registerToolConstructor("get_random_number_seeded", nil, NewRandomNumberSeededTool)
 	registerToolConstructor("run_callback_function", nil, NewRunCallbackFunctionTool)
 	registerToolConstructor("n8n_trigger_workflow_webhook", nil, NewN8NTriggerWorkflowWebhookTool)
 	registerToolConstructor("create_confirmable_action_suggestion", nil, NewCreateConfirmableActionSuggestionTool)
