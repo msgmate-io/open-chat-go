@@ -10,11 +10,19 @@ require github.com/msgmate-io/go-tool-interface v0.0.0
 
 require github.com/msgmate-io/go-integration-interface v0.0.0
 
+require github.com/msgmate-io/admin-db-managemnt-integration v0.0.0
+
 require github.com/msgmate-io/mcp-integration v0.0.0
+
+require github.com/msgmate-io/rest-api-tool-integration v0.0.0
+
+require github.com/msgmate-io/ssh-integration v0.0.0
 
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/uuid v1.6.0
+	github.com/hibiken/asynq v0.26.0
+	github.com/hibiken/asynqmon v0.7.2
 	github.com/swaggo/swag/v2 v2.0.0-rc5
 	golang.org/x/term v0.37.0
 	gorm.io/driver/postgres v1.5.11
@@ -24,7 +32,13 @@ replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
 
 replace github.com/msgmate-io/go-integration-interface => ../clients/go_integration_interface
 
+replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integrations/admin_db_managemnt_integration
+
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
+
+replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integrations/rest_api_tool_integration
+
+replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_integration
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
@@ -39,14 +53,11 @@ require (
 	github.com/go-openapi/swag v0.22.3 // indirect
 	github.com/google/pprof v0.0.0-20241017200806-017d972448fc // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/hibiken/asynq v0.26.0 // indirect
-	github.com/hibiken/asynqmon v0.7.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.9.2 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect

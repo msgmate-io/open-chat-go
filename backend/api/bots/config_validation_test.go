@@ -41,3 +41,30 @@ func TestValidateSharedConfigStructureRejectsInvalidToolsType(t *testing.T) {
 		t.Fatalf("expected error for non-string tool entry")
 	}
 }
+
+func TestValidateSharedConfigStructureAcceptsToolCallLimitOverrides(t *testing.T) {
+	config := map[string]interface{}{
+		"model":                "qwen3-8b-instruct_vllm",
+		"backend":              "litellm",
+		"tool_call_max_total":  24.0,
+		"tool_call_max_failed": 5.0,
+	}
+
+	if err := validateSharedConfigStructure(config); err != nil {
+		t.Fatalf("expected valid tool call limits, got error: %v", err)
+	}
+}
+
+func TestValidateSharedConfigStructureRejectsInvalidToolCallLimitValues(t *testing.T) {
+	config := map[string]interface{}{
+		"model":                "qwen3-8b-instruct_vllm",
+		"backend":              "litellm",
+		"tool_call_max_total":  0.0,
+		"tool_call_max_failed": -1.0,
+	}
+
+	err := validateSharedConfigStructure(config)
+	if err == nil {
+		t.Fatalf("expected error for invalid tool call limits")
+	}
+}

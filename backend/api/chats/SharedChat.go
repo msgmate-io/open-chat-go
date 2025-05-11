@@ -284,6 +284,22 @@ func findOwnedChat(DB *gorm.DB, userID uint, chatUUID string) (database.Chat, er
 func getSharedChatByUUID(DB *gorm.DB, shareUUID string) (database.Chat, database.SharedChatInstance, error) {
 	var share database.SharedChatInstance
 	err := DB.Where("chat_share_uuid = ?", shareUUID).First(&share).Error
+	if err == gorm.ErrRecordNotFound {
+		var chat database.Chat
+		chatErr := DB.Preload("User1").Preload("User2").Preload("SharedConfig").
+			Where("uuid = ? AND chat_type = ?", shareUUID, "interaction").
+			First(&chat).Error
+		if chatErr != nil {
+			return database.Chat{}, database.SharedChatInstance{}, chatErr
+		}
+
+		shareErr := DB.Where("chat_id = ?", chat.ID).Order("created_at DESC").First(&share).Error
+		if shareErr != nil {
+			return database.Chat{}, database.SharedChatInstance{}, shareErr
+		}
+
+		return chat, share, nil
+	}
 	if err != nil {
 		return database.Chat{}, database.SharedChatInstance{}, err
 	}
