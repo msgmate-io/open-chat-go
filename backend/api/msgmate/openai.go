@@ -875,7 +875,7 @@ func buildTestBackendStreamingReader(
 		)
 	} else {
 		selectedToolName := ""
-		for _, candidate := range []string{"get_current_time_confirmed_testing", "get_current_time_confirmed", "get_current_time"} {
+		for _, candidate := range []string{"get_current_time_confirmed_testing", "get_current_time_confirmed", "get_current_time", "get_random_number_seeded", "get_random_number"} {
 			if _, exists := toolMap[candidate]; exists {
 				selectedToolName = candidate
 				break
@@ -893,6 +893,12 @@ func buildTestBackendStreamingReader(
 				},
 			)
 		} else {
+			toolArguments := "{}"
+			switch selectedToolName {
+			case "get_random_number", "get_random_number_seeded":
+				toolArguments = `{"min":1,"max":100}`
+			}
+
 			chunkPayloads = append(chunkPayloads,
 				map[string]interface{}{
 					"choices": []map[string]interface{}{{
@@ -903,7 +909,7 @@ func buildTestBackendStreamingReader(
 								"type": "function",
 								"function": map[string]interface{}{
 									"name":      selectedToolName,
-									"arguments": "{}",
+									"arguments": toolArguments,
 								},
 							}},
 						},
