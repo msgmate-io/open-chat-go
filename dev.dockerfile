@@ -28,6 +28,8 @@ COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integ
 COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
 COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
 COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
+COPY clients/integrations/ssh_integration/go.mod /clients/integrations/ssh_integration/go.mod
+COPY clients/integrations/ssh_integration/go.sum /clients/integrations/ssh_integration/go.sum
 # END GENERATED: integration-mod-manifests
 # Keep module/build caches in-image so the first `docker compose up` can reuse
 # warm caches from `docker compose build`.
@@ -40,6 +42,7 @@ ADD ./clients/go_integration_interface /clients/go_integration_interface
 COPY clients/integrations/admin_db_managemnt_integration /clients/integrations/admin_db_managemnt_integration
 COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
 COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
+COPY clients/integrations/ssh_integration /clients/integrations/ssh_integration
 # END GENERATED: integration-source-copies
 ADD ./backend /backend
 RUN go build
