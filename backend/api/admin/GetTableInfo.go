@@ -192,6 +192,14 @@ var tableConfigurations = map[string]TableInfoConfig{
 			"User": "user",
 		},
 	},
+	"registration_requests": {
+		IncludeFields: []string{"UUID", "ID", "CreatedAt", "UpdatedAt", "DeletedAt", "Name", "Email", "Status", "ReviewNote", "ReviewedAt", "ReviewedByUserId", "ApprovedUserId"},
+		Preloads:      []string{"ReviewedByUser", "ApprovedUser"},
+		PreloadMappings: map[string]string{
+			"ReviewedByUser": "reviewed_by_user",
+			"ApprovedUser":   "approved_user",
+		},
+	},
 }
 
 func GetTableInfo(w http.ResponseWriter, r *http.Request) {

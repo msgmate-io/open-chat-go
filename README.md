@@ -10,7 +10,7 @@
 
 ### TL;DR
 
-- [Latest Open-Chat-Go Linux Binary](https://github.com/msgmate-io/open-chat-go/releases/latest/download/open-chat-linux-amd64)
+- [Latest Open-Chat-Go Linux Binary](https://github.com/msgmate-io/open-chat-go/releases/)
 - Python Client: `pip install git+https://github.com/msgmate-io/open-chat-go-python-client.git`
 
 ### Development
