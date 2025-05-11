@@ -1,8 +1,8 @@
 package msgmate
 
 import (
-	"bufio"
 	"backend/database"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -93,7 +93,7 @@ func TestProcessStreamingResponseReader_ExecutesDynamicRESTToolCall(t *testing.T
 	result, err := processStreamingResponseReader(
 		bufio.NewReader(strings.NewReader(sse)),
 		toolMap,
-		map[string]bool{},
+		map[string]string{},
 		chunkChan,
 		usageChan,
 		toolChan,
@@ -111,15 +111,34 @@ func TestProcessStreamingResponseReader_ExecutesDynamicRESTToolCall(t *testing.T
 		t.Fatalf("unexpected tool name in result: %s", result.toolName)
 	}
 
-	select {
-	case tc := <-toolChan:
-		if tc.ToolName != "rest_get_user_self_ai_mock" {
-			t.Fatalf("unexpected tool call name: %s", tc.ToolName)
+	observedOngoing := false
+	observedSucceeded := false
+	for i := 0; i < 2; i++ {
+		select {
+		case tc := <-toolChan:
+			if tc.ToolName != "rest_get_user_self_ai_mock" {
+				t.Fatalf("unexpected tool call name: %s", tc.ToolName)
+			}
+			switch tc.Status {
+			case ToolCallStatusOngoing:
+				observedOngoing = true
+			case ToolCallStatusSucceeded:
+				observedSucceeded = true
+				if tc.Result != `{"uuid":"u-123","name":"Alice"}` {
+					t.Fatalf("unexpected tool result: %s", tc.Result)
+				}
+			default:
+				t.Fatalf("unexpected tool status: %s", tc.Status)
+			}
+		default:
+			t.Fatalf("expected emitted tool call")
 		}
-		if tc.Result != `{"uuid":"u-123","name":"Alice"}` {
-			t.Fatalf("unexpected tool result: %s", tc.Result)
-		}
-	default:
-		t.Fatalf("expected emitted tool call")
+	}
+
+	if !observedOngoing {
+		t.Fatalf("expected ongoing tool call event")
+	}
+	if !observedSucceeded {
+		t.Fatalf("expected succeeded tool call event")
 	}
 }
