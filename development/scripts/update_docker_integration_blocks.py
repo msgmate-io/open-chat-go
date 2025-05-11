@@ -25,6 +25,8 @@ PLACEHOLDER_SEGMENT_MAP = {
     "table_name": "{table_name}",
     "id": "{id}",
     "tool_uuid": "tool-uuid-placeholder",
+    "key_uuid": "key-uuid-placeholder",
+    "server_uuid": "server-uuid-placeholder",
 }
 
 
