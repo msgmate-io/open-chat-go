@@ -339,7 +339,7 @@ func ServerCli() *cli.Command {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 
-			runtimecfg.SetAll(map[string]runtimecfg.Value{
+			runtimeValues := map[string]runtimecfg.Value{
 				"DB_BACKEND":              {Value: c.String("db-backend"), Sensitive: false},
 				"DB_PATH":                 {Value: c.String("db-path"), Sensitive: false},
 				"DEBUG":                   {Value: fmt.Sprintf("%t", c.Bool("debug")), Sensitive: false},
@@ -371,7 +371,19 @@ func ServerCli() *cli.Command {
 				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
 				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
-			})
+			}
+
+			for _, decl := range integrations.RuntimeEnvDeclarations() {
+				if _, exists := runtimeValues[decl.Key]; exists {
+					continue
+				}
+				runtimeValues[decl.Key] = runtimecfg.Value{
+					Value:     os.Getenv(decl.Key),
+					Sensitive: decl.Sensitive,
+				}
+			}
+
+			runtimecfg.SetAll(runtimeValues)
 
 			redisConnOpt, err := resolveRedisConnOpt(c)
 			if err != nil {

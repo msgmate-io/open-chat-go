@@ -3,7 +3,6 @@ package user
 import (
 	"backend/api/admin"
 	"backend/database"
-	"backend/integrations"
 	"backend/server/util"
 	"bytes"
 	"context"
@@ -20,8 +19,7 @@ var registerExternalModelsOnce sync.Once
 
 func ensureExternalModelsRegistered() {
 	registerExternalModelsOnce.Do(func() {
-		integrations.EnsureLoaded()
-		database.RegisterExternalModels(integrations.AdditionalModels()...)
+		database.RegisterExternalModels(&database.RegistrationRequest{})
 	})
 }
 
