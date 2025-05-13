@@ -401,7 +401,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
 	v1PrivateApis.HandleFunc("GET /admin/tests/go", admin.GetGoTestsOverview)
-	v1PrivateApis.HandleFunc("GET /admin/server/config", admin.GetServerRuntimeConfig)
 	integrations.RegisterRoutes(v1PrivateApis, mux)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/stats", admin.GetDocsSnapshotStatsByTag)
 	v1PrivateApis.HandleFunc("POST /admin/docs/snapshots/{snapshot}/refresh", admin.RefreshDocsSnapshotByTag)
@@ -434,9 +433,6 @@ func BackendRouting(
 	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
-	if integrations.Has("account_management") {
-		mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(user.RegisterFromRuntimeConfig)))
-	}
 	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
 	mux.Handle("GET /api/v1/models", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
 	mux.Handle("GET /api/v1/models/{model_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.Get)))))

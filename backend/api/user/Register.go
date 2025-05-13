@@ -4,14 +4,26 @@ import (
 	"backend/database"
 	"backend/runtimecfg"
 	"encoding/json"
+	"errors"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"io"
 	"net/http"
 	"net/mail"
 	"strconv"
 	"strings"
 )
+
+var (
+	ErrEmailAlreadyInUse                 = errors.New("email already in use")
+	ErrRegistrationRequestAlreadyPending = errors.New("registration request already pending")
+)
+
+type RegistrationResult struct {
+	User                *database.User
+	RegistrationRequest *database.RegistrationRequest
+}
 
 type UserRegister struct {
 	Name     string `json:"name"`
@@ -55,6 +67,75 @@ func signupRequiresAdminApprovalFromRuntimeConfig() bool {
 	return required
 }
 
+func SignupRequiresAdminApprovalFromRuntimeConfig() bool {
+	return signupRequiresAdminApprovalFromRuntimeConfig()
+}
+
+func CreateUserOrRegistrationRequest(DB *gorm.DB, name string, email string, passwordHash string, signupRequiresAdminApproval bool) (RegistrationResult, error) {
+	name = strings.TrimSpace(name)
+	email = strings.TrimSpace(strings.ToLower(email))
+	passwordHash = strings.TrimSpace(passwordHash)
+
+	if name == "" {
+		return RegistrationResult{}, errors.New("name is required")
+	}
+	if email == "" {
+		return RegistrationResult{}, errors.New("email is required")
+	}
+	if passwordHash == "" {
+		return RegistrationResult{}, errors.New("password hash is required")
+	}
+
+	if _, err := mail.ParseAddress(email); err != nil {
+		return RegistrationResult{}, errors.New("invalid email")
+	}
+
+	var existingUser database.User
+	if err := DB.First(&existingUser, "email = ?", email).Error; err == nil {
+		return RegistrationResult{}, ErrEmailAlreadyInUse
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return RegistrationResult{}, err
+	}
+
+	if signupRequiresAdminApproval {
+		var existingRequest database.RegistrationRequest
+		err := DB.First(&existingRequest, "email = ? AND status = ?", email, database.RegistrationRequestStatusPending).Error
+		if err == nil {
+			return RegistrationResult{}, ErrRegistrationRequestAlreadyPending
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return RegistrationResult{}, err
+		}
+
+		registrationRequest := &database.RegistrationRequest{
+			Name:         name,
+			Email:        email,
+			PasswordHash: passwordHash,
+			Status:       database.RegistrationRequestStatusPending,
+		}
+
+		if err := DB.Create(registrationRequest).Error; err != nil {
+			return RegistrationResult{}, err
+		}
+
+		return RegistrationResult{RegistrationRequest: registrationRequest}, nil
+	}
+
+	createdUser := &database.User{
+		Name:         name,
+		Email:        email,
+		PasswordHash: passwordHash,
+		ContactToken: uuid.New().String(),
+		IsAdmin:      false,
+	}
+
+	if err := DB.Create(createdUser).Error; err != nil {
+		return RegistrationResult{}, err
+	}
+
+	return RegistrationResult{User: createdUser}, nil
+}
+
 func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupRequiresAdminApproval bool) {
 	var data UserRegister
 
@@ -64,9 +145,27 @@ func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupReq
 		return
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
+	if err != nil {
+		http.Error(w, "Unable to read request body", http.StatusBadRequest)
 		return
+	}
+	bodyText := strings.TrimSpace(string(bodyBytes))
+	if strings.Contains(contentType, "application/json") || strings.HasPrefix(bodyText, "{") {
+		if err := json.Unmarshal(bodyBytes, &data); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+	} else {
+		r.Body = io.NopCloser(strings.NewReader(bodyText))
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form payload", http.StatusBadRequest)
+			return
+		}
+		data.Name = r.FormValue("name")
+		data.Email = r.FormValue("email")
+		data.Password = r.FormValue("password")
 	}
 
 	data.Name = strings.TrimSpace(data.Name)
@@ -77,17 +176,9 @@ func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupReq
 		return
 	}
 
-	_, err := mail.ParseAddress(data.Email)
+	_, err = mail.ParseAddress(data.Email)
 	if err != nil {
 		http.Error(w, "Invalid email", http.StatusBadRequest)
-		return
-	}
-
-	var user database.User
-	q := DB.First(&user, "email = ?", data.Email)
-
-	if q.Error == nil {
-		http.Error(w, "Email already in use", http.StatusBadRequest)
 		return
 	}
 
@@ -104,55 +195,32 @@ func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupReq
 		return
 	}
 
-	if signupRequiresAdminApproval {
-		var existingRequest database.RegistrationRequest
-		requestQuery := DB.First(&existingRequest, "email = ? AND status = ?", data.Email, database.RegistrationRequestStatusPending)
-		if requestQuery.Error == nil {
+	result, err := CreateUserOrRegistrationRequest(DB, data.Name, data.Email, string(hashedPassword), signupRequiresAdminApproval)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEmailAlreadyInUse):
+			http.Error(w, "Email already in use", http.StatusBadRequest)
+			return
+		case errors.Is(err, ErrRegistrationRequestAlreadyPending):
 			http.Error(w, "Registration request already pending", http.StatusBadRequest)
 			return
-		}
-		if requestQuery.Error != nil && requestQuery.Error != gorm.ErrRecordNotFound {
+		default:
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+	}
 
-		registrationRequest := database.RegistrationRequest{
-			Name:         data.Name,
-			Email:        data.Email,
-			PasswordHash: string(hashedPassword),
-			Status:       database.RegistrationRequestStatusPending,
-		}
-
-		if err := DB.Create(&registrationRequest).Error; err != nil {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
+	if result.RegistrationRequest != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"message":      "Registration request submitted and pending admin approval",
-			"request_uuid": registrationRequest.UUID,
-			"status":       registrationRequest.Status,
+			"request_uuid": result.RegistrationRequest.UUID,
+			"status":       result.RegistrationRequest.Status,
 		})
 		return
 	}
 
-	user = database.User{
-		Name:         data.Name,
-		Email:        data.Email,
-		PasswordHash: string(hashedPassword),
-		ContactToken: uuid.New().String(),
-		IsAdmin:      false,
-	}
-
-	q = DB.Create(&user)
-
-	if q.Error != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("User created"))
+	_, _ = w.Write([]byte("User created"))
 }
