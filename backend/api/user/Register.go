@@ -2,12 +2,14 @@ package user
 
 import (
 	"backend/database"
+	"backend/runtimecfg"
 	"encoding/json"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"net/http"
 	"net/mail"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +36,26 @@ type UserRegister struct {
 //	@Failure      500  {string}  string	"Internal server error"
 //	@Router       /api/v1/user/register [post]
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
+	registerWithAdminApproval(w, r, h.SignupRequiresAdminApproval)
+}
+
+func RegisterFromRuntimeConfig(w http.ResponseWriter, r *http.Request) {
+	registerWithAdminApproval(w, r, signupRequiresAdminApprovalFromRuntimeConfig())
+}
+
+func signupRequiresAdminApprovalFromRuntimeConfig() bool {
+	value, ok := runtimecfg.GetAll()["SIGNUP_REQUIRES_ADMIN_APPROVAL"]
+	if !ok {
+		return false
+	}
+	required, err := strconv.ParseBool(strings.TrimSpace(value.Value))
+	if err != nil {
+		return false
+	}
+	return required
+}
+
+func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupRequiresAdminApproval bool) {
 	var data UserRegister
 
 	DB, ok := r.Context().Value("db").(*gorm.DB)
@@ -82,7 +104,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.SignupRequiresAdminApproval {
+	if signupRequiresAdminApproval {
 		var existingRequest database.RegistrationRequest
 		requestQuery := DB.First(&existingRequest, "email = ? AND status = ?", data.Email, database.RegistrationRequestStatusPending)
 		if requestQuery.Error == nil {
