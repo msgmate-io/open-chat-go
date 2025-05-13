@@ -14,6 +14,7 @@ type IntegrationListRow struct {
 	FrontendRouteCount int    `json:"frontend_route_count"`
 	ModelProviderCount int    `json:"model_provider_count"`
 	FunctionCount      int    `json:"function_count"`
+	RuntimeEnvVarCount int    `json:"runtime_env_var_count"`
 }
 
 type IntegrationsListResponse struct {
@@ -39,6 +40,7 @@ func (h *IntegrationsHandler) List(w http.ResponseWriter, r *http.Request) {
 			FrontendRouteCount: len(def.FrontendRoutes) + len(def.FrontendPages),
 			ModelProviderCount: len(def.ModelProviders),
 			FunctionCount:      len(def.Functions),
+			RuntimeEnvVarCount: len(def.RuntimeEnvVars),
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
