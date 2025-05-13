@@ -3398,6 +3398,9 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "runtime_env_var_count": {
+                    "type": "integer"
                 }
             }
         },
@@ -3482,6 +3485,26 @@
                 },
                 "readme_markdown": {
                     "type": "string"
+                },
+                "runtime_env_vars": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationRuntimeEnvVarOverview"
+                    }
+                }
+            }
+        },
+        "integrations.IntegrationRuntimeEnvVarOverview": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "sensitive": {
+                    "type": "boolean"
                 }
             }
         },
