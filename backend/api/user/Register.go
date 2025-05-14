@@ -48,11 +48,19 @@ type UserRegister struct {
 //	@Failure      500  {string}  string	"Internal server error"
 //	@Router       /api/v1/user/register [post]
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
-	registerWithAdminApproval(w, r, h.SignupRequiresAdminApproval)
+	registerWithAdminApproval(w, r, h.SignupRequiresAdminApproval, false)
 }
 
 func RegisterFromRuntimeConfig(w http.ResponseWriter, r *http.Request) {
-	registerWithAdminApproval(w, r, signupRequiresAdminApprovalFromRuntimeConfig())
+	registerWithAdminApproval(w, r, signupRequiresAdminApprovalFromRuntimeConfig(), false)
+}
+
+func RegisterWithAdminApproval(w http.ResponseWriter, r *http.Request, signupRequiresAdminApproval bool) {
+	registerWithAdminApproval(w, r, signupRequiresAdminApproval, false)
+}
+
+func RegisterWithOptions(w http.ResponseWriter, r *http.Request, signupRequiresAdminApproval bool, requireEmailVerification bool) {
+	registerWithAdminApproval(w, r, signupRequiresAdminApproval, requireEmailVerification)
 }
 
 func signupRequiresAdminApprovalFromRuntimeConfig() bool {
@@ -136,7 +144,7 @@ func CreateUserOrRegistrationRequest(DB *gorm.DB, name string, email string, pas
 	return RegistrationResult{User: createdUser}, nil
 }
 
-func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupRequiresAdminApproval bool) {
+func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupRequiresAdminApproval bool, requireEmailVerification bool) {
 	var data UserRegister
 
 	DB, ok := r.Context().Value("db").(*gorm.DB)
@@ -219,6 +227,16 @@ func registerWithAdminApproval(w http.ResponseWriter, r *http.Request, signupReq
 			"status":       result.RegistrationRequest.Status,
 		})
 		return
+	}
+	if result.User != nil && requireEmailVerification {
+		if err := database.SetUserEmailVerified(DB, result.User.ID, false); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if err := database.SetEmailVerificationIdentityVerified(DB, result.User.Email, false); err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.WriteHeader(http.StatusCreated)
