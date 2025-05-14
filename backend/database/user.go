@@ -62,6 +62,12 @@ func (u *User) AfterCreate(tx *gorm.DB) error {
 	if err := tx.Where("user_id = ? AND permission = ?", u.ID, PermissionCreateBots).FirstOrCreate(&createBotsPermission).Error; err != nil {
 		return err
 	}
+	if err := EnsureAccountStateRowForUser(tx, u); err != nil {
+		return err
+	}
+	if err := EnsureEmailVerificationIdentityVerifiedByDefault(tx, u.Email); err != nil {
+		return err
+	}
 	return EnsureDefaultAccessTokenForUser(tx, u.ID)
 }
 
