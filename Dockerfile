@@ -26,6 +26,7 @@ COPY clients/go_integration_interface/go.mod /clients/go_integration_interface/g
 COPY clients/integrations/account_management/go.mod /clients/integrations/account_management/go.mod
 COPY clients/integrations/account_management/go.sum /clients/integrations/account_management/go.sum
 COPY clients/integrations/admin_db_managemnt_integration/go.mod /clients/integrations/admin_db_managemnt_integration/go.mod
+COPY clients/integrations/admin_db_managemnt_integration/go.sum /clients/integrations/admin_db_managemnt_integration/go.sum
 COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
 COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
 COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
