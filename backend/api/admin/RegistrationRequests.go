@@ -2,16 +2,30 @@ package admin
 
 import (
 	"backend/database"
+	"backend/runtimecfg"
 	"backend/server/util"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+func requireEmailVerification() bool {
+	v, ok := runtimecfg.GetAll()[database.RequireEmailVerificationEnvKey]
+	if !ok {
+		return true
+	}
+	required, err := strconv.ParseBool(strings.TrimSpace(v.Value))
+	if err != nil {
+		return true
+	}
+	return required
+}
 
 type RegistrationDecisionPayload struct {
 	ReviewNote string `json:"review_note"`
@@ -128,6 +142,11 @@ func decisionRegistrationRequest(w http.ResponseWriter, r *http.Request, targetS
 			}
 			if err := tx.Create(&newUser).Error; err != nil {
 				return err
+			}
+			if requireEmailVerification() {
+				if err := database.SetUserEmailVerified(tx, newUser.ID, false); err != nil {
+					return err
+				}
 			}
 
 			updates["approved_user_id"] = newUser.ID
