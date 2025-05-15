@@ -316,3 +316,17 @@ func AdditionalModels() []interface{} {
 	}
 	return models
 }
+
+func AdditionalMigrations() []extiface.Migration {
+	EnsureLoaded()
+	migrations := []extiface.Migration{}
+	for _, def := range List() {
+		for _, migration := range def.Migrations {
+			if migration.Run == nil {
+				continue
+			}
+			migrations = append(migrations, migration)
+		}
+	}
+	return migrations
+}

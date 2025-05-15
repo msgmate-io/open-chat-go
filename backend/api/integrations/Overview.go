@@ -2,6 +2,7 @@ package integrations
 
 import (
 	backendintegrations "backend/integrations"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 	"reflect"
@@ -279,6 +280,12 @@ func buildAPIRouteOverview(route string, docsByRoute map[string]integrationinter
 //	@Failure      404 {string} string "integration not found"
 //	@Router       /api/v1/integrations/{integration_name}/overview [get]
 func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil || user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	integrationName := strings.ToLower(strings.TrimSpace(r.PathValue("integration_name")))
 	if integrationName == "" {
 		http.Error(w, "integration_name is required", http.StatusBadRequest)
@@ -287,6 +294,15 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 
 	def, found := backendintegrations.Get(integrationName)
 	if !found {
+		http.Error(w, "integration not found", http.StatusNotFound)
+		return
+	}
+	visible, err := backendintegrations.IsVisibleToUser(DB, def, user)
+	if err != nil {
+		http.Error(w, "Failed to resolve integration visibility", http.StatusInternalServerError)
+		return
+	}
+	if !visible {
 		http.Error(w, "integration not found", http.StatusNotFound)
 		return
 	}
