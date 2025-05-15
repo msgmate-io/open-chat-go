@@ -3,6 +3,7 @@ package server
 // Some stuff stolen from 'https://github.com/dreamsofcode-io/nethttp'
 import (
 	"backend/database"
+	"backend/integrations"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -380,7 +381,7 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/integrations", "/callback", "/signup-request-send", "/sign-up", "/email-verification"}
+var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/callback", "/signup-request-send", "/sign-up", "/email-verification"}
 
 func isPublicFrontendRoute(path string) bool {
 	for _, route := range PublicRoutes {
@@ -400,7 +401,7 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		DB, _ := r.Context().Value("db").(*gorm.DB)
-		_, authorized, _ := resolveValidSessionFromRequest(DB, r)
+		session, authorized, _ := resolveValidSessionFromRequest(DB, r)
 		if !authorized {
 			http.SetCookie(w, &http.Cookie{
 				Name:     "is_authorized",
@@ -437,14 +438,35 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/chat", http.StatusFound)
 			return
 		}
-		if database.RequireEmailVerificationFromRuntimeConfig() {
-			session, found, err := resolveValidSessionFromRequest(DB, r)
-			if err == nil && found {
-				verified, verifyErr := database.IsUserEmailVerified(DB, session.UserId)
-				if verifyErr == nil && !verified && r.URL.Path != "/email-verification" {
-					http.Redirect(w, r, "/email-verification", http.StatusFound)
+		if session == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		var currentUser database.User
+		if err := DB.First(&currentUser, "id = ?", session.UserId).Error; err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/integrations/") {
+			remainder := strings.TrimPrefix(r.URL.Path, "/integrations/")
+			parts := strings.SplitN(remainder, "/", 2)
+			integrationName := strings.TrimSpace(parts[0])
+			if integrationName != "" {
+				visible, visErr := integrations.IsVisibleByName(DB, &currentUser, integrationName)
+				if visErr == nil && !visible {
+					http.Redirect(w, r, "/chat", http.StatusFound)
 					return
 				}
+			}
+		}
+
+		if database.RequireEmailVerificationFromRuntimeConfig() {
+			verified, verifyErr := database.IsUserEmailVerified(DB, session.UserId)
+			if verifyErr == nil && !verified && r.URL.Path != "/email-verification" {
+				http.Redirect(w, r, "/email-verification", http.StatusFound)
+				return
 			}
 		}
 

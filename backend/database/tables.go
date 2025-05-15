@@ -20,6 +20,18 @@ func (t TableMigration) Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(t.Model)
 }
 
+type FunctionMigration struct {
+	Name string
+	Run  func(*gorm.DB) error
+}
+
+func (m FunctionMigration) Migrate(db *gorm.DB) error {
+	if m.Run == nil {
+		return nil
+	}
+	return m.Run(db)
+}
+
 type ChatAndMessageMigration struct{}
 
 type TempChat struct {
@@ -159,6 +171,7 @@ var Tabels []interface{} = []interface{}{
 	&BotRuntimeConfig{},
 	&Permission{},
 	&AccessToken{},
+	&IntegrationAccess{},
 }
 
 var Migrations []Migration = []Migration{
@@ -177,6 +190,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&BotRuntimeConfig{}},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
+	TableMigration{&IntegrationAccess{}},
 	GrantDefaultPermissionsMigration{},
 }
 
@@ -187,5 +201,14 @@ func RegisterExternalModels(models ...interface{}) {
 		}
 		Tabels = append(Tabels, model)
 		Migrations = append(Migrations, TableMigration{Model: model})
+	}
+}
+
+func RegisterExternalMigrations(migrations ...FunctionMigration) {
+	for _, migration := range migrations {
+		if migration.Run == nil {
+			continue
+		}
+		Migrations = append(Migrations, migration)
 	}
 }
