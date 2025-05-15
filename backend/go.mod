@@ -14,6 +14,8 @@ require github.com/msgmate-io/account-management-integration v0.0.0
 
 require github.com/msgmate-io/admin-db-managemnt-integration v0.0.0
 
+require github.com/msgmate-io/email-integration v0.0.0
+
 require github.com/msgmate-io/mcp-integration v0.0.0
 
 require github.com/msgmate-io/rest-api-tool-integration v0.0.0
@@ -37,6 +39,8 @@ replace github.com/msgmate-io/go-integration-interface => ../clients/go_integrat
 replace github.com/msgmate-io/account-management-integration => ../clients/integrations/account_management
 
 replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integrations/admin_db_managemnt_integration
+
+replace github.com/msgmate-io/email-integration => ../clients/integrations/email_integration
 
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
 
