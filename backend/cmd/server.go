@@ -338,6 +338,12 @@ func ServerCli() *cli.Command {
 		Action: func(_ context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
+			for _, migration := range integrations.AdditionalMigrations() {
+				database.RegisterExternalMigrations(database.FunctionMigration{
+					Name: migration.Name,
+					Run:  migration.Run,
+				})
+			}
 
 			runtimeValues := map[string]runtimecfg.Value{
 				"DB_BACKEND":              {Value: c.String("db-backend"), Sensitive: false},
