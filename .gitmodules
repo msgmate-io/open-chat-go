@@ -31,3 +31,6 @@
 [submodule "clients/integrations/account_management"]
 	path = clients/integrations/account_management
 	url = https://github.com/msgmate-io/open-chat-go-account-management-integration.git
+[submodule "clients/integrations/email_integration"]
+	path = clients/integrations/email_integration
+	url = https://github.com/msgmate-io/open-chat-go-email-integration
