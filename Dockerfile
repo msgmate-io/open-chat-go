@@ -68,6 +68,7 @@ COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/{id}/
 COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/table_name/index.html
 COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
 COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
+COPY --from=frontend /frontend/dist/client/integrations/emails/automations/index.html /clients/integrations/email_integration/frontend_assets/automations/index.html
 COPY --from=frontend /frontend/dist/client/integrations/emails/create/index.html /clients/integrations/email_integration/frontend_assets/create/index.html
 COPY --from=frontend /frontend/dist/client/integrations/emails/dynamic-email-uuid-placeholder/edit/index.html /clients/integrations/email_integration/frontend_assets/dynamic_email_uuid/edit/index.html
 COPY --from=frontend /frontend/dist/client/integrations/emails/dynamic-email-uuid-placeholder/send/index.html /clients/integrations/email_integration/frontend_assets/dynamic_email_uuid/send/index.html
