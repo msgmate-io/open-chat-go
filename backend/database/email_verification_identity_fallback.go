@@ -1,6 +1,7 @@
 package database
 
 import (
+	"net/mail"
 	"strings"
 	"time"
 
@@ -15,6 +16,9 @@ func normalizeIdentityEmail(email string) string {
 func EnsureEmailVerificationIdentityVerifiedByDefault(DB *gorm.DB, email string) error {
 	email = normalizeIdentityEmail(email)
 	if DB == nil || email == "" {
+		return nil
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
 		return nil
 	}
 	if !DB.Migrator().HasTable("email_verification_identities") {
@@ -36,6 +40,9 @@ func EnsureEmailVerificationIdentityVerifiedByDefault(DB *gorm.DB, email string)
 func SetEmailVerificationIdentityVerified(DB *gorm.DB, email string, verified bool) error {
 	email = normalizeIdentityEmail(email)
 	if DB == nil || email == "" {
+		return nil
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
 		return nil
 	}
 	if !DB.Migrator().HasTable("email_verification_identities") {

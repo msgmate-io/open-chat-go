@@ -67,11 +67,22 @@ func findUserByUsername(DB *gorm.DB, username string) (*database.User, error) {
 	}
 
 	var user database.User
-	if err := DB.Where("email = ? OR name = ?", normalized, normalized).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("user %q not found", normalized)
+	if err := DB.Where("username = ?", normalized).First(&user).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
-		return nil, err
+		if err := DB.Where("email = ? OR name = ?", normalized, normalized).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("user %q not found", normalized)
+			}
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(user.Username) == "" {
+		if err := DB.Model(&user).Update("username", normalized).Error; err != nil {
+			return nil, err
+		}
+		user.Username = normalized
 	}
 	return &user, nil
 }
