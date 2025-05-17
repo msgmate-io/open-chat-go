@@ -3307,6 +3307,9 @@
                 "two_factor_enabled": {
                     "type": "boolean"
                 },
+                "username": {
+                    "type": "string"
+                },
                 "uuid": {
                     "type": "string"
                 }
