@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -153,6 +154,35 @@ func (GrantDefaultPermissionsMigration) Migrate(db *gorm.DB) error {
 	return nil
 }
 
+type BackfillUsernamesMigration struct{}
+
+func (BackfillUsernamesMigration) Migrate(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("users") || !db.Migrator().HasColumn(&User{}, "username") {
+		return nil
+	}
+	users := []User{}
+	if err := db.Where("username IS NULL OR username = ''").Find(&users).Error; err != nil {
+		return err
+	}
+	for _, user := range users {
+		candidate := strings.TrimSpace(user.Email)
+		if candidate == "" {
+			generated, err := EnsureUniqueRandomUsername(db)
+			if err != nil {
+				return err
+			}
+			candidate = generated
+		}
+		if err := db.Model(&User{}).Where("id = ?", user.ID).Update("username", candidate).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var Tabels []interface{} = []interface{}{
 	&User{},
 	&TwoFactorRecoveryCode{},
@@ -176,6 +206,7 @@ var Tabels []interface{} = []interface{}{
 
 var Migrations []Migration = []Migration{
 	TableMigration{&User{}},
+	BackfillUsernamesMigration{},
 	TableMigration{&TwoFactorRecoveryCode{}},
 	TableMigration{&Session{}},
 	TableMigration{&PublicProfile{}},
