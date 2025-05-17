@@ -131,11 +131,17 @@ func CreateUserOrRegistrationRequest(DB *gorm.DB, name string, email string, pas
 
 	createdUser := &database.User{
 		Name:         name,
+		Username:     "",
 		Email:        email,
 		PasswordHash: passwordHash,
 		ContactToken: uuid.New().String(),
 		IsAdmin:      false,
 	}
+	generatedUsername, genErr := database.EnsureUniqueRandomUsername(DB)
+	if genErr != nil {
+		return RegistrationResult{}, genErr
+	}
+	createdUser.Username = generatedUsername
 
 	if err := DB.Create(createdUser).Error; err != nil {
 		return RegistrationResult{}, err
