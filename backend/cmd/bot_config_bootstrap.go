@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
 	"os"
 	"strings"
 
@@ -18,6 +19,7 @@ type ownerBotConfig struct {
 
 type botIdentityConfig struct {
 	Username    string `json:"username"`
+	Email       string `json:"email,omitempty"`
 	Password    string `json:"password"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -52,6 +54,12 @@ func loadBotBootstrapConfig(path string) (botBootstrapConfig, error) {
 	}
 	if strings.TrimSpace(cfg.Bot.Name) == "" {
 		return cfg, fmt.Errorf("bot config %q: bot.name is required", path)
+	}
+	if email := strings.TrimSpace(strings.ToLower(cfg.Bot.Email)); email != "" {
+		if _, err := mail.ParseAddress(email); err != nil {
+			return cfg, fmt.Errorf("bot config %q: bot.email must be a valid email", path)
+		}
+		cfg.Bot.Email = email
 	}
 	if cfg.DefaultSharedConfig == nil {
 		return cfg, fmt.Errorf("bot config %q: default_shared_config is required", path)
@@ -89,6 +97,7 @@ func findUserByUsername(DB *gorm.DB, username string) (*database.User, error) {
 
 func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) (*database.User, error) {
 	username := strings.TrimSpace(cfg.Bot.Username)
+	botEmail := strings.TrimSpace(strings.ToLower(cfg.Bot.Email))
 	password := strings.TrimSpace(cfg.Bot.Password)
 
 	if password == "" {
@@ -101,6 +110,18 @@ func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 			if saveErr := DB.Save(user).Error; saveErr != nil {
 				return nil, saveErr
 			}
+		}
+		if botEmail != "" && !strings.EqualFold(strings.TrimSpace(user.Email), botEmail) {
+			var existing database.User
+			if err := DB.Where("email = ? AND id <> ?", botEmail, user.ID).First(&existing).Error; err == nil {
+				return nil, fmt.Errorf("bot config %q: bot.email already in use", sourcePath)
+			} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, err
+			}
+			if saveErr := DB.Model(user).Update("email", botEmail).Error; saveErr != nil {
+				return nil, saveErr
+			}
+			user.Email = botEmail
 		}
 		return user, nil
 	}
@@ -115,6 +136,18 @@ func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 	})
 	if err != nil {
 		return nil, err
+	}
+	if botEmail != "" && !strings.EqualFold(strings.TrimSpace(botUser.Email), botEmail) {
+		var existing database.User
+		if err := DB.Where("email = ? AND id <> ?", botEmail, botUser.ID).First(&existing).Error; err == nil {
+			return nil, fmt.Errorf("bot config %q: bot.email already in use", sourcePath)
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		if saveErr := DB.Model(botUser).Update("email", botEmail).Error; saveErr != nil {
+			return nil, saveErr
+		}
+		botUser.Email = botEmail
 	}
 	return botUser, nil
 }
