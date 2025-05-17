@@ -406,3 +406,39 @@ func TestApplyBotBootstrapConfigFilesMissingPasswordRequiresExistingBot(t *testi
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	path := writeBotConfigFile(t, map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": "owner_user",
+		},
+		"bot": map[string]interface{}{
+			"username": "owner_support_bot",
+			"password": "BotPass1!",
+			"name":     "support_bot",
+			"email":    "owner+support-bot@example.com",
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "qwen3-8b-instruct_vllm",
+		},
+	})
+
+	if err := applyBotBootstrapConfigFiles(DB, []string{path}, false); err != nil {
+		t.Fatalf("applyBotBootstrapConfigFiles failed: %v", err)
+	}
+
+	bot, err := findUserByUsername(DB, "owner_support_bot")
+	if err != nil {
+		t.Fatalf("failed to resolve bot user: %v", err)
+	}
+	if bot.Email != "owner+support-bot@example.com" {
+		t.Fatalf("expected bot email to be updated, got %q", bot.Email)
+	}
+}
