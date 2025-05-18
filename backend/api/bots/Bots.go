@@ -137,6 +137,25 @@ func hasPermission(DB *gorm.DB, user *database.User, permission database.Permiss
 	return q.Error == nil
 }
 
+func runtimeIDsOwnedByUserSubquery(DB *gorm.DB, userID uint) *gorm.DB {
+	return DB.Model(&database.BotRuntimeOwner{}).
+		Select("bot_runtime_config_id").
+		Where("user_id = ?", userID)
+}
+
+func isRuntimeOwnedByUser(DB *gorm.DB, runtime database.BotRuntimeConfig, userID uint) bool {
+	if runtime.OwnerUserId == userID {
+		return true
+	}
+	var count int64
+	if err := DB.Model(&database.BotRuntimeOwner{}).
+		Where("bot_runtime_config_id = ? AND user_id = ?", runtime.ID, userID).
+		Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
 func decodeSharedConfig(raw []byte) map[string]interface{} {
 	result := map[string]interface{}{}
 	if len(raw) == 0 {
@@ -490,25 +509,22 @@ func resolveByBotUsername(DB *gorm.DB, user *database.User, username string) (da
 		Joins("JOIN users ON users.id = bot_runtime_configs.bot_user_id").
 		Where("users.name = ? AND bot_runtime_configs.is_active = ?", username, true)
 
-	if user.IsAdmin {
-		var matches []database.BotRuntimeConfig
-		if err := baseQuery.Find(&matches).Error; err != nil {
-			return database.BotRuntimeConfig{}, err
-		}
-		if len(matches) == 0 {
-			return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
-		}
-		if len(matches) > 1 {
-			return database.BotRuntimeConfig{}, errAmbiguousIdentifier
-		}
-		return matches[0], nil
+	ownedRuntimeIDs := runtimeIDsOwnedByUserSubquery(DB, user.ID)
+	if !user.IsAdmin {
+		baseQuery = baseQuery.Where("bot_runtime_configs.id IN (?)", ownedRuntimeIDs)
 	}
 
-	var runtime database.BotRuntimeConfig
-	if err := baseQuery.Where("bot_runtime_configs.owner_user_id = ?", user.ID).First(&runtime).Error; err != nil {
+	var matches []database.BotRuntimeConfig
+	if err := baseQuery.Limit(2).Find(&matches).Error; err != nil {
 		return database.BotRuntimeConfig{}, err
 	}
-	return runtime, nil
+	if len(matches) == 0 {
+		return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
+	}
+	if len(matches) > 1 {
+		return database.BotRuntimeConfig{}, errAmbiguousIdentifier
+	}
+	return matches[0], nil
 }
 
 func parsePagination(r *http.Request, defaultLimit int) (int, int) {
@@ -543,33 +559,28 @@ func resolveReadableBot(DB *gorm.DB, user *database.User, identifier string) (da
 
 	var runtime database.BotRuntimeConfig
 	if err := DB.Preload("BotUser").Preload("OwnerUser").Where("uuid = ? AND is_active = ?", identifier, true).First(&runtime).Error; err == nil {
-		if runtime.OwnerUserId != user.ID && !user.IsAdmin && !runtime.IsPublic {
+		owned := isRuntimeOwnedByUser(DB, runtime, user.ID)
+		if !owned && !user.IsAdmin && !runtime.IsPublic {
 			return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
 		}
 		return runtime, nil
 	}
 
-	query := DB.Preload("BotUser").Preload("OwnerUser").Where("owner_user_id = ? AND name = ? AND is_active = ?", user.ID, identifier, true)
-	if user.IsAdmin {
-		var matches []database.BotRuntimeConfig
-		if err := DB.Preload("BotUser").Preload("OwnerUser").Where("name = ? AND is_active = ?", identifier, true).Find(&matches).Error; err != nil {
-			return database.BotRuntimeConfig{}, err
-		}
-		if len(matches) == 0 {
-			return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
-		}
-		if len(matches) > 1 {
-			return database.BotRuntimeConfig{}, errAmbiguousIdentifier
-		}
+	query := DB.Preload("BotUser").Preload("OwnerUser").Where("name = ? AND is_active = ?", identifier, true)
+	if !user.IsAdmin {
+		query = query.Where("id IN (?)", runtimeIDsOwnedByUserSubquery(DB, user.ID))
+	}
+	var matches []database.BotRuntimeConfig
+	if err := query.Limit(2).Find(&matches).Error; err != nil {
+		return database.BotRuntimeConfig{}, err
+	}
+	if len(matches) > 1 {
+		return database.BotRuntimeConfig{}, errAmbiguousIdentifier
+	}
+	if len(matches) == 1 {
 		return matches[0], nil
 	}
-	if err := query.First(&runtime).Error; err != nil {
-		if err != gorm.ErrRecordNotFound {
-			return database.BotRuntimeConfig{}, err
-		}
-		return resolveByBotUsername(DB, user, identifier)
-	}
-	return runtime, nil
+	return resolveByBotUsername(DB, user, identifier)
 }
 
 func resolveOwnedBot(DB *gorm.DB, user *database.User, identifier string) (database.BotRuntimeConfig, error) {
@@ -577,7 +588,7 @@ func resolveOwnedBot(DB *gorm.DB, user *database.User, identifier string) (datab
 	if err != nil {
 		return database.BotRuntimeConfig{}, err
 	}
-	if runtime.OwnerUserId != user.ID && !user.IsAdmin {
+	if !user.IsAdmin && !isRuntimeOwnedByUser(DB, runtime, user.ID) {
 		return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
 	}
 	return runtime, nil
@@ -734,6 +745,9 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Create(&runtime).Error; err != nil {
 			return err
 		}
+		if err := database.EnsureBotRuntimeOwner(tx, runtime.ID, user.ID); err != nil {
+			return err
+		}
 
 		if err := ensureContactAndDirectChat(tx, *user, botUser); err != nil {
 			return err
@@ -786,9 +800,11 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 	page, limit := parsePagination(r, 40)
 	includePublic := parseBoolQuery(r.URL.Query().Get("include_public"))
 
-	query := DB.Model(&database.BotRuntimeConfig{}).Where("is_active = ? AND owner_user_id = ?", true, user.ID)
+	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, user.ID)
+	query := DB.Model(&database.BotRuntimeConfig{}).
+		Where("is_active = ? AND id IN (?)", true, ownedIDs)
 	if includePublic {
-		query = query.Or("is_active = ? AND is_public = ? AND owner_user_id <> ?", true, true, user.ID)
+		query = query.Or("is_active = ? AND is_public = ? AND id NOT IN (?)", true, true, ownedIDs)
 	}
 
 	var totalRows int64
