@@ -268,8 +268,8 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		if message.MetaData != nil {
 			_ = json.Unmarshal(message.MetaData, &metadata)
 		}
-		metadata["tool_init_update"] = data.ToolInit
-		metadata["tool_init_effective"] = effectiveToolInit
+		metadata["tool_init_update"] = redactToolInitPayload(data.ToolInit)
+		metadata["tool_init_effective"] = redactToolInitPayload(effectiveToolInit)
 		if encoded, marshalErr := json.Marshal(metadata); marshalErr == nil {
 			message.MetaData = encoded
 		}
@@ -466,6 +466,19 @@ func validateToolInitUpdateAgainstConfiguredTools(chat *database.Chat, update ma
 		}
 	}
 	return nil
+}
+
+func redactToolInitPayload(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		redacted := map[string]interface{}{}
+		for key, nested := range typed {
+			redacted[key] = redactToolInitPayload(nested)
+		}
+		return redacted
+	default:
+		return nil
+	}
 }
 
 func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request) {
