@@ -160,7 +160,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real')
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only')
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -238,7 +238,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real')))
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -254,6 +254,7 @@ jobs:
       should_build: ${{ steps.context.outputs.should_build }}
       should_ai_test_mock: ${{ steps.context.outputs.should_ai_test_mock }}
       should_ai_test_real: ${{ steps.context.outputs.should_ai_test_real }}
+      should_test_core_only: ${{ steps.context.outputs.should_test_core_only }}
       image_url: ${{ steps.image.outputs.image_url }}
       dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
       is_same_repo_pr: ${{ steps.context.outputs.is_same_repo_pr }}
@@ -312,6 +313,7 @@ jobs:
             SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
             SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
             SHOULD_AI_TEST_REAL="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-real' || true)"
+            SHOULD_TEST_CORE_ONLY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test-core-only' || true)"
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
             DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
             if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
@@ -329,6 +331,7 @@ jobs:
             SHOULD_BUILD=""
             SHOULD_AI_TEST_MOCK=""
             SHOULD_AI_TEST_REAL=""
+            SHOULD_TEST_CORE_ONLY=""
             RAW_PR_NAME="$DEPLOYMENT_NAME"
             DISPATCH_REF="$TARGET_REF"
             IS_SAME_REPO_PR="true"
@@ -383,9 +386,10 @@ jobs:
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
           echo "should_ai_test_real=$SHOULD_AI_TEST_REAL" >> "$GITHUB_OUTPUT"
+          echo "should_test_core_only=$SHOULD_TEST_CORE_ONLY" >> "$GITHUB_OUTPUT"
           echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
           echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
-          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} build=${SHOULD_BUILD:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false}"
+          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} build=${SHOULD_BUILD:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
 
       - name: Checkout source repository (with submodules)
         uses: actions/checkout@v4
@@ -611,6 +615,153 @@ jobs:
           set -euo pipefail
           echo "Built image: ${{ steps.image.outputs.image_url }}"
           echo "Image digest: ${{ steps.build.outputs.digest }}"
+
+  run-pr-ci-core-only:
+    name: Run PR CI Core-Only
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments]
+    continue-on-error: true
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      needs.run-pr-ci-tests-and-deployments.outputs.should_test_core_only != ''
+    steps:
+      - name: Checkout source repository (without recursive submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: false
+
+      - name: Initialize required submodules only
+        run: |
+          set -euo pipefail
+          git submodule sync -- \
+            frontend \
+            clients/go_tool_interface \
+            clients/go_integration_interface \
+            clients/integrations/mcp_integration \
+            clients/integrations/rest_api_tool_integration
+          git submodule update --init --depth 1 -- \
+            frontend \
+            clients/go_tool_interface \
+            clients/go_integration_interface \
+            clients/integrations/mcp_integration \
+            clients/integrations/rest_api_tool_integration
+
+      - name: Remove excluded integration directories
+        run: |
+          set -euo pipefail
+          rm -rf clients/integrations/account_management
+          rm -rf clients/integrations/admin_db_managemnt_integration
+          rm -rf clients/integrations/email_integration
+          rm -rf clients/integrations/ssh_integration
+
+      - name: Restrict integration manifest and go.mod to core-only set
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          cat > integrationdeps.json <<'EOF'
+          {
+            "dependencies": [
+              {
+                "module": "github.com/msgmate-io/mcp-integration",
+                "version": "",
+                "import": "github.com/msgmate-io/mcp-integration"
+              },
+              {
+                "module": "github.com/msgmate-io/rest-api-tool-integration",
+                "version": "",
+                "import": "github.com/msgmate-io/rest-api-tool-integration"
+              }
+            ]
+          }
+          EOF
+          go mod edit -droprequire=github.com/msgmate-io/account-management-integration
+          go mod edit -droprequire=github.com/msgmate-io/admin-db-managemnt-integration
+          go mod edit -droprequire=github.com/msgmate-io/email-integration
+          go mod edit -droprequire=github.com/msgmate-io/ssh-integration
+          go mod edit -dropreplace=github.com/msgmate-io/account-management-integration
+          go mod edit -dropreplace=github.com/msgmate-io/admin-db-managemnt-integration
+          go mod edit -dropreplace=github.com/msgmate-io/email-integration
+          go mod edit -dropreplace=github.com/msgmate-io/ssh-integration
+
+      - name: Update Docker integration copy blocks for core-only build
+        run: |
+          set -euo pipefail
+          python3 development/scripts/update_docker_integration_blocks.py
+
+      - name: Resolve core-only image metadata
+        id: image
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_TAG="pr-${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}-${SHORT_SHA}-core-only"
+          IMAGE_URL="ghcr.io/${IMAGE_REPO}:${IMAGE_TAG}"
+          echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push core-only backend image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: prod-alpine
+          push: true
+          tags: ${{ steps.image.outputs.image_url }}
+
+      - name: Start backend from core-only image for smoke test
+        env:
+          BACKEND_IMAGE: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          echo "Using core-only image: ${BACKEND_IMAGE}"
+          docker pull "${BACKEND_IMAGE}"
+
+          cat > .ci-test.env <<EOF
+          BACKEND_IMAGE=${BACKEND_IMAGE}
+          LITELLM_API_HOST=
+          LITELLM_API_KEY=
+          EOF
+
+          docker compose --env-file .ci-test.env -f docker-compose.ci.yaml up -d redis
+          docker compose --env-file .ci-test.env -f docker-compose.ci.yaml up -d --no-deps backend
+
+          for i in $(seq 1 90); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
+            if [ "$code" != "000" ]; then
+              echo "Core-only backend is reachable (HTTP $code)."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::Timed out waiting for core-only backend on http://127.0.0.1:1984"
+          docker compose --env-file .ci-test.env -f docker-compose.ci.yaml logs backend || true
+          exit 1
+
+      - name: Stop backend after core-only smoke test
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f .ci-test.env ]; then
+            docker compose --env-file .ci-test.env -f docker-compose.ci.yaml logs backend || true
+            docker compose --env-file .ci-test.env -f docker-compose.ci.yaml down -v || true
+          else
+            docker compose -f docker-compose.ci.yaml logs backend || true
+            docker compose -f docker-compose.ci.yaml down -v || true
+          fi
 
   run-pr-ci-tests:
     name: Run PR CI Tests
