@@ -132,7 +132,10 @@ func ensureAdminOwnsDefaultBotRuntime(DB *gorm.DB, adminUser database.User, botU
 				IsPublic:            true,
 				IsActive:            true,
 			}
-			return tx.Create(&runtime).Error
+			if err := tx.Create(&runtime).Error; err != nil {
+				return err
+			}
+			return database.EnsureBotRuntimeOwner(tx, runtime.ID, adminUser.ID)
 		}
 
 		updates := map[string]interface{}{}
@@ -156,10 +159,12 @@ func ensureAdminOwnsDefaultBotRuntime(DB *gorm.DB, adminUser database.User, botU
 			updates["is_public"] = true
 		}
 
-		if len(updates) == 0 {
-			return nil
+		if len(updates) > 0 {
+			if err := tx.Model(&runtime).Updates(updates).Error; err != nil {
+				return err
+			}
 		}
-		return tx.Model(&runtime).Updates(updates).Error
+		return database.EnsureBotRuntimeOwner(tx, runtime.ID, adminUser.ID)
 	})
 }
 
