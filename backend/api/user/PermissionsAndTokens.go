@@ -85,7 +85,10 @@ func resolveOwnedBotByUUID(DB *gorm.DB, user *database.User, botUUID string) (da
 
 	query := DB.Where("uuid = ?", botUUID)
 	if !user.IsAdmin {
-		query = query.Where("owner_user_id = ?", user.ID)
+		ownedRuntimeIDs := DB.Model(&database.BotRuntimeOwner{}).
+			Select("bot_runtime_config_id").
+			Where("user_id = ?", user.ID)
+		query = query.Where("id IN (?)", ownedRuntimeIDs)
 	}
 
 	var runtime database.BotRuntimeConfig
