@@ -3,32 +3,56 @@
     {
       "module": "github.com/msgmate-io/account-management-integration",
       "version": "",
-      "import": "github.com/msgmate-io/account-management-integration"
+      "import": "github.com/msgmate-io/account-management-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/account_management",
+      "default_enabled": false,
+      "private": true
     },
     {
       "module": "github.com/msgmate-io/admin-db-managemnt-integration",
       "version": "",
-      "import": "github.com/msgmate-io/admin-db-managemnt-integration"
+      "import": "github.com/msgmate-io/admin-db-managemnt-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/admin_db_managemnt_integration",
+      "default_enabled": false,
+      "private": true
     },
     {
       "module": "github.com/msgmate-io/mcp-integration",
       "version": "",
-      "import": "github.com/msgmate-io/mcp-integration"
+      "import": "github.com/msgmate-io/mcp-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/mcp_integration",
+      "default_enabled": true,
+      "private": false
     },
     {
       "module": "github.com/msgmate-io/email-integration",
       "version": "",
-      "import": "github.com/msgmate-io/email-integration"
+      "import": "github.com/msgmate-io/email-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/email_integration",
+      "default_enabled": false,
+      "private": true
     },
     {
       "module": "github.com/msgmate-io/rest-api-tool-integration",
       "version": "",
-      "import": "github.com/msgmate-io/rest-api-tool-integration"
+      "import": "github.com/msgmate-io/rest-api-tool-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/rest_api_tool_integration",
+      "default_enabled": true,
+      "private": false
     },
     {
       "module": "github.com/msgmate-io/ssh-integration",
       "version": "",
-      "import": "github.com/msgmate-io/ssh-integration"
+      "import": "github.com/msgmate-io/ssh-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/ssh_integration",
+      "default_enabled": false,
+      "private": true
     }
   ]
 }
