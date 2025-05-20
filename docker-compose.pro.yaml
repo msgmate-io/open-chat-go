@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: prod-alpine
+      args:
+        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
     ports:
       - 1984:1984
     environment:
