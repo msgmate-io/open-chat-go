@@ -609,6 +609,8 @@ jobs:
           target: prod-alpine
           push: true
           tags: ${{ steps.image.outputs.image_url }}
+          build-args: |
+            INTEGRATION_PROFILE=full
 
       - name: Print built image provenance
         run: |
@@ -634,64 +636,6 @@ jobs:
           ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: false
-
-      - name: Initialize required submodules only
-        run: |
-          set -euo pipefail
-          git submodule sync -- \
-            frontend \
-            clients/go_tool_interface \
-            clients/go_integration_interface \
-            clients/integrations/mcp_integration \
-            clients/integrations/rest_api_tool_integration
-          git submodule update --init --depth 1 -- \
-            frontend \
-            clients/go_tool_interface \
-            clients/go_integration_interface \
-            clients/integrations/mcp_integration \
-            clients/integrations/rest_api_tool_integration
-
-      - name: Remove excluded integration directories
-        run: |
-          set -euo pipefail
-          rm -rf clients/integrations/account_management
-          rm -rf clients/integrations/admin_db_managemnt_integration
-          rm -rf clients/integrations/email_integration
-          rm -rf clients/integrations/ssh_integration
-
-      - name: Restrict integration manifest and go.mod to core-only set
-        working-directory: backend
-        run: |
-          set -euo pipefail
-          cat > integrationdeps.json <<'EOF'
-          {
-            "dependencies": [
-              {
-                "module": "github.com/msgmate-io/mcp-integration",
-                "version": "",
-                "import": "github.com/msgmate-io/mcp-integration"
-              },
-              {
-                "module": "github.com/msgmate-io/rest-api-tool-integration",
-                "version": "",
-                "import": "github.com/msgmate-io/rest-api-tool-integration"
-              }
-            ]
-          }
-          EOF
-          go mod edit -droprequire=github.com/msgmate-io/account-management-integration
-          go mod edit -droprequire=github.com/msgmate-io/admin-db-managemnt-integration
-          go mod edit -droprequire=github.com/msgmate-io/email-integration
-          go mod edit -droprequire=github.com/msgmate-io/ssh-integration
-          go mod edit -dropreplace=github.com/msgmate-io/account-management-integration
-          go mod edit -dropreplace=github.com/msgmate-io/admin-db-managemnt-integration
-          go mod edit -dropreplace=github.com/msgmate-io/email-integration
-          go mod edit -dropreplace=github.com/msgmate-io/ssh-integration
-
-      - name: Update Docker integration copy blocks for core-only build
-        run: |
-          set -euo pipefail
-          python3 development/scripts/update_docker_integration_blocks.py
 
       - name: Resolve core-only image metadata
         id: image
@@ -720,6 +664,9 @@ jobs:
           target: prod-alpine
           push: true
           tags: ${{ steps.image.outputs.image_url }}
+          build-args: |
+            INTEGRATION_PROFILE=core-only
+            FRONTEND_STAGE=frontend_empty
 
       - name: Start backend from core-only image for smoke test
         env:
