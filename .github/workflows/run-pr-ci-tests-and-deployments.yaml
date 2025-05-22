@@ -637,25 +637,46 @@ jobs:
           token: ${{ secrets.BOT_TOKEN }}
           submodules: false
 
-      - name: Initialize required core submodules
-        env:
-          SUBMODULE_TOKEN: ${{ secrets.BOT_TOKEN }}
+      - name: Resolve required core submodule refs
+        id: core_submodule_refs
         run: |
           set -euo pipefail
-          if [ -z "${SUBMODULE_TOKEN}" ]; then
-            echo "::error::BOT_TOKEN is required for core-only submodule checkout."
-            exit 1
-          fi
-          git submodule sync -- \
-            clients/go_tool_interface \
-            clients/go_integration_interface \
-            clients/integrations/mcp_integration \
-            clients/integrations/rest_api_tool_integration
-          git submodule update --init --depth 1 -- \
-            clients/go_tool_interface \
-            clients/go_integration_interface \
-            clients/integrations/mcp_integration \
-            clients/integrations/rest_api_tool_integration
+          echo "go_tool_sha=$(git rev-parse HEAD:clients/go_tool_interface)" >> "$GITHUB_OUTPUT"
+          echo "go_integration_sha=$(git rev-parse HEAD:clients/go_integration_interface)" >> "$GITHUB_OUTPUT"
+          echo "mcp_sha=$(git rev-parse HEAD:clients/integrations/mcp_integration)" >> "$GITHUB_OUTPUT"
+          echo "rest_api_sha=$(git rev-parse HEAD:clients/integrations/rest_api_tool_integration)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout core submodule go_tool_interface
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go-tool-interface
+          ref: ${{ steps.core_submodule_refs.outputs.go_tool_sha }}
+          token: ${{ secrets.BOT_TOKEN }}
+          path: clients/go_tool_interface
+
+      - name: Checkout core submodule go_integration_interface
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go-integration-interface
+          ref: ${{ steps.core_submodule_refs.outputs.go_integration_sha }}
+          token: ${{ secrets.BOT_TOKEN }}
+          path: clients/go_integration_interface
+
+      - name: Checkout core submodule mcp_integration
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go-mcp-integration
+          ref: ${{ steps.core_submodule_refs.outputs.mcp_sha }}
+          token: ${{ secrets.BOT_TOKEN }}
+          path: clients/integrations/mcp_integration
+
+      - name: Checkout core submodule rest_api_tool_integration
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go-rest-api-tool-integration
+          ref: ${{ steps.core_submodule_refs.outputs.rest_api_sha }}
+          token: ${{ secrets.BOT_TOKEN }}
+          path: clients/integrations/rest_api_tool_integration
 
       - name: Resolve core-only image metadata
         id: image
