@@ -1555,6 +1555,32 @@
                 }
             }
         },
+        "/api/v1/integrations/mcp/templates": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "List built-in MCP configuration templates and setup documentation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "List MCP server templates",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/integrations/rest_api_tool/tools": {
             "get": {
                 "security": [
