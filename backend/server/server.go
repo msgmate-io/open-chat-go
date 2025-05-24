@@ -18,7 +18,7 @@ func BackendServer(
 	queueInspector *asynq.Inspector,
 	asynqUIHandler http.Handler,
 	host string,
-	port int64,
+	port uint16,
 	debug bool,
 	frontendProxy string,
 	sessionCookieDomain string,
