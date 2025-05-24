@@ -16,11 +16,18 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
+
+func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) (map[string]interface{}, error) {
+	_ = DB
+	_ = user
+	return extiface.ApplySharedConfigDefaults(config), nil
+}
 
 type BotDTO struct {
 	UUID                string                 `json:"uuid"`
@@ -678,6 +685,12 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "default_shared_config is required", http.StatusBadRequest)
 		return
 	}
+	defaultsAppliedConfig, err := applyIntegrationDefaultsForUser(DB, user, req.DefaultSharedConfig)
+	if err != nil {
+		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+		return
+	}
+	req.DefaultSharedConfig = defaultsAppliedConfig
 	if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -907,6 +920,12 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.DefaultSharedConfig != nil {
+		defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, req.DefaultSharedConfig)
+		if defaultsErr != nil {
+			http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+			return
+		}
+		req.DefaultSharedConfig = defaultsAppliedConfig
 		if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1012,6 +1031,12 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, config)
+	if defaultsErr != nil {
+		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+		return
+	}
+	config = defaultsAppliedConfig
 	if err := validateSharedConfigStructure(config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -1134,6 +1159,12 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		effectiveConfig[k] = v
 	}
 	effectiveConfig["tool_init"] = req.ToolInit
+	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, effectiveConfig)
+	if defaultsErr != nil {
+		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+		return
+	}
+	effectiveConfig = withDefaultsConfig
 	if err := validateAndAttachDynamicToolsForUser(DB, user, effectiveConfig); err != nil {
 		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
 		return
