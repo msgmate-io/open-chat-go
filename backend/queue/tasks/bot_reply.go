@@ -3,7 +3,6 @@ package tasks
 import (
 	"backend/api/msgmate"
 	wsapi "backend/api/websocket"
-	"backend/client"
 	"backend/database"
 	"backend/workqueue"
 	"context"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	client "github.com/msgmate-io/go-client-integration/goclient"
 	"gorm.io/gorm"
 )
 
@@ -74,7 +74,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	ocClient := client.NewClient(host)
 	ocClient.SetSessionId(token)
-	ocClient.User = botUser
+	ocClient.User = client.User{UUID: botUser.UUID}
 
 	wsHandler := deps.WSHandler
 	if wsHandler == nil {

@@ -2,7 +2,7 @@ module backend
 
 go 1.25.10
 
-require github.com/urfave/cli/v3 v3.0.0-alpha9.3
+require github.com/urfave/cli/v3 v3.10.1
 
 require golang.org/x/crypto v0.54.0
 
@@ -30,7 +30,6 @@ require (
 	github.com/hibiken/asynq v0.26.0
 	github.com/hibiken/asynqmon v0.7.2
 	github.com/swaggo/swag/v2 v2.0.0-rc5
-	golang.org/x/term v0.45.0
 	gorm.io/driver/postgres v1.5.11
 )
 
@@ -102,6 +101,7 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
