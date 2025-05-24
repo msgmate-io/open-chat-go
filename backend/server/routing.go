@@ -457,6 +457,7 @@ func BackendRouting(
 	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
 	mux.Handle("GET /api/user/cli-auth", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuth))))
+	mux.Handle("GET /api/user/cli-auth/poll", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuthPoll))))
 	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
