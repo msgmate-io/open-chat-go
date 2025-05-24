@@ -11,12 +11,27 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 const maxUserAccessTokens = 5
+const cliBrowserAuthStateTTL = 5 * time.Minute
+
+type cliBrowserAuthResult struct {
+	Token     string
+	Error     string
+	ExpiresAt time.Time
+}
+
+var cliBrowserAuthResults = struct {
+	mu    sync.Mutex
+	state map[string]cliBrowserAuthResult
+}{
+	state: map[string]cliBrowserAuthResult{},
+}
 
 type PermissionsResponse struct {
 	Rows []string `json:"rows"`
@@ -260,11 +275,15 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 		tokenName = "open-chat-cli"
 	}
 
-	if redirectURI == "" || state == "" {
-		http.Error(w, "redirect_uri and state are required", http.StatusBadRequest)
+	if state == "" {
+		http.Error(w, "state is required", http.StatusBadRequest)
 		return
 	}
-	if !isLoopbackRedirectURI(redirectURI) {
+	if !isValidCLIAuthState(state) {
+		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
+	if redirectURI != "" && !isLoopbackRedirectURI(redirectURI) {
 		http.Error(w, "redirect_uri must target localhost loopback", http.StatusBadRequest)
 		return
 	}
@@ -272,18 +291,18 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 	user, ok := resolveUserFromSessionCookie(DB, r)
 	if !ok {
 		currentURL := requestAbsoluteURL(r)
-		http.Redirect(w, r, "/login?redirect="+url.QueryEscape(currentURL), http.StatusFound)
+		http.Redirect(w, r, loginRedirectURL(currentURL), http.StatusFound)
 		return
 	}
 
 	if !requirePermission(DB, user, database.PermissionCreateAPITokens) {
-		redirectToCLIAuthCallback(w, r, redirectURI, state, "Missing permission: create_api_tokens", "")
+		handleCLIAuthResult(w, r, redirectURI, state, "Missing permission: create_api_tokens", "")
 		return
 	}
 
 	rawToken, prefix, tokenHash, genErr := database.GenerateRawAccessToken()
 	if genErr != nil {
-		redirectToCLIAuthCallback(w, r, redirectURI, state, "Failed to generate token", "")
+		handleCLIAuthResult(w, r, redirectURI, state, "Failed to generate token", "")
 		return
 	}
 
@@ -294,11 +313,36 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 		TokenHash:   tokenHash,
 	}
 	if createErr := DB.Create(&accessToken).Error; createErr != nil {
-		redirectToCLIAuthCallback(w, r, redirectURI, state, "Failed to persist token", "")
+		handleCLIAuthResult(w, r, redirectURI, state, "Failed to persist token", "")
 		return
 	}
 
-	redirectToCLIAuthCallback(w, r, redirectURI, state, "", rawToken)
+	handleCLIAuthResult(w, r, redirectURI, state, "", rawToken)
+}
+
+func (h *UserHandler) CLIBrowserAuthPoll(w http.ResponseWriter, r *http.Request) {
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	if state == "" {
+		http.Error(w, "state is required", http.StatusBadRequest)
+		return
+	}
+	if !isValidCLIAuthState(state) {
+		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
+
+	result, found := popCLIAuthResult(state)
+	w.Header().Set("Content-Type", "application/json")
+	if !found {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ready": false})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ready": true,
+		"token": result.Token,
+		"error": result.Error,
+	})
 }
 
 func resolveUserFromSessionCookie(DB *gorm.DB, r *http.Request) (*database.User, bool) {
@@ -356,6 +400,89 @@ func isLoopbackRedirectURI(raw string) bool {
 	}
 	ip := net.ParseIP(hostname)
 	return ip != nil && ip.IsLoopback()
+}
+
+func isValidCLIAuthState(state string) bool {
+	if len(state) < 16 || len(state) > 200 {
+		return false
+	}
+	for _, ch := range state {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			continue
+		}
+		if ch == '-' || ch == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func loginRedirectURL(target string) string {
+	escaped := url.QueryEscape(strings.TrimSpace(target))
+	return "/login?redirect=" + escaped + "&next=" + escaped
+}
+
+func handleCLIAuthResult(w http.ResponseWriter, r *http.Request, redirectURI, state, authErr, token string) {
+	if strings.TrimSpace(redirectURI) != "" {
+		redirectToCLIAuthCallback(w, r, redirectURI, state, authErr, token)
+		return
+	}
+	setCLIAuthResult(state, token, authErr)
+	if authErr != "" {
+		writeCLIAuthResultPage(w, false, authErr)
+		return
+	}
+	writeCLIAuthResultPage(w, true, "Open Chat CLI authenticated. You can close this tab and return to your terminal.")
+}
+
+func writeCLIAuthResultPage(w http.ResponseWriter, ok bool, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	status := http.StatusOK
+	if !ok {
+		status = http.StatusForbidden
+	}
+	w.WriteHeader(status)
+	title := "Open Chat CLI auth complete"
+	if !ok {
+		title = "Open Chat CLI auth failed"
+	}
+	_, _ = w.Write([]byte("<html><body><h2>" + title + "</h2><p>" + message + "</p></body></html>"))
+}
+
+func setCLIAuthResult(state, token, authErr string) {
+	now := time.Now()
+	cliBrowserAuthResults.mu.Lock()
+	defer cliBrowserAuthResults.mu.Unlock()
+
+	cleanupExpiredCLIAuthResultsLocked(now)
+	cliBrowserAuthResults.state[state] = cliBrowserAuthResult{
+		Token:     strings.TrimSpace(token),
+		Error:     strings.TrimSpace(authErr),
+		ExpiresAt: now.Add(cliBrowserAuthStateTTL),
+	}
+}
+
+func popCLIAuthResult(state string) (cliBrowserAuthResult, bool) {
+	now := time.Now()
+	cliBrowserAuthResults.mu.Lock()
+	defer cliBrowserAuthResults.mu.Unlock()
+
+	cleanupExpiredCLIAuthResultsLocked(now)
+	result, found := cliBrowserAuthResults.state[state]
+	if !found {
+		return cliBrowserAuthResult{}, false
+	}
+	delete(cliBrowserAuthResults.state, state)
+	return result, true
+}
+
+func cleanupExpiredCLIAuthResultsLocked(now time.Time) {
+	for key, value := range cliBrowserAuthResults.state {
+		if now.After(value.ExpiresAt) {
+			delete(cliBrowserAuthResults.state, key)
+		}
+	}
 }
 
 func redirectToCLIAuthCallback(w http.ResponseWriter, r *http.Request, redirectURI, state, authErr, token string) {
