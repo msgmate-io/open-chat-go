@@ -54,6 +54,7 @@ replace github.com/msgmate-io/voice-integration => ../clients/integrations/voice
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
@@ -73,6 +74,7 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/oapi-codegen/runtime v1.6.0 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.4 // indirect
 	github.com/pion/ice/v4 v4.0.6 // indirect
@@ -114,7 +116,10 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
+	github.com/msgmate-io/go-client-integration v0.0.0
 	golang.org/x/text v0.40.0 // indirect
 	gorm.io/gorm v1.25.12
 	modernc.org/sqlite v1.29.10 // indirect
 )
+
+replace github.com/msgmate-io/go-client-integration => ../clients/integrations/go_client_integration
