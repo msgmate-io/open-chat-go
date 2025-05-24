@@ -567,7 +567,7 @@ func ServerCli() *cli.Command {
 				queueInspector,
 				asynqUIHandler,
 				c.String("host"),
-				c.Int("port"),
+				int64(c.Int("port")),
 				c.Bool("debug"),
 				c.String("frontend-proxy"),
 				sessionCookieDomain,
