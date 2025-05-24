@@ -5,7 +5,9 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -242,6 +244,136 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 			RevokedAt:   accessToken.RevokedAt,
 		},
 	})
+}
+
+func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
+	DB, err := util.GetDB(r)
+	if err != nil {
+		http.Error(w, "Unable to get database", http.StatusInternalServerError)
+		return
+	}
+
+	redirectURI := strings.TrimSpace(r.URL.Query().Get("redirect_uri"))
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	tokenName := strings.TrimSpace(r.URL.Query().Get("name"))
+	if tokenName == "" {
+		tokenName = "open-chat-cli"
+	}
+
+	if redirectURI == "" || state == "" {
+		http.Error(w, "redirect_uri and state are required", http.StatusBadRequest)
+		return
+	}
+	if !isLoopbackRedirectURI(redirectURI) {
+		http.Error(w, "redirect_uri must target localhost loopback", http.StatusBadRequest)
+		return
+	}
+
+	user, ok := resolveUserFromSessionCookie(DB, r)
+	if !ok {
+		currentURL := requestAbsoluteURL(r)
+		http.Redirect(w, r, "/login?redirect="+url.QueryEscape(currentURL), http.StatusFound)
+		return
+	}
+
+	if !requirePermission(DB, user, database.PermissionCreateAPITokens) {
+		redirectToCLIAuthCallback(w, r, redirectURI, state, "Missing permission: create_api_tokens", "")
+		return
+	}
+
+	rawToken, prefix, tokenHash, genErr := database.GenerateRawAccessToken()
+	if genErr != nil {
+		redirectToCLIAuthCallback(w, r, redirectURI, state, "Failed to generate token", "")
+		return
+	}
+
+	accessToken := database.AccessToken{
+		UserId:      user.ID,
+		Name:        composeTokenName(tokenName, nil),
+		TokenPrefix: prefix,
+		TokenHash:   tokenHash,
+	}
+	if createErr := DB.Create(&accessToken).Error; createErr != nil {
+		redirectToCLIAuthCallback(w, r, redirectURI, state, "Failed to persist token", "")
+		return
+	}
+
+	redirectToCLIAuthCallback(w, r, redirectURI, state, "", rawToken)
+}
+
+func resolveUserFromSessionCookie(DB *gorm.DB, r *http.Request) (*database.User, bool) {
+	if DB == nil || r == nil {
+		return nil, false
+	}
+	sessionCookie, err := r.Cookie("session_id")
+	if err != nil || strings.TrimSpace(sessionCookie.Value) == "" {
+		return nil, false
+	}
+
+	var session database.Session
+	now := time.Now()
+	if err := DB.Where("token = ? AND expiry > ?", strings.TrimSpace(sessionCookie.Value), now).First(&session).Error; err != nil {
+		return nil, false
+	}
+
+	var user database.User
+	if err := DB.First(&user, "id = ?", session.UserId).Error; err != nil {
+		return nil, false
+	}
+	return &user, true
+}
+
+func requestAbsoluteURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		host = "localhost"
+	}
+	return scheme + "://" + host + r.URL.RequestURI()
+}
+
+func isLoopbackRedirectURI(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	hostname := strings.TrimSpace(parsed.Hostname())
+	if hostname == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
+}
+
+func redirectToCLIAuthCallback(w http.ResponseWriter, r *http.Request, redirectURI, state, authErr, token string) {
+	parsed, err := url.Parse(redirectURI)
+	if err != nil {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
+	q := parsed.Query()
+	q.Set("state", state)
+	if token != "" {
+		q.Set("token", token)
+	}
+	if authErr != "" {
+		q.Set("error", authErr)
+	}
+	parsed.RawQuery = q.Encode()
+	http.Redirect(w, r, parsed.String(), http.StatusFound)
 }
 
 func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
