@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 CORE_MODULES = {
+    "github.com/msgmate-io/go-client-integration",
     "github.com/msgmate-io/mcp-integration",
     "github.com/msgmate-io/rest-api-tool-integration",
 }
