@@ -9,9 +9,15 @@ from pathlib import Path
 
 
 CORE_MODULES = {
-    "github.com/msgmate-io/open-chat-go-golang-client",
+    "github.com/msgmate-io/go-client-integration",
     "github.com/msgmate-io/mcp-integration",
     "github.com/msgmate-io/rest-api-tool-integration",
+}
+
+# Some modules are published from repositories whose names differ from module path.
+# Keep these in replace form when local submodule paths are unavailable.
+REMOTE_FALLBACK_REPLACES = {
+    "github.com/msgmate-io/go-client-integration": "github.com/msgmate-io/open-chat-go-golang-client@v0.0.0-20260718164154-96485c47c58a",
 }
 
 
@@ -106,11 +112,16 @@ def main() -> int:
             run_go_mod_edit(output_modfile, module_dir, f"-dropreplace={module}")
             continue
         if module not in keep_local_replace:
-            run_go_mod_edit(output_modfile, module_dir, f"-dropreplace={module}")
+            fallback_replace = REMOTE_FALLBACK_REPLACES.get(module, "")
+            if fallback_replace:
+                run_go_mod_edit(output_modfile, module_dir, f"-replace={module}={fallback_replace}")
+            else:
+                run_go_mod_edit(output_modfile, module_dir, f"-dropreplace={module}")
+
             remote_version = selected_remote_versions.get(module, "")
             if remote_version:
                 run_go_mod_edit(output_modfile, module_dir, f"-require={module}@{remote_version}")
-            else:
+            elif not fallback_replace:
                 run_go_mod_edit(output_modfile, module_dir, f"-droprequire={module}")
 
     # Local interface submodules can also be absent; prefer remote modules in that case.
