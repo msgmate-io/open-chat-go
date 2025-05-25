@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 from pathlib import Path
 
 
 CORE_MODULES = {
-    "github.com/msgmate-io/go-client-integration",
+    "github.com/msgmate-io/open-chat-go-golang-client",
     "github.com/msgmate-io/mcp-integration",
     "github.com/msgmate-io/rest-api-tool-integration",
 }
@@ -60,6 +59,7 @@ def main() -> int:
     all_modules: list[str] = []
     selected_deps: list[dict[str, str]] = []
     keep_local_replace: set[str] = set()
+    selected_remote_versions: dict[str, str] = {}
 
     for dep in raw_deps:
         if not isinstance(dep, dict):
@@ -89,6 +89,8 @@ def main() -> int:
         selected_deps.append({"module": module, "import": import_path, "version": version})
         if use_local:
             keep_local_replace.add(module)
+        else:
+            selected_remote_versions[module] = version
 
     output_manifest.parent.mkdir(parents=True, exist_ok=True)
     output_manifest.write_text(json.dumps({"dependencies": selected_deps}, indent=2) + "\n", encoding="utf-8")
@@ -105,6 +107,11 @@ def main() -> int:
             continue
         if module not in keep_local_replace:
             run_go_mod_edit(output_modfile, module_dir, f"-dropreplace={module}")
+            remote_version = selected_remote_versions.get(module, "")
+            if remote_version:
+                run_go_mod_edit(output_modfile, module_dir, f"-require={module}@{remote_version}")
+            else:
+                run_go_mod_edit(output_modfile, module_dir, f"-droprequire={module}")
 
     # Local interface submodules can also be absent; prefer remote modules in that case.
     optional_interface_replaces = {

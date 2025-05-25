@@ -11,7 +11,7 @@ import (
 	"time"
 
 	wsapi "backend/api/websocket"
-	client "github.com/msgmate-io/go-client-integration/goclient"
+	client "github.com/msgmate-io/open-chat-go-golang-client/goclient"
 )
 
 func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[string]interface{} {
