@@ -63,7 +63,32 @@ else
     echo "Step 1: Incrementing version in metrics handler..."
 fi
 
-./development/scripts/bump_backend_version.sh
+BUMP_SCRIPT="./development/scripts/bump_backend_version.sh"
+if [ -x "$BUMP_SCRIPT" ]; then
+    "$BUMP_SCRIPT"
+elif [ -f "$BUMP_SCRIPT" ]; then
+    bash "$BUMP_SCRIPT"
+else
+    echo "Warning: $BUMP_SCRIPT not found; bumping backend version inline."
+    VERSION_FILE="backend/api/metrics/handler.go"
+    CURRENT_VERSION=$(grep 'var VERSION =' "$VERSION_FILE" | sed 's/.*"\(.*\)".*/\1/')
+    IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+    if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
+        echo "Error: unexpected version format '$CURRENT_VERSION' in $VERSION_FILE"
+        exit 1
+    fi
+    if ! [[ "$PATCH" =~ ^[0-9]+$ ]]; then
+        echo "Error: patch segment is not numeric in version '$CURRENT_VERSION'"
+        exit 1
+    fi
+    NEW_PATCH=$((PATCH + 1))
+    NEW_VERSION_INLINE="${MAJOR}.${MINOR}.${NEW_PATCH}"
+    TMP_FILE=$(mktemp)
+    sed "s|var VERSION = \"${CURRENT_VERSION}\"|var VERSION = \"${NEW_VERSION_INLINE}\"|" "$VERSION_FILE" > "$TMP_FILE"
+    mv "$TMP_FILE" "$VERSION_FILE"
+    echo "Current version: $CURRENT_VERSION"
+    echo "New version: $NEW_VERSION_INLINE"
+fi
 NEW_VERSION=$(grep 'var VERSION =' backend/api/metrics/handler.go | sed 's/.*"\(.*\)".*/\1/')
 echo "Version updated to: $NEW_VERSION"
 
