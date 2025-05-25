@@ -116,10 +116,10 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/msgmate-io/open-chat-go-golang-client v0.0.0
+	github.com/msgmate-io/go-client-integration v0.0.0
 	golang.org/x/text v0.40.0 // indirect
 	gorm.io/gorm v1.25.12
 	modernc.org/sqlite v1.29.10 // indirect
 )
 
-replace github.com/msgmate-io/open-chat-go-golang-client => ../clients/integrations/go_client_integration
+replace github.com/msgmate-io/go-client-integration => ../clients/integrations/go_client_integration
