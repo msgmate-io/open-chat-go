@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
-	client "github.com/msgmate-io/go-client-integration/goclient"
+	client "github.com/msgmate-io/open-chat-go-golang-client/goclient"
 	"gorm.io/gorm"
 )
 
