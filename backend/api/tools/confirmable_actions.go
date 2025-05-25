@@ -343,16 +343,6 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		}
 		execMetaBytes, _ := json.Marshal(execMeta)
 
-		toolCallRepr := []map[string]interface{}{{
-			"id":        actionID,
-			"name":      targetToolName,
-			"arguments": inputParams,
-			"result":    toolResult,
-		}}
-		toolCallBytes, _ := json.Marshal(toolCallRepr)
-		var toolCalls []json.RawMessage
-		_ = json.Unmarshal(toolCallBytes, &toolCalls)
-
 		msg := database.Message{
 			ChatId:     chat.ID,
 			SenderId:   botUserID,
@@ -360,7 +350,6 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			DataType:   "event",
 			Text:       &messageText,
 			MetaData:   execMetaBytes,
-			ToolCalls:  &toolCalls,
 		}
 
 		if err := tx.Create(&msg).Error; err != nil {
