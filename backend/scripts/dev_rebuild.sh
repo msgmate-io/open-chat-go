@@ -5,6 +5,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-default}"
+GEN_DIR="${ROOT_DIR}/.generated"
+mkdir -p "$GEN_DIR"
+EFFECTIVE_INTEGRATION_MANIFEST="${GEN_DIR}/integrationdeps.effective.json"
+EFFECTIVE_MODFILE="${GEN_DIR}/go.effective.mod"
+
 log() {
   printf '[dev-rebuild %(%H:%M:%S)T] %s\n' -1 "$1"
 }
@@ -66,6 +72,16 @@ run_generator_jobs() {
   done
 }
 
+resolve_integrations() {
+  python3 ./scripts/resolve_integrations.py \
+    --manifest ./integrationdeps.json \
+    --profile "$INTEGRATION_PROFILE" \
+    --repo-root "$(cd "$ROOT_DIR/.." && pwd)" \
+    --base-go-mod ./go.mod \
+    --output-manifest "$EFFECTIVE_INTEGRATION_MANIFEST" \
+    --output-modfile "$EFFECTIVE_MODFILE"
+}
+
 generate_swagger() {
   if [[ -x /dev_bin/swag ]]; then
     /dev_bin/swag init --parseDependency --parseDependencyLevel 3 --parseInternal --output ./docs --generalInfo ./main.go
@@ -76,6 +92,21 @@ generate_swagger() {
   fi
 }
 
+run_step "resolve integrations" resolve_integrations
+
+if [[ -n "${GOFLAGS:-}" ]]; then
+  export GOFLAGS="${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}"
+else
+  export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
+fi
+log "using GOFLAGS=${GOFLAGS}"
+
+INTEGRATION_JOBS=("${EFFECTIVE_INTEGRATION_MANIFEST}:./integrations/externalintegrations/imports_gen.go")
+run_step "integration dependency generation" run_generator_jobs "integrationdepsgen" "./scripts/integrationdepsgen" "${INTEGRATION_JOBS[@]}"
+run_step "tool dependency generation" run_generator_jobs "tooldepsgen" "./scripts/tooldepsgen" "${TOOL_JOBS[@]}"
+run_step "module download" go mod download
+run_step "module tidy" go mod tidy
+
 run_step "swagger generation" generate_swagger
 
 if [[ -f ./docs/swagger.json ]]; then
@@ -84,9 +115,6 @@ if [[ -f ./docs/swagger.json ]]; then
     cp ./docs/swagger.json ./server/swagger.json
   fi
 fi
-
-run_step "tool dependency generation" run_generator_jobs "tooldepsgen" "./scripts/tooldepsgen" "${TOOL_JOBS[@]}"
-run_step "integration dependency generation" run_generator_jobs "integrationdepsgen" "./scripts/integrationdepsgen" "${INTEGRATION_JOBS[@]}"
 
 mkdir -p ./.devbin
 run_step "backend build" go build -o ./.devbin/backend .

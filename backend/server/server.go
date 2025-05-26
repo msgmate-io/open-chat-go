@@ -18,7 +18,7 @@ func BackendServer(
 	queueInspector *asynq.Inspector,
 	asynqUIHandler http.Handler,
 	host string,
-	port int64,
+	port uint16,
 	debug bool,
 	frontendProxy string,
 	sessionCookieDomain string,
@@ -132,7 +132,10 @@ func ensureAdminOwnsDefaultBotRuntime(DB *gorm.DB, adminUser database.User, botU
 				IsPublic:            true,
 				IsActive:            true,
 			}
-			return tx.Create(&runtime).Error
+			if err := tx.Create(&runtime).Error; err != nil {
+				return err
+			}
+			return database.EnsureBotRuntimeOwner(tx, runtime.ID, adminUser.ID)
 		}
 
 		updates := map[string]interface{}{}
@@ -156,10 +159,12 @@ func ensureAdminOwnsDefaultBotRuntime(DB *gorm.DB, adminUser database.User, botU
 			updates["is_public"] = true
 		}
 
-		if len(updates) == 0 {
-			return nil
+		if len(updates) > 0 {
+			if err := tx.Model(&runtime).Updates(updates).Error; err != nil {
+				return err
+			}
 		}
-		return tx.Model(&runtime).Updates(updates).Error
+		return database.EnsureBotRuntimeOwner(tx, runtime.ID, adminUser.ID)
 	})
 }
 
@@ -178,56 +183,6 @@ func ensureUserConnectedToDefaultBot(DB *gorm.DB, user database.User, botUser da
 		if err := DB.Create(&contact).Error; err != nil {
 			return err
 		}
-	}
-
-	// first check if already a chat between these two exists
-	var chat database.Chat
-	err = DB.Where(
-		"(user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)",
-		user.ID,
-		botUser.ID,
-		botUser.ID,
-		user.ID,
-	).First(&chat).Error
-	if err == nil {
-		return nil
-	}
-	if err != gorm.ErrRecordNotFound {
-		return err
-	}
-
-	if user.ID < botUser.ID {
-		chat = database.Chat{
-			User1Id: user.ID,
-			User2Id: botUser.ID,
-		}
-	} else {
-		chat = database.Chat{
-			User1Id: botUser.ID,
-			User2Id: user.ID,
-		}
-	}
-	if err := DB.Create(&chat).Error; err != nil {
-		return err
-	}
-
-	// Now create a hello word message from the bot to the user
-	text := "Hello World"
-	message := database.Message{
-		SenderId:   botUser.ID,
-		ReceiverId: user.ID,
-		ChatId:     chat.ID,
-		Text:       &text,
-	}
-
-	if err := DB.Create(&message).Error; err != nil {
-		return err
-	}
-
-	// Now we update the chat again with the latest chat id
-	chat.LatestMessageId = &message.ID
-	if err := DB.Save(&chat).Error; err != nil {
-		return err
 	}
 
 	return nil

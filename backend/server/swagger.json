@@ -1555,6 +1555,32 @@
                 }
             }
         },
+        "/api/v1/integrations/mcp/templates": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "List built-in MCP configuration templates and setup documentation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "List MCP server templates",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/integrations/rest_api_tool/tools": {
             "get": {
                 "security": [
@@ -3307,6 +3333,9 @@
                 "two_factor_enabled": {
                     "type": "boolean"
                 },
+                "username": {
+                    "type": "string"
+                },
                 "uuid": {
                     "type": "string"
                 }
@@ -3381,6 +3410,9 @@
         "integrations.IntegrationListRow": {
             "type": "object",
             "properties": {
+                "admin_only": {
+                    "type": "boolean"
+                },
                 "api_route_count": {
                     "type": "integer"
                 },
@@ -3398,6 +3430,12 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "runtime_env_var_count": {
+                    "type": "integer"
+                },
+                "user_accessible": {
+                    "type": "boolean"
                 }
             }
         },
@@ -3482,6 +3520,26 @@
                 },
                 "readme_markdown": {
                     "type": "string"
+                },
+                "runtime_env_vars": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationRuntimeEnvVarOverview"
+                    }
+                }
+            }
+        },
+        "integrations.IntegrationRuntimeEnvVarOverview": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "sensitive": {
+                    "type": "boolean"
                 }
             }
         },
