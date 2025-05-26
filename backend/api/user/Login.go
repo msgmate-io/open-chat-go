@@ -177,7 +177,8 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string, recoveryCode string, expiry time.Time) (error, string, bool, database.User) {
 	var user database.User // TODO: sql injection?
-	q := DB.First(&user, "email = ?", email)
+	identifier := strings.TrimSpace(email)
+	q := DB.First(&user, "email = ? OR username = ?", identifier, identifier)
 
 	if q.Error != nil {
 		fmt.Println(q.Error)
@@ -216,6 +217,9 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 				return fmt.Errorf("invalid two-factor code"), "", true, database.User{}
 			}
 		}
+	}
+	if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+		return err, "", false, database.User{}
 	}
 
 	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!

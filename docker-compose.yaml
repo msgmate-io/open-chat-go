@@ -3,6 +3,8 @@ services:
     build:
       dockerfile: dev.dockerfile
       context: .
+      args:
+        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
     image: dev-backend
     depends_on:
       frontend:
@@ -24,15 +26,16 @@ services:
       ANTHROPIC_API_HOST: ${ANTHROPIC_API_HOST}
       LITELLM_API_KEY: ${LITELLM_API_KEY}
       LITELLM_API_HOST: ${LITELLM_API_HOST}
-      FRONTEND_PROXY: "http://frontend:3000"
-      ROOT_CREDENTIALS: "admin:password"
-      DB_PATH: "/tmp/data.db"
-      CREATE_EXTRA_USER: "littleworld:Test123!"
-      CREATE_EXTRA_BOT: "little_world_support_chat_bot:Test123!,little_world_reply_suggestion_bot:Test123!"
-      ADD_BOT_FROM_CONFIG: "/backend/little_world_default_bots/little_world_support_chat.json,/backend/little_world_default_bots/little_world_reply_suggestion.json"
-      HOST: "0.0.0.0"
-      PORT: 1984
-      REDIS_URL: "redis://redis:6379/0"
+      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
+      FRONTEND_PROXY: ${FRONTEND_PROXY:-http://frontend:3000}
+      ROOT_CREDENTIALS: ${ROOT_CREDENTIALS:-admin:password}
+      DB_PATH: ${DB_PATH:-/tmp/data.db}
+      CREATE_EXTRA_USER: ${CREATE_EXTRA_USER:-littleworld:Test123!}
+      CREATE_EXTRA_BOT: ${CREATE_EXTRA_BOT}
+      ADD_BOT_FROM_CONFIG: ${ADD_BOT_FROM_CONFIG}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-1984}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     env_file:
       - path: ./.env
         required: false
