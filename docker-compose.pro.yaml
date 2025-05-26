@@ -4,16 +4,31 @@ services:
       context: .
       dockerfile: Dockerfile
       target: prod-alpine
+      args:
+        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
     ports:
       - 1984:1984
     environment:
-      - DB_BACKEND=postgres
-      - DB_PATH=postgresql://postgres:dbpass@db:5432/dbname
-      - REDIS_URL=redis://redis:6379/0
-      - HOST=0.0.0.0
-      - PORT=1984
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - ANTHROPIC_API_HOST=${ANTHROPIC_API_HOST}
+      DB_BACKEND: ${DB_BACKEND:-postgres}
+      DB_PATH: ${DB_PATH:-postgresql://postgres:dbpass@db:5432/dbname}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-1984}
+      FRONTEND_PROXY: ${FRONTEND_PROXY}
+      ROOT_CREDENTIALS: ${ROOT_CREDENTIALS:-admin:password}
+      CREATE_EXTRA_USER: ${CREATE_EXTRA_USER:-littleworld:Test123!}
+      CREATE_EXTRA_BOT: ${CREATE_EXTRA_BOT}
+      ADD_BOT_FROM_CONFIG: ${ADD_BOT_FROM_CONFIG}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_API_HOST: ${ANTHROPIC_API_HOST}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LITELLM_API_KEY: ${LITELLM_API_KEY}
+      LITELLM_API_HOST: ${LITELLM_API_HOST}
+    env_file:
+      - path: ./.env
+        required: false
     depends_on:
       db:
         condition: service_healthy

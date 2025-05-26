@@ -14,6 +14,9 @@ if [[ -z "${COMMIT_MESSAGE}" ]]; then
   exit 1
 fi
 
+echo "Bumping backend version before commits"
+"${REPO_ROOT}/development/scripts/bump_backend_version.sh"
+
 SUBREPO_PATHS=()
 if [[ -f "${REPO_ROOT}/.gitmodules" ]]; then
   while read -r _config_key path; do
