@@ -2,15 +2,19 @@ module backend
 
 go 1.25.10
 
-require github.com/urfave/cli/v3 v3.0.0-alpha9.3
+require github.com/urfave/cli/v3 v3.10.1
 
-require golang.org/x/crypto v0.45.0
+require golang.org/x/crypto v0.54.0
 
 require github.com/msgmate-io/go-tool-interface v0.0.0
 
 require github.com/msgmate-io/go-integration-interface v0.0.0
 
+require github.com/msgmate-io/account-management-integration v0.0.0
+
 require github.com/msgmate-io/admin-db-managemnt-integration v0.0.0
+
+require github.com/msgmate-io/email-integration v0.0.0
 
 require github.com/msgmate-io/mcp-integration v0.0.0
 
@@ -18,13 +22,14 @@ require github.com/msgmate-io/rest-api-tool-integration v0.0.0
 
 require github.com/msgmate-io/ssh-integration v0.0.0
 
+require github.com/msgmate-io/voice-integration v0.0.0
+
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/uuid v1.6.0
 	github.com/hibiken/asynq v0.26.0
 	github.com/hibiken/asynqmon v0.7.2
 	github.com/swaggo/swag/v2 v2.0.0-rc5
-	golang.org/x/term v0.37.0
 	gorm.io/driver/postgres v1.5.11
 )
 
@@ -32,7 +37,11 @@ replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
 
 replace github.com/msgmate-io/go-integration-interface => ../clients/go_integration_interface
 
+replace github.com/msgmate-io/account-management-integration => ../clients/integrations/account_management
+
 replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integrations/admin_db_managemnt_integration
+
+replace github.com/msgmate-io/email-integration => ../clients/integrations/email_integration
 
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
 
@@ -40,8 +49,11 @@ replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integratio
 
 replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_integration
 
+replace github.com/msgmate-io/voice-integration => ../clients/integrations/voice_integration
+
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
@@ -61,6 +73,23 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/oapi-codegen/runtime v1.6.0 // indirect
+	github.com/pion/datachannel v1.5.10 // indirect
+	github.com/pion/dtls/v3 v3.0.4 // indirect
+	github.com/pion/ice/v4 v4.0.6 // indirect
+	github.com/pion/interceptor v0.1.39 // indirect
+	github.com/pion/logging v0.2.3 // indirect
+	github.com/pion/mdns/v2 v2.0.7 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/rtcp v1.2.15 // indirect
+	github.com/pion/rtp v1.8.18 // indirect
+	github.com/pion/sctp v1.8.35 // indirect
+	github.com/pion/sdp/v3 v3.0.10 // indirect
+	github.com/pion/srtp/v3 v3.0.4 // indirect
+	github.com/pion/stun/v3 v3.0.0 // indirect
+	github.com/pion/transport/v3 v3.0.7 // indirect
+	github.com/pion/turn/v4 v4.0.0 // indirect
+	github.com/pion/webrtc/v4 v4.0.9 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/redis/go-redis/v9 v9.14.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -68,10 +97,13 @@ require (
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/sv-tools/openapi v0.4.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	github.com/wlynxg/anet v0.0.5 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.38.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.49.3 // indirect
@@ -84,7 +116,10 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	github.com/msgmate-io/go-client-integration v0.0.0
+	golang.org/x/text v0.40.0 // indirect
 	gorm.io/gorm v1.25.12
 	modernc.org/sqlite v1.29.10 // indirect
 )
+
+replace github.com/msgmate-io/go-client-integration => ../clients/integrations/go_client_integration
