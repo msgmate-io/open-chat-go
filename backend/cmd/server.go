@@ -512,8 +512,16 @@ func ServerCli() *cli.Command {
 				"GROQ_API_KEY":       {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
 				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
 				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
-				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
-			}
+			"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+			"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
+				Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
+				Sensitive: false,
+			},
+			"MOBILE_UPSTREAM_URL": {
+				Value:     os.Getenv("MOBILE_UPSTREAM_URL"),
+				Sensitive: false,
+			},
+		}
 
 			for _, decl := range integrations.RuntimeEnvDeclarations() {
 				if _, exists := runtimeValues[decl.Key]; exists {
