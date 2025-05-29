@@ -4,6 +4,7 @@ package server
 import (
 	"backend/database"
 	"backend/integrations"
+	"backend/runtimecfg"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -395,6 +396,11 @@ func isPublicFrontendRoute(path string) bool {
 
 func FrontendAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(strings.TrimSpace(runtimecfg.GetAll()["MOBILE_ROUTE_API_WS_TO_UPSTREAM"].Value), "true") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		accept := r.Header.Get("Accept")
 		if !strings.Contains(accept, "text/html") {
 			next.ServeHTTP(w, r)
