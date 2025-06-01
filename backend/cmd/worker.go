@@ -61,9 +61,19 @@ func WorkerCli() *cli.Command {
 				})
 			}
 
-			redisConnOpt, err := resolveRedisConnOpt(c)
+			redisRuntime, err := resolveRedisRuntime(c)
 			if err != nil {
 				return err
+			}
+			defer redisRuntime.Cleanup()
+			if redisRuntime.Mode == queue.RedisModeEmbedded {
+				if redisRuntime.FallbackReason != nil {
+					log.Printf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
+				} else {
+					log.Printf("Started embedded redis at %s", redisRuntime.Address)
+				}
+			} else {
+				log.Printf("Using external redis at %s", redisRuntime.Address)
 			}
 
 			DB := database.SetupDatabase(database.DBConfig{
@@ -78,7 +88,7 @@ func WorkerCli() *cli.Command {
 			}
 
 			server := asynq.NewServer(
-				redisConnOpt,
+				redisRuntime.ConnOpt,
 				asynq.Config{
 					Concurrency: int(c.Int("asynq-concurrency")),
 					Queues: map[string]int{
