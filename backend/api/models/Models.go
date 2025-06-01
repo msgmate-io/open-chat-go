@@ -225,9 +225,6 @@ func (h *ModelsHandler) List(w http.ResponseWriter, r *http.Request) {
 		like := "%" + strings.ToLower(queryFilter) + "%"
 		query = query.Where("LOWER(title) LIKE ? OR LOWER(model_id) LIKE ? OR LOWER(description) LIKE ?", like, like, like)
 	}
-	if hosterFilter != "" {
-		query = query.Where("CAST(configuration AS TEXT) LIKE ?", "%\"backend\":\""+hosterFilter+"\"%")
-	}
 	if isAdmin && botFilter != "" {
 		query = query.Where("CAST(bot_usernames AS TEXT) LIKE ?", "%\""+botFilter+"\"%")
 	}
@@ -249,6 +246,17 @@ func (h *ModelsHandler) List(w http.ResponseWriter, r *http.Request) {
 			}
 			modelConfigs = filtered
 		}
+	}
+
+	if hosterFilter != "" {
+		normalizedHosterFilter := strings.ToLower(hosterFilter)
+		filtered := make([]database.ModelConfig, 0, len(modelConfigs))
+		for _, cfg := range modelConfigs {
+			if strings.ToLower(parseHoster(cfg.Configuration)) == normalizedHosterFilter {
+				filtered = append(filtered, cfg)
+			}
+		}
+		modelConfigs = filtered
 	}
 
 	totalRows := int64(len(modelConfigs))

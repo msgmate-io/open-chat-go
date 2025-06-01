@@ -40,3 +40,12 @@
 [submodule "clients/integrations/go_client_integration"]
 	path = clients/integrations/go_client_integration
 	url = https://github.com/msgmate-io/open-chat-go-golang-client
+[submodule "clients/gomobile"]
+	path = clients/gomobile
+	url = https://github.com/msgmate-io/open-chat-go-mobile
+[submodule "clients/integrations/opencode_integration"]
+	path = clients/integrations/opencode_integration
+	url = https://github.com/msgmate-io/open-chat-go-opencode-integration
+[submodule "clients/llm_coding_agents"]
+	path = clients/llm_coding_agents
+	url = https://github.com/msgmate-io/open-chat-go-llm-coding-context
