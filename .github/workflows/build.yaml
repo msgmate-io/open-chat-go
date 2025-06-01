@@ -122,6 +122,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          INTEGRATION_PROFILE: full
         run: |
           chmod +x ./full_build.sh
           ./full_build.sh
