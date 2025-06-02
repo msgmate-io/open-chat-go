@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -30,6 +32,14 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 
 func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	proxy := newReverseProxy(target)
+	namespacedSessionCookie := mobileSessionCookieName(target)
+
+	baseDirector := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		baseDirector(r)
+		rewriteMobileProxyRequestCookies(r, namespacedSessionCookie)
+	}
+
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		setCookies := resp.Header.Values("Set-Cookie")
 		if len(setCookies) == 0 {
@@ -44,6 +54,9 @@ func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
 				trimmed := strings.TrimSpace(part)
 				if trimmed == "" {
 					continue
+				}
+				if idx == 0 {
+					trimmed = rewriteSessionCookieName(trimmed, namespacedSessionCookie)
 				}
 				if idx > 0 {
 					lower := strings.ToLower(trimmed)
@@ -71,6 +84,65 @@ func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	}
 
 	return proxy
+}
+
+func mobileSessionCookieName(target *url.URL) string {
+	key := strings.TrimSpace(target.String())
+	h := sha1.Sum([]byte(strings.ToLower(key)))
+	return "session_id_mobile_" + hex.EncodeToString(h[:])[:12]
+}
+
+func rewriteSessionCookieName(cookiePair string, namespacedSessionCookie string) string {
+	idx := strings.Index(cookiePair, "=")
+	if idx <= 0 {
+		return cookiePair
+	}
+	name := strings.TrimSpace(cookiePair[:idx])
+	if name != "session_id" {
+		return cookiePair
+	}
+	return namespacedSessionCookie + cookiePair[idx:]
+}
+
+func rewriteMobileProxyRequestCookies(r *http.Request, namespacedSessionCookie string) {
+	allCookies := r.Cookies()
+	if len(allCookies) == 0 {
+		return
+	}
+
+	rewritten := make([]*http.Cookie, 0, len(allCookies))
+	var fallbackSessionCookie *http.Cookie
+	var upstreamSessionCookie *http.Cookie
+
+	for _, cookie := range allCookies {
+		if cookie.Name == namespacedSessionCookie {
+			copyCookie := *cookie
+			copyCookie.Name = "session_id"
+			upstreamSessionCookie = &copyCookie
+			continue
+		}
+
+		if cookie.Name == "session_id" {
+			if fallbackSessionCookie == nil {
+				copyCookie := *cookie
+				fallbackSessionCookie = &copyCookie
+			}
+			continue
+		}
+
+		rewritten = append(rewritten, cookie)
+	}
+
+	if upstreamSessionCookie != nil {
+		rewritten = append(rewritten, upstreamSessionCookie)
+	} else if fallbackSessionCookie != nil {
+		rewritten = append(rewritten, fallbackSessionCookie)
+	}
+
+	r.Header.Del("Cookie")
+	for _, cookie := range rewritten {
+		r.AddCookie(cookie)
+	}
 }
 
 // registerFrontendProxies wires each proxy's prefixes onto the mux. Paths are
