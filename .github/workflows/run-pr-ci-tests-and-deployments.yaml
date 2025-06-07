@@ -425,7 +425,6 @@ jobs:
           MOBILE_RELEASE_WORKFLOW: release-apk.yml
         run: |
           set -euo pipefail
-          dispatch_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           payload="$({
             jq -n \
               --arg ref "main" \
@@ -452,32 +451,7 @@ jobs:
             exit 1
           fi
 
-          run_url=""
-          for attempt in $(seq 1 20); do
-            runs_json="$(curl -fsSL \
-              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${MOBILE_RELEASE_REPO}/actions/workflows/${MOBILE_RELEASE_WORKFLOW}/runs?event=workflow_dispatch&per_page=30")"
-
-            run_url="$(jq -r --arg actor "${{ github.actor }}" --arg start "$dispatch_started_at" '
-              [.workflow_runs[]
-               | select((.actor.login // "") == $actor)
-               | select((.created_at // "") >= $start)]
-              | sort_by(.created_at)
-              | reverse
-              | .[0].html_url // ""' <<< "$runs_json")"
-
-            if [ -n "$run_url" ]; then
-              break
-            fi
-
-            sleep 5
-          done
-
-          if [ -z "$run_url" ]; then
-            run_url="https://github.com/${MOBILE_RELEASE_REPO}/actions/workflows/${MOBILE_RELEASE_WORKFLOW}"
-          fi
+          run_url="https://github.com/${MOBILE_RELEASE_REPO}/actions/workflows/${MOBILE_RELEASE_WORKFLOW}"
 
           echo "android_release_run_url=$run_url" >> "$GITHUB_OUTPUT"
           echo "Dispatched Android release workflow: $run_url"
@@ -908,12 +882,31 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
-      - name: Regenerate integration imports for full CI profile
+      - name: Resolve full integration test module set
         if: steps.context.outputs.should_test != ''
         working-directory: backend
         run: |
           set -euo pipefail
-          go run ./scripts/integrationdepsgen -manifest ./integrationdeps.json -output ./integrations/externalintegrations/imports_gen.go -sync=false
+          GEN_DIR="$PWD/.generated"
+          mkdir -p "$GEN_DIR"
+          EFFECTIVE_INTEGRATION_MANIFEST="$GEN_DIR/integrationdeps.effective.full-ci.json"
+          EFFECTIVE_MODFILE="$GEN_DIR/go.effective.full-ci.mod"
+
+          python3 ./scripts/resolve_integrations.py \
+            --manifest ./integrationdeps.json \
+            --profile full \
+            --repo-root "${GITHUB_WORKSPACE}" \
+            --base-go-mod ./go.mod \
+            --output-manifest "$EFFECTIVE_INTEGRATION_MANIFEST" \
+            --output-modfile "$EFFECTIVE_MODFILE"
+
+          if [ -n "${GOFLAGS:-}" ]; then
+            echo "GOFLAGS=${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}" >> "$GITHUB_ENV"
+          else
+            echo "GOFLAGS=-modfile=${EFFECTIVE_MODFILE}" >> "$GITHUB_ENV"
+          fi
+
+          go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
 
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
