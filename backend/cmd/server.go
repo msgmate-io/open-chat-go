@@ -680,6 +680,19 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
+			providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
+			if err != nil {
+				return err
+			}
+			log.Printf(
+				"Synced default bot provider-key model access bot=%s assigned=%d unassigned=%d skipped_unmanaged=%d skipped_invalid=%d",
+				botUser.Name,
+				providerSyncResult.Assigned,
+				providerSyncResult.Unassigned,
+				providerSyncResult.SkippedUnmanaged,
+				providerSyncResult.SkippedInvalid,
+			)
+
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err
 			}
