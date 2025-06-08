@@ -115,6 +115,7 @@ func validatePasswordStrength(password string) error {
 // Runtime behavior is driven by CLI flags and environment variables:
 // - DB backend/path and debug/reset toggles
 // - host/port binding and bootstrap credentials for root, bot, and extra users
+// - optional EXTRA_MODELS_JSON / --extra-models-json (path or inline JSON array)
 // - Redis connection options used by Asynq and Asynqmon
 // - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
 func GetServerFlags() []cli.Flag {
@@ -195,6 +196,12 @@ func GetServerFlags() []cli.Flag {
 			Sources: cli.EnvVars("ADD_BOT_FROM_CONFIG"),
 			Name:    "add-bot-from-config",
 			Usage:   "path(s) to JSON files defining additional bots; can be repeated",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
+			Name:    "extra-models-json",
+			Usage:   "extra default models: filesystem path to a JSON array, or an inline JSON array string",
+			Value:   "",
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("FRONTEND_PROXY"),
@@ -493,6 +500,7 @@ func ServerCli() *cli.Command {
 				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
 				"CREATE_EXTRA_BOT":        {Value: strings.Join(c.StringSlice("create-extra-bot"), ","), Sensitive: true},
 				"ADD_BOT_FROM_CONFIG":     {Value: strings.Join(c.StringSlice("add-bot-from-config"), ","), Sensitive: false},
+				"EXTRA_MODELS_JSON":       {Value: c.String("extra-models-json"), Sensitive: false},
 				"FRONTEND_PROXY":          {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":            {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
 				"ASYNQ_CONCURRENCY":       {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
