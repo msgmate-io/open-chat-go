@@ -2,7 +2,6 @@ package database
 
 import (
 	"fmt"
-	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"log"
@@ -27,7 +26,7 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 
 	switch config.Backend {
 	case "sqlite":
-		db, err = gorm.Open(sqlite.Open(config.FilePath), &gorm.Config{})
+		db, err = openSQLite(config.FilePath)
 	case "postgres":
 		db, err = gorm.Open(postgres.Open(config.FilePath), &gorm.Config{})
 	default:

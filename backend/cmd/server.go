@@ -115,6 +115,7 @@ func validatePasswordStrength(password string) error {
 // Runtime behavior is driven by CLI flags and environment variables:
 // - DB backend/path and debug/reset toggles
 // - host/port binding and bootstrap credentials for root, bot, and extra users
+// - optional EXTRA_MODELS_JSON / --extra-models-json (path or inline JSON array)
 // - Redis connection options used by Asynq and Asynqmon
 // - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
 func GetServerFlags() []cli.Flag {
@@ -195,6 +196,12 @@ func GetServerFlags() []cli.Flag {
 			Sources: cli.EnvVars("ADD_BOT_FROM_CONFIG"),
 			Name:    "add-bot-from-config",
 			Usage:   "path(s) to JSON files defining additional bots; can be repeated",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
+			Name:    "extra-models-json",
+			Usage:   "extra default models: filesystem path to a JSON array, or an inline JSON array string",
+			Value:   "",
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("FRONTEND_PROXY"),
@@ -493,6 +500,7 @@ func ServerCli() *cli.Command {
 				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
 				"CREATE_EXTRA_BOT":        {Value: strings.Join(c.StringSlice("create-extra-bot"), ","), Sensitive: true},
 				"ADD_BOT_FROM_CONFIG":     {Value: strings.Join(c.StringSlice("add-bot-from-config"), ","), Sensitive: false},
+				"EXTRA_MODELS_JSON":       {Value: c.String("extra-models-json"), Sensitive: false},
 				"FRONTEND_PROXY":          {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":            {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
 				"ASYNQ_CONCURRENCY":       {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
@@ -500,11 +508,11 @@ func ServerCli() *cli.Command {
 					Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 					Sensitive: false,
 				},
-			"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
-			"REDIS_MODE":         {Value: c.String("redis-mode"), Sensitive: false},
-			"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
-			"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
-			"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+				"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
+				"REDIS_MODE":         {Value: c.String("redis-mode"), Sensitive: false},
+				"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
+				"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
+				"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
 				"OPENAI_API_KEY":     {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
 				"ANTHROPIC_API_KEY":  {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
 				"ANTHROPIC_API_HOST": {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
@@ -512,16 +520,32 @@ func ServerCli() *cli.Command {
 				"GROQ_API_KEY":       {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
 				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
 				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
-			"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
-			"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
-				Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
-				Sensitive: false,
-			},
-			"MOBILE_UPSTREAM_URL": {
-				Value:     os.Getenv("MOBILE_UPSTREAM_URL"),
-				Sensitive: false,
-			},
-		}
+				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
+					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
+					Sensitive: false,
+				},
+				"MOBILE_UPSTREAM_URL": {
+					Value:     os.Getenv("MOBILE_UPSTREAM_URL"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_ENABLED": {
+					Value:     os.Getenv("MOBILE_API_CACHE_ENABLED"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_TTL_SECONDS": {
+					Value:     os.Getenv("MOBILE_API_CACHE_TTL_SECONDS"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_MAX_BODY_BYTES": {
+					Value:     os.Getenv("MOBILE_API_CACHE_MAX_BODY_BYTES"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_MAX_ROWS": {
+					Value:     os.Getenv("MOBILE_API_CACHE_MAX_ROWS"),
+					Sensitive: false,
+				},
+			}
 
 			for _, decl := range integrations.RuntimeEnvDeclarations() {
 				if _, exists := runtimeValues[decl.Key]; exists {
@@ -580,16 +604,16 @@ func ServerCli() *cli.Command {
 			sessionCookieDomain := normalizeSessionCookieDomain(c.String("host"))
 
 			// Initialize HTTP server and websocket handler.
-				s, ch, _, err := server.BackendServer(
-					DB,
-					queueClient,
-					queueInspector,
-					asynqUIHandler,
-					c.String("host"),
-					c.Uint16("port"),
-					c.Bool("debug"),
-					c.String("frontend-proxy"),
-					sessionCookieDomain,
+			s, ch, _, err := server.BackendServer(
+				DB,
+				queueClient,
+				queueInspector,
+				asynqUIHandler,
+				c.String("host"),
+				c.Uint16("port"),
+				c.Bool("debug"),
+				c.String("frontend-proxy"),
+				sessionCookieDomain,
 				c.Bool("signup-requires-admin-approval"),
 			)
 			if err != nil {
