@@ -901,12 +901,16 @@ jobs:
             --output-modfile "$EFFECTIVE_MODFILE"
 
           if [ -n "${GOFLAGS:-}" ]; then
-            echo "GOFLAGS=${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}" >> "$GITHUB_ENV"
+            export GOFLAGS="${GOFLAGS} -mod=mod -modfile=${EFFECTIVE_MODFILE}"
           else
-            echo "GOFLAGS=-modfile=${EFFECTIVE_MODFILE}" >> "$GITHUB_ENV"
+            export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
           fi
+          echo "GOFLAGS=${GOFLAGS}" >> "$GITHUB_ENV"
 
           go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
+
+          # Populate the effective sum file used by -modfile before tests run.
+          go mod download
 
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
