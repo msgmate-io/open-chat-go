@@ -1,11 +1,14 @@
 package database
 
 import (
+	"backend/runtimecfg"
+	"bytes"
 	"database/sql/driver"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"slices"
 	"strings"
 
@@ -14,6 +17,9 @@ import (
 
 //go:embed data/default_model_configs.json
 var defaultModelConfigsJSON []byte
+
+//go:embed data/extra_default_models_config.json
+var extraDefaultModelsConfigJSON []byte
 
 // ModelConfig stores a default LLM model definition that can be assigned to bot profiles.
 type ModelConfig struct {
@@ -151,21 +157,64 @@ func GetModelConfigsForBot(db *gorm.DB, botUsername string) ([]ModelConfig, erro
 	return matched, nil
 }
 
-// SeedModelConfigs loads default model definitions from the embedded JSON file
-// and inserts any that are not already present (matched by model_id).
-func SeedModelConfigs(db *gorm.DB) error {
-	var entries []modelConfigFileEntry
-	if err := json.Unmarshal(defaultModelConfigsJSON, &entries); err != nil {
-		return fmt.Errorf("failed to parse default model configs: %w", err)
+func runtimeConfigValue(key string) string {
+	values := runtimecfg.GetAll()
+	if value, ok := values[key]; ok {
+		return strings.TrimSpace(value.Value)
+	}
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+// ResolveExtraModelConfigsJSON returns the extra default-models JSON payload used
+// at seed time. EXTRA_MODELS_JSON / --extra-models-json may be a filesystem path
+// or an inline JSON array; otherwise the embedded extra_default_models_config.json
+// is used.
+func ResolveExtraModelConfigsJSON() ([]byte, string, error) {
+	override := runtimeConfigValue("EXTRA_MODELS_JSON")
+	if override == "" {
+		return extraDefaultModelsConfigJSON, "embedded:extra_default_models_config.json", nil
 	}
 
+	trimmed := strings.TrimSpace(override)
+	if strings.HasPrefix(trimmed, "[") {
+		return []byte(trimmed), "EXTRA_MODELS_JSON (inline)", nil
+	}
+
+	content, err := os.ReadFile(trimmed)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed reading EXTRA_MODELS_JSON path %q: %w", trimmed, err)
+	}
+	return content, trimmed, nil
+}
+
+func parseModelConfigFileEntries(raw []byte, source string) ([]modelConfigFileEntry, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return []modelConfigFileEntry{}, nil
+	}
+	var entries []modelConfigFileEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", source, err)
+	}
+	for idx, entry := range entries {
+		var cfg modelConfigID
+		if err := json.Unmarshal(entry.Configuration, &cfg); err != nil {
+			return nil, fmt.Errorf("%s[%d] has invalid configuration JSON: %w", source, idx, err)
+		}
+		if strings.TrimSpace(cfg.Model) == "" {
+			return nil, fmt.Errorf("%s[%d] is missing configuration.model", source, idx)
+		}
+	}
+	return entries, nil
+}
+
+func seedModelConfigEntries(db *gorm.DB, entries []modelConfigFileEntry, source string) error {
 	for _, entry := range entries {
 		var cfg modelConfigID
 		if err := json.Unmarshal(entry.Configuration, &cfg); err != nil {
-			return fmt.Errorf("failed to parse configuration for %q: %w", entry.Title, err)
+			return fmt.Errorf("failed to parse configuration for %q from %s: %w", entry.Title, source, err)
 		}
 		if cfg.Model == "" {
-			return fmt.Errorf("model config %q is missing configuration.model", entry.Title)
+			return fmt.Errorf("model config %q from %s is missing configuration.model", entry.Title, source)
 		}
 
 		var existing ModelConfig
@@ -204,10 +253,33 @@ func SeedModelConfigs(db *gorm.DB) error {
 			IsDefault:     true,
 		}
 		if err := db.Create(&record).Error; err != nil {
-			return fmt.Errorf("failed to seed model config %q: %w", cfg.Model, err)
+			return fmt.Errorf("failed to seed model config %q from %s: %w", cfg.Model, source, err)
 		}
-		log.Printf("Seeded model config: %s (bots: %v)", cfg.Model, entry.BotUsernames)
+		log.Printf("Seeded model config: %s (bots: %v, source: %s)", cfg.Model, entry.BotUsernames, source)
 	}
 
 	return nil
+}
+
+// SeedModelConfigs loads default model definitions from the embedded JSON file
+// plus optional EXTRA_MODELS_JSON / embedded extras, and inserts any that are
+// not already present (matched by model_id).
+func SeedModelConfigs(db *gorm.DB) error {
+	defaultEntries, err := parseModelConfigFileEntries(defaultModelConfigsJSON, "default_model_configs.json")
+	if err != nil {
+		return err
+	}
+	if err := seedModelConfigEntries(db, defaultEntries, "default_model_configs.json"); err != nil {
+		return err
+	}
+
+	extraRaw, extraSource, err := ResolveExtraModelConfigsJSON()
+	if err != nil {
+		return err
+	}
+	extraEntries, err := parseModelConfigFileEntries(extraRaw, extraSource)
+	if err != nil {
+		return err
+	}
+	return seedModelConfigEntries(db, extraEntries, extraSource)
 }
