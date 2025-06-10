@@ -1,3 +1,5 @@
+//go:build !coreonly
+
 package cmd
 
 import (
