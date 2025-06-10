@@ -120,6 +120,11 @@ if [ -n "${GOFLAGS:-}" ]; then
 else
   export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
 fi
+
+if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
+  export GOFLAGS="${GOFLAGS} -tags=coreonly"
+fi
+
 echo "Using GOFLAGS=${GOFLAGS}"
 
 echo "Syncing external tool dependencies from tooldeps.json..."
