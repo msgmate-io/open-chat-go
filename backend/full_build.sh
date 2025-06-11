@@ -116,9 +116,9 @@ python3 ./scripts/resolve_integrations.py \
   --output-modfile "$EFFECTIVE_MODFILE"
 
 if [ -n "${GOFLAGS:-}" ]; then
-  export GOFLAGS="${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}"
+  export GOFLAGS="${GOFLAGS} -mod=mod -modfile=${EFFECTIVE_MODFILE}"
 else
-  export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
+  export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
 fi
 
 if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
