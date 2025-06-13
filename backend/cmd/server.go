@@ -195,7 +195,22 @@ func GetServerFlags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Sources: cli.EnvVars("ADD_BOT_FROM_CONFIG"),
 			Name:    "add-bot-from-config",
-			Usage:   "path(s) to JSON files defining additional bots; can be repeated",
+			Usage:   "path(s) or inline JSON object/array defining additional bots; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_KEYS_FROM_CONFIG"),
+			Name:    "add-ssh-keys-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH keys; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_SERVERS_FROM_CONFIG"),
+			Name:    "add-ssh-servers-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH servers; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_DEFAULT_OWNER"),
+			Name:    "add-ssh-default-owner",
+			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
@@ -500,10 +515,22 @@ func ServerCli() *cli.Command {
 				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
 				"CREATE_EXTRA_BOT":        {Value: strings.Join(c.StringSlice("create-extra-bot"), ","), Sensitive: true},
 				"ADD_BOT_FROM_CONFIG":     {Value: strings.Join(c.StringSlice("add-bot-from-config"), ","), Sensitive: false},
-				"EXTRA_MODELS_JSON":       {Value: c.String("extra-models-json"), Sensitive: false},
-				"FRONTEND_PROXY":          {Value: c.String("frontend-proxy"), Sensitive: false},
-				"START_WORKER":            {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
-				"ASYNQ_CONCURRENCY":       {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
+				"ADD_SSH_KEYS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-keys-from-config"), ","),
+					Sensitive: true,
+				},
+				"ADD_SSH_SERVERS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-servers-from-config"), ","),
+					Sensitive: true,
+				},
+				"ADD_SSH_DEFAULT_OWNER": {
+					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
+					Sensitive: false,
+				},
+				"EXTRA_MODELS_JSON": {Value: c.String("extra-models-json"), Sensitive: false},
+				"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
+				"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
+				"ASYNQ_CONCURRENCY": {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
 				"SIGNUP_REQUIRES_ADMIN_APPROVAL": {
 					Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 					Sensitive: false,
@@ -676,9 +703,36 @@ func ServerCli() *cli.Command {
 				}
 			}
 
-			if err := applyBotBootstrapConfigFiles(DB, c.StringSlice("add-bot-from-config"), !c.Bool("debug")); err != nil {
+			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
+
+			botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
+			botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
+			if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
 				return err
 			}
+
+			sshDefaultOwners := append([]string{}, c.StringSlice("add-ssh-default-owner")...)
+			sshDefaultOwners = append(sshDefaultOwners, openChatBootstrap.SSHDefaultOwners...)
+			sshKeySpecs := append([]string{}, c.StringSlice("add-ssh-keys-from-config")...)
+			sshKeySpecs = append(sshKeySpecs, openChatBootstrap.SSHKeySpecs...)
+			sshServerSpecs := append([]string{}, c.StringSlice("add-ssh-servers-from-config")...)
+			sshServerSpecs = append(sshServerSpecs, openChatBootstrap.SSHServerSpecs...)
+			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs); err != nil {
+				return err
+			}
+
+			providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
+			if err != nil {
+				return err
+			}
+			log.Printf(
+				"Synced default bot provider-key model access bot=%s assigned=%d unassigned=%d skipped_unmanaged=%d skipped_invalid=%d",
+				botUser.Name,
+				providerSyncResult.Assigned,
+				providerSyncResult.Unassigned,
+				providerSyncResult.SkippedUnmanaged,
+				providerSyncResult.SkippedInvalid,
+			)
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err
