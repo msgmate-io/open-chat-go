@@ -165,6 +165,100 @@ func runtimeConfigValue(key string) string {
 	return strings.TrimSpace(os.Getenv(key))
 }
 
+func managedProviderAPIKeyEnv(backend string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "openai":
+		return "OPENAI_API_KEY", true
+	case "anthropic":
+		return "ANTHROPIC_API_KEY", true
+	case "deepinfra":
+		return "DEEPINFRA_API_KEY", true
+	case "groq":
+		return "GROQ_API_KEY", true
+	case "litellm":
+		return "LITELLM_API_KEY", true
+	default:
+		return "", false
+	}
+}
+
+func modelConfigBackend(raw json.RawMessage) (string, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", nil
+	}
+	cfg := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", err
+	}
+	backend, _ := cfg["backend"].(string)
+	return strings.ToLower(strings.TrimSpace(backend)), nil
+}
+
+// DefaultBotProviderKeySyncResult reports assignment changes applied while
+// syncing default bot model access from provider API key availability.
+type DefaultBotProviderKeySyncResult struct {
+	Assigned         int
+	Unassigned       int
+	SkippedUnmanaged int
+	SkippedInvalid   int
+}
+
+// SyncDefaultBotModelsByProviderKeys enables/disables default-model assignments
+// for the given bot username based on provider API key availability.
+//
+// Only provider backends with explicit key mappings are managed. Models with
+// unknown backends or invalid configuration are left untouched.
+func SyncDefaultBotModelsByProviderKeys(db *gorm.DB, botUsername string) (DefaultBotProviderKeySyncResult, error) {
+	result := DefaultBotProviderKeySyncResult{}
+	botUsername = strings.TrimSpace(botUsername)
+	if botUsername == "" {
+		return result, fmt.Errorf("bot username is required")
+	}
+
+	rows := []ModelConfig{}
+	if err := db.Where("owner_user_id IS NULL AND is_default = ?", true).Find(&rows).Error; err != nil {
+		return result, err
+	}
+
+	for _, row := range rows {
+		backend, err := modelConfigBackend(row.Configuration)
+		if err != nil {
+			result.SkippedInvalid++
+			continue
+		}
+
+		apiKeyEnv, managed := managedProviderAPIKeyEnv(backend)
+		if !managed {
+			result.SkippedUnmanaged++
+			continue
+		}
+
+		hasAPIKey := strings.TrimSpace(runtimeConfigValue(apiKeyEnv)) != ""
+		isAssigned := row.AssignedToBot(botUsername)
+
+		if hasAPIKey && !isAssigned {
+			updated := append(append(StringSliceJSON{}, row.BotUsernames...), botUsername)
+			if err := db.Model(&row).Update("bot_usernames", updated).Error; err != nil {
+				return result, err
+			}
+			result.Assigned++
+			continue
+		}
+
+		if !hasAPIKey && isAssigned {
+			updated := slices.DeleteFunc(row.BotUsernames, func(username string) bool {
+				return username == botUsername
+			})
+			if err := db.Model(&row).Update("bot_usernames", updated).Error; err != nil {
+				return result, err
+			}
+			result.Unassigned++
+		}
+	}
+
+	return result, nil
+}
+
 // ResolveExtraModelConfigsJSON returns the extra default-models JSON payload used
 // at seed time. EXTRA_MODELS_JSON / --extra-models-json may be a filesystem path
 // or an inline JSON array; otherwise the embedded extra_default_models_config.json
