@@ -792,6 +792,14 @@ func ServerCli() *cli.Command {
 				}
 			case <-signalCtx.Done():
 				log.Printf("Shutting down server (signal: %v)", signalCtx.Err())
+				forceSigCh := make(chan os.Signal, 1)
+				signal.Notify(forceSigCh, os.Interrupt)
+				defer signal.Stop(forceSigCh)
+				go func() {
+					<-forceSigCh
+					log.Printf("Received additional interrupt; forcing immediate exit")
+					os.Exit(130)
+				}()
 				ch.Shutdown()
 				shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancelShutdown()
