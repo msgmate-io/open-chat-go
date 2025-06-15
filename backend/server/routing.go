@@ -483,6 +483,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
 	commonMiddlewares := CreateStack(
+		APINoCacheMiddleware,
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 		queueMiddleware(queueClient, queueInspector),
