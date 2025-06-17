@@ -283,6 +283,7 @@ func (h *FilesHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 	// Serve the file
 	w.Header().Set("Content-Type", uploadedFile.MIMEType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", uploadedFile.FileName))
+	w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
 	http.ServeFile(w, r, uploadedFile.StorageURL)
 }
 

@@ -680,13 +680,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 		if streamErr != nil {
 			text = strings.TrimSpace(text)
+			providerGuidance := "This can happen if your provider tokens/credits are exhausted or if the provider is having a temporary outage."
 			if text == "" {
-				text = "I ran into an error while generating a reply. Please try again in a moment."
+				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
 			} else {
-				text += "\n\nI ran into an error while finishing this reply."
+				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
 			}
 			if reasoning {
-				reasoningEntries = append(reasoningEntries, "Response stopped due to an upstream provider error.")
+				reasoningEntries = append(reasoningEntries, "Response stopped due to an upstream provider error (possible token/credit exhaustion or temporary provider outage).")
 			}
 		}
 
