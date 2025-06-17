@@ -27,6 +27,8 @@ type WebSocketHandler struct {
 	serveMux       http.ServeMux
 	subscribersMu  sync.Mutex
 	subscribers    map[*Subscriber]struct{}
+	connectionsMu  sync.Mutex
+	connections    map[*websocket.Conn]struct{}
 }
 
 func (cs *WebSocketHandler) GetSubscribers() []Subscriber {
@@ -49,6 +51,38 @@ func NewWebSocketHandler() *WebSocketHandler {
 			log.Printf(f, v...)
 		},
 		subscribers: make(map[*Subscriber]struct{}),
+		connections: make(map[*websocket.Conn]struct{}),
+	}
+}
+
+func (cs *WebSocketHandler) addConnection(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	cs.connectionsMu.Lock()
+	cs.connections[conn] = struct{}{}
+	cs.connectionsMu.Unlock()
+}
+
+func (cs *WebSocketHandler) deleteConnection(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	cs.connectionsMu.Lock()
+	delete(cs.connections, conn)
+	cs.connectionsMu.Unlock()
+}
+
+func (cs *WebSocketHandler) Shutdown() {
+	cs.connectionsMu.Lock()
+	conns := make([]*websocket.Conn, 0, len(cs.connections))
+	for conn := range cs.connections {
+		conns = append(conns, conn)
+	}
+	cs.connectionsMu.Unlock()
+
+	for _, conn := range conns {
+		conn.CloseNow()
 	}
 }
 
@@ -148,6 +182,8 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 	}
 	c = c2
 	mu.Unlock()
+	cs.addConnection(c)
+	defer cs.deleteConnection(c)
 	defer c.CloseNow()
 
 	ctx := c.CloseRead(context.Background())
@@ -197,6 +233,8 @@ func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.
 	}
 	c = c2
 	mu.Unlock()
+	cs.addConnection(c)
+	defer cs.deleteConnection(c)
 	defer c.CloseNow()
 
 	ctx := c.CloseRead(context.Background())

@@ -1,4 +1,4 @@
-//go:build coreonly
+//go:build !sshintegration
 
 package cmd
 
@@ -38,5 +38,5 @@ func applySSHBootstrapSources(_ *gorm.DB, _ string, defaultOwners []string, keyS
 		return nil
 	}
 
-	return fmt.Errorf("ssh bootstrap requested, but ssh integration is not included in core-only builds")
+	return fmt.Errorf("ssh bootstrap requested, but ssh integration is not included in this build")
 }
