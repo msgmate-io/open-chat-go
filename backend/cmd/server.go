@@ -213,6 +213,16 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "path(s) or inline JSON object/array defining SSH servers; can be repeated",
 		},
 		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_KEY_GRANTS_FROM_CONFIG"),
+			Name:    "add-ssh-key-grants-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH key grants; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_SERVER_GRANTS_FROM_CONFIG"),
+			Name:    "add-ssh-server-grants-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH server grants; can be repeated",
+		},
+		&cli.StringSliceFlag{
 			Sources: cli.EnvVars("ADD_SSH_DEFAULT_OWNER"),
 			Name:    "add-ssh-default-owner",
 			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
@@ -529,6 +539,14 @@ func ServerCli() *cli.Command {
 					Value:     strings.Join(c.StringSlice("add-ssh-servers-from-config"), ","),
 					Sensitive: true,
 				},
+				"ADD_SSH_KEY_GRANTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-key-grants-from-config"), ","),
+					Sensitive: false,
+				},
+				"ADD_SSH_SERVER_GRANTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-server-grants-from-config"), ","),
+					Sensitive: false,
+				},
 				"ADD_SSH_DEFAULT_OWNER": {
 					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
 					Sensitive: false,
@@ -723,7 +741,11 @@ func ServerCli() *cli.Command {
 			sshKeySpecs = append(sshKeySpecs, openChatBootstrap.SSHKeySpecs...)
 			sshServerSpecs := append([]string{}, c.StringSlice("add-ssh-servers-from-config")...)
 			sshServerSpecs = append(sshServerSpecs, openChatBootstrap.SSHServerSpecs...)
-			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs); err != nil {
+			sshKeyGrantSpecs := append([]string{}, c.StringSlice("add-ssh-key-grants-from-config")...)
+			sshKeyGrantSpecs = append(sshKeyGrantSpecs, openChatBootstrap.SSHKeyGrantSpecs...)
+			sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
+			sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
+			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
 				return err
 			}
 

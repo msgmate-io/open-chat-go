@@ -14,10 +14,12 @@ var (
 )
 
 type OpenChatBootstrap struct {
-	BotSpecs         []string
-	SSHDefaultOwners []string
-	SSHKeySpecs      []string
-	SSHServerSpecs   []string
+	BotSpecs            []string
+	SSHDefaultOwners    []string
+	SSHKeySpecs         []string
+	SSHServerSpecs      []string
+	SSHKeyGrantSpecs    []string
+	SSHServerGrantSpecs []string
 }
 
 func SetAll(next map[string]Value) {
@@ -43,10 +45,12 @@ func SetOpenChatBootstrap(next OpenChatBootstrap) {
 	mu.Lock()
 	defer mu.Unlock()
 	openChatBootstrap = OpenChatBootstrap{
-		BotSpecs:         append([]string(nil), next.BotSpecs...),
-		SSHDefaultOwners: append([]string(nil), next.SSHDefaultOwners...),
-		SSHKeySpecs:      append([]string(nil), next.SSHKeySpecs...),
-		SSHServerSpecs:   append([]string(nil), next.SSHServerSpecs...),
+		BotSpecs:            append([]string(nil), next.BotSpecs...),
+		SSHDefaultOwners:    append([]string(nil), next.SSHDefaultOwners...),
+		SSHKeySpecs:         append([]string(nil), next.SSHKeySpecs...),
+		SSHServerSpecs:      append([]string(nil), next.SSHServerSpecs...),
+		SSHKeyGrantSpecs:    append([]string(nil), next.SSHKeyGrantSpecs...),
+		SSHServerGrantSpecs: append([]string(nil), next.SSHServerGrantSpecs...),
 	}
 }
 
@@ -54,9 +58,11 @@ func GetOpenChatBootstrap() OpenChatBootstrap {
 	mu.RLock()
 	defer mu.RUnlock()
 	return OpenChatBootstrap{
-		BotSpecs:         append([]string(nil), openChatBootstrap.BotSpecs...),
-		SSHDefaultOwners: append([]string(nil), openChatBootstrap.SSHDefaultOwners...),
-		SSHKeySpecs:      append([]string(nil), openChatBootstrap.SSHKeySpecs...),
-		SSHServerSpecs:   append([]string(nil), openChatBootstrap.SSHServerSpecs...),
+		BotSpecs:            append([]string(nil), openChatBootstrap.BotSpecs...),
+		SSHDefaultOwners:    append([]string(nil), openChatBootstrap.SSHDefaultOwners...),
+		SSHKeySpecs:         append([]string(nil), openChatBootstrap.SSHKeySpecs...),
+		SSHServerSpecs:      append([]string(nil), openChatBootstrap.SSHServerSpecs...),
+		SSHKeyGrantSpecs:    append([]string(nil), openChatBootstrap.SSHKeyGrantSpecs...),
+		SSHServerGrantSpecs: append([]string(nil), openChatBootstrap.SSHServerGrantSpecs...),
 	}
 }
