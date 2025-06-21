@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func applySSHBootstrapSources(_ *gorm.DB, _ string, defaultOwners []string, keySpecs []string, serverSpecs []string) error {
+func applySSHBootstrapSources(_ *gorm.DB, _ string, defaultOwners []string, keySpecs []string, serverSpecs []string, keyGrantSpecs []string, serverGrantSpecs []string) error {
 	hasOwners := false
 	for _, owner := range defaultOwners {
 		if strings.TrimSpace(owner) != "" {
@@ -34,7 +34,23 @@ func applySSHBootstrapSources(_ *gorm.DB, _ string, defaultOwners []string, keyS
 		}
 	}
 
-	if !hasOwners && !hasKeySpecs && !hasServerSpecs {
+	hasKeyGrantSpecs := false
+	for _, spec := range keyGrantSpecs {
+		if strings.TrimSpace(spec) != "" {
+			hasKeyGrantSpecs = true
+			break
+		}
+	}
+
+	hasServerGrantSpecs := false
+	for _, spec := range serverGrantSpecs {
+		if strings.TrimSpace(spec) != "" {
+			hasServerGrantSpecs = true
+			break
+		}
+	}
+
+	if !hasOwners && !hasKeySpecs && !hasServerSpecs && !hasKeyGrantSpecs && !hasServerGrantSpecs {
 		return nil
 	}
 

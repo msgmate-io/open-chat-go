@@ -7,5 +7,9 @@ func ApplyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength 
 }
 
 func ApplySSHBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners []string, keySpecs []string, serverSpecs []string) error {
-	return applySSHBootstrapSources(DB, fallbackOwner, defaultOwners, keySpecs, serverSpecs)
+	return applySSHBootstrapSources(DB, fallbackOwner, defaultOwners, keySpecs, serverSpecs, nil, nil)
+}
+
+func ApplySSHBootstrapSourcesWithGrants(DB *gorm.DB, fallbackOwner string, defaultOwners []string, keySpecs []string, serverSpecs []string, keyGrantSpecs []string, serverGrantSpecs []string) error {
+	return applySSHBootstrapSources(DB, fallbackOwner, defaultOwners, keySpecs, serverSpecs, keyGrantSpecs, serverGrantSpecs)
 }
