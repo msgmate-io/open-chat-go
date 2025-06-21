@@ -54,7 +54,7 @@ func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 			"is_active":   true,
 		},
 		"default_shared_config": map[string]interface{}{
-			"model":       "qwen3-8b-instruct_vllm",
+			"model":       "qwen3-4b-instruct-2507_vllm",
 			"temperature": 0.2,
 		},
 	})
@@ -88,7 +88,7 @@ func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
 		t.Fatalf("failed to decode default_shared_config: %v", err)
 	}
-	if shared["model"] != "qwen3-8b-instruct_vllm" {
+	if shared["model"] != "qwen3-4b-instruct-2507_vllm" {
 		t.Fatalf("unexpected model in default_shared_config: %v", shared["model"])
 	}
 
@@ -110,7 +110,7 @@ func TestApplyBotBootstrapConfigFilesRequiresOwner(t *testing.T) {
 			"name":     "orphan_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -139,7 +139,7 @@ func TestApplyBotBootstrapConfigFilesIsIdempotent(t *testing.T) {
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -191,7 +191,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 			"is_active":   true,
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -241,7 +241,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
 		t.Fatalf("failed to decode default_shared_config: %v", err)
 	}
-	if shared["model"] != "qwen3-8b-instruct_vllm" {
+	if shared["model"] != "qwen3-4b-instruct-2507_vllm" {
 		t.Fatalf("expected original model to be preserved, got %v", shared["model"])
 	}
 }
@@ -265,7 +265,7 @@ func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *tes
 			"is_active":   true,
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -344,7 +344,7 @@ func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *test
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -376,7 +376,7 @@ func TestApplyBotBootstrapConfigFilesMissingPasswordRequiresExistingBot(t *testi
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -406,7 +406,7 @@ func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
 			"email":    "owner+support-bot@example.com",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -443,7 +443,7 @@ func TestApplyBotBootstrapConfigFilesSupportsAdditionalOwners(t *testing.T) {
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -500,7 +500,7 @@ func TestApplyBotBootstrapConfigFilesAllowsSinglePrimaryOwner(t *testing.T) {
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 

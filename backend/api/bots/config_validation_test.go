@@ -4,7 +4,7 @@ import "testing"
 
 func TestValidateSharedConfigStructureValid(t *testing.T) {
 	config := map[string]interface{}{
-		"model":       "qwen3-8b-instruct_vllm",
+		"model":       "qwen3-4b-instruct-2507_vllm",
 		"backend":     "litellm",
 		"endpoint":    "https://litellm.t1m.me/v1",
 		"temperature": 0.0,
@@ -31,7 +31,7 @@ func TestValidateSharedConfigStructureMissingRequiredKeys(t *testing.T) {
 
 func TestValidateSharedConfigStructureRejectsInvalidToolsType(t *testing.T) {
 	config := map[string]interface{}{
-		"model":   "qwen3-8b-instruct_vllm",
+		"model":   "qwen3-4b-instruct-2507_vllm",
 		"backend": "litellm",
 		"tools":   []interface{}{true},
 	}
@@ -44,7 +44,7 @@ func TestValidateSharedConfigStructureRejectsInvalidToolsType(t *testing.T) {
 
 func TestValidateSharedConfigStructureAcceptsToolCallLimitOverrides(t *testing.T) {
 	config := map[string]interface{}{
-		"model":                "qwen3-8b-instruct_vllm",
+		"model":                "qwen3-4b-instruct-2507_vllm",
 		"backend":              "litellm",
 		"tool_call_max_total":  24.0,
 		"tool_call_max_failed": 5.0,
@@ -57,7 +57,7 @@ func TestValidateSharedConfigStructureAcceptsToolCallLimitOverrides(t *testing.T
 
 func TestValidateSharedConfigStructureRejectsInvalidToolCallLimitValues(t *testing.T) {
 	config := map[string]interface{}{
-		"model":                "qwen3-8b-instruct_vllm",
+		"model":                "qwen3-4b-instruct-2507_vllm",
 		"backend":              "litellm",
 		"tool_call_max_total":  0.0,
 		"tool_call_max_failed": -1.0,
