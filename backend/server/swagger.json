@@ -3387,6 +3387,48 @@
                 }
             }
         },
+        "integrations.IntegrationDefaultBotOverview": {
+            "type": "object",
+            "properties": {
+                "additional_owners": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default_shared_config": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "description": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "overwrite_if_exists": {
+                    "type": "boolean"
+                },
+                "primary_owner": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "uses_random_password": {
+                    "type": "boolean"
+                }
+            }
+        },
         "integrations.IntegrationFrontendRouteOverview": {
             "type": "object",
             "properties": {
@@ -3414,6 +3456,9 @@
                     "type": "boolean"
                 },
                 "api_route_count": {
+                    "type": "integer"
+                },
+                "default_bot_count": {
                     "type": "integer"
                 },
                 "frontend_route_count": {
@@ -3495,6 +3540,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/integrations.IntegrationAPIRouteOverview"
+                    }
+                },
+                "default_bots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationDefaultBotOverview"
                     }
                 },
                 "frontend_routes": {
