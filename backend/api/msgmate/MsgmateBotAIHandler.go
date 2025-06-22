@@ -38,6 +38,9 @@ func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[str
 	if suggested, exists := confirmation["suggested_inputs"]; exists {
 		action["input"] = suggested
 	}
+	if toolInput, exists := confirmation["tool_input"]; exists {
+		action["input"] = toolInput
+	}
 	if continueAfterExecute, ok := confirmation["continue_after_execute"].(bool); ok {
 		action["continue_after_execute"] = continueAfterExecute
 	}
@@ -698,6 +701,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		return strings.TrimSpace(clean), thoughts
 	}
 
+	streamFailureReason := func(streamErr error) string {
+		if isContextWindowExceededError(streamErr) {
+			return "context_window_exceeded"
+		}
+		return "upstream_provider_error"
+	}
+
 	// Helper function to send final message and cleanup
 	sendFinalMessage := func(isCancelled bool, streamErr error) {
 		// If we're still thinking when finishing, add the final thinking time
@@ -715,14 +725,20 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 		if streamErr != nil {
 			text = strings.TrimSpace(text)
+			failureReason := streamFailureReason(streamErr)
 			providerGuidance := "This can happen if your provider tokens/credits are exhausted or if the provider is having a temporary outage."
+			reasoningEntry := "Response stopped due to an upstream provider error (possible token/credit exhaustion or temporary provider outage)."
+			if failureReason == "context_window_exceeded" {
+				providerGuidance = "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+				reasoningEntry = "Response stopped because the model context window was exceeded."
+			}
 			if text == "" {
 				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
 			} else {
 				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
 			}
 			if reasoning {
-				reasoningEntries = append(reasoningEntries, "Response stopped due to an upstream provider error (possible token/credit exhaustion or temporary provider outage).")
+				reasoningEntries = append(reasoningEntries, reasoningEntry)
 			}
 		}
 
@@ -732,7 +748,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			"finished":   true,
 		}
 		if streamErr != nil {
+			failureReason := streamFailureReason(streamErr)
 			metadata["error"] = true
+			metadata["failure_reason"] = failureReason
 			metadata["error_detail"] = streamErr.Error()
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
