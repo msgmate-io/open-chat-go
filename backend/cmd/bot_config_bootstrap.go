@@ -11,26 +11,12 @@ import (
 	"os"
 	"strings"
 
+	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
 )
 
-type botIdentityConfig struct {
-	Username    string `json:"username"`
-	Email       string `json:"email,omitempty"`
-	Password    string `json:"password"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	IsPublic    *bool  `json:"is_public,omitempty"`
-	IsActive    *bool  `json:"is_active,omitempty"`
-}
-
-type botBootstrapConfig struct {
-	PrimaryOwner        string                 `json:"primary_owner"`
-	AdditionalOwners    []string               `json:"additional_owners,omitempty"`
-	Bot                 botIdentityConfig      `json:"bot"`
-	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
-	OverwriteIfExists   bool                   `json:"overwrite_if_exists,omitempty"`
-}
+type botIdentityConfig = extiface.BotIdentityConfig
+type botBootstrapConfig = extiface.BotBootstrapConfig
 
 func normalizeOwnerUsernames(cfg botBootstrapConfig) []string {
 	ordered := []string{}
@@ -180,7 +166,7 @@ func findUserByUsername(DB *gorm.DB, username string) (*database.User, error) {
 	return &user, nil
 }
 
-func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) (*database.User, error) {
+func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool, suppressGeneratedPasswordLog bool) (*database.User, error) {
 	username := strings.TrimSpace(cfg.Bot.Username)
 	botEmail := strings.TrimSpace(strings.ToLower(cfg.Bot.Email))
 	password := strings.TrimSpace(cfg.Bot.Password)
@@ -213,11 +199,12 @@ func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 
 	botCredentials := fmt.Sprintf("%s:%s", username, password)
 	botUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
-		Label:            fmt.Sprintf("add-bot-from-config[%s]", sourcePath),
-		Credentials:      botCredentials,
-		IsAdmin:          false,
-		IsAutomated:      true,
-		ValidateStrength: validateStrength,
+		Label:                        fmt.Sprintf("add-bot-from-config[%s]", sourcePath),
+		Credentials:                  botCredentials,
+		IsAdmin:                      false,
+		IsAutomated:                  true,
+		ValidateStrength:             validateStrength,
+		SuppressGeneratedPasswordLog: suppressGeneratedPasswordLog,
 	})
 	if err != nil {
 		return nil, err
@@ -249,7 +236,7 @@ func ensureOwnerConnectedToBot(DB *gorm.DB, owner database.User, bot database.Us
 	return nil
 }
 
-func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) error {
+func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool, suppressGeneratedPasswordLog bool) error {
 	ownerUsernames := normalizeOwnerUsernames(cfg)
 	ownersByUsername := map[string]*database.User{}
 	for _, ownerUsername := range ownerUsernames {
@@ -263,7 +250,7 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 	primaryOwnerUsername := strings.TrimSpace(cfg.PrimaryOwner)
 	owner := ownersByUsername[primaryOwnerUsername]
 
-	botUser, err := resolveBotUserForConfig(DB, sourcePath, cfg, validateStrength)
+	botUser, err := resolveBotUserForConfig(DB, sourcePath, cfg, validateStrength, suppressGeneratedPasswordLog)
 	if err != nil {
 		return err
 	}
@@ -331,6 +318,30 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 	})
 }
 
+func applyBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, configs []botBootstrapConfig, validateStrength bool, suppressGeneratedPasswordLog bool) error {
+	for cfgIdx, cfg := range configs {
+		sourcePath := sourcePrefix
+		if len(configs) > 1 {
+			sourcePath = fmt.Sprintf("%s[%d]", sourcePrefix, cfgIdx)
+		}
+		validated, err := validateBotBootstrapConfig(cfg, sourcePath)
+		if err != nil {
+			return err
+		}
+		if suppressGeneratedPasswordLog {
+			password := strings.TrimSpace(validated.Bot.Password)
+			if password != "" && password != "random" {
+				return fmt.Errorf("bot config %q: integration declared bot.password must be empty or random", sourcePath)
+			}
+			validated.OverwriteIfExists = false
+		}
+		if err := applyBotBootstrapConfig(DB, sourcePath, validated, validateStrength, suppressGeneratedPasswordLog); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func applyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength bool) error {
 	for i, spec := range paths {
 		trimmed := strings.TrimSpace(spec)
@@ -341,15 +352,13 @@ func applyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength 
 		if err != nil {
 			return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
 		}
-		for cfgIdx, cfg := range configs {
-			sourcePath := trimmed
-			if len(configs) > 1 {
-				sourcePath = fmt.Sprintf("%s[%d]", trimmed, cfgIdx)
-			}
-			if err := applyBotBootstrapConfig(DB, sourcePath, cfg, validateStrength); err != nil {
-				return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
-			}
+		if err := applyBotBootstrapConfigs(DB, trimmed, configs, validateStrength, false); err != nil {
+			return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
 		}
 	}
 	return nil
+}
+
+func applyIntegrationBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, configs []botBootstrapConfig, validateStrength bool) error {
+	return applyBotBootstrapConfigs(DB, sourcePrefix, configs, validateStrength, true)
 }
