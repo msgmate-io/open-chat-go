@@ -294,6 +294,7 @@ func BotBootstrapDeclarations() []BotBootstrapDeclaration {
 func cloneBotBootstrapConfig(input extiface.BotBootstrapConfig) extiface.BotBootstrapConfig {
 	out := input
 	out.AdditionalOwners = append([]string(nil), input.AdditionalOwners...)
+	out.AllowedModelBackends = append([]string(nil), input.AllowedModelBackends...)
 	out.DefaultSharedConfig = cloneJSONMap(input.DefaultSharedConfig)
 	return out
 }
