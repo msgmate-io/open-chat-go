@@ -622,3 +622,86 @@ func TestApplyIntegrationBotBootstrapConfigsNeverOverwritesExistingRuntime(t *te
 		t.Fatalf("expected integration defaults to not overwrite description, got %q", runtime.Description)
 	}
 }
+
+func TestApplyIntegrationBotBootstrapConfigsRestrictsAllowedModelBackends(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		Label:          "root-credentials",
+		Credentials:    "admin:AdminPass1!",
+		IsAdmin:        true,
+		SingletonAdmin: true,
+	}); err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	insertDefaultModel := func(title string, backend string) {
+		cfg := map[string]interface{}{
+			"model":    title,
+			"backend":  backend,
+			"endpoint": "https://example.invalid/v1",
+		}
+		raw, _ := json.Marshal(cfg)
+		row := database.ModelConfig{
+			Title:         title,
+			Description:   title,
+			ModelID:       title,
+			Configuration: raw,
+			IsDefault:     true,
+		}
+		if err := DB.Create(&row).Error; err != nil {
+			t.Fatalf("failed to create model config %s: %v", title, err)
+		}
+	}
+
+	insertDefaultModel("test-openai", "openai")
+	insertDefaultModel("test-litellm", "litellm")
+	insertDefaultModel("test-ollama", "ollama")
+
+	configs := []extiface.BotBootstrapConfig{{
+		PrimaryOwner: "admin",
+		Bot: extiface.BotIdentityConfig{
+			Username: "ssh-bot-test-models",
+			Password: "random",
+			Name:     "ssh_bot_models_runtime",
+		},
+		DefaultSharedConfig:  map[string]interface{}{"tools": []string{"ssh_list_accessible_servers"}},
+		AllowedModelBackends: []string{"litellm", "ollama"},
+	}}
+	if err := applyIntegrationBotBootstrapConfigs(DB, "integration:ssh.bot_bootstrap_configs", configs, false); err != nil {
+		t.Fatalf("applyIntegrationBotBootstrapConfigs failed: %v", err)
+	}
+
+	botUser, err := findUserByUsername(DB, "ssh-bot-test-models")
+	if err != nil {
+		t.Fatalf("failed to resolve bot user: %v", err)
+	}
+	assigned, err := database.GetModelConfigsForBot(DB, botUser.Name)
+	if err != nil {
+		t.Fatalf("GetModelConfigsForBot failed: %v", err)
+	}
+
+	backends := map[string]struct{}{}
+	for _, row := range assigned {
+		cfg := map[string]interface{}{}
+		if err := json.Unmarshal(row.Configuration, &cfg); err != nil {
+			continue
+		}
+		backend, _ := cfg["backend"].(string)
+		backend = strings.ToLower(strings.TrimSpace(backend))
+		if backend != "" {
+			backends[backend] = struct{}{}
+		}
+	}
+
+	if _, ok := backends["litellm"]; !ok {
+		t.Fatalf("expected litellm models assigned")
+	}
+	if _, ok := backends["ollama"]; !ok {
+		t.Fatalf("expected ollama models assigned")
+	}
+	if _, ok := backends["openai"]; ok {
+		t.Fatalf("expected openai models to be excluded by allowed_model_backends")
+	}
+}
