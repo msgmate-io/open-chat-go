@@ -65,7 +65,75 @@ func validateBotBootstrapConfig(cfg botBootstrapConfig, source string) (botBoots
 		return cfg, fmt.Errorf("bot config %q: default_shared_config is required", source)
 	}
 
+	normalizedBackends := make([]string, 0, len(cfg.AllowedModelBackends))
+	seenBackends := map[string]struct{}{}
+	for _, backend := range cfg.AllowedModelBackends {
+		normalized := strings.ToLower(strings.TrimSpace(backend))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seenBackends[normalized]; exists {
+			continue
+		}
+		seenBackends[normalized] = struct{}{}
+		normalizedBackends = append(normalizedBackends, normalized)
+	}
+	cfg.AllowedModelBackends = normalizedBackends
+
 	return cfg, nil
+}
+
+func modelBackendFromConfiguration(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	cfg := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return ""
+	}
+	backend, _ := cfg["backend"].(string)
+	return strings.ToLower(strings.TrimSpace(backend))
+}
+
+func syncBotDefaultModelAccessByBackend(tx *gorm.DB, botUsername string, allowedBackends []string) error {
+	botUsername = strings.TrimSpace(botUsername)
+	if botUsername == "" || len(allowedBackends) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	for _, backend := range allowedBackends {
+		normalized := strings.ToLower(strings.TrimSpace(backend))
+		if normalized != "" {
+			allowed[normalized] = struct{}{}
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	rows := []database.ModelConfig{}
+	if err := tx.Where("owner_user_id IS NULL AND is_default = ?", true).Find(&rows).Error; err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		backend := modelBackendFromConfiguration(row.Configuration)
+		_, isAllowed := allowed[backend]
+		isAssigned := row.AssignedToBot(botUsername)
+		if isAllowed && !isAssigned {
+			if _, err := database.AssignBotToModelConfig(tx, row.UUID, botUsername); err != nil {
+				return err
+			}
+			continue
+		}
+		if !isAllowed && isAssigned {
+			if _, err := database.UnassignBotFromModelConfig(tx, row.UUID, botUsername); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func decodeBotBootstrapConfig(raw []byte, source string) (botBootstrapConfig, error) {
@@ -310,6 +378,16 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 				return err
 			}
 			if err := ensureOwnerConnectedToBot(tx, *configuredOwner, *botUser); err != nil {
+				return err
+			}
+		}
+
+		if len(cfg.AllowedModelBackends) > 0 {
+			assignmentName := strings.TrimSpace(botUser.Name)
+			if assignmentName == "" {
+				assignmentName = strings.TrimSpace(botUser.Username)
+			}
+			if err := syncBotDefaultModelAccessByBackend(tx, assignmentName, cfg.AllowedModelBackends); err != nil {
 				return err
 			}
 		}
