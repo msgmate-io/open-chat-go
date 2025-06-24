@@ -9,6 +9,8 @@
   "/chat/new",
   "/chat",
   "/mobile/config",
+  "/mobile/config-import",
+  "/mobile/runtime-error",
   "/interaction/{chat_share_uuid}/newest_response",
   "/interaction/{chat_share_uuid}",
   "/integrations/voice/models",
