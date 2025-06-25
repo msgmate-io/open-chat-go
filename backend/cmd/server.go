@@ -213,6 +213,16 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "path(s) or inline JSON object/array defining SSH servers; can be repeated",
 		},
 		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_KEY_GRANTS_FROM_CONFIG"),
+			Name:    "add-ssh-key-grants-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH key grants; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_SERVER_GRANTS_FROM_CONFIG"),
+			Name:    "add-ssh-server-grants-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH server grants; can be repeated",
+		},
+		&cli.StringSliceFlag{
 			Sources: cli.EnvVars("ADD_SSH_DEFAULT_OWNER"),
 			Name:    "add-ssh-default-owner",
 			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
@@ -282,12 +292,13 @@ func normalizeSessionCookieDomain(host string) string {
 }
 
 type bootstrapUserSpec struct {
-	Label            string
-	Credentials      string
-	IsAdmin          bool
-	IsAutomated      bool
-	SingletonAdmin   bool
-	ValidateStrength bool
+	Label                        string
+	Credentials                  string
+	IsAdmin                      bool
+	IsAutomated                  bool
+	SingletonAdmin               bool
+	ValidateStrength             bool
+	SuppressGeneratedPasswordLog bool
 }
 
 func nextAvailableUsername(DB *gorm.DB, base string) (string, error) {
@@ -434,14 +445,16 @@ func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*
 	return &admin, nil
 }
 
-func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string) (string, error) {
+func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string, suppressGeneratedPasswordLog bool) (string, error) {
 	if rawPassword == "random" {
 		generatedPassword, genErr := generateRandomPassword()
 		if genErr != nil {
 			return "", fmt.Errorf("failed to generate random password for %s: %w", label, genErr)
 		}
-		fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
-		fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		if !suppressGeneratedPasswordLog {
+			fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
+			fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		}
 		return generatedPassword, nil
 	}
 
@@ -464,7 +477,7 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		return nil, err
 	}
 
-	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label)
+	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label, spec.SuppressGeneratedPasswordLog)
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +512,7 @@ func ServerCli() *cli.Command {
 		Flags: GetServerFlags(),
 		Action: func(ctx context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
+			msgmate.EnsureExternalToolsRegistered()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 			for _, migration := range integrations.AdditionalMigrations() {
 				database.RegisterExternalMigrations(database.FunctionMigration{
@@ -527,6 +541,14 @@ func ServerCli() *cli.Command {
 				"ADD_SSH_SERVERS_FROM_CONFIG": {
 					Value:     strings.Join(c.StringSlice("add-ssh-servers-from-config"), ","),
 					Sensitive: true,
+				},
+				"ADD_SSH_KEY_GRANTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-key-grants-from-config"), ","),
+					Sensitive: false,
+				},
+				"ADD_SSH_SERVER_GRANTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-server-grants-from-config"), ","),
+					Sensitive: false,
 				},
 				"ADD_SSH_DEFAULT_OWNER": {
 					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
@@ -715,6 +737,13 @@ func ServerCli() *cli.Command {
 			if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
 				return err
 			}
+			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			for _, decl := range integrationBotDecls {
+				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
+				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
+					return err
+				}
+			}
 
 			sshDefaultOwners := append([]string{}, c.StringSlice("add-ssh-default-owner")...)
 			sshDefaultOwners = append(sshDefaultOwners, openChatBootstrap.SSHDefaultOwners...)
@@ -722,7 +751,11 @@ func ServerCli() *cli.Command {
 			sshKeySpecs = append(sshKeySpecs, openChatBootstrap.SSHKeySpecs...)
 			sshServerSpecs := append([]string{}, c.StringSlice("add-ssh-servers-from-config")...)
 			sshServerSpecs = append(sshServerSpecs, openChatBootstrap.SSHServerSpecs...)
-			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs); err != nil {
+			sshKeyGrantSpecs := append([]string{}, c.StringSlice("add-ssh-key-grants-from-config")...)
+			sshKeyGrantSpecs = append(sshKeyGrantSpecs, openChatBootstrap.SSHKeyGrantSpecs...)
+			sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
+			sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
+			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
 				return err
 			}
 

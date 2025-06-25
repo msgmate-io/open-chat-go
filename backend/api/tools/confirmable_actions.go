@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"backend/api"
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/server/util"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -32,6 +34,70 @@ type ConfirmableActionExecuteResponse struct {
 
 func getToolInitForChat(DB *gorm.DB, chat database.Chat, toolName string) map[string]interface{} {
 	return database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
+}
+
+func requestBaseURL(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if commaIdx := strings.Index(host, ","); commaIdx >= 0 {
+		host = strings.TrimSpace(host[:commaIdx])
+	}
+	if host == "" {
+		return ""
+	}
+
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+
+	return scheme + "://" + host
+}
+
+func mergeToolInitWithTrustedRuntime(initData map[string]interface{}, runtime map[string]interface{}) map[string]interface{} {
+	merged := map[string]interface{}{}
+	for k, v := range initData {
+		merged[k] = v
+	}
+	if apiHost, ok := runtime["api_host"].(string); ok && strings.TrimSpace(apiHost) != "" {
+		merged["api_host"] = strings.TrimSpace(apiHost)
+	}
+	if sessionID, ok := runtime["session_id"].(string); ok && strings.TrimSpace(sessionID) != "" {
+		merged["session_id"] = strings.TrimSpace(sessionID)
+	}
+	merged["_runtime"] = runtime
+	return merged
+}
+
+func getOrCreateBotSessionToken(DB *gorm.DB, botUserID uint) (string, error) {
+	now := time.Now().UTC()
+	var existing database.Session
+	if err := DB.Where("user_id = ? AND expiry > ?", botUserID, now).
+		Order("expiry desc").
+		First(&existing).Error; err == nil {
+		if strings.TrimSpace(existing.Token) != "" {
+			return strings.TrimSpace(existing.Token), nil
+		}
+	}
+
+	expiry := now.Add(30 * time.Minute)
+	token := api.GenerateToken(fmt.Sprintf("bot-%d-%d", botUserID, now.UnixNano()))
+	row := database.Session{
+		UserId: botUserID,
+		Token:  token,
+		Data:   []byte{},
+		Expiry: expiry,
+	}
+	if err := DB.Create(&row).Error; err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 func findBotAndReceiver(chat database.Chat, user database.User) (uint, uint) {
@@ -184,7 +250,35 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		continueAfterExecute = *req.ContinueAfterExecute
 	}
 
-	toolInitData := getToolInitForChat(DB, chat, targetToolName)
+	botUserID, _ := findBotAndReceiver(chat, *user)
+	if botUserID == 0 {
+		http.Error(w, "No bot user available for this chat", http.StatusBadRequest)
+		return
+	}
+
+	var botUser database.User
+	if err := DB.Where("id = ?", botUserID).First(&botUser).Error; err != nil {
+		http.Error(w, "Unable to resolve chat bot user", http.StatusInternalServerError)
+		return
+	}
+
+	botSessionToken, err := getOrCreateBotSessionToken(DB, botUserID)
+	if err != nil {
+		http.Error(w, "Unable to establish bot session for tool execution", http.StatusInternalServerError)
+		return
+	}
+
+	runtime := map[string]interface{}{
+		"chat_uuid":     strings.TrimSpace(chatUUID),
+		"sender_uuid":   strings.TrimSpace(user.UUID),
+		"bot_user_id":   botUser.ID,
+		"bot_user_uuid": strings.TrimSpace(botUser.UUID),
+		"api_host":      requestBaseURL(r),
+		"session_id":    botSessionToken,
+	}
+
+	rawToolInitData := getToolInitForChat(DB, chat, targetToolName)
+	toolInitData := mergeToolInitWithTrustedRuntime(rawToolInitData, runtime)
 	dynamicTools := map[string]interface{}{}
 	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
@@ -216,6 +310,11 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	}
 
 	toolResult, execErr := toolInstance.RunTool(toolInput)
+	unlockRequired := false
+	if execErr != nil {
+		errLower := strings.ToLower(execErr.Error())
+		unlockRequired = strings.Contains(errLower, "ssh_key_unlock_required") || (strings.Contains(errLower, "passphrase") && strings.Contains(errLower, "unlock"))
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	selectedAction["approved_by"] = user.UUID
 	selectedAction["approved_at"] = now
@@ -230,9 +329,18 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	}
 
 	if execErr != nil {
-		selectedAction["status"] = "failed"
+		if unlockRequired {
+			selectedAction["status"] = "pending"
+			selectedAction["unlock_required"] = true
+		} else {
+			selectedAction["status"] = "failed"
+		}
 		selectedAction["execution_error"] = execErr.Error()
-		response.Status = "failed"
+		if unlockRequired {
+			response.Status = "pending_unlock"
+		} else {
+			response.Status = "failed"
+		}
 		response.Error = execErr.Error()
 	} else {
 		selectedAction["status"] = "executed"
@@ -287,6 +395,10 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		}
 		if continueAfterExecute && execErr == nil {
 			continuationMessageUUID = eventRequestedMessage.UUID
+		}
+
+		if unlockRequired {
+			return nil
 		}
 
 		if execErr != nil {

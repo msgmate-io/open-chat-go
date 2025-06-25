@@ -463,8 +463,18 @@ func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, c
 	if err != nil {
 		return err
 	}
+	mcpIntegrationNames := make([]string, 0, len(integrationNames))
+	for _, name := range integrationNames {
+		if name != "mcp" && integrations.Has(name) {
+			continue
+		}
+		mcpIntegrationNames = append(mcpIntegrationNames, name)
+	}
+
+	integrationNames = mcpIntegrationNames
 	if len(integrationNames) == 0 {
 		delete(config, "mcp_tools")
+		delete(config, "integrations")
 		toolNames, err := collectToolNames(config["tools"])
 		if err == nil {
 			filtered := make([]string, 0, len(toolNames))
@@ -488,9 +498,25 @@ func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, c
 	}
 	for _, name := range integrationNames {
 		if _, ok := found[name]; !ok {
+			if name != "mcp" && integrations.Has(name) {
+				continue
+			}
 			return fmt.Errorf("integration %q not found or not enabled", name)
 		}
 	}
+
+	activeIntegrations := make([]string, 0, len(integrationNames))
+	for _, name := range integrationNames {
+		if _, ok := found[name]; ok {
+			activeIntegrations = append(activeIntegrations, name)
+		}
+	}
+	if len(activeIntegrations) == 0 {
+		delete(config, "integrations")
+	} else {
+		config["integrations"] = activeIntegrations
+	}
+
 	mcpTools, mcpToolNames, err := msgmate.BuildMCPToolsSnapshotFromIntegrations(rows)
 	if err != nil {
 		return fmt.Errorf("failed to attach integrations: %w", err)

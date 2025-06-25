@@ -33,10 +33,12 @@ type openChatBootstrapConfig struct {
 }
 
 type openChatSSHBootstrapConfig struct {
-	Owner   string          `json:"owner,omitempty"`
-	Owners  []string        `json:"owners,omitempty"`
-	Keys    json.RawMessage `json:"keys,omitempty"`
-	Servers json.RawMessage `json:"servers,omitempty"`
+	Owner        string          `json:"owner,omitempty"`
+	Owners       []string        `json:"owners,omitempty"`
+	Keys         json.RawMessage `json:"keys,omitempty"`
+	Servers      json.RawMessage `json:"servers,omitempty"`
+	KeyGrants    json.RawMessage `json:"key_grants,omitempty"`
+	ServerGrants json.RawMessage `json:"server_grants,omitempty"`
 }
 
 func parseOpenChatConfigBootstrap(args []string) openChatConfigBootstrap {
@@ -275,6 +277,12 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 		}
 		if len(bytes.TrimSpace(cfg.Bootstrap.SSH.Servers)) > 0 {
 			out.SSHServerSpecs = append(out.SSHServerSpecs, string(bytes.TrimSpace(cfg.Bootstrap.SSH.Servers)))
+		}
+		if len(bytes.TrimSpace(cfg.Bootstrap.SSH.KeyGrants)) > 0 {
+			out.SSHKeyGrantSpecs = append(out.SSHKeyGrantSpecs, string(bytes.TrimSpace(cfg.Bootstrap.SSH.KeyGrants)))
+		}
+		if len(bytes.TrimSpace(cfg.Bootstrap.SSH.ServerGrants)) > 0 {
+			out.SSHServerGrantSpecs = append(out.SSHServerGrantSpecs, string(bytes.TrimSpace(cfg.Bootstrap.SSH.ServerGrants)))
 		}
 	}
 
