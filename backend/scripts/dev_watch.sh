@@ -18,7 +18,6 @@ exec /dev_bin/CompileDaemon \
   -include="*.json" \
   -include="go.mod" \
   -include="go.sum" \
-  -include="tooldeps.json" \
   -include="integrationdeps.json" \
   -exclude-dir=/backend/docs \
   -exclude-dir=/backend/.devbin \

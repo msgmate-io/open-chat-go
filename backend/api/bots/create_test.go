@@ -38,7 +38,7 @@ func createBotRequestPayload(name string) map[string]interface{} {
 		"name":        name,
 		"description": "test bot",
 		"default_shared_config": map[string]interface{}{
-			"model":         "qwen3-8b-instruct_vllm",
+			"model":         "qwen3-4b-instruct-2507_vllm",
 			"backend":       "litellm",
 			"endpoint":      "https://litellm.t1m.me/v1",
 			"temperature":   0.7,
