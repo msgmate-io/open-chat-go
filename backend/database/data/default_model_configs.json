@@ -1,6 +1,6 @@
 [
   {
-    "title": "qwen3-4b-instruct-2507_vllm",
+    "title": "claude-haiku-4-5_di",
     "description": "Auto-discovered model from litellm provider.",
     "bot_usernames": [
       "bot"
@@ -11,73 +11,8 @@
       "context": 10,
       "endpoint": "https://litellm.t1m.me/v1",
       "max_tokens": 4096,
-      "model": "qwen3-4b-instruct-2507_vllm",
+      "model": "claude-haiku-4-5_di",
       "reasoning": true,
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "qwen38-27b-fp8_vllm",
-    "description": "Auto-discovered model from litellm provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "litellm",
-      "context": 10,
-      "endpoint": "https://litellm.t1m.me/v1",
-      "max_tokens": 4096,
-      "model": "qwen38-27b-fp8_vllm",
-      "reasoning": true,
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "chat-latest",
-    "description": "Auto-discovered model from openai provider.",
-    "bot_usernames": [],
-    "is_public": true,
-    "configuration": {
-      "backend": "openai",
-      "context": 10,
-      "endpoint": "https://api.openai.com/v1",
-      "max_tokens": 4096,
-      "model": "chat-latest",
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "claude-fable-5",
-    "description": "Auto-discovered model from anthropic provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "anthropic",
-      "context": 10,
-      "endpoint": "https://api.anthropic.com/v1",
-      "max_tokens": 4096,
-      "model": "claude-fable-5",
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7,
       "tools": [
@@ -132,20 +67,138 @@
     }
   },
   {
-    "title": "gpt-3.5-turbo-instruct",
-    "description": "Auto-discovered model from openai provider.",
-    "bot_usernames": [],
+    "title": "claude-sonnet-5_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
     "is_public": true,
     "configuration": {
-      "backend": "openai",
+      "backend": "litellm",
       "context": 10,
-      "endpoint": "https://api.openai.com/v1",
+      "endpoint": "https://litellm.t1m.me/v1",
       "max_tokens": 4096,
-      "model": "gpt-3.5-turbo-instruct",
+      "model": "claude-sonnet-5_di",
+      "reasoning": true,
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7,
       "tools": [
-        "get_current_time",
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-v3-2_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "deepseek-v3-2_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-v4-flash_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "deepseek-v4-flash_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-v4-pro_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "deepseek-v4-pro_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gemini-3-5-flash_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gemini-3-5-flash_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gemini-3.5-flash",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gemini-3.5-flash",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
         "get_weather",
         "get_random_number"
       ]
@@ -166,6 +219,627 @@
       "temperature": 0.7,
       "tools": [
         "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-mini",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-mini",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-nano",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-nano",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-mini",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-mini",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-nano",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-nano",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-mini",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-mini",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-nano",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-nano",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.5",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.6-luna",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-luna",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.6-sol",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-sol",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.6-terra",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-terra",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "kimi-k2-5_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "kimi-k2-5_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "kimi-k2-7-code_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "kimi-k2-7-code_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o3",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "o3",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o4-mini",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "o4-mini",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen3-4b-instruct-2507_vllm",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen3-4b-instruct-2507_vllm",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen35-35b-a3b_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen35-35b-a3b_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen35-9b_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen35-9b_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen36-27b_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen36-27b_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen37-max_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen37-max_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen38-27b-fp8_vllm",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen38-27b-fp8_vllm",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen38-27b_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen38-27b_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen38-max_di",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen38-max_di",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
         "get_weather",
         "get_random_number"
       ]
