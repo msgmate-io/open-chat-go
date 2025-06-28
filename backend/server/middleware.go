@@ -116,41 +116,69 @@ func UserFromContext(ctx context.Context) *database.User {
 	return user
 }
 
-func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, bool) {
+func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, *database.AccessToken, bool) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authHeader == "" || !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-		return nil, false
+		return nil, nil, false
 	}
 	rawToken := strings.TrimSpace(authHeader[7:])
 	if rawToken == "" {
-		return nil, false
+		return nil, nil, false
 	}
 	h := sha256.Sum256([]byte(rawToken))
 	tokenHash := hex.EncodeToString(h[:])
 
 	var accessToken database.AccessToken
 	if err := DB.Where("token_hash = ?", tokenHash).First(&accessToken).Error; err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if accessToken.RevokedAt != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if accessToken.ExpiresAt != nil && accessToken.ExpiresAt.Before(time.Now()) {
-		return nil, false
+		return nil, nil, false
+	}
+
+	// Restricted (audience-bound) tokens are default-deny: they are only
+	// valid on explicitly allowlisted routes and must carry the required
+	// scope for the route.
+	if strings.TrimSpace(accessToken.Audience) != "" {
+		requiredScope, routeAllowed := matchBrowserTokenRoute(r.Method, r.URL.Path)
+		if !routeAllowed {
+			return nil, nil, false
+		}
+		if requiredScope != "" && !accessToken.HasScope(requiredScope) {
+			return nil, nil, false
+		}
+	}
+
+	// Tokens derived from a parent credential (e.g. exchanged browser
+	// tokens) become invalid as soon as the parent is revoked or expired.
+	if accessToken.ParentTokenId != nil {
+		var parent database.AccessToken
+		if err := DB.First(&parent, "id = ?", *accessToken.ParentTokenId).Error; err != nil {
+			return nil, nil, false
+		}
+		if parent.RevokedAt != nil {
+			return nil, nil, false
+		}
+		if parent.ExpiresAt != nil && parent.ExpiresAt.Before(time.Now()) {
+			return nil, nil, false
+		}
 	}
 
 	var user database.User
 	if err := DB.First(&user, "id = ?", accessToken.UserId).Error; err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 
 	now := time.Now()
 	DB.Model(&database.AccessToken{}).Where("id = ?", accessToken.ID).Update("last_used_at", &now)
 
-	return &user, true
+	return &user, &accessToken, true
 }
 
 func sessionTokensFromRequest(r *http.Request) []string {
@@ -308,12 +336,13 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if user, ok := resolveUserFromBearerToken(DB, r); ok {
+		if user, accessToken, ok := resolveUserFromBearerToken(DB, r); ok {
 			if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
 				http.Error(w, "email verification required", http.StatusForbidden)
 				return
 			}
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			ctx = database.ContextWithAccessToken(ctx, accessToken)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -363,8 +392,9 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if user, ok := resolveUserFromBearerToken(DB, r); ok {
+		if user, accessToken, ok := resolveUserFromBearerToken(DB, r); ok {
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			ctx = database.ContextWithAccessToken(ctx, accessToken)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}

@@ -61,6 +61,10 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if !enforceBrowserTokenInteractionChat(w, r, chat.ChatType) {
+		return
+	}
+
 	status, err := resolveInteractionStatus(DB, inspector, chat)
 	if err != nil {
 		http.Error(w, "Unable to resolve interaction status", http.StatusInternalServerError)
