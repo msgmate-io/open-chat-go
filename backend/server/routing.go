@@ -449,6 +449,7 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 	v1PrivateApis.HandleFunc("GET /user/permissions", userHandler.ListPermissions)
+	v1PrivateApis.HandleFunc("POST /user/browser-token", userHandler.ExchangeBrowserToken)
 	v1PrivateApis.HandleFunc("POST /user/access-tokens", userHandler.CreateAccessToken)
 	v1PrivateApis.HandleFunc("GET /user/access-tokens/list", userHandler.ListAccessTokens)
 	v1PrivateApis.HandleFunc("POST /user/access-tokens/{token_uuid}/revoke", userHandler.RevokeAccessToken)
@@ -483,6 +484,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
 	commonMiddlewares := CreateStack(
+		CORSMiddleware(runtimecfg.CORSAllowedOrigins()),
 		APINoCacheMiddleware,
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),

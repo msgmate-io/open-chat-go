@@ -170,7 +170,7 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 	cs.addSubscriber(s)
 	defer cs.deleteSubscriber(s)
 
-	c2, err := websocket.Accept(w, r, nil)
+	c2, err := cs.acceptConnection(w, r)
 	cs.logf("accept connection")
 	if err != nil {
 		return err
@@ -221,7 +221,7 @@ func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.
 	cs.addSubscriber(s)
 	defer cs.deleteSubscriber(s)
 
-	c2, err := websocket.Accept(w, r, nil)
+	c2, err := cs.acceptConnection(w, r)
 	cs.logf("accept shared interaction connection")
 	if err != nil {
 		return err
