@@ -19,6 +19,11 @@ func TestMatchBrowserTokenRoute(t *testing.T) {
 		{http.MethodGet, "/bots/some-bot-uuid", database.ScopeBotsRead, true},
 		{http.MethodPatch, "/bots/some-bot-uuid", database.ScopeBotsWrite, true},
 		{http.MethodPut, "/bots/some-bot-uuid/config", database.ScopeBotsWrite, true},
+		{http.MethodGet, "/models", database.ScopeBotsRead, true},
+		{http.MethodGet, "/api/v1/models", database.ScopeBotsRead, true},
+		{http.MethodGet, "/tools", database.ScopeBotsRead, true},
+		{http.MethodGet, "/integrations/mcp/servers", database.ScopeBotsRead, true},
+		{http.MethodGet, "/api/v1/integrations/mcp/servers", database.ScopeBotsRead, true},
 		{http.MethodGet, "/chats/list", database.ScopeInteractionsList, true},
 		{http.MethodGet, "/chats/chat-uuid", database.ScopeInteractionsRead, true},
 		{http.MethodGet, "/chats/chat-uuid/messages/list", database.ScopeInteractionsRead, true},
@@ -41,11 +46,17 @@ func TestMatchBrowserTokenRoute(t *testing.T) {
 		{http.MethodGet, "/integrations/list", "", false},
 		{http.MethodPost, "/files/upload", "", false},
 		{http.MethodGet, "/connect", "", false},
-		{http.MethodGet, "/models", "", false},
-		{http.MethodGet, "/api/v1/models", "", false},
 		{http.MethodGet, "/chats/chat-uuid/contact", "", false},
 		{http.MethodGet, "/bots/list/extra", "", false},
 		{http.MethodPost, "/bots/list", "", false},
+
+		// catalog sibling routes stay default-deny
+		{http.MethodGet, "/models/some-model-uuid", "", false},
+		{http.MethodPost, "/models", "", false},
+		{http.MethodGet, "/tools/some-tool", "", false},
+		{http.MethodGet, "/tools/typing", "", false},
+		{http.MethodGet, "/integrations/mcp/templates", "", false},
+		{http.MethodGet, "/integrations/mcp/servers/some-server", "", false},
 	}
 
 	for _, tc := range cases {
