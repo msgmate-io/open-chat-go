@@ -2628,6 +2628,60 @@
                 }
             }
         },
+        "/api/v1/user/browser-token": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Exchange the caller's existing credential for a short-lived scoped browser API token",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Exchange credentials for a short-lived browser token",
+                "parameters": [
+                    {
+                        "description": "Requested scopes and optional TTL",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.BrowserTokenExchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ephemeral browser token",
+                        "schema": {
+                            "$ref": "#/definitions/user.BrowserTokenExchangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid scopes or TTL",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/login": {
             "post": {
                 "description": "Authenticate and login a user with email and password",
@@ -4097,6 +4151,49 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "user.BrowserTokenExchangeRequest": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ttl_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "user.BrowserTokenExchangeResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string"
+                },
+                "api_base_url": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "expires_in": {
+                    "type": "integer"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_type": {
+                    "type": "string"
                 }
             }
         },
