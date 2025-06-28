@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -45,4 +46,23 @@ func EnsureDefaultAccessTokenForUser(tx *gorm.DB, userID uint) error {
 		TokenHash:   hash,
 	}
 	return tx.Create(&defaultToken).Error
+}
+
+// RevokeChildAccessTokens revokes all tokens derived from the given parent
+// token. Child tokens are also validated against their parent at resolve
+// time; this cascade makes revocation explicit and auditable.
+func RevokeChildAccessTokens(tx *gorm.DB, parentTokenID uint) error {
+	now := time.Now()
+	return tx.Model(&AccessToken{}).
+		Where("parent_token_id = ? AND revoked_at IS NULL", parentTokenID).
+		Update("revoked_at", &now).Error
+}
+
+// CleanupExpiredBrowserAccessTokens removes expired browser-audience tokens
+// for a user. Best effort housekeeping; expiry is enforced at resolve time
+// regardless.
+func CleanupExpiredBrowserAccessTokens(tx *gorm.DB, userID uint) {
+	now := time.Now()
+	tx.Where("user_id = ? AND audience = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, AudienceBrowserAPI, now).
+		Delete(&AccessToken{})
 }
