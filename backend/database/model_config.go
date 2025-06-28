@@ -177,6 +177,8 @@ func managedProviderAPIKeyEnv(backend string) (string, bool) {
 		return "GROQ_API_KEY", true
 	case "litellm":
 		return "LITELLM_API_KEY", true
+	case "msgmate_cluster":
+		return "MSGMATE_CLUSTER_API_KEY", true
 	default:
 		return "", false
 	}
