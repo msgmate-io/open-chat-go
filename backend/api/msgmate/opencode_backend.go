@@ -49,6 +49,7 @@ func opencodeChatBackend(_ context.Context, req ChatBackendRequest) error {
 	}
 
 	projectHint := opencodeProjectHintFromConfig(req.Config)
+	createGitWorkspace := opencodeCreateGitWorkspaceFromConfig(req.Config)
 	model := ""
 	if v, ok := req.Config["model"].(string); ok {
 		model = strings.TrimSpace(v)
@@ -68,7 +69,7 @@ func opencodeChatBackend(_ context.Context, req ChatBackendRequest) error {
 	senderUUID := req.Message.Content.SenderUUID
 	db := req.DB
 
-	go runOpencodeStreamingGeneration(db, host, botUser, wsHandler, chatUUID, senderUUID, projectHint, model, senderID, text)
+	go runOpencodeStreamingGeneration(db, host, botUser, wsHandler, chatUUID, senderUUID, projectHint, createGitWorkspace, model, senderID, text)
 
 	return nil
 }
@@ -90,9 +91,24 @@ func opencodeProjectHintFromConfig(config map[string]interface{}) string {
 	return ""
 }
 
+// opencodeCreateGitWorkspaceFromConfig resolves the create-git-workspace toggle
+// from the project-selection tool_init payload. When set, a new chat binding
+// works in a temporary 1:1 git workspace copy of the project with a fresh
+// random branch checked out.
+func opencodeCreateGitWorkspaceFromConfig(config map[string]interface{}) bool {
+	if toolInit, ok := config["tool_init"].(map[string]interface{}); ok {
+		if toolPayload, ok := toolInit[opencodeintegration.ToolNameSelectProject].(map[string]interface{}); ok {
+			if v, ok := toolPayload["create_git_workspace"].(bool); ok {
+				return v
+			}
+		}
+	}
+	return false
+}
+
 // runOpencodeStreamingGeneration creates a dedicated bot session/client and drives
 // a single opencode generation end to end, delivering activity through the sink.
-func runOpencodeStreamingGeneration(db *gorm.DB, host string, botUser database.User, wsHandler *wsapi.WebSocketHandler, chatUUID, senderUUID, projectHint, model string, senderID uint, text string) {
+func runOpencodeStreamingGeneration(db *gorm.DB, host string, botUser database.User, wsHandler *wsapi.WebSocketHandler, chatUUID, senderUUID, projectHint string, createGitWorkspace bool, model string, senderID uint, text string) {
 	token := uuid.NewString()
 	session := database.Session{
 		UserId: botUser.ID,
@@ -120,9 +136,10 @@ func runOpencodeStreamingGeneration(db *gorm.DB, host string, botUser database.U
 	}
 
 	opts := opencodeintegration.RunOptions{
-		ProjectUUIDHint: projectHint,
-		Model:           model,
-		OwnerUserID:     senderID,
+		ProjectUUIDHint:    projectHint,
+		Model:              model,
+		OwnerUserID:        senderID,
+		CreateGitWorkspace: createGitWorkspace,
 	}
 	if err := opencodeintegration.RunStreamingGeneration(context.Background(), db, chatUUID, text, sink, opts); err != nil {
 		log.Printf("opencode streaming generation for chat %s ended with error: %v", chatUUID, err)
@@ -172,18 +189,23 @@ func (s *opencodeStreamSink) OnSessionInfo(info opencodeintegration.SessionInfo)
 	}
 	messageText := fmt.Sprintf("OpenCode instance connected: project %q (%s), model %s.", info.ProjectName, info.ProjectMode, modelDisplay)
 
+	sessionInfo := map[string]interface{}{
+		"project_uuid": info.ProjectUUID,
+		"project_name": info.ProjectName,
+		"project_mode": info.ProjectMode,
+		"project_path": info.ProjectPath,
+		"session_id":   info.SessionID,
+		"model":        info.Model,
+		"provider_id":  info.ProviderID,
+	}
+	if strings.TrimSpace(info.WorkspacePath) != "" {
+		sessionInfo["workspace_path"] = info.WorkspacePath
+		sessionInfo["workspace_branch"] = info.WorkspaceBranch
+	}
 	metadata := map[string]interface{}{
-		"backend":  "opencode",
-		"finished": true,
-		"opencode_session_info": map[string]interface{}{
-			"project_uuid": info.ProjectUUID,
-			"project_name": info.ProjectName,
-			"project_mode": info.ProjectMode,
-			"project_path": info.ProjectPath,
-			"session_id":   info.SessionID,
-			"model":        info.Model,
-			"provider_id":  info.ProviderID,
-		},
+		"backend":             "opencode",
+		"finished":            true,
+		"opencode_session_info": sessionInfo,
 	}
 	if err := s.client.SendChatMessage(s.chatUUID, client.SendMessage{Text: messageText, MetaData: &metadata}); err != nil {
 		log.Printf("opencode streaming: failed to persist session info for chat %s: %v", s.chatUUID, err)
