@@ -253,6 +253,7 @@ func streamChatCompletion(
 	interactionStartTools []string,
 	interactionCompleteTools []string,
 	handler *MsgmateHandler,
+	samplingParams SamplingParams,
 ) (<-chan string, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -341,6 +342,7 @@ func streamChatCompletion(
 				host, model, backend, currentMessages, tools, toolMap, apiKey,
 				executedToolResults,
 				chunkChan, usageChan, toolChan, errChan,
+				samplingParams,
 			)
 			if err != nil && isContextWindowExceededError(err) {
 				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
@@ -355,6 +357,7 @@ func streamChatCompletion(
 						host, model, backend, currentMessages, tools, toolMap, apiKey,
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
+						samplingParams,
 					)
 				}
 			}
@@ -563,6 +566,7 @@ func processStreamingRequest(
 	},
 	toolChan chan<- ToolCall,
 	errChan chan<- error,
+	samplingParams SamplingParams,
 ) (*toolCallResult, error) {
 	if backend == "testbackend" {
 		reader, err := buildTestBackendStreamingReader(messages, toolMap)
@@ -585,6 +589,7 @@ func processStreamingRequest(
 	if backend == "openai" {
 		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
+	applySamplingParamsToRequestBody(requestBody, samplingParams, backend)
 
 	// Setup request
 	jsonData, err := json.Marshal(requestBody)
