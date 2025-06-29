@@ -14,6 +14,7 @@ var (
 )
 
 type OpenChatBootstrap struct {
+	UserSpecs             []string
 	BotSpecs              []string
 	SSHDefaultOwners      []string
 	SSHKeySpecs           []string
@@ -47,6 +48,7 @@ func SetOpenChatBootstrap(next OpenChatBootstrap) {
 	mu.Lock()
 	defer mu.Unlock()
 	openChatBootstrap = OpenChatBootstrap{
+		UserSpecs:             append([]string(nil), next.UserSpecs...),
 		BotSpecs:              append([]string(nil), next.BotSpecs...),
 		SSHDefaultOwners:      append([]string(nil), next.SSHDefaultOwners...),
 		SSHKeySpecs:           append([]string(nil), next.SSHKeySpecs...),
@@ -62,6 +64,7 @@ func GetOpenChatBootstrap() OpenChatBootstrap {
 	mu.RLock()
 	defer mu.RUnlock()
 	return OpenChatBootstrap{
+		UserSpecs:             append([]string(nil), openChatBootstrap.UserSpecs...),
 		BotSpecs:              append([]string(nil), openChatBootstrap.BotSpecs...),
 		SSHDefaultOwners:      append([]string(nil), openChatBootstrap.SSHDefaultOwners...),
 		SSHKeySpecs:           append([]string(nil), openChatBootstrap.SSHKeySpecs...),
