@@ -227,6 +227,16 @@ func GetServerFlags() []cli.Flag {
 			Name:    "add-ssh-default-owner",
 			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
 		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_OPENCODE_PROJECTS_FROM_CONFIG"),
+			Name:    "add-opencode-projects-from-config",
+			Usage:   "path(s) or inline JSON object/array defining opencode projects; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_OPENCODE_DEFAULT_OWNER"),
+			Name:    "add-opencode-default-owner",
+			Usage:   "default opencode bootstrap owner username/email/name; can be repeated",
+		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
 			Name:    "extra-models-json",
@@ -258,6 +268,30 @@ func GetServerFlags() []cli.Flag {
 			Name:    "signup-requires-admin-approval",
 			Usage:   "Require admin approval for new user signup",
 			Value:   false,
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("CORS_ALLOWED_ORIGINS"),
+			Name:    "cors-allowed-origins",
+			Usage:   "comma separated allowlist of cross-origin browser origins (scheme://host[:port]); wildcards are rejected; empty disables cross-origin API access",
+			Value:   "",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("PUBLIC_BASE_URL"),
+			Name:    "public-base-url",
+			Usage:   "canonical public origin (scheme://host[:port]) advertised to external clients, e.g. in browser token exchange responses",
+			Value:   "",
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("BROWSER_TOKEN_TTL_SECONDS"),
+			Name:    "browser-token-ttl-seconds",
+			Usage:   "default lifetime in seconds for exchanged browser tokens",
+			Value:   900,
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("BROWSER_TOKEN_MAX_TTL_SECONDS"),
+			Name:    "browser-token-max-ttl-seconds",
+			Usage:   "maximum lifetime in seconds for exchanged browser tokens",
+			Value:   3600,
 		},
 	}
 
@@ -294,6 +328,7 @@ func normalizeSessionCookieDomain(host string) string {
 type bootstrapUserSpec struct {
 	Label                        string
 	Credentials                  string
+	Email                        string
 	IsAdmin                      bool
 	IsAutomated                  bool
 	SingletonAdmin               bool
@@ -502,6 +537,16 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		DB.Save(user)
 	}
 
+	if user != nil {
+		email := strings.TrimSpace(spec.Email)
+		if email != "" && user.Email != email {
+			user.Email = email
+			if err := DB.Save(user).Error; err != nil {
+				return nil, fmt.Errorf("failed to update email for %s: %w", spec.Label, err)
+			}
+		}
+	}
+
 	return user, nil
 }
 
@@ -554,6 +599,14 @@ func ServerCli() *cli.Command {
 					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
 					Sensitive: false,
 				},
+				"ADD_OPENCODE_PROJECTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-opencode-projects-from-config"), ","),
+					Sensitive: true,
+				},
+				"ADD_OPENCODE_DEFAULT_OWNER": {
+					Value:     strings.Join(c.StringSlice("add-opencode-default-owner"), ","),
+					Sensitive: false,
+				},
 				"EXTRA_MODELS_JSON": {Value: c.String("extra-models-json"), Sensitive: false},
 				"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
@@ -562,19 +615,25 @@ func ServerCli() *cli.Command {
 					Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 					Sensitive: false,
 				},
-				"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
-				"REDIS_MODE":         {Value: c.String("redis-mode"), Sensitive: false},
-				"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
-				"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
-				"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
-				"OPENAI_API_KEY":     {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_KEY":  {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_HOST": {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
-				"DEEPINFRA_API_KEY":  {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
-				"GROQ_API_KEY":       {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
-				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
-				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
-				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+				"CORS_ALLOWED_ORIGINS":          {Value: c.String("cors-allowed-origins"), Sensitive: false},
+				"PUBLIC_BASE_URL":               {Value: c.String("public-base-url"), Sensitive: false},
+				"BROWSER_TOKEN_TTL_SECONDS":     {Value: fmt.Sprintf("%d", c.Int("browser-token-ttl-seconds")), Sensitive: false},
+				"BROWSER_TOKEN_MAX_TTL_SECONDS": {Value: fmt.Sprintf("%d", c.Int("browser-token-max-ttl-seconds")), Sensitive: false},
+				"REDIS_URL":                     {Value: c.String("redis-url"), Sensitive: true},
+				"REDIS_MODE":                    {Value: c.String("redis-mode"), Sensitive: false},
+				"REDIS_ADDR":                    {Value: c.String("redis-addr"), Sensitive: false},
+				"REDIS_PASSWORD":                {Value: c.String("redis-password"), Sensitive: true},
+				"REDIS_DB":                      {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+				"OPENAI_API_KEY":                {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_KEY":             {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_HOST":            {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
+				"DEEPINFRA_API_KEY":             {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
+				"GROQ_API_KEY":                  {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
+				"LITELLM_API_KEY":               {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
+				"LITELLM_API_HOST":              {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
+				"MSGMATE_CLUSTER_API_KEY":       {Value: os.Getenv("MSGMATE_CLUSTER_API_KEY"), Sensitive: true},
+				"MSGMATE_CLUSTER_HOST":          {Value: os.Getenv("MSGMATE_CLUSTER_HOST"), Sensitive: true},
+				"OPEN_CHAT_SEAL_KEY":            {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
 					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
 					Sensitive: false,
@@ -732,6 +791,11 @@ func ServerCli() *cli.Command {
 
 			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
 
+			userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
+			if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
+				return err
+			}
+
 			botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
 			botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
 			if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
@@ -756,6 +820,14 @@ func ServerCli() *cli.Command {
 			sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
 			sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
 			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
+				return err
+			}
+
+			opencodeDefaultOwners := append([]string{}, c.StringSlice("add-opencode-default-owner")...)
+			opencodeDefaultOwners = append(opencodeDefaultOwners, openChatBootstrap.OpencodeDefaultOwners...)
+			opencodeProjectSpecs := append([]string{}, c.StringSlice("add-opencode-projects-from-config")...)
+			opencodeProjectSpecs = append(opencodeProjectSpecs, openChatBootstrap.OpencodeProjectSpecs...)
+			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, opencodeDefaultOwners, opencodeProjectSpecs); err != nil {
 				return err
 			}
 

@@ -123,8 +123,6 @@
   ["openai", "o4-mini-2025-04-16"],
   ["openai", "omni-moderation-2024-09-26"],
   ["openai", "omni-moderation-latest"],
-  ["litellm", "qwen3-4b-instruct-2507_vllm"],
-  ["litellm", "qwen38-27b-fp8_vllm"],
   ["openai", "sora-2"],
   ["openai", "sora-2-pro"],
   ["openai", "text-embedding-3-large"],

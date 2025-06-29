@@ -75,6 +75,10 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !enforceBrowserTokenInteractionChat(w, r, chat.ChatType) {
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	listedChat := convertChatToListedChat(user, chat)
