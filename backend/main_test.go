@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestToOpenChatBootstrapRuntimeIncludesUserSpecs(t *testing.T) {
+	cfg := openChatConfig{
+		Bootstrap: &openChatBootstrapConfig{
+			Users: json.RawMessage(`[{"username":"bootstrap_admin","password":"StrongPass1!","is_admin":true}]`),
+		},
+	}
+
+	out := toOpenChatBootstrapRuntime(cfg)
+
+	if len(out.UserSpecs) != 1 {
+		t.Fatalf("expected 1 user spec, got %d", len(out.UserSpecs))
+	}
+	if out.UserSpecs[0] != `[{"username":"bootstrap_admin","password":"StrongPass1!","is_admin":true}]` {
+		t.Fatalf("unexpected UserSpecs: %+v", out.UserSpecs)
+	}
+}
+
 func TestToOpenChatBootstrapRuntimeIncludesSSHGrantSpecs(t *testing.T) {
 	cfg := openChatConfig{
 		Bootstrap: &openChatBootstrapConfig{
