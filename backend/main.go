@@ -28,6 +28,7 @@ type openChatConfig struct {
 }
 
 type openChatBootstrapConfig struct {
+	Users    json.RawMessage                  `json:"users,omitempty"`
 	Bots     json.RawMessage                  `json:"bots,omitempty"`
 	SSH      *openChatSSHBootstrapConfig      `json:"ssh,omitempty"`
 	Opencode *openChatOpencodeBootstrapConfig `json:"opencode,omitempty"`
@@ -266,6 +267,10 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 	out := runtimecfg.OpenChatBootstrap{}
 	if cfg.Bootstrap == nil {
 		return out
+	}
+
+	if len(bytes.TrimSpace(cfg.Bootstrap.Users)) > 0 {
+		out.UserSpecs = append(out.UserSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Users)))
 	}
 
 	if len(bytes.TrimSpace(cfg.Bootstrap.Bots)) > 0 {
