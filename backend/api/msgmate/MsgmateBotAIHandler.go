@@ -153,8 +153,10 @@ func mergeToolInitWithTrustedRuntime(initData interface{}, runtime map[string]in
 			base[k] = v
 		}
 	}
-	if apiHost, ok := runtime["api_host"].(string); ok && strings.TrimSpace(apiHost) != "" {
-		base["api_host"] = strings.TrimSpace(apiHost)
+	if _, has := base["api_host"]; !has {
+		if apiHost, ok := runtime["api_host"].(string); ok && strings.TrimSpace(apiHost) != "" {
+			base["api_host"] = strings.TrimSpace(apiHost)
+		}
 	}
 	if sessionID, ok := runtime["session_id"].(string); ok && strings.TrimSpace(sessionID) != "" {
 		base["session_id"] = sessionID
