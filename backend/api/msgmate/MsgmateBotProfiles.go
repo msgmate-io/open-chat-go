@@ -1,9 +1,11 @@
 package msgmate
 
 import (
+	"backend/chatstate"
 	"backend/database"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -17,6 +19,7 @@ type BotProfileConfig struct {
 	Model        string                 `json:"model"`
 	Endpoint     string                 `json:"endpoint"`
 	Backend      string                 `json:"backend"`
+	ChatBackend  string                 `json:"chat_backend,omitempty"`
 	Context      int                    `json:"context"`
 	SystemPrompt string                 `json:"system_prompt"`
 	Reasoning    *bool                  `json:"reasoning,omitempty"`
@@ -86,18 +89,33 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		return err
 	}
 
-	if len(models) == 0 {
-		var runtime database.BotRuntimeConfig
-		if err := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error; err == nil {
-			var fallbackConfig BotProfileConfig
-			if err := json.Unmarshal(runtime.DefaultSharedConfig, &fallbackConfig); err == nil {
-				if fallbackConfig.Model != "" && fallbackConfig.Backend != "" {
-					models = append(models, BotModel{
-						Title:         fallbackConfig.Model,
-						Description:   runtime.Description,
-						Configuration: fallbackConfig,
-					})
-				}
+	var runtime database.BotRuntimeConfig
+	runtimeErr := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error
+
+	if len(models) == 0 && runtimeErr == nil {
+		var fallbackConfig BotProfileConfig
+		if err := json.Unmarshal(runtime.DefaultSharedConfig, &fallbackConfig); err == nil {
+			if fallbackConfig.Model != "" && fallbackConfig.Backend != "" {
+				models = append(models, BotModel{
+					Title:         fallbackConfig.Model,
+					Description:   runtime.Description,
+					Configuration: fallbackConfig,
+				})
+			}
+		}
+	}
+
+	// Bots that route chats through an external chat backend (eg the opencode
+	// integration bot) expose that chat backend on every profile model via the
+	// dedicated chat_backend key. The selected model only picks which LLM the
+	// external backend runs on (its provider stays in backend), so the chat
+	// start page must keep resolving the backend's chat UI (eg the opencode
+	// project selector) and new chats must stay bound to the chat backend
+	// regardless of which model config is selected.
+	if runtimeErr == nil {
+		if chatBackendName := runtimeChatBackendName(runtime.DefaultSharedConfig); chatBackendName != "" {
+			for i := range models {
+				models[i].Configuration.ChatBackend = chatBackendName
 			}
 		}
 	}
@@ -132,6 +150,27 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	}
 
 	return nil
+}
+
+// runtimeChatBackendName resolves the external chat backend declared by a bot
+// runtime's default shared config. An explicit "chat_backend" key wins; legacy
+// runtimes stored the chat backend name in "backend", which only counts when
+// it names a registered external chat backend (otherwise "backend" holds the
+// LLM provider, eg "deepinfra").
+func runtimeChatBackendName(defaultSharedConfig []byte) string {
+	config := map[string]interface{}{}
+	if err := json.Unmarshal(defaultSharedConfig, &config); err != nil {
+		return ""
+	}
+	if v, ok := config[chatstate.ChatBackendKey].(string); ok {
+		if name := strings.ToLower(strings.TrimSpace(v)); name != "" {
+			return name
+		}
+	}
+	if legacyName := chatstate.ChatBackendNameFromConfig(config); legacyName != "" && IsRegisteredChatBackend(legacyName) {
+		return legacyName
+	}
+	return ""
 }
 
 // SyncAutomatedBotProfiles refreshes public profiles for all automated bot users.

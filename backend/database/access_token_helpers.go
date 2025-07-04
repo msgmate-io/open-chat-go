@@ -66,3 +66,28 @@ func CleanupExpiredBrowserAccessTokens(tx *gorm.DB, userID uint) {
 	tx.Where("user_id = ? AND audience = ? AND expires_at IS NOT NULL AND expires_at < ?", userID, AudienceBrowserAPI, now).
 		Delete(&AccessToken{})
 }
+
+// EnforceActiveBrowserTokenLimit keeps the number of active (non-revoked,
+// non-expired) browser-audience tokens for a user at or below limit by
+// evicting the oldest ones. Browser tokens are ephemeral session credentials
+// and are intentionally rotated: issuing new browser tokens must never fail
+// or exhaust the regular API token quota, so surplus tokens are hard deleted
+// like expired browser tokens. Best effort housekeeping.
+func EnforceActiveBrowserTokenLimit(tx *gorm.DB, userID uint, limit int) {
+	if tx == nil || limit <= 0 {
+		return
+	}
+	now := time.Now()
+	activeIDs := []uint{}
+	if err := tx.Model(&AccessToken{}).
+		Where("user_id = ? AND audience = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)", userID, AudienceBrowserAPI, now).
+		Order("created_at ASC, id ASC").
+		Pluck("id", &activeIDs).Error; err != nil {
+		return
+	}
+	if len(activeIDs) <= limit {
+		return
+	}
+	evictIDs := activeIDs[:len(activeIDs)-limit]
+	tx.Where("id IN ? AND audience = ?", evictIDs, AudienceBrowserAPI).Delete(&AccessToken{})
+}

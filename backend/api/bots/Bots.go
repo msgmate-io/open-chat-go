@@ -320,6 +320,17 @@ func validateAndAttachDynamicToolsForUser(DB *gorm.DB, user *database.User, conf
 		return msgmate.NewToolFromDefinition(def), true, nil
 	}
 
+	// Client integrations register their own dynamic REST tools at runtime
+	// and carry matching tool_init data when starting interactions, without
+	// necessarily controlling the bot's configured tool list. Implicitly
+	// enable any tool_init key that resolves to a known tool so these flows
+	// do not break on config drift; keys that resolve to nothing still fail
+	// validation below. Callers could override the tool list via
+	// config_overrides anyway, so this grants no additional authority.
+	if err := enableToolsReferencedByToolInit(config, resolver); err != nil {
+		return err
+	}
+
 	toolsForValidation, err := filterOutMCPConfiguredTools(config["tools"])
 	if err != nil {
 		return err
@@ -352,6 +363,66 @@ func validateAndAttachDynamicToolsForUser(DB *gorm.DB, user *database.User, conf
 	} else {
 		delete(config, "dynamic_tools")
 	}
+	return nil
+}
+
+// enableToolsReferencedByToolInit appends tools referenced by tool_init keys
+// to the configured tool list when they resolve to a known static tool or one
+// of the user's dynamic REST tools. This keeps runtime-registered integration
+// tools usable even when the bot config does not list them explicitly.
+func enableToolsReferencedByToolInit(config map[string]interface{}, resolver msgmate.ToolResolver) error {
+	toolInitMap, ok := config["tool_init"].(map[string]interface{})
+	if !ok || len(toolInitMap) == 0 {
+		return nil
+	}
+
+	configuredNames, err := collectToolNames(config["tools"])
+	if err != nil {
+		return err
+	}
+	known := make(map[string]struct{}, len(configuredNames)*2)
+	for _, name := range configuredNames {
+		known[name] = struct{}{}
+		known[msgmate.NormalizeConfiguredToolName(name)] = struct{}{}
+	}
+
+	additional := []string{}
+	for key := range toolInitMap {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			continue
+		}
+		actualName := msgmate.NormalizeConfiguredToolName(trimmed)
+		if _, exists := known[trimmed]; exists {
+			continue
+		}
+		if _, exists := known[actualName]; exists {
+			continue
+		}
+		if staticTool, found := msgmate.NewToolByName(actualName); found && staticTool != nil {
+			additional = append(additional, trimmed)
+			continue
+		}
+		if resolver == nil {
+			continue
+		}
+		_, found, resolveErr := resolver(actualName)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if found {
+			additional = append(additional, trimmed)
+		}
+	}
+
+	if len(additional) == 0 {
+		return nil
+	}
+	merged, err := mergeToolNames(config["tools"], additional)
+	if err != nil {
+		return err
+	}
+	config["tools"] = merged
 	return nil
 }
 
