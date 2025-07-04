@@ -75,5 +75,59 @@
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7
     }
+  },
+  {
+    "title": "gpt-5.6-luna",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-luna",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "gpt-5.6-sol",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-sol",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "gpt-5.5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
   }
 ]
