@@ -50,6 +50,8 @@ type AccessTokenListItem struct {
 	Scope       string     `json:"scope"`
 	BotUUID     *string    `json:"bot_uuid,omitempty"`
 	TokenPrefix string     `json:"token_prefix"`
+	Audience    string     `json:"audience,omitempty"`
+	Scopes      string     `json:"scopes,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
@@ -204,8 +206,11 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 	if !user.IsAdmin {
 		var activeCount int64
 		now := time.Now()
+		// Restricted audience tokens (e.g. short-lived browser session
+		// tokens) rotate automatically and are not counted against the
+		// regular API token quota.
 		DB.Model(&database.AccessToken{}).
-			Where("user_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)", user.ID, now).
+			Where("user_id = ? AND audience = '' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)", user.ID, now).
 			Count(&activeCount)
 		if activeCount >= maxUserAccessTokens {
 			http.Error(w, fmt.Sprintf("Token limit reached (max %d for regular users)", maxUserAccessTokens), http.StatusConflict)
@@ -253,6 +258,8 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 			Scope:       scope,
 			BotUUID:     parsedBotUUID,
 			TokenPrefix: accessToken.TokenPrefix,
+			Audience:    accessToken.Audience,
+			Scopes:      accessToken.Scopes,
 			CreatedAt:   accessToken.CreatedAt,
 			LastUsedAt:  accessToken.LastUsedAt,
 			ExpiresAt:   accessToken.ExpiresAt,
@@ -577,6 +584,8 @@ func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
 			Scope:       scope,
 			BotUUID:     parsedBotUUID,
 			TokenPrefix: token.TokenPrefix,
+			Audience:    token.Audience,
+			Scopes:      token.Scopes,
 			CreatedAt:   token.CreatedAt,
 			LastUsedAt:  token.LastUsedAt,
 			ExpiresAt:   token.ExpiresAt,
@@ -644,6 +653,8 @@ func (h *UserHandler) RevokeAccessToken(w http.ResponseWriter, r *http.Request) 
 			Scope:       scope,
 			BotUUID:     parsedBotUUID,
 			TokenPrefix: token.TokenPrefix,
+			Audience:    token.Audience,
+			Scopes:      token.Scopes,
 			CreatedAt:   token.CreatedAt,
 			LastUsedAt:  token.LastUsedAt,
 			ExpiresAt:   token.ExpiresAt,
