@@ -80,6 +80,15 @@
       "local_path": "clients/integrations/voice_integration",
       "default_enabled": false,
       "private": true
+    },
+    {
+      "module": "github.com/msgmate-io/matrix-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/matrix-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/matrix_integration",
+      "default_enabled": true,
+      "private": false
     }
   ]
 }
