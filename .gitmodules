@@ -52,3 +52,6 @@
 [submodule "clients/js_client"]
 	path = clients/js_client
 	url = https://github.com/msgmate-io/open-chat-go-js-client
+[submodule "clients/integrations/matrix_integration"]
+	path = clients/integrations/matrix_integration
+	url = https://github.com/msgmate-io/open-chat-go-matrix-integration
