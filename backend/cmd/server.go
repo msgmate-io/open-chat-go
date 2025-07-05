@@ -809,7 +809,9 @@ func ServerCli() *cli.Command {
 				return err
 			}
 			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			integrationBotConfigs := make([]botBootstrapConfig, 0, len(integrationBotDecls))
 			for _, decl := range integrationBotDecls {
+				integrationBotConfigs = append(integrationBotConfigs, decl.Config)
 				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
 				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
 					return err
@@ -850,6 +852,9 @@ func ServerCli() *cli.Command {
 				providerSyncResult.SkippedUnmanaged,
 				providerSyncResult.SkippedInvalid,
 			)
+			if err := syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs); err != nil {
+				return err
+			}
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err

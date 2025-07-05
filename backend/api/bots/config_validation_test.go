@@ -59,6 +59,38 @@ func TestValidateSharedConfigStructureAcceptsToolCallLimitOverrides(t *testing.T
 	}
 }
 
+func TestValidateSharedConfigStructureValidatesMaxCompletionTokensOverride(t *testing.T) {
+	validConfig := map[string]interface{}{
+		"model":                     "company-reasoning-model",
+		"backend":                   "openai",
+		"use_max_completion_tokens": true,
+		"disabled_sampling_params":  []interface{}{"temperature", "top_p"},
+	}
+	if err := validateSharedConfigStructure(validConfig); err != nil {
+		t.Fatalf("expected boolean use_max_completion_tokens override to be valid, got error: %v", err)
+	}
+
+	invalidConfig := map[string]interface{}{
+		"model":                     "company-reasoning-model",
+		"backend":                   "openai",
+		"use_max_completion_tokens": "true",
+	}
+	err := validateSharedConfigStructure(invalidConfig)
+	if err == nil || !strings.Contains(err.Error(), "use_max_completion_tokens must be a boolean") {
+		t.Fatalf("expected invalid override type error, got %v", err)
+	}
+
+	invalidConfig = map[string]interface{}{
+		"model":                    "company-reasoning-model",
+		"backend":                  "openai",
+		"disabled_sampling_params": []interface{}{"temperature", "unknown_parameter"},
+	}
+	err = validateSharedConfigStructure(invalidConfig)
+	if err == nil || !strings.Contains(err.Error(), "unsupported parameter") {
+		t.Fatalf("expected unsupported disabled sampling parameter error, got %v", err)
+	}
+}
+
 func TestValidateSharedConfigStructureRejectsInvalidToolCallLimitValues(t *testing.T) {
 	config := map[string]interface{}{
 		"model":                "qwen3-4b-instruct-2507_vllm",
