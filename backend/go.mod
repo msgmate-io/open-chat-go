@@ -28,6 +28,8 @@ require github.com/msgmate-io/voice-integration v0.0.0
 
 require github.com/msgmate-io/matrix-integration v0.0.0
 
+require github.com/msgmate-io/docker-sandbox-integration v0.0.0
+
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/coder/websocket v1.8.15
@@ -58,6 +60,8 @@ replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integratio
 replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_integration
 
 replace github.com/msgmate-io/voice-integration => ../clients/integrations/voice_integration
+
+replace github.com/msgmate-io/docker-sandbox-integration => ../clients/integrations/docker_sandbox_integration
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
