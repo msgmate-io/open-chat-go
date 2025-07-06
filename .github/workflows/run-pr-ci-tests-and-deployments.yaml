@@ -1182,16 +1182,16 @@ jobs:
           docker compose --env-file .ci-e2e.env -f docker-compose.ci.yaml up -d redis
           docker compose --env-file .ci-e2e.env -f docker-compose.ci.yaml up -d --no-deps backend
 
-          for i in $(seq 1 90); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/login || true)"
-            if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "307" ]; then
+          for i in $(seq 1 60); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
+            if [ "$code" != "000" ]; then
               echo "E2E test backend is reachable (HTTP $code)."
               exit 0
             fi
-            sleep 2
+            sleep 1
           done
 
-          echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984/login"
+          echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
           docker compose --env-file .ci-e2e.env -f docker-compose.ci.yaml logs backend || true
           exit 1
 
