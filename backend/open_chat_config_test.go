@@ -68,7 +68,12 @@ func TestStagingOpenChatConfigLoads(t *testing.T) {
 // parses and configures the docker-sandbox SSH key, server, and OpenCode project,
 // and tests live SSH connectivity to the dev-sandbox container if running.
 func TestDockerSandboxConfigLoadsAndConnects(t *testing.T) {
-	candidates := []string{"open-chat.json", filepath.Join("..", "open-chat.json")}
+	candidates := []string{
+		"open-chat.json",
+		filepath.Join("..", "open-chat.json"),
+		filepath.Join("..", "development", "ci", "open-chat-sandbox-benchmark.json"),
+		filepath.Join("development", "ci", "open-chat-sandbox-benchmark.json"),
+	}
 	var raw []byte
 	var loadedPath string
 	for _, c := range candidates {
@@ -79,7 +84,7 @@ func TestDockerSandboxConfigLoadsAndConnects(t *testing.T) {
 		}
 	}
 	if len(raw) == 0 {
-		t.Fatalf("could not find open-chat.json in %v", candidates)
+		t.Skipf("no sandbox config found in %v (skipping)", candidates)
 	}
 
 	cfg, err := loadOpenChatConfig(raw, loadedPath)
