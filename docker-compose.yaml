@@ -107,7 +107,7 @@ networks:
     driver: bridge
   open-chat-lw-shared:
     name: open-chat-lw-shared
-    driver: bridge
+    external: true
 
 volumes:
   go_mod_cache:

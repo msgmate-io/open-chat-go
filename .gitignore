@@ -47,3 +47,6 @@ backend/uploads/*
 backend/open-chat.json
 open-chat.json
 .open-chat.json
+.sandbox-results/
+.ci-sandbox-*.env
+.ci-sandbox-*-cookies*
