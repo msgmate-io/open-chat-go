@@ -1298,13 +1298,20 @@ jobs:
       tests: ${{ needs.sandbox-tests-discover.outputs.tests }}
     env:
       BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
-      SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}
+      # Scratch dir on host so the bot's own git clone can never land inside a
+      # tracked checkout (avoids the accidental-submodule footgun).
+      SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
       SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
-      SANDBOX_INTERACTION_TIMEOUT: "600"
+      # Home-cluster litellm models are slow: give interactions generous time.
+      SANDBOX_INTERACTION_TIMEOUT: "1800"
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
+      # Pin the opencode runtime model to a model reachable with the litellm
+      # key (mirrors the ai-test-real suite).
+      SANDBOX_OPENCODE_PROVIDER: litellm
+      SANDBOX_OPENCODE_MODEL: qwen38-flash-next_local
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -1332,6 +1339,8 @@ jobs:
           path: |
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
+            ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
           if-no-files-found: warn
 
   sandbox-tests-summary:
