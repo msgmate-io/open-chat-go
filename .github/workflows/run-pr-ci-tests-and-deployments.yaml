@@ -1417,6 +1417,8 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
+            ${{ github.workspace }}/.sandbox-results/*.run_config.json
+            ${{ github.workspace }}/.sandbox-results/*.interaction.json
           if-no-files-found: warn
 
   sandbox-tests-summary:
@@ -1442,12 +1444,14 @@ jobs:
           merge-multiple: true
 
       - name: Build and post summary table
+        env:
+          RENDERER_BASE: ${{ vars.INTERACTION_RENDERER_BASE || 'https://stage.msgmate.io' }}
         run: |
           set -euo pipefail
           results_dir="${{ github.workspace }}/.sandbox-results"
 
-          header="| Test | Status | Runtime | Notes |"
-          sep="|---|---|---|---|"
+          header="| Test | Status | Model | Runtime | Interaction | Notes |"
+          sep="|---|---|---|---|---|---|"
           : > /tmp/summary-rows.txt
           for f in "$results_dir"/*.tsv; do
             [ -e "$f" ] || continue
@@ -1462,18 +1466,38 @@ jobs:
             else
               runtime="-"
             fi
+            # Column 5 is the pinned provider/model the benchmark ran with.
+            model="$(cut -f5 "$f" | tr -d '\t\r\n')"
+            [ -z "$model" ] && model="-"
+            # Upload the sanitized interaction export as a gist so reviewers can
+            # open the full chat in the interaction renderer without login.
+            interaction_link="-"
+            export_file="$results_dir/${name}.interaction.json"
+            if [ -s "$export_file" ] && jq -e . "$export_file" >/dev/null 2>&1; then
+              raw_url="$(curl -fsSL -X POST \
+                -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/gists" \
+                -d "$(jq -n --arg content "$(cat "$export_file")" \
+                  '{files:{"interaction.json":{content: $content}}}')" \
+                | jq -r '.files["interaction.json"].raw_url // empty')" || true
+              if [ -n "$raw_url" ]; then
+                encoded_raw_url="$(jq -Rr @uri <<< "$raw_url")"
+                interaction_link="[open](${RENDERER_BASE}/interaction_renderer/?url=${encoded_raw_url})"
+              fi
+            fi
             if [ "$status" = "passed" ]; then
               icon="✅ passed"
             else
               icon="❌ failed"
             fi
-            printf '| %s | %s | %s | %s |\n' "$name" "$icon" "$runtime" "$detail" >> /tmp/summary-rows.txt
+            printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
           done
 
           failed_count="$(grep -c '❌' /tmp/summary-rows.txt || true)"
           rows="$(cat /tmp/summary-rows.txt)"
           if [ -z "$rows" ]; then
-            rows="| _no sandbox tests ran_ | - | - | - |"
+            rows="| _no sandbox tests ran_ | - | - | - | - | - |"
           fi
 
           body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
