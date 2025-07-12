@@ -1278,14 +1278,87 @@ jobs:
           echo "tests=$tests_json" >> "$GITHUB_OUTPUT"
           echo "Discovered sandbox tests: $tests_json"
 
+  sandbox-image-ensure:
+    name: Ensure Sandbox Image
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != ''
+    outputs:
+      image_url: ${{ steps.image.outputs.image_url }}
+    steps:
+      - name: Checkout sandbox-integration submodule
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Resolve sandbox image tag from content hash
+        id: image
+        run: |
+          set -euo pipefail
+          HASH="$(find clients/docker_sandbox_integration/sandboxes/coding -type f \
+            ! -name 'recent-repo-changes-summary.md' -print0 \
+            | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "sandbox image content hash: ${HASH}"
+
+      - name: Login to GHCR
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Check whether sandbox image already exists
+        id: probe
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE_URL" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Sandbox image ${IMAGE_URL} already in registry; skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.probe.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push sandbox image (with retries)
+        if: steps.probe.outputs.exists != 'true'
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          attempt=0
+          until docker buildx build \
+            --push \
+            -f clients/docker_sandbox_integration/sandboxes/coding/Dockerfile \
+            -t "$IMAGE_URL" \
+            clients/docker_sandbox_integration/sandboxes/coding; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::sandbox image build failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            echo "sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
+            sleep 15
+          done
+
   run-pr-ci-sandbox-tests-after-deploy:
     name: Sandbox Test ${{ matrix.test }} After Deploy
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-tests-discover, approve-and-dispatch-deploy]
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-tests-discover, sandbox-image-ensure, approve-and-dispatch-deploy]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
+      (needs.sandbox-image-ensure.result == 'success' || needs.sandbox-image-ensure.result == 'skipped') &&
       needs.sandbox-tests-discover.result == 'success' &&
       (needs.approve-and-dispatch-deploy.result == 'success' ||
        (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production'))
@@ -1297,6 +1370,9 @@ jobs:
       tests: ${{ needs.sandbox-tests-discover.outputs.tests }}
     env:
       BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
+      # Prebuilt sandbox image (only rebuilt when the sandbox Dockerfile dir
+      # content changes); empty = build locally.
+      SANDBOX_IMAGE_URL: ${{ needs.sandbox-image-ensure.outputs.image_url }}
       # Scratch dir on host so the bot's own git clone can never land inside a
       # tracked checkout (avoids the accidental-submodule footgun).
       SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
