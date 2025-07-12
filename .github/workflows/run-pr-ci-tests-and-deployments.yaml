@@ -1420,7 +1420,8 @@ jobs:
           summary="$(
             jq -r '.last_bot.text // empty' \
               ".sandbox-results/repo_changes_summary.last_bot.json"
-          )"          if [ -z "$summary" ]; then
+          )"
+          if [ -z "$summary" ]; then
             echo "::warning::No summary text available; skipping PR comment."
             exit 0
           fi
