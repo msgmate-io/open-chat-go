@@ -1370,26 +1370,34 @@ jobs:
           set -euo pipefail
           results_dir="${{ github.workspace }}/.sandbox-results"
 
-          header="| Test | Status | Notes |"
-          sep="|---|---|---|"
+          header="| Test | Status | Runtime | Notes |"
+          sep="|---|---|---|---|"
           : > /tmp/summary-rows.txt
           for f in "$results_dir"/*.tsv; do
             [ -e "$f" ] || continue
             name="$(cut -f1 "$f")"
             status="$(cut -f2 "$f")"
             detail="$(cut -f3 "$f" | tr -d '\t\r\n' | head -c 60)"
+            # Column 4 is the wall-clock duration as "<n>s" (run_test.sh timer).
+            runtime="$(cut -f4 "$f" | tr -d '\t\r\n')"
+            if [ -n "$runtime" ] && [ "$runtime" != "-" ] && [ "$runtime" != "null" ]; then
+              secs="${runtime%s}"
+              runtime="≈ $(( secs / 60 ))m $(( secs % 60 ))s"
+            else
+              runtime="-"
+            fi
             if [ "$status" = "passed" ]; then
               icon="✅ passed"
             else
               icon="❌ failed"
             fi
-            printf '| %s | %s | %s |\n' "$name" "$icon" "$detail" >> /tmp/summary-rows.txt
+            printf '| %s | %s | %s | %s |\n' "$name" "$icon" "$runtime" "$detail" >> /tmp/summary-rows.txt
           done
 
           failed_count="$(grep -c '❌' /tmp/summary-rows.txt || true)"
           rows="$(cat /tmp/summary-rows.txt)"
           if [ -z "$rows" ]; then
-            rows="| _no sandbox tests ran_ | - | - |"
+            rows="| _no sandbox tests ran_ | - | - | - |"
           fi
 
           body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
