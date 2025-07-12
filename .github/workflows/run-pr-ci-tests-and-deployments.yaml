@@ -1302,8 +1302,9 @@ jobs:
       # tracked checkout (avoids the accidental-submodule footgun).
       SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
       SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
-      # Home-cluster litellm models are slow: give interactions generous time.
-      SANDBOX_INTERACTION_TIMEOUT: "1800"
+      # Home-cluster litellm models are slow: observed repo test needed >25min
+      # (clone+submodules+summary turns). 3600s leaves comfortable headroom.
+      SANDBOX_INTERACTION_TIMEOUT: "3600"
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
