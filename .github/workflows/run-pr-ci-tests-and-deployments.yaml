@@ -342,6 +342,26 @@ jobs:
             SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
             SHOULD_AI_TEST_REAL="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-real' || true)"
             SHOULD_TEST_CORE_ONLY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test-core-only' || true)"
+            # Production promotion PRs (base.ref == 'production') always run the
+            # full suite. Their labels are added in one burst right after the PR
+            # is opened, so each per-label event payload carries only a partial
+            # label snapshot - deriving the flags from the event payload races
+            # with cancel-in-progress and can skip every suite (all-suite gate
+            # then fails). The flags below are authoritative instead; the
+            # promotion PR must never deploy (production deploy happens after
+            # this PR merges via the merged-deployment flow).
+            if [ "${{ github.event.pull_request.base.ref }}" = "production" ]; then
+              echo "Production promotion PR: forcing full test suite, deploy disabled."
+              SHOULD_DEPLOY=""
+              SHOULD_TEST="test"
+              SHOULD_E2E_TEST="e2e"
+              SHOULD_SANDBOX_TEST="sandbox-test"
+              SHOULD_BUILD="build"
+              SHOULD_RELEASE_ANDROID="release-android"
+              SHOULD_AI_TEST_MOCK="ai-test-mock"
+              SHOULD_AI_TEST_REAL="ai-test-real"
+              SHOULD_TEST_CORE_ONLY="test-core-only"
+            fi
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
             DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
             if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
@@ -845,7 +865,8 @@ jobs:
       (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-      contains(github.event.pull_request.labels.*.name, 'test')))
+      (github.event.pull_request.base.ref == 'production' ||
+      contains(github.event.pull_request.labels.*.name, 'test'))))
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
       go_status: ${{ steps.finalize.outputs.go_status }}
@@ -975,7 +996,8 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.build-backend-image-once.result == 'success' &&
       github.event_name == 'pull_request' && github.event.action != 'closed' &&
-      contains(github.event.pull_request.labels.*.name, 'ai-test-mock')
+      (github.event.pull_request.base.ref == 'production' ||
+      contains(github.event.pull_request.labels.*.name, 'ai-test-mock'))
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
@@ -1471,6 +1493,7 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
             ${{ github.workspace }}/.sandbox-results/*.interaction.json
+          include-hidden-files: true
           if-no-files-found: warn
 
   sandbox-tests-summary:
@@ -1646,7 +1669,10 @@ jobs:
       - name: Enforce test label and passing tests
         run: |
           set -euo pipefail
-          if ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test)'; then
+          # Production promotion PRs run the full suite without relying on
+          # labels (burst label-adds race with the event payload snapshot).
+          if [ "${{ github.event.pull_request.base.ref }}" != "production" ] &&
+             ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test)'; then
             echo "::error::PR is missing the required test label."
             exit 1
           fi
