@@ -1451,6 +1451,11 @@ jobs:
             echo "::warning::No summary text available; skipping PR comment."
             exit 0
           fi
+          # Defensive: if the model wrapped the summary in a markdown code
+          # fence, unwrap it so the comment renders the markdown directly.
+          if printf '%s' "$summary" | head -n1 | grep -q '^```'; then
+            summary="$(printf '%s' "$summary" | sed '1d' | sed '${/^```[[:space:]]*$/d}')"
+          fi
           if [ "${#summary}" -gt 55000 ]; then
             summary="${summary:0:55000}
           ... (truncated)"
@@ -1511,6 +1516,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
       SOURCE_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
       PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
@@ -1556,18 +1562,18 @@ jobs:
             interaction_link="-"
             export_file="$artifact_dir/${name}.interaction.json"
             if [ -s "$export_file" ] && jq -e . "$export_file" >/dev/null 2>&1; then
-              raw_url="$(curl -fsSL -X POST \
-                -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              gist_code="$(curl -sS -o /tmp/gist-resp.json -w '%{http_code}' -X POST \
+                -H "Authorization: Bearer ${GIST_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/gists" \
                 -d "$(jq -n --arg content "$(cat "$export_file")" \
-                  '{files:{"interaction.json":{content: $content}}}')" \
-                | jq -r '.files["interaction.json"].raw_url // empty')" || true
+                  '{files:{"interaction.json":{content: $content}}}')")" || gist_code="curl-error"
+              raw_url="$(jq -r '.files["interaction.json"].raw_url // empty' /tmp/gist-resp.json 2>/dev/null || true)"
               if [ -n "$raw_url" ]; then
                 encoded_raw_url="$(jq -Rr @uri <<< "$raw_url")"
                 interaction_link="[open](${RENDERER_BASE}/interaction_renderer/?url=${encoded_raw_url})"
               else
-                echo "::warning::Could not create gist for ${name} interaction export (token may lack gist scope)."
+                echo "::warning::Could not create gist for ${name} interaction export (http=${gist_code}; token may lack gist scope)."
               fi
             fi
             if [ "$status" = "passed" ]; then
