@@ -3,6 +3,7 @@ package msgmate
 import (
 	"encoding/json"
 	"math"
+	"strings"
 )
 
 // SamplingParams carries optional generation parameters from a chat's shared
@@ -14,6 +15,12 @@ type SamplingParams struct {
 	TopP             *float64
 	PresencePenalty  *float64
 	FrequencyPenalty *float64
+	// UseMaxCompletionTokens overrides model-family detection for OpenAI
+	// model aliases and future models.
+	UseMaxCompletionTokens *bool
+	// DisabledSamplingParams replaces model-family defaults when configured.
+	// A pointer distinguishes an explicit empty list from an absent setting.
+	DisabledSamplingParams *[]string
 }
 
 func (p SamplingParams) isEmpty() bool {
@@ -120,13 +127,96 @@ func mapInt64OrDefault(m map[string]interface{}, key string, defaultValue int64)
 // shared config map. Only explicitly configured values are returned; missing
 // keys stay nil so the provider default applies.
 func samplingParamsFromConfig(configMap map[string]interface{}) SamplingParams {
-	return SamplingParams{
-		Temperature:      mapOptionalFloat(configMap, "temperature"),
-		MaxTokens:        mapOptionalInt(configMap, "max_tokens"),
-		TopP:             mapOptionalFloat(configMap, "top_p"),
-		PresencePenalty:  mapOptionalFloat(configMap, "presence_penalty"),
-		FrequencyPenalty: mapOptionalFloat(configMap, "frequency_penalty"),
+	var useMaxCompletionTokens *bool
+	if value, ok := configMap["use_max_completion_tokens"].(bool); ok {
+		useMaxCompletionTokens = &value
 	}
+	disabledSamplingParams := mapOptionalStringSlice(configMap, "disabled_sampling_params")
+
+	return SamplingParams{
+		Temperature:            mapOptionalFloat(configMap, "temperature"),
+		MaxTokens:              mapOptionalInt(configMap, "max_tokens"),
+		TopP:                   mapOptionalFloat(configMap, "top_p"),
+		PresencePenalty:        mapOptionalFloat(configMap, "presence_penalty"),
+		FrequencyPenalty:       mapOptionalFloat(configMap, "frequency_penalty"),
+		UseMaxCompletionTokens: useMaxCompletionTokens,
+		DisabledSamplingParams: disabledSamplingParams,
+	}
+}
+
+func mapOptionalStringSlice(m map[string]interface{}, key string) *[]string {
+	if m == nil {
+		return nil
+	}
+	raw, exists := m[key]
+	if !exists {
+		return nil
+	}
+
+	values := make([]string, 0)
+	switch items := raw.(type) {
+	case []interface{}:
+		for _, item := range items {
+			value, ok := item.(string)
+			if !ok || strings.TrimSpace(value) == "" {
+				return nil
+			}
+			values = append(values, strings.ToLower(strings.TrimSpace(value)))
+		}
+	case []string:
+		for _, value := range items {
+			if strings.TrimSpace(value) == "" {
+				return nil
+			}
+			values = append(values, strings.ToLower(strings.TrimSpace(value)))
+		}
+	default:
+		return nil
+	}
+	return &values
+}
+
+func openAIModelUsesMaxCompletionTokens(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "gpt-5" || strings.HasPrefix(model, "gpt-5-") || strings.HasPrefix(model, "gpt-5.") {
+		return true
+	}
+
+	if len(model) < 2 || model[0] != 'o' {
+		return false
+	}
+	i := 1
+	for i < len(model) && model[i] >= '0' && model[i] <= '9' {
+		i++
+	}
+	return i > 1 && (i == len(model) || model[i] == '-')
+}
+
+func useMaxCompletionTokens(backend, model string, override *bool) bool {
+	if !strings.EqualFold(strings.TrimSpace(backend), "openai") {
+		return false
+	}
+	if override != nil {
+		return *override
+	}
+	return openAIModelUsesMaxCompletionTokens(model)
+}
+
+func disabledSamplingParams(backend, model string, params SamplingParams) map[string]bool {
+	disabled := make(map[string]bool)
+	if params.DisabledSamplingParams != nil {
+		for _, name := range *params.DisabledSamplingParams {
+			disabled[strings.ToLower(strings.TrimSpace(name))] = true
+		}
+		return disabled
+	}
+
+	if useMaxCompletionTokens(backend, model, params.UseMaxCompletionTokens) {
+		for _, name := range []string{"temperature", "top_p", "presence_penalty", "frequency_penalty"} {
+			disabled[name] = true
+		}
+	}
+	return disabled
 }
 
 // applySamplingParamsToRequestBody adds configured sampling parameters to an
@@ -136,27 +226,32 @@ func samplingParamsFromConfig(configMap map[string]interface{}) SamplingParams {
 //
 // The anthropic backend has no equivalent of presence_penalty and
 // frequency_penalty; those two are dropped for it. temperature, top_p and
-// max_tokens are forwarded for all backends.
-func applySamplingParamsToRequestBody(requestBody map[string]interface{}, params SamplingParams, backend string) {
+// the provider-compatible token limit are forwarded for all backends.
+func applySamplingParamsToRequestBody(requestBody map[string]interface{}, params SamplingParams, backend, model string) {
 	if requestBody == nil || params.isEmpty() {
 		return
 	}
-	if params.Temperature != nil {
+	disabled := disabledSamplingParams(backend, model, params)
+	if params.Temperature != nil && !disabled["temperature"] {
 		requestBody["temperature"] = *params.Temperature
 	}
 	if params.MaxTokens != nil {
-		requestBody["max_tokens"] = *params.MaxTokens
+		tokenLimitKey := "max_tokens"
+		if useMaxCompletionTokens(backend, model, params.UseMaxCompletionTokens) {
+			tokenLimitKey = "max_completion_tokens"
+		}
+		requestBody[tokenLimitKey] = *params.MaxTokens
 	}
-	if params.TopP != nil {
+	if params.TopP != nil && !disabled["top_p"] {
 		requestBody["top_p"] = *params.TopP
 	}
 	if backend == "anthropic" {
 		return
 	}
-	if params.PresencePenalty != nil {
+	if params.PresencePenalty != nil && !disabled["presence_penalty"] {
 		requestBody["presence_penalty"] = *params.PresencePenalty
 	}
-	if params.FrequencyPenalty != nil {
+	if params.FrequencyPenalty != nil && !disabled["frequency_penalty"] {
 		requestBody["frequency_penalty"] = *params.FrequencyPenalty
 	}
 }

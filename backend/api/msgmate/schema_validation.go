@@ -17,26 +17,39 @@ func ValidatePayloadAgainstSchema(payload map[string]interface{}, schema map[str
 		return fmt.Errorf("unsupported top-level schema type %q", schemaType)
 	}
 
-	requiredFields := map[string]struct{}{}
-	switch requiredRaw := schema["required"].(type) {
-	case []string:
-		for _, field := range requiredRaw {
-			if strings.TrimSpace(field) != "" {
-				requiredFields[field] = struct{}{}
-			}
-		}
-	case []interface{}:
-		for _, field := range requiredRaw {
-			if name, ok := field.(string); ok && strings.TrimSpace(name) != "" {
-				requiredFields[name] = struct{}{}
-			}
-		}
-	}
-
+	requiredFields := schemaRequiredFields(schema)
 	properties, _ := schema["properties"].(map[string]interface{})
 	for field := range requiredFields {
 		if _, exists := payload[field]; !exists {
 			return fmt.Errorf("missing required field %q", field)
+		}
+	}
+	if alternatives, ok := schema["anyOf"].([]interface{}); ok && len(alternatives) > 0 {
+		matched := false
+		for _, alternative := range alternatives {
+			alternativeSchema, ok := alternative.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			alternativeRequired := schemaRequiredFields(alternativeSchema)
+			if len(alternativeRequired) == 0 {
+				matched = true
+				break
+			}
+			hasAllRequired := true
+			for field := range alternativeRequired {
+				if _, exists := payload[field]; !exists {
+					hasAllRequired = false
+					break
+				}
+			}
+			if hasAllRequired {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("payload does not satisfy any allowed field combination")
 		}
 	}
 
@@ -74,6 +87,25 @@ func ValidatePayloadAgainstSchema(payload map[string]interface{}, schema map[str
 	}
 
 	return nil
+}
+
+func schemaRequiredFields(schema map[string]interface{}) map[string]struct{} {
+	requiredFields := map[string]struct{}{}
+	switch requiredRaw := schema["required"].(type) {
+	case []string:
+		for _, field := range requiredRaw {
+			if strings.TrimSpace(field) != "" {
+				requiredFields[field] = struct{}{}
+			}
+		}
+	case []interface{}:
+		for _, field := range requiredRaw {
+			if name, ok := field.(string); ok && strings.TrimSpace(name) != "" {
+				requiredFields[name] = struct{}{}
+			}
+		}
+	}
+	return requiredFields
 }
 
 func validateSchemaType(value interface{}, schemaType string) bool {
