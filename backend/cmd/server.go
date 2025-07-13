@@ -640,6 +640,8 @@ func ServerCli() *cli.Command {
 				"LITELLM_API_HOST":                  {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"MSGMATE_CLUSTER_API_KEY":           {Value: os.Getenv("MSGMATE_CLUSTER_API_KEY"), Sensitive: true},
 				"MSGMATE_CLUSTER_HOST":              {Value: os.Getenv("MSGMATE_CLUSTER_HOST"), Sensitive: true},
+				"OPENROUTER_API_KEY":                {Value: os.Getenv("OPENROUTER_API_KEY"), Sensitive: true},
+				"IONOS_API_KEY":                     {Value: os.Getenv("IONOS_API_KEY"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY":                {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
 					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
@@ -809,7 +811,9 @@ func ServerCli() *cli.Command {
 				return err
 			}
 			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			integrationBotConfigs := make([]botBootstrapConfig, 0, len(integrationBotDecls))
 			for _, decl := range integrationBotDecls {
+				integrationBotConfigs = append(integrationBotConfigs, decl.Config)
 				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
 				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
 					return err
@@ -850,6 +854,9 @@ func ServerCli() *cli.Command {
 				providerSyncResult.SkippedUnmanaged,
 				providerSyncResult.SkippedInvalid,
 			)
+			if err := syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs); err != nil {
+				return err
+			}
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err
