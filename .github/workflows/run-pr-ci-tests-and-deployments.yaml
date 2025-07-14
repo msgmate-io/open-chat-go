@@ -1417,9 +1417,10 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
       IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
-      # Pin the benchmark opencode runtime model: deepseek via openrouter.
+      # Pin the benchmark opencode runtime model: nemotron 3.5 lightning (free
+      # tier) via openrouter - matches the sandbox test config.json pins.
       SANDBOX_OPENCODE_PROVIDER: openrouter
-      SANDBOX_OPENCODE_MODEL: deepseek/deepseek-v4-flash-0731
+      SANDBOX_OPENCODE_MODEL: nvidia/nemotron-3.5-lightning:free
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
