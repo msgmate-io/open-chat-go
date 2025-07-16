@@ -290,18 +290,14 @@ func TestProcessStreamingRequestForwardsSamplingParams(t *testing.T) {
 	}
 
 	chunkChan := make(chan string, 16)
-	usageChan := make(chan *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	}, 16)
+	usageChan := make(chan *TokenUsage, 16)
 	toolChan := make(chan ToolCall, 16)
 	errChan := make(chan error, 1)
 
 	messages := []map[string]interface{}{{"role": "user", "content": "hello"}}
 	_, err := processStreamingRequest(
 		server.URL, "some-model", "litellm", messages, nil, map[string]Tool{}, "test-key",
-		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params,
+		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params, providerRequestMeta{},
 	)
 	if err != nil {
 		t.Fatalf("processStreamingRequest failed: %v", err)
@@ -354,18 +350,14 @@ func TestProcessStreamingRequestUsesMaxCompletionTokensForOpenAIModel(t *testing
 		FrequencyPenalty: &frequencyPenalty,
 	}
 	chunkChan := make(chan string, 16)
-	usageChan := make(chan *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	}, 16)
+	usageChan := make(chan *TokenUsage, 16)
 	toolChan := make(chan ToolCall, 16)
 	errChan := make(chan error, 1)
 
 	messages := []map[string]interface{}{{"role": "user", "content": "hello"}}
 	_, err := processStreamingRequest(
 		server.URL, "gpt-5.6-luna", "openai", messages, nil, map[string]Tool{}, "test-key",
-		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params,
+		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params, providerRequestMeta{},
 	)
 	if err != nil {
 		t.Fatalf("processStreamingRequest failed: %v", err)
