@@ -972,6 +972,47 @@
                 "responses": {}
             }
         },
+        "/api/v1/chats/{chat_uuid}/messages/streaming": {
+            "get": {
+                "description": "Returns the throttled snapshot of the bot message currently being streamed, if any",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "messages"
+                ],
+                "summary": "Get currently streaming message snapshot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chats.StreamingMessageResponse"
+                        }
+                    },
+                    "204": {
+                        "description": "No streaming message in flight",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chats/{chat_uuid}/messages/{message_uuid}/rerun": {
             "post": {
                 "security": [
@@ -3356,6 +3397,39 @@
                     "type": "string"
                 },
                 "chat_uuid": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.StreamingMessageResponse": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sender_uuid": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {}
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "uuid": {
                     "type": "string"
                 }
             }
