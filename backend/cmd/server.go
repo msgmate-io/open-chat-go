@@ -713,6 +713,7 @@ func ServerCli() *cli.Command {
 				Debug:    c.Bool("debug"),
 				ResetDB:  c.Bool("reset-db"),
 			})
+			database.SetGlobalDB(DB)
 
 			if err := database.SeedModelConfigs(DB); err != nil {
 				return err
