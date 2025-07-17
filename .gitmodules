@@ -58,3 +58,6 @@
 [submodule "clients/docker_sandbox_integration"]
 	path = clients/docker_sandbox_integration
 	url = https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration
+[submodule "clients/integrations/git_integration"]
+	path = clients/integrations/git_integration
+	url = https://github.com/msgmate-io/open-chat-go-git-integration
