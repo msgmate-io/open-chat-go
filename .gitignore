@@ -50,3 +50,4 @@ open-chat.json
 .sandbox-results/
 .ci-sandbox-*.env
 .ci-sandbox-*-cookies*
+.sandbox-workspace/
