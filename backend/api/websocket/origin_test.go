@@ -107,4 +107,3 @@ func TestAcceptConnectionOriginGateWithAllowlist(t *testing.T) {
 		}
 	})
 }
-
