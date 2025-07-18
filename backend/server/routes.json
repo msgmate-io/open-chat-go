@@ -23,6 +23,7 @@
   "/integrations/git/workspaces/workspace-uuid-placeholder/details",
   "/integrations/git/workspaces/add",
   "/integrations/git/workspaces",
+  "/integrations/git/pr_sessions",
   "/integrations/git/tokens/add",
   "/integrations/git/tokens",
   "/integrations/git/tokens/token-uuid-placeholder/edit",
