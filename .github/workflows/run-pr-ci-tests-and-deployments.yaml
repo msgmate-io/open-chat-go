@@ -1379,10 +1379,12 @@ jobs:
   run-pr-ci-sandbox-tests-after-deploy:
     name: Sandbox Test ${{ matrix.test }} After Deploy
     runs-on: ubuntu-latest
-    # Hard cap for the whole matrix job. The LLM interaction itself is capped
-    # at 12 min via SANDBOX_INTERACTION_TIMEOUT; the extra minutes cover
-    # sandbox/backend startup, verification and artifact upload.
-    timeout-minutes: 18
+    # Hard cap for the whole matrix job. The LLM interaction is capped at
+    # 12 min via SANDBOX_INTERACTION_TIMEOUT by default; tests may override
+    # per-test via config.json "interaction_timeout" (repo_changes_summary
+    # uses 900s). The extra minutes cover sandbox/backend startup,
+    # verification and artifact upload.
+    timeout-minutes: 22
     needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-tests-discover, sandbox-image-ensure, approve-and-dispatch-deploy]
     if: |
       always() &&
