@@ -23,16 +23,25 @@ func applyOpencodeBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwn
 		allProjectSpecs = append(allProjectSpecs, decoded...)
 	}
 
-	if len(allProjectSpecs) == 0 {
+	if len(allProjectSpecs) == 0 && len(defaultOwners) == 0 {
+		// nothing from the bootstrap.opencode section; still honor the
+		// integration-owned OCI_OPENCODE_BOOTSTRAP_* env keys
+		if _, err := opencodeintegration.ApplyRuntimeConfigBootstrap(DB, fallbackOwner); err != nil {
+			return err
+		}
 		return nil
 	}
 
-	_, err := opencodeintegration.ApplyBootstrap(DB, opencodeintegration.BootstrapSpec{
+	if _, err := opencodeintegration.ApplyBootstrap(DB, opencodeintegration.BootstrapSpec{
 		FallbackOwner: fallbackOwner,
 		DefaultOwners: normalizeOwnersList(defaultOwners),
 		Projects:      allProjectSpecs,
-	})
-	if err != nil {
+	}); err != nil {
+		return err
+	}
+
+	// apply the integration-owned OCI_OPENCODE_BOOTSTRAP_* env sources as well
+	if _, err := opencodeintegration.ApplyRuntimeConfigBootstrap(DB, fallbackOwner); err != nil {
 		return err
 	}
 
