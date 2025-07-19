@@ -1379,10 +1379,12 @@ jobs:
   run-pr-ci-sandbox-tests-after-deploy:
     name: Sandbox Test ${{ matrix.test }} After Deploy
     runs-on: ubuntu-latest
-    # Hard cap for the whole matrix job. The LLM interaction itself is capped
-    # at 12 min via SANDBOX_INTERACTION_TIMEOUT; the extra minutes cover
-    # sandbox/backend startup, verification and artifact upload.
-    timeout-minutes: 18
+    # Hard cap for the whole matrix job. The LLM interaction is capped at
+    # 12 min via SANDBOX_INTERACTION_TIMEOUT by default; tests may override
+    # per-test via config.json "interaction_timeout" (repo_changes_summary
+    # uses 900s). The extra minutes cover sandbox/backend startup,
+    # verification and artifact upload.
+    timeout-minutes: 22
     needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-tests-discover, sandbox-image-ensure, approve-and-dispatch-deploy]
     if: |
       always() &&
@@ -1417,10 +1419,17 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
       IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
-      # Pin the benchmark opencode runtime model: nemotron 3.5 lightning (free
-      # tier) via openrouter - matches the sandbox test config.json pins.
-      SANDBOX_OPENCODE_PROVIDER: openrouter
-      SANDBOX_OPENCODE_MODEL: nvidia/nemotron-3.5-lightning:free
+      # Pin the benchmark opencode runtime model: deepseek v4 flash (fast,
+      # stable tool-use via openrouter) - matches the sandbox test config.json
+      # pins and the default model catalog.
+      SANDBOX_OPENCODE_MODEL: deepseek/deepseek-v4-flash
+      # gh_pr_comment test: the git integration pre-authenticates the gh CLI on
+      # the sandbox VM with this token and the verification re-reads the posted
+      # comment with it. BOT_TOKEN already has PR comment rights (used by the
+      # summary-posting step); a dedicated secret can override it.
+      SANDBOX_GH_TOKEN: ${{ secrets.SANDBOX_GH_TOKEN || secrets.BOT_TOKEN || github.token }}
+      SANDBOX_GH_PR_REPO: ${{ github.repository }}
+      SANDBOX_GH_PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4

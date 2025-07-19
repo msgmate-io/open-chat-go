@@ -15,12 +15,12 @@ import (
 )
 
 type InteractionStatusResponse struct {
-	ChatUUID             string `json:"chat_uuid"`
-	IsActive             bool   `json:"is_active"`
-	State                string `json:"state"`
-	LatestMessageUUID    string `json:"latest_message_uuid,omitempty"`
+	ChatUUID              string `json:"chat_uuid"`
+	IsActive              bool   `json:"is_active"`
+	State                 string `json:"state"`
+	LatestMessageUUID     string `json:"latest_message_uuid,omitempty"`
 	LatestMessageFinished *bool  `json:"latest_message_finished,omitempty"`
-	Source               string `json:"source"`
+	Source                string `json:"source"`
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
