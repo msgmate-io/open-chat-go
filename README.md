@@ -28,14 +28,6 @@ docker compose --profile storybook up
 - Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and place integrations in `backend/integrationdeps.json`
 - Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
-### Production
-
-```bash
-docker compose -f docker-compose.pro.yaml build
-# backend ( postgres + frontend static html + js )
-docker compose -f docker-compose.pro.yaml up -d
-```
-
 ### Releases
 
 We release all versions always ( after admin confirmation ):
