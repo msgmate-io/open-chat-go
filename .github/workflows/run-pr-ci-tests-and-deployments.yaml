@@ -1569,6 +1569,18 @@ jobs:
             else
               runtime="-"
             fi
+            # Column 6 is the aggregated opencode token usage of the run
+            # ("in:<n> out:<n>", or "-" when the session export was
+            # unavailable). Rendered under the runtime value in the same cell.
+            tokens="$(cut -f6 "$f" | tr -d '\t\r\n')"
+            if [ -n "$tokens" ] && [ "$tokens" != "-" ] && [ "$tokens" != "null" ]; then
+              tokens_cell="$(printf '%s' "$tokens" | sed -E 's/^in:([0-9]+) out:([0-9]+)$/in: \1 · out: \2/')"
+              if [ -n "$tokens_cell" ] && [ "$tokens_cell" != "$tokens" ]; then
+                runtime="${runtime}<br/>${tokens_cell}"
+              else
+                echo "::warning::unexpected token usage format in $f: '$tokens'"
+              fi
+            fi
             # Column 5 is the pinned provider/model the benchmark ran with.
             model="$(cut -f5 "$f" | tr -d '\t\r\n')"
             [ -z "$model" ] && model="-"
