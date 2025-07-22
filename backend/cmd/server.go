@@ -825,6 +825,10 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
+			if err := applyKubernetesBootstrapSources(DB, adminUser.Username); err != nil {
+				return err
+			}
+
 			providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
 			if err != nil {
 				return err
