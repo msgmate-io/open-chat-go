@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -34,6 +35,24 @@ type ConfirmableActionExecuteResponse struct {
 
 func getToolInitForChat(DB *gorm.DB, chat database.Chat, toolName string) map[string]interface{} {
 	return database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
+}
+
+// toolRuntimeSelfHost returns the base URL an in-process tool execution can
+// use to call back into the backend API. The request's Host header points at
+// the browser-facing address (eg a loopback port published on the host), which
+// is NOT reachable from inside the backend container - so prefer the
+// configured self host (HOST/PORT env), the same source the bot runtime uses
+// for trustedToolRuntime api_host.
+func toolRuntimeSelfHost(r *http.Request) string {
+	selfHost := strings.TrimSpace(os.Getenv("HOST"))
+	if selfHost != "" {
+		selfPort := strings.TrimSpace(os.Getenv("PORT"))
+		if selfPort == "" {
+			selfPort = "1984"
+		}
+		return fmt.Sprintf("http://%s:%s", selfHost, selfPort)
+	}
+	return requestBaseURL(r)
 }
 
 func requestBaseURL(r *http.Request) string {
@@ -113,7 +132,11 @@ func findBotAndReceiver(chat database.Chat, user database.User) (uint, uint) {
 	return chat.User1.ID, chat.User2.ID
 }
 
-func updateSourceMessageToolCallResult(tx *gorm.DB, sourceMessage database.Message, actionID, toolResult string) error {
+// updateSourceMessageToolCallResult records the executed tool result in the
+// source message's tool_calls and flips the tool call status from
+// pending_confirmation to the given terminal status ("succeeded"/"failed"),
+// so the interaction no longer reports a pending confirmation.
+func updateSourceMessageToolCallResult(tx *gorm.DB, sourceMessage database.Message, actionID, toolResult, status string) error {
 	if sourceMessage.ToolCalls == nil || len(*sourceMessage.ToolCalls) == 0 {
 		return nil
 	}
@@ -130,6 +153,10 @@ func updateSourceMessageToolCallResult(tx *gorm.DB, sourceMessage database.Messa
 		toolCallID, _ := toolCall["id"].(string)
 		if toolCallID == actionID {
 			toolCall["result"] = toolResult
+			// The top-level status is what InteractionStatus scans to decide
+			// whether the chat is still waiting for a user confirmation; the
+			// nested confirmation meta is what the UI renders.
+			toolCall["status"] = status
 			if confirmationMeta, ok := toolCall["confirmation"].(map[string]interface{}); ok {
 				confirmationMeta["status"] = "executed"
 				confirmationMeta["executed"] = true
@@ -273,7 +300,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		"sender_uuid":   strings.TrimSpace(user.UUID),
 		"bot_user_id":   botUser.ID,
 		"bot_user_uuid": strings.TrimSpace(botUser.UUID),
-		"api_host":      requestBaseURL(r),
+		"api_host":      toolRuntimeSelfHost(r),
 		"session_id":    botSessionToken,
 	}
 
@@ -361,10 +388,12 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
 			return err
 		}
+		toolCallStatus := "failed"
 		if execErr == nil {
-			if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolResult); err != nil {
-				return err
-			}
+			toolCallStatus = "succeeded"
+		}
+		if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolResult, toolCallStatus); err != nil {
+			return err
 		}
 
 		eventRequestedMeta := map[string]interface{}{
