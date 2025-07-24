@@ -3,6 +3,8 @@ package msgmate
 import (
 	"backend/database"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -74,8 +77,8 @@ func parseMCPIntegrationConfig(raw map[string]interface{}) (mcpIntegrationConfig
 		if scheme != "http" {
 			return out, fmt.Errorf("config.url must use https or http")
 		}
-		if !(isLoopbackHost || hostname == "host.docker.internal") {
-			return out, fmt.Errorf("config.url may use http only for localhost or host.docker.internal")
+		if !isPrivateOrLocalHTTPHost(hostname) {
+			return out, fmt.Errorf("config.url may use http only for localhost, host.docker.internal, or private network hosts")
 		}
 	}
 
@@ -102,6 +105,34 @@ func parseMCPIntegrationConfig(raw map[string]interface{}) (mcpIntegrationConfig
 		}
 	}
 	return out, nil
+}
+
+// isPrivateOrLocalHTTPHost reports whether a plain http MCP endpoint may talk
+// to the given host. Plain http is only sensible on trusted networks, so it is
+// allowed for loopback, host.docker.internal and any host that resolves to a
+// private/loopback/link-local address (docker containers, sandboxes, LAN).
+// Hostnames that cannot be resolved are rejected (fail closed).
+func isPrivateOrLocalHTTPHost(hostname string) bool {
+	if hostname == "localhost" || hostname == "host.docker.internal" {
+		return true
+	}
+	if ip := net.ParseIP(hostname); ip != nil {
+		return isPrivateOrLocalIP(ip)
+	}
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		return false
+	}
+	for _, ipRaw := range ips {
+		if ip := net.ParseIP(ipRaw); ip != nil && isPrivateOrLocalIP(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrivateOrLocalIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 func parseMCPAuthHeaders(raw map[string]interface{}) map[string]string {
@@ -248,21 +279,58 @@ func mcpInitializeSession(config mcpIntegrationConfig, auth map[string]interface
 	return extraHeaders, nil
 }
 
-func mcpCall(config mcpIntegrationConfig, auth map[string]interface{}, method string, params interface{}) (mcpRPCResponse, error) {
-	response, _, err := mcpDoRequest(config, auth, method, params, nil)
-	if err == nil {
-		return response, nil
+// mcpSessionCache keeps the negotiated MCP streamable session headers per
+// server identity so stateful MCP servers (e.g. the Playwright MCP, where
+// every session owns a browser context) keep working across separate tool
+// calls. Stateless servers never return a session id and are unaffected.
+var mcpSessionCache sync.Map
+
+func mcpSessionKey(config mcpIntegrationConfig, auth map[string]interface{}) string {
+	digest := sha256.New()
+	io.WriteString(digest, config.Transport)
+	io.WriteString(digest, "\x00")
+	io.WriteString(digest, config.URL)
+	for name, value := range parseMCPAuthHeaders(auth) {
+		io.WriteString(digest, "\x00"+name+"="+value)
 	}
-	if !isServerNotInitializedError(err) {
-		return mcpRPCResponse{}, err
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func isSessionExpiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return isServerNotInitializedError(err) ||
+		(strings.Contains(msg, "mcp request failed: 404") && strings.Contains(msg, "session")) ||
+		strings.Contains(msg, "session not found") ||
+		strings.Contains(msg, "invalid session") ||
+		strings.Contains(msg, "session expired")
+}
+
+func mcpCall(config mcpIntegrationConfig, auth map[string]interface{}, method string, params interface{}) (mcpRPCResponse, error) {
+	cacheKey := mcpSessionKey(config, auth)
+	if cachedHeaders, ok := mcpSessionCache.Load(cacheKey); ok {
+		response, _, err := mcpDoRequest(config, auth, method, params, cachedHeaders.(map[string]string))
+		if err == nil {
+			return response, nil
+		}
+		// Fall through and establish a fresh session for retry.
+		if !isSessionExpiredError(err) {
+			return mcpRPCResponse{}, err
+		}
+		mcpSessionCache.Delete(cacheKey)
 	}
 	sessionHeaders, initErr := mcpInitializeSession(config, auth)
 	if initErr != nil {
 		return mcpRPCResponse{}, fmt.Errorf("mcp initialize failed: %w", initErr)
 	}
-	response, _, err = mcpDoRequest(config, auth, method, params, sessionHeaders)
+	response, _, err := mcpDoRequest(config, auth, method, params, sessionHeaders)
 	if err != nil {
 		return mcpRPCResponse{}, err
+	}
+	if len(sessionHeaders) > 0 {
+		mcpSessionCache.Store(cacheKey, sessionHeaders)
 	}
 	return response, nil
 }
