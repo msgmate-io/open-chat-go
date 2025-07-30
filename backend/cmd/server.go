@@ -178,7 +178,7 @@ func GetServerFlags() []cli.Flag {
 			Name:    "root-credentials",
 			Aliases: []string{"rc"},
 			Usage:   "root credentials",
-			Value:   "admin:random",
+			Value:   defaultRootCredentialsValue,
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
@@ -301,6 +301,56 @@ func parseCredentials(raw, label string) (string, string, error) {
 		return "", "", fmt.Errorf("%s must be in format username:password", label)
 	}
 	return parts[0], parts[1], nil
+}
+
+const defaultRootCredentialsValue = "admin:random"
+
+// resolveRootCredentials determines the credentials used to bootstrap the
+// (singleton) admin account. ROOT_CREDENTIALS (env or flag) takes precedence;
+// otherwise the "admin" entry from the bootstrap.users configuration is used.
+// When neither source is available the server fails to start instead of
+// silently generating an unknown admin password.
+func resolveRootCredentials(c *cli.Command, userSpecs []string) (string, error) {
+	rootCreds := c.String("root-credentials")
+	if strings.TrimSpace(os.Getenv("ROOT_CREDENTIALS")) != "" {
+		return rootCreds, nil
+	}
+	if rootCreds != "" && rootCreds != defaultRootCredentialsValue {
+		// Explicitly provided via flag/alias.
+		return rootCreds, nil
+	}
+
+	// Without an explicit ROOT_CREDENTIALS the admin account is bootstrapped
+	// from the open-chat.json "bootstrap.users" entry for "admin" when present.
+	adminConfig, err := findAdminBootstrapUser(userSpecs)
+	if err != nil {
+		return "", err
+	}
+	if adminConfig == nil {
+		return "", errors.New("ROOT_CREDENTIALS is not set and no 'admin' user is declared in bootstrap.users; provide one of them so the admin account can be bootstrapped")
+	}
+
+	fmt.Printf("Bootstrapping admin user from bootstrap.users entry (ROOT_CREDENTIALS not set)\n")
+	return adminConfig.Username + ":" + adminConfig.Password, nil
+}
+
+// findAdminBootstrapUser scans the bootstrap.users specs for an entry that
+// bootstraps the "admin" user and returns its configuration, or nil when none
+// of the specs declare an admin entry.
+func findAdminBootstrapUser(specs []string) (*userBootstrapConfig, error) {
+	for _, spec := range specs {
+		configs, err := loadUserBootstrapConfigsFromSpec(spec)
+		if err != nil {
+			return nil, err
+		}
+		for _, cfg := range configs {
+			if strings.EqualFold(strings.TrimSpace(cfg.Username), "admin") && strings.TrimSpace(cfg.Password) != "" {
+				found := cfg
+				return &found, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 func normalizeSessionCookieDomain(host string) string {
@@ -728,9 +778,16 @@ func ServerCli() *cli.Command {
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
+			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
+
+			rootCredentials, err := resolveRootCredentials(c, openChatBootstrap.UserSpecs)
+			if err != nil {
+				return err
+			}
+
 			adminUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
 				Label:            "root-credentials",
-				Credentials:      c.String("root-credentials"),
+				Credentials:      rootCredentials,
 				IsAdmin:          true,
 				SingletonAdmin:   true,
 				ValidateStrength: !c.Bool("debug"),
@@ -780,8 +837,6 @@ func ServerCli() *cli.Command {
 					return err
 				}
 			}
-
-			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
 
 			userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
 			if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
