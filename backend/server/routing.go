@@ -557,6 +557,7 @@ func BackendRouting(
 		mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/badge.svg", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionBadge))))
 
 		mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 	} else {
