@@ -1717,6 +1717,166 @@ jobs:
               -d "$payload"
           fi
 
+  ci-failure-planner:
+    name: CI Failure Planner (Open-Chat)
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, build-backend-image-once]
+    # Security trigger scope: PR events only; the review ping comment is authored
+    # by github-actions (never the rely-on bot user) and notes the failure so the
+    # author can see it; the fix-plan issue creation itself is handled by the
+    # dispatched planning agent below.
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      (needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true') &&
+      (contains(needs.*.result, 'failure'))
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+    steps:
+      - name: Install Open-Chat python client
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          pip install "git+https://x-access-token:${GH_TOKEN}@github.com/msgmate-io/open-chat-go-python-client.git"
+
+      - name: Collect failing job details
+        id: failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          RUN_JSON="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          RUN_JOBS_JSON="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${RUN_JSON}/jobs?per_page=100")"
+          {
+            echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "pr_number=${{ github.event.pull_request.number }}"
+            echo "failed_jobs<<FAILED_JOBS_EOF"
+            jq -r '.jobs[] | select(.conclusion == "failure") | "- [`\(.name)`](\(.html_url))"' <<< "$RUN_JOBS_JSON"
+            echo "FAILED_JOBS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post CI failure review ping comment on the PR
+        env:
+          PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
+          RUN_URL: ${{ steps.failure.outputs.run_url }}
+          FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
+          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+        run: |
+          set -euo pipefail
+          COMMENT_BODY="$(cat <<EOF
+          <!-- open-chat-ci-failure-plan -->
+          :x: **PR CI run failed**
+
+          Failed jobs:
+          ${FAILED_JOBS}
+
+          Run: ${RUN_URL}
+
+          @${BOT_USER} please review this CI error and post a fix plan as an issue: investigate the failing job above, create a new GitHub issue describing the CI error and a proposed bug fix plan, and post a comment in this PR thread with the link to that issue.
+          EOF
+          )"
+          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.failure.outputs.pr_number }}/comments" \
+            -d "$payload"
+
+      - name: Dispatch Open-Chat fix-plan interaction
+        id: interaction
+        env:
+          OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
+          OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+          OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || 'issue-plan-bot' }}
+          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+          FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
+          RUN_URL: ${{ steps.failure.outputs.run_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from client.client import OpenChatClient, TokenAuth
+
+          header = (
+              "You are a CI-failure planning agent reacting to a failed PR CI run.\n"
+              "Investigate the failing CI job for the pull request below using the gh CLI\n"
+              "(gh run list/watch, gh run view --log-failed for the failing run number) and\n"
+              "the repository code. Determine the root cause and prepare a fix plan.\n"
+              "Then perform these two GitHub actions with your gh-authenticated bot identity:\n"
+              "1. Create a NEW GitHub issue titled after the failure. The issue body must\n"
+              "   contain: a description of the CI error, the failing job/run links, the\n"
+              "   root-cause analysis, and a step-by-step bug fix plan as a proposal.\n"
+              "2. Post a follow-up comment on the PR thread containing a short summary of\n"
+              "   the failure and the link to the created fix-plan issue.\n"
+              "You are authenticated on GitHub via the gh CLI as the bot user \""
+              + os.environ["BOT_USER"] + "\"; use that identity for all git/gh operations.\n"
+              "\n"
+              "Context:\n"
+              + "- Repository: " + os.environ["REPO"] + "\n"
+              + "- PR number: " + os.environ["PR_NUMBER"] + "\n"
+              + "- PR title: " + os.environ["PR_TITLE"] + "\n"
+              + "- PR url: " + os.environ["PR_URL"] + "\n"
+              + "- CI run url: " + os.environ["RUN_URL"] + "\n"
+              + "\nFailing jobs (markdown links):\n"
+              + os.environ["FAILED_JOBS"] + "\n"
+          )
+          message = header
+
+          client = OpenChatClient(
+              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
+              auth=TokenAuth(token=os.environ["OPEN_CHAT_API_TOKEN"]),
+          )
+          me = client.me()
+          print("Authenticated as:", me.name)
+          bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
+          interaction = bot.create_interaction(message=message, share=True)
+          print("Created interaction chat:", interaction.uuid)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"chat_uuid={interaction.uuid}\n")
+              share_uuid = getattr(interaction, "_chat_share_uuid", None)
+              if share_uuid:
+                  out.write(f"chat_share_uuid={share_uuid}\n")
+                  out.write(f"shared_url={interaction.shared_url()}\n")
+          PY
+
+      - name: Reply on PR with planner badge
+        if: steps.interaction.outputs.chat_uuid != ''
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
+          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
+          OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+        run: |
+          set -euo pipefail
+          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
+          BADGE_URL="${INTERACTION_URL}/badge.svg"
+          COMMENT_BODY="$(printf '%s\n' \
+            "[![open-chat fix plan session](%s)](%s)" \
+            "*Fix-plan agent started for this CI failure; click the badge above to watch live progress. A fix plan issue will be linked in a follow-up comment.*")"
+          COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
+          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.failure.outputs.pr_number }}/comments" \
+            -d "$payload"
+
   pr-test-merge-requirement:
     name: PR Test Merge Requirement
     runs-on: ubuntu-latest

@@ -12,8 +12,15 @@ permissions:
 
 env:
   OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude' }}
+  # Security: only comments by this author may trigger the agent (hard filter).
+  OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode' }}
   OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
   OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || 'issue-repl-bot' }}
+  # Bot used when the comment explicitly requests a PR review (agent config
+  # carrying the review behaviour lives in development/ci/open-chat-ci.json).
+  OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || 'issue-review-bot' }}
+  # Phrase inside the comment body that routes the request to the review bot.
+  OPEN_CHAT_REVIEW_PHRASE: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || 'please review' }}
 
 concurrency:
   group: open-chat-repl-${{ github.event.issue.number }}
@@ -26,7 +33,7 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
-      github.event.comment.user.login != vars.OPEN_CHAT_BOT_GITHUB_USER &&
+      github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') &&
       contains(github.event.comment.body, format('@{0}', vars.OPEN_CHAT_BOT_GITHUB_USER))
     steps:
       - name: Install Open-Chat python client
@@ -70,6 +77,10 @@ jobs:
           PR_BRANCH: ${{ steps.context.outputs.pr_branch }}
           PR_URL: ${{ steps.context.outputs.pr_url }}
           BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
+          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
+          OPEN_CHAT_BOT: ${{ env.OPEN_CHAT_BOT }}
+          OPEN_CHAT_REVIEW_BOT: ${{ env.OPEN_CHAT_REVIEW_BOT }}
+          OPEN_CHAT_REVIEW_PHRASE: ${{ env.OPEN_CHAT_REVIEW_PHRASE }}
         run: |
           set -euo pipefail
           if [ -z "$OPEN_CHAT_API_TOKEN" ]; then
@@ -82,10 +93,18 @@ jobs:
 
           api_token = os.environ["OPEN_CHAT_API_TOKEN"]
 
+          body_lower = os.environ["COMMENT_BODY"].lower()
           is_pr = os.environ.get("IS_PR") == "true"
+          review_requested = (
+              is_pr
+              and os.environ["OPEN_CHAT_REVIEW_BOT"] != ""
+              and os.environ["OPEN_CHAT_REVIEW_PHRASE"].lower() in body_lower
+          )
+          mode = "review" if review_requested else "implement"
+          bot_name = os.environ["OPEN_CHAT_REVIEW_BOT"] if review_requested else os.environ.get("OPEN_CHAT_BOT", "issue-repl-bot")
           kind = "pull request" if is_pr else "issue"
 
-          header = (
+          implement_header = (
               "You are a recurring coding agent responding to a GitHub comment that mentioned you.\n"
               "Your task is to fully complete the user request described in the comment below\n"
               "(implement, test and where needed open a PR) and, after you have finished, post\n"
@@ -95,19 +114,37 @@ jobs:
               + os.environ["BOT_USER"] + "\"; use that identity for any git/gh operations\n"
               "and for the follow-up comment.\n"
               "\n"
+          )
+          review_header = (
+              "You are a GitHub PR review agent responding to a review request that mentioned you.\n"
+              "Perform a genuine, hands-on code review of the pull request and post it as a real\n"
+              "GitHub review (gh pr review with --comment/--approve/--request-changes as fitting).\n"
+              "Before reviewing, create a FRESH full clone of the repository in a new directory\n"
+              "(git clone --recurse-submodules <repo>) and checkout the exact PR head commit\n"
+              "given below so you review the real code incl. every submodule; never review from\n"
+              "an existing workspace copy. Use gh pr view/diff for context and reference concrete\n"
+              "files and lines in your review body.\n"
+              "You are authenticated on GitHub via the gh CLI as the bot user \""
+              + os.environ["BOT_USER"] + "\"; use that identity for all git/gh operations.\n"
+              "\n"
+          )
+          header = review_header if mode == "review" else implement_header
+
+          context = (
               "Context:\n"
               + "- Repository: " + os.environ["REPO"] + "\n"
+              + "- Interaction mode: " + mode + "\n"
               + "- Kind: " + kind + "\n"
               + "- Issue/PR number: " + os.environ["ISSUE_NUMBER"] + "\n"
               + "- Issue/PR title: " + os.environ["ISSUE_TITLE"] + "\n"
           )
           if is_pr:
-              header += (
+              context += (
                   "- PR head branch: " + os.environ["PR_BRANCH"] + "\n"
                   + "- PR head commit: " + os.environ["PR_SHA"] + "\n"
                   + "- PR url: " + os.environ["PR_URL"] + "\n"
               )
-          header += (
+          context += (
               "- Requested by (comment author): " + os.environ["COMMENT_AUTHOR"] + "\n"
               + "- Triggering comment id: " + os.environ["COMMENT_ID"] + "\n"
               + "- Triggering comment url: " + os.environ["COMMENT_URL"] + "\n"
@@ -115,33 +152,43 @@ jobs:
               + "Triggering comment (verbatim):\n"
               + "```\n"
           )
-          message = header + os.environ["COMMENT_BODY"].strip() + "\n```\n"
+          message = header + context + os.environ["COMMENT_BODY"].strip() + "\n```\n"
 
           client = OpenChatClient(
-              base_url="https://ci.msgmate.io",
+              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
               auth=TokenAuth(token=api_token),
           )
           me = client.me()
           print("Authenticated as:", me.name)
-          bot = client.get_bot(os.environ.get("OPEN_CHAT_BOT", "issue-repl-bot"))
-          interaction = bot.create_interaction(message=message)
+          print("Interaction mode:", mode, "-> bot:", bot_name)
+          bot = client.get_bot(bot_name)
+          interaction = bot.create_interaction(message=message, share=True)
           print("Created interaction chat:", interaction.uuid)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"chat_uuid={interaction.uuid}\n")
+              share_uuid = getattr(interaction, "_chat_share_uuid", None)
+              if share_uuid:
+                  out.write(f"chat_share_uuid={share_uuid}\n")
+                  out.write(f"shared_url={interaction.shared_url()}\n")
           PY
 
-      - name: Reply in thread with interaction link
+      - name: Reply in thread with interaction badge
         if: steps.interaction.outputs.chat_uuid != ''
         env:
           COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
-          INTERACTION_URL: ${{ env.OPEN_CHAT_HOST }}/chat/${{ steps.interaction.outputs.chat_uuid }}
+          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
+          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
+          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
         run: |
           set -euo pipefail
+          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
+          BADGE_URL="${INTERACTION_URL}/badge.svg"
           COMMENT_BODY="$(printf '%s\n' \
-            "Coding agent started for this request (requested by @${BOT_USER})." \
-            "Interactive progress: ${INTERACTION_URL} (login on ${OPEN_CHAT_HOST} to watch the interaction)." \
+            "[![open-chat interaction](%s)](%s)" \
+            "*Agent responding for a request mentioning the bot; click the badge above to watch live progress on the Open-Chat server.*" \
             "The agent will follow up in this thread when it has completed the request.")"
+          COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${COMMENT_TOKEN}" \
