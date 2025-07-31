@@ -1748,14 +1748,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          RUN_JSON="$(curl -fsSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
           RUN_JOBS_JSON="$(curl -fsSL \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "${RUN_JSON}/jobs?per_page=100")"
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")"
           {
             echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "pr_number=${{ github.event.pull_request.number }}"
