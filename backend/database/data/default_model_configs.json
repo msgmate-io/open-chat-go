@@ -149,6 +149,24 @@
     }
   },
   {
+    "title": "deepseek/deepseek-v4.1-flash",
+    "description": "DeepSeek V4.1 Flash from DeepSeek via OpenRouter is a fast mixture-of-experts model with a 1M-token context window, suited for coding, reasoning, and agentic workflows.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openrouter",
+      "context": 10,
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_tokens": 262144,
+      "model": "deepseek/deepseek-v4.1-flash",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
     "title": "nvidia/nemotron-3.5-lightning",
     "description": "NVIDIA Nemotron 3.5 Lightning is an open mixture-of-experts model from NVIDIA, with 3B active parameters out of 30B total. It is suited for high-throughput agentic workloads and specialized tasks that...",
     "bot_usernames": [
