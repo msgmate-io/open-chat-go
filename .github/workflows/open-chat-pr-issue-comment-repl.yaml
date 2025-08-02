@@ -33,8 +33,14 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
-      github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') &&
-      contains(github.event.comment.body, format('@{0}', vars.OPEN_CHAT_BOT_GITHUB_USER))
+      !contains(github.event.comment.body, 'ci-fix-blocked') &&
+      (
+        github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') ||
+        (
+          github.event.comment.user.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
+          contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->')
+        )
+      )
     steps:
       - name: Install Open-Chat python client
         env:
@@ -95,6 +101,7 @@ jobs:
 
           body_lower = os.environ["COMMENT_BODY"].lower()
           is_pr = os.environ.get("IS_PR") == "true"
+          fix_plan_post = "<!-- open-chat-ci-fix-plan-post -->" in os.environ["COMMENT_BODY"]
           review_requested = (
               is_pr
               and os.environ["OPEN_CHAT_REVIEW_BOT"] != ""
@@ -114,8 +121,25 @@ jobs:
               "You are authenticated on GitHub via the gh CLI as the bot user \""
               + os.environ["BOT_USER"] + "\"; use that identity for any git/gh operations\n"
               "and for the follow-up comment.\n"
-              "\n"
           )
+          if fix_plan_post:
+              implement_header += (
+                  "\n"
+                  "IMPORTANT - this is an automatic CI fix-plan dispatch (comment marker\n"
+                  "'open-chat-ci-fix-plan-post'). Workflow:\n"
+                  "1. Check whether a '[CI fix plan]' issue for this PR already exists and is\n"
+                  "   open (gh issue list --search). If none exists, create it: title\n"
+                  "   '[CI fix plan] PR #" + os.environ["ISSUE_NUMBER"] + " <short cause>' ; body: the plan text\n"
+                  "   from the triggering comment verbatim, prefixed with the PR link, the\n"
+                  "   failing run/comment url and the latest attempt number.\n"
+                  "2. Comment on the PR linking the fix-plan issue.\n"
+                  "3. Implement the fix-plan issue step-by-step on the PR branch, commit with\n"
+                  "   detailed messages and PUSH so CI re-runs (submodule changes pushed and\n"
+                  "   gitlinks bumped first, see your playbook).\n"
+                  "4. When the CI passes, comment 'fix implemented' on the fix-plan issue and\n"
+                  "   close it; otherwise the automatic fix cycle repeats (see playbook).\n"
+              )
+          implement_header += "\n"
           review_header = (
               "You are a GitHub PR review agent responding to a review request that mentioned you.\n"
               "Your durable playbook is part of your agent definition (system_prompt); follow it:\n"
