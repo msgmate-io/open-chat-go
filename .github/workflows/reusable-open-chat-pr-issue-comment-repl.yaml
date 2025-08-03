@@ -38,12 +38,12 @@ on:
         type: string
         default: ""
       bot:
-        description: Name of the Open-Chat coding bot (falls back to vars.OPEN_CHAT_CODING_BOT, then 'issue-repl-bot')
+        description: Name of the Open-Chat coding bot (falls back to vars.OPEN_CHAT_CODING_BOT, then '<caller-repo>-repl-bot')
         required: false
         type: string
         default: ""
       review_bot:
-        description: Name of the Open-Chat bot used when the comment explicitly requests a PR review (falls back to vars.OPEN_CHAT_REVIEW_BOT, then 'issue-review-bot')
+        description: Name of the Open-Chat bot used when the comment explicitly requests a PR review (falls back to vars.OPEN_CHAT_REVIEW_BOT, then '<caller-repo>-review-bot')
         required: false
         type: string
         default: ""
@@ -70,8 +70,8 @@ env:
   # Security: only comments by this author may trigger the agent (hard filter).
   OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
   OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
-  OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || inputs.bot || 'issue-repl-bot' }}
-  OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || 'issue-review-bot' }}
+  OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || inputs.bot || format('{0}-repl-bot', github.event.repository.name) }}
+  OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || format('{0}-review-bot', github.event.repository.name) }}
   OPEN_CHAT_REVIEW_PHRASE: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || inputs.review_phrase || 'please review' }}
 
 concurrency:
