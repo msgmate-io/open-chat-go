@@ -1463,9 +1463,15 @@ jobs:
 
       - name: Run sandbox test ${{ matrix.test }}
         id: test
+        # Independent wall-clock backstop below the 22-minute job cap: even if a
+        # test hook wedges (eg docker exec against an unresponsive k3s API
+        # server), the harness is killed and the job fails fast instead of
+        # hanging until the runner cancels everything.
+        timeout-minutes: 18
         run: |
           set -euo pipefail
-          bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
+          timeout --foreground --kill-after=30 1020 \
+            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
 
       - name: Post repo_changes_summary to the PR
         if: matrix.test == 'repo_changes_summary' && steps.test.outcome == 'success' && needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
@@ -1760,24 +1766,68 @@ jobs:
             echo "FAILED_JOBS_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Count failed CI fix-plan attempts
+        id: attempts
+        env:
+          PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          COMMENTS_JSON="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100")"
+          # Every automatic failure cycle posts a `<!-- open-chat-ci-failure-plan -->`
+          # comment and a fix-plan implementation follows; the marker count is the
+          # durable attempt state for this PR.
+          PREVIOUS="$(jq '[.[] | select(.body | contains("<!-- open-chat-ci-failure-plan -->"))] | length' <<< "$COMMENTS_JSON")"
+          ATTEMPT=$((PREVIOUS + 1))
+          MAX_ATTEMPTS="${{ vars.CI_FIX_MAX_ATTEMPTS || 3 }}"
+          echo "attempt=${ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "max_attempts=${MAX_ATTEMPTS}" >> "$GITHUB_OUTPUT"
+          if [ "${ATTEMPT}" -gt "${MAX_ATTEMPTS}" ]; then
+            echo "exhausted=true" >> "$GITHUB_OUTPUT"
+            comment_body="$(printf '%s\n' \
+              "<!-- open-chat-ci-failure-plan -->" \
+              ":warning: **CI fix-cycle limit reached (${ATTEMPT}/${MAX_ATTEMPTS} attempts).**" \
+              "" \
+              "Automatic planning/implementation sessions are stopped for this PR - maintainer intervention is required.")"
+            payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              -d "$payload"
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels" \
+              -d '{"labels":["ci-fix-blocked"]}'
+          fi
+
       - name: Post CI failure review ping comment on the PR
+        if: steps.attempts.outputs.exhausted != 'true'
         env:
           PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
           RUN_URL: ${{ steps.failure.outputs.run_url }}
           FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
           BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+          ATTEMPT: ${{ steps.attempts.outputs.attempt }}
+          MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
         run: |
           set -euo pipefail
           COMMENT_BODY="$(cat <<EOF
           <!-- open-chat-ci-failure-plan -->
-          :x: **PR CI run failed**
+          :x: **PR CI run failed** (fix attempt ${ATTEMPT}/${MAX_ATTEMPTS})
 
           Failed jobs:
           ${FAILED_JOBS}
 
           Run: ${RUN_URL}
 
-          @${BOT_USER} please review this CI error and post a fix plan as an issue: investigate the failing job above, create a new GitHub issue describing the CI error and a proposed bug fix plan, and post a comment in this PR thread with the link to that issue.
+          @${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments.
           EOF
           )"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
@@ -1790,6 +1840,7 @@ jobs:
 
       - name: Dispatch Open-Chat fix-plan interaction
         id: interaction
+        if: steps.attempts.outputs.exhausted != 'true'
         env:
           OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
@@ -1798,28 +1849,58 @@ jobs:
           FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
           RUN_URL: ${{ steps.failure.outputs.run_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
+          ATTEMPT: ${{ steps.attempts.outputs.attempt }}
+          MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import os
+          import os, json
           from client.client import OpenChatClient, TokenAuth
 
-          header = (
+          post_action = {
+              "kind": "github_issue_comment",
+              "repo": os.environ["REPO"],
+              "number": int(os.environ["PR_NUMBER"]),
+              # The posted comment re-enters the repo workloop: it is picked up
+              # by open-chat-pr-issue-comment-repl because it mentions the bot
+              # user (footer), which creates the fix-plan issue and implements.
+              "header": (
+                  "<!-- open-chat-post-interaction -->\n"
+                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")\n"
+                  "<!-- open-chat-ci-fix-plan-post -->"
+              ),
+              "footer": (
+                  "Attempt " + os.environ["ATTEMPT"] + "/" + os.environ["MAX_ATTEMPTS"]
+                  + " | run: " + os.environ["RUN_URL"] + " | PR: " + os.environ["PR_URL"] + "\n\n"
+                  "@cur1ousdude continue: create a fix-plan issue titled '[CI fix plan] PR #"
+                  + os.environ["PR_NUMBER"] + " attempt " + os.environ["ATTEMPT"] + "' containing the plan above "
+                  "(prefixed with the failing jobs and the run url), link the issue in a short PR comment, then "
+                  "implement it on the PR branch (" + os.environ["PR_BRANCH"] + ", head "
+                  + os.environ["PR_SHA"] + ") and push the fix commits so CI re-runs. Never poll CI."
+              ),
+          }
+          message = (
               "You are a CI-failure planning agent reacting to a failed PR CI run.\n"
               "Investigate the failing CI job for the pull request below using the gh CLI\n"
-              "(gh run list/watch, gh run view --log-failed for the failing run number) and\n"
+              "(gh run list/watch/view --log-failed for the failing run number) and\n"
               "the repository code. Determine the root cause and prepare a fix plan.\n"
-              "Then perform these two GitHub actions with your gh-authenticated bot identity:\n"
-              "1. Create a NEW GitHub issue titled after the failure. The issue body must\n"
-              "   contain: a description of the CI error, the failing job/run links, the\n"
-              "   root-cause analysis, and a step-by-step bug fix plan as a proposal.\n"
-              "2. Post a follow-up comment on the PR thread containing a short summary of\n"
-              "   the failure and the link to the created fix-plan issue.\n"
-              "You are authenticated on GitHub via the gh CLI as the bot user \""
-              + os.environ["BOT_USER"] + "\"; use that identity for all git/gh operations.\n"
+              "You operate in PLAN MODE: read-only investigation only - do NOT push\n"
+              "commits and do NOT create issues, comments or pull requests yourself.\n"
+              "Produce the plan as your final chat message; the Open-Chat server posts\n"
+              "it automatically as a PR comment when the interaction finishes.\n"
+              "Structure the final message as:\n"
+              "1. '## Root cause' - one-paragraph root-cause analysis with evidence from\n"
+              "   logs/code.\n"
+              "2. '## Fix plan' - a numbered list of small, ordered implementation steps\n"
+              "   a coding agent can execute 1:1 on the PR branch (concrete: file\n"
+              "   paths, commands, expected results).\n"
+              "3. '## Verification' - how the fix can be verified locally and by CI.\n"
+              "Do not include anything else in the final message.\n"
               "\n"
               "Context:\n"
               + "- Repository: " + os.environ["REPO"] + "\n"
@@ -1827,10 +1908,21 @@ jobs:
               + "- PR title: " + os.environ["PR_TITLE"] + "\n"
               + "- PR url: " + os.environ["PR_URL"] + "\n"
               + "- CI run url: " + os.environ["RUN_URL"] + "\n"
+              + "- Fix attempt (of max " + os.environ["MAX_ATTEMPTS"] + "): " + os.environ["ATTEMPT"] + "\n"
               + "\nFailing jobs (markdown links):\n"
               + os.environ["FAILED_JOBS"] + "\n"
           )
-          message = header
+          message = message + ("\n\n(Meta block for the plan issue, paste into the issue body "
+                               "when created, keep verbatim:)\n"
+                               + json.dumps({"pr_number": int(os.environ["PR_NUMBER"]),
+                                             "pr_branch": os.environ["PR_BRANCH"],
+                                             "attempt": int(os.environ["ATTEMPT"]),
+                                             "max_attempts": int(os.environ["MAX_ATTEMPTS"]),
+                                             "run_url": os.environ["RUN_URL"]}))
+          message = message + ("\nFailing jobs (markdown links):\n"
+                               + os.environ["FAILED_JOBS"] + "\n")
+          message = message + ("CI run url: " + os.environ["RUN_URL"] + "\n")
+          message = message + ("PR url: " + os.environ["PR_URL"] + "\n")
 
           client = OpenChatClient(
               base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
@@ -1839,7 +1931,7 @@ jobs:
           me = client.me()
           print("Authenticated as:", me.name)
           bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          interaction = bot.create_interaction(message=message, share=True)
+          interaction = bot.create_interaction(message=message, overrides={"post_action": post_action}, share=True)
           print("Created interaction chat:", interaction.uuid)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"chat_uuid={interaction.uuid}\n")
@@ -1848,7 +1940,6 @@ jobs:
                   out.write(f"chat_share_uuid={share_uuid}\n")
                   out.write(f"shared_url={interaction.shared_url()}\n")
           PY
-
       - name: Reply on PR with planner badge
         if: steps.interaction.outputs.chat_uuid != ''
         env:
@@ -1856,14 +1947,13 @@ jobs:
           SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
           CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
         run: |
           set -euo pipefail
           INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
           BADGE_URL="${INTERACTION_URL}/badge.svg"
           COMMENT_BODY="$(printf '%s\n' \
             "[![open-chat fix plan session](%s)](%s)" \
-            "*Fix-plan agent started for this CI failure; click the badge above to watch live progress. A fix plan issue will be linked in a follow-up comment.*")"
+            "*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment (marker open-chat-ci-fix-plan-post) which automatically dispatches the implementation agent.")"
           COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
           curl -fsSL -X POST \
