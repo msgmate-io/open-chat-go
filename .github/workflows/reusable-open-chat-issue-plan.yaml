@@ -34,7 +34,7 @@ on:
         type: string
         default: ""
       plan_bot:
-        description: Name of the Open-Chat bot to start the plan interaction with (falls back to vars.OPEN_CHAT_PLAN_BOT, then 'issue-plan-bot')
+        description: Name of the Open-Chat bot to start the plan interaction with (falls back to vars.OPEN_CHAT_PLAN_BOT, then '<caller-repo>-plan-bot')
         required: false
         type: string
         default: ""
@@ -55,7 +55,7 @@ env:
   # Security: only this author may (have) assigned the plan bot (hard filter).
   OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
   OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
-  OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || inputs.plan_bot || 'issue-plan-bot' }}
+  OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || inputs.plan_bot || format('{0}-plan-bot', github.event.repository.name) }}
 
 concurrency:
   group: open-chat-issue-plan-${{ github.event.issue.number }}
