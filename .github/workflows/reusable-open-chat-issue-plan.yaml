@@ -39,15 +39,10 @@ on:
         type: string
         default: ""
       auto_implement:
-        description: After the plan agent finished, automatically post an implement-dispatch comment that starts the comment-REPL coding agent on a separate PR
+        description: Attach a server-side post-interaction action that posts the finished plan as an implement-dispatch comment on the issue (starts the coding agent on a separate PR)
         required: false
         type: boolean
         default: true
-      plan_timeout_seconds:
-        description: Maximum time to wait for the plan agent interaction to finish
-        required: false
-        type: number
-        default: 7200
       agent_context:
         description: Optional extra context block appended verbatim to the agent message header (repo-specific notes for cloned agents)
         required: false
@@ -104,6 +99,7 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           AGENT_CONTEXT: ${{ inputs.agent_context }}
+          AUTO_IMPLEMENT: ${{ inputs.auto_implement }}
           REPO: ${{ github.repository }}
           ASSIGNED_BY: ${{ github.event.sender.login }}
         run: |
@@ -125,9 +121,9 @@ jobs:
               "## Summary\n## Investigation findings\n## Proposed changes (file-by-file)\n"
               "## Verification / test plan\n## Risks & open questions\n"
               "Do NOT implement anything and do NOT post anything to GitHub yourself; planning only.\n"
-              "The triggering workflow reads your final message, posts it as a comment on the\n"
-              "GitHub issue (Issue number below) and automatically dispatches a coding agent\n"
-              "that implements the plan on a separate PR.\n"
+              "When the interaction finishes, Open-Chat posts your final message (the plan) as a\n"
+              "comment on the GitHub issue (Issue number below) and automatically dispatches a\n"
+              "coding agent that implements the plan on a separate PR.\n"
               "You are authenticated on GitHub via the gh CLI (read-only usage) as the bot user \""
               + os.environ["BOT_USER"] + "\".\n"
               "\n"
@@ -150,7 +146,30 @@ jobs:
           me = client.me()
           print("Authenticated as:", me.name)
           bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          interaction = bot.create_interaction(message=message, share=True)
+          auto_implement = os.environ.get("AUTO_IMPLEMENT", "true") in ("true", "True", "1")
+          overrides = None
+          if auto_implement:
+              post_action = {
+                  "kind": "github_issue_comment",
+                  "repo": os.environ["REPO"],
+                  "number": int(os.environ["ISSUE_NUMBER"]),
+                  # The posted comment re-enters the repo workloop: it is
+                  # picked up by the issue comment REPL workflow (bot user +
+                  # marker) and dispatched to the implementation agent, which
+                  # executes the plan on a separate PR.
+                  "header": (
+                      "<!-- open-chat-post-interaction -->\n"
+                      "## Plan from `" + os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot") + "`\n"
+                      "<!-- open-chat-issue-implement -->"
+                  ),
+                  "footer": (
+                      "*Posted automatically by Open-Chat when the planning interaction finished.*\n\n"
+                      "@" + os.environ["BOT_USER"] + " please implement this issue according to the plan "
+                      "above on a separate PR."
+                  ),
+              }
+              overrides = {"post_action": post_action}
+          interaction = bot.create_interaction(message=message, overrides=overrides, share=True)
           print("Created interaction chat:", interaction.uuid)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"chat_uuid={interaction.uuid}\n")
@@ -175,7 +194,7 @@ jobs:
           COMMENT_BODY="$(printf '%s\n' \
             "<!-- open-chat-issue-plan -->" \
             "[![open-chat planning session](%s)](%s)" \
-            "*Plan agent started for this issue assignment; click the badge above to watch live progress on the Open-Chat server. The full plan will be posted in this issue when the agent finishes.*")"
+            "*Plan agent started for this issue assignment; click the badge above to watch live progress on the Open-Chat server. When the agent finishes Open-Chat posts the plan as an issue comment and automatically dispatches the implementation agent on a separate PR.*")"
           COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
           curl -fsSL -X POST \
@@ -184,141 +203,3 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
             -d "$payload"
-
-      - name: Wait for plan agent to finish and capture final plan
-        id: wait
-        if: steps.interaction.outputs.chat_uuid != ''
-        timeout-minutes: 360
-        env:
-          OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
-          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
-          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
-          TIMEOUT_SECONDS: ${{ inputs.plan_timeout_seconds }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import time
-          from client.client import OpenChatClient, TokenAuth
-
-          client = OpenChatClient(
-              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
-              auth=TokenAuth(token=os.environ["OPEN_CHAT_API_TOKEN"]),
-          )
-          chat_uuid = os.environ["CHAT_UUID"]
-          timeout = int(float(os.environ.get("TIMEOUT_SECONDS", "7200")))
-          session = client.interaction(chat_uuid)
-          try:
-              result = session.wait_until_finished(
-                  timeout_seconds=timeout,
-                  poll_interval=30.0,
-                  quiet_seconds=600.0,
-              )
-              print("wait result:", type(result).__name__)
-          except TimeoutError as exc:
-              print("Plan agent did not finish in time:", exc)
-
-          # Fetch the final agent reply: rows are newest-first; the final agent
-          # message is the newest row flagged meta_data.finished == true.
-          plan_text = ""
-          rows = getattr(session.messages(page=1, limit=100), "rows", None) or []
-
-          def row_meta(row):
-              md = getattr(row, "meta_data", None)
-              if md is None:
-                  return {}
-              extra = getattr(md, "additional_properties", None)
-              return extra if isinstance(extra, dict) else {}
-
-          finished_rows = [
-              row for row in rows
-              if row_meta(row).get("finished") and len(str(getattr(row, "text", "") or "").strip()) > 200
-          ]
-          finished_rows.sort(key=lambda row: str(getattr(row, "send_at", "")))
-          if finished_rows:
-              plan_text = str(finished_rows[-1].text).strip()
-          else:
-              for row in rows:
-                  text = getattr(row, "text", None)
-                  if text and str(text).strip():
-                      plan_text = str(text).strip()
-                      break
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write("plan_text<<PLANEOF\n" + plan_text + "\nPLANEOF\n")
-              out.write(f"plan_found={'true' if plan_text.strip() else 'false'}\n")
-              if plan_text.strip():
-                  with open("plan.md", "w", encoding="utf-8") as f:
-                      f.write(plan_text)
-          PY
-
-      - name: Post plan comment on the issue
-        if: steps.wait.outputs.plan_found == 'true'
-        env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          PLAN_BOT: ${{ env.OPEN_CHAT_PLAN_BOT }}
-          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
-          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
-          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
-          {
-            echo "<!-- open-chat-issue-plan-result -->"
-            echo "## Plan from \`${PLAN_BOT}\`"
-            echo
-            cat plan.md
-            echo
-            echo "*Posted automatically from the [planning interaction](${INTERACTION_URL}) on the Open-Chat server.*"
-          } > plan_comment.md
-          payload="$(jq -n --rawfile body plan_comment.md '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
-            -d "$payload"
-
-      - name: Auto dispatch implement agent on the issue
-        if: >-
-          (inputs.auto_implement == true || inputs.auto_implement == 'true') &&
-          steps.wait.outputs.plan_found == 'true'
-        env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          COMMENT_BODY="$(printf '%s\n' \
-            "<!-- open-chat-issue-implement -->" \
-            "@${BOT_USER} please implement this issue according to the plan above on a separate PR." \
-            "*Automatic dispatch: posted by the planning workflow after the plan agent completed.*")"
-          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
-            -d "$payload"
-
-      - name: Post timeout notice on the issue
-        if: steps.wait.outputs.plan_found != 'true'
-        env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
-          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
-          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: |
-          set -euo pipefail
-          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
-          body="$(printf '%s\n' "*The plan agent did not finish in the expected time. Check the [planning interaction](%s) directly on the Open-Chat server.*" "$INTERACTION_URL")"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
-            -d "$payload"
-          echo "::warning::Plan agent did not finish within the timeout; no plan was posted."
