@@ -55,10 +55,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      app-network:
-      open-chat-lw-shared:
-        aliases:
-          - open-chat-go-backend
+      - app-network
   frontend:
     build:
       dockerfile: dev.dockerfile
@@ -110,9 +107,6 @@ services:
 networks:
   app-network:
     driver: bridge
-  open-chat-lw-shared:
-    name: open-chat-lw-shared
-    external: true
 
 volumes:
   go_mod_cache:
