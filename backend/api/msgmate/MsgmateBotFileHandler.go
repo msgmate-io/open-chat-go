@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+// maxInlineTextAttachmentBytes caps how large a text/* attachment may be before
+// it is inlined into the prompt for non-OpenAI backends.
+const maxInlineTextAttachmentBytes = 64 * 1024
+
 // FileHandlerImpl implements the FileHandler interface
 type FileHandlerImpl struct {
 	botContext *BotContext
@@ -50,7 +54,30 @@ func (fh *FileHandlerImpl) ProcessAttachments(attachments []interface{}, backend
 					})
 				} else {
 					// For non-images, handle based on backend
-					if backend == "openai" {
+					if backend != "openai" && strings.HasPrefix(mimeType, "text/") {
+						// Non-OpenAI backends have no file-upload API, so inline
+						// small text attachments directly into the prompt. Larger
+						// files are skipped to avoid blowing the provider body
+						// limit.
+						base64Data, _, err := fh.RetrieveFileData(fileID)
+						if err != nil {
+							log.Printf("Error retrieving text file data for %s: %v", fileID, err)
+							continue
+						}
+						fileBytes, err := base64.StdEncoding.DecodeString(base64Data)
+						if err != nil {
+							log.Printf("Error decoding text file data for %s: %v", fileID, err)
+							continue
+						}
+						if len(fileBytes) > maxInlineTextAttachmentBytes {
+							log.Printf("Text attachment %s too large to inline (%d bytes > %d), skipping", fileID, len(fileBytes), maxInlineTextAttachmentBytes)
+							continue
+						}
+						contentArray = append(contentArray, map[string]interface{}{
+							"type": "text",
+							"text": "Attached file content:\n" + string(fileBytes),
+						})
+					} else if backend == "openai" {
 						// For OpenAI backend, use file ID approach
 						openAIFileID, err := fh.getOpenAIFileID(fileID)
 						if err != nil {
