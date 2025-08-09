@@ -222,3 +222,146 @@ func TestCreateInteractionCreatesChatWithAutoShare(t *testing.T) {
 		t.Fatalf("expected bot reply task to be queued: %v", err)
 	}
 }
+
+func postInteractionForTest(t *testing.T, DB *gorm.DB, owner *database.User, bot BotDTO, reqBody CreateBotInteractionRequest, client *asynq.Client, inspector *asynq.Inspector) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("failed to marshal interaction request: %v", err)
+	}
+	req := httptest.NewRequest("POST", "/api/v1/bots/"+bot.UUID+"/interactions", bytes.NewReader(body))
+	req.SetPathValue("identifier", bot.UUID)
+	ctx := context.WithValue(req.Context(), "db", DB)
+	ctx = context.WithValue(ctx, "user", owner)
+	ctx = context.WithValue(ctx, "asynq_client", client)
+	ctx = context.WithValue(ctx, "asynq_inspector", inspector)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h := &BotsHandler{}
+	h.CreateInteraction(rr, req)
+	return rr
+}
+
+func TestCreateInteractionStoresAttachmentMetadataAndSharesWithBot(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.interaction.attachments@example.com", false)
+	bot := createBotForInteractionTest(t, DB, owner, "interaction-bot-attachments")
+
+	uploaded := database.UploadedFile{
+		FileID:   "file-attachment-1",
+		FileName: "secret.txt",
+		Size:     42,
+		MIMEType: "text/plain",
+		OwnerID:  owner.ID,
+	}
+	if err := DB.Create(&uploaded).Error; err != nil {
+		t.Fatalf("failed to create uploaded file: %v", err)
+	}
+
+	queueClient, queueInspector, cleanupQueue := setupAsynqTest(t)
+	defer cleanupQueue()
+
+	rr := postInteractionForTest(t, DB, owner, bot, CreateBotInteractionRequest{
+		Message: "please read the attached file",
+		Attachments: []BotInteractionAttachment{
+			{FileID: uploaded.FileID, DisplayName: "secret.txt"},
+		},
+	}, queueClient, queueInspector)
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response BotInteractionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode interaction response: %v", err)
+	}
+
+	var chat database.Chat
+	if err := DB.Where("uuid = ?", response.ChatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected interaction chat to be created: %v", err)
+	}
+	if chat.LatestMessageId == nil {
+		t.Fatalf("expected latest_message_id to be set")
+	}
+
+	var msg database.Message
+	if err := DB.Where("id = ?", *chat.LatestMessageId).First(&msg).Error; err != nil {
+		t.Fatalf("expected initial message row: %v", err)
+	}
+	if len(msg.MetaData) == 0 {
+		t.Fatalf("expected attachment metadata to be persisted")
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(msg.MetaData, &meta); err != nil {
+		t.Fatalf("failed to decode message metadata: %v", err)
+	}
+	rawAttachments, ok := meta["attachments"].([]interface{})
+	if !ok || len(rawAttachments) != 1 {
+		t.Fatalf("expected one persisted attachment, got %#v", meta["attachments"])
+	}
+	attachment, ok := rawAttachments[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected attachment object, got %#v", rawAttachments[0])
+	}
+	if attachment["file_id"] != uploaded.FileID {
+		t.Fatalf("expected file_id %q, got %#v", uploaded.FileID, attachment["file_id"])
+	}
+	if attachment["mime_type"] != "text/plain" {
+		t.Fatalf("expected mime_type to be enriched, got %#v", attachment["mime_type"])
+	}
+	if attachment["file_name"] != "secret.txt" {
+		t.Fatalf("expected file_name to be enriched, got %#v", attachment["file_name"])
+	}
+
+	// The bot user must be granted view access so the reply pipeline can fetch
+	// the attachment via the file API.
+	var botUser database.User
+	if err := DB.Where("uuid = ?", bot.BotUserUUID).First(&botUser).Error; err != nil {
+		t.Fatalf("failed to load bot user: %v", err)
+	}
+	var access database.FileAccess
+	if err := DB.Where("user_id = ? AND uploaded_file_id = ?", botUser.ID, uploaded.ID).First(&access).Error; err != nil {
+		t.Fatalf("expected file access row for bot user: %v", err)
+	}
+	if access.Permission != "view" {
+		t.Fatalf("expected view permission, got %q", access.Permission)
+	}
+}
+
+func TestCreateInteractionRejectsUnknownAndForeignAttachments(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.interaction.att-errors@example.com", false)
+	other := createUserForBotsTest(t, DB, "other.interaction.att-errors@example.com", false)
+	bot := createBotForInteractionTest(t, DB, owner, "interaction-bot-att-errors")
+
+	foreign := database.UploadedFile{
+		FileID:   "file-foreign-1",
+		FileName: "foreign.txt",
+		Size:     7,
+		MIMEType: "text/plain",
+		OwnerID:  other.ID,
+	}
+	if err := DB.Create(&foreign).Error; err != nil {
+		t.Fatalf("failed to create foreign uploaded file: %v", err)
+	}
+
+	queueClient, queueInspector, cleanupQueue := setupAsynqTest(t)
+	defer cleanupQueue()
+
+	unknownRR := postInteractionForTest(t, DB, owner, bot, CreateBotInteractionRequest{
+		Message:     "unknown file",
+		Attachments: []BotInteractionAttachment{{FileID: "does-not-exist"}},
+	}, queueClient, queueInspector)
+	if unknownRR.Code != 400 {
+		t.Fatalf("expected 400 for unknown attachment, got %d: %s", unknownRR.Code, unknownRR.Body.String())
+	}
+
+	foreignRR := postInteractionForTest(t, DB, owner, bot, CreateBotInteractionRequest{
+		Message:     "foreign file",
+		Attachments: []BotInteractionAttachment{{FileID: foreign.FileID}},
+	}, queueClient, queueInspector)
+	if foreignRR.Code != 403 {
+		t.Fatalf("expected 403 for foreign attachment, got %d: %s", foreignRR.Code, foreignRR.Body.String())
+	}
+}
