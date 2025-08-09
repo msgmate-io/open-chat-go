@@ -166,7 +166,7 @@
         },
         "/api/interaction/{chat_share_uuid}/badge.svg": {
             "get": {
-                "description": "Render an SVG badge showing the current processing state of a shared interaction",
+                "description": "Render an SVG badge showing the current processing state, server host and runtime of a shared interaction. Pass ?variant=simple for the legacy two-segment badge.",
                 "produces": [
                     "image/svg+xml"
                 ],
@@ -181,6 +181,12 @@
                         "name": "chat_share_uuid",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Badge variant: detailed (default) or simple",
+                        "name": "variant",
+                        "in": "query"
                     }
                 ],
                 "responses": {
