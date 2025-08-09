@@ -6,11 +6,10 @@ import (
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -215,49 +214,16 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 
 	// Handle file attachments
 	if data.Attachments != nil {
-		// Validate that all attachments belong to the user and enrich with file details
-		enrichedAttachments := make([]FileAttachment, len(*data.Attachments))
-		for i, attachment := range *data.Attachments {
-			var uploadedFile database.UploadedFile
-			if err := DB.Where("file_id = ?", attachment.FileID).First(&uploadedFile).Error; err != nil {
-				http.Error(w, "Invalid file attachment", http.StatusBadRequest)
-				return
-			}
-
-			if uploadedFile.OwnerID != user.ID {
+		// Validate that all attachments belong to the user, share them with the
+		// receiver and enrich them with file details.
+		enrichedAttachments, attachErr := EnrichAndShareAttachments(DB, user.ID, receiverId, *data.Attachments)
+		if attachErr != nil {
+			if errors.Is(attachErr, ErrAttachmentNotOwned) {
 				http.Error(w, "Access denied to file attachment", http.StatusForbidden)
-				return
-			}
-
-			// Share the file with the receiver
-			var existingAccess database.FileAccess
-			result := DB.Where("user_id = ? AND uploaded_file_id = ?", receiverId, uploadedFile.ID).First(&existingAccess)
-			if result.Error != nil {
-				// File access doesn't exist, create it
-				fileAccess := database.FileAccess{
-					UserID:         receiverId,
-					UploadedFileID: uploadedFile.ID,
-					Permission:     "view",
-					CreatedAt:      time.Now(),
-				}
-				if err := DB.Create(&fileAccess).Error; err != nil {
-					log.Printf("Error sharing file %s (ID: %d) with user %d: %v", attachment.FileID, uploadedFile.ID, receiverId, err)
-					// Don't fail the message send if file sharing fails
-				} else {
-					log.Printf("Successfully shared file %s (ID: %d) with user %d", attachment.FileID, uploadedFile.ID, receiverId)
-				}
 			} else {
-				log.Printf("File %s (ID: %d) already shared with user %d", attachment.FileID, uploadedFile.ID, receiverId)
+				http.Error(w, "Invalid file attachment", http.StatusBadRequest)
 			}
-
-			// Enrich attachment with file details
-			enrichedAttachments[i] = FileAttachment{
-				FileID:      attachment.FileID,
-				DisplayName: attachment.DisplayName,
-				FileName:    uploadedFile.FileName,
-				FileSize:    uploadedFile.Size,
-				MimeType:    uploadedFile.MIMEType,
-			}
+			return
 		}
 
 		// Store enriched attachments in metadata
