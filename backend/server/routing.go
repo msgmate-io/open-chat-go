@@ -557,6 +557,7 @@ func BackendRouting(
 		mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/access", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(chatsHandler.GetSharedInteractionAccess)))))
 		// The badge is embedded by external consumers (GitHub workflows, the
 		// Python client) that derive it from the human-facing interaction share
 		// URL, i.e. `/interaction/{uuid}/badge.svg` without the `/api` prefix.
