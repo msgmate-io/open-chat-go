@@ -164,6 +164,38 @@
                 }
             }
         },
+        "/api/interaction/{chat_share_uuid}/access": {
+            "get": {
+                "description": "Report whether the viewer is authenticated and has access to the full interaction",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Get shared interaction access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Shared chat UUID",
+                        "name": "chat_share_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Viewer access info",
+                        "schema": {
+                            "$ref": "#/definitions/chats.SharedInteractionAccessResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/interaction/{chat_share_uuid}/badge.svg": {
             "get": {
                 "description": "Render an SVG badge showing the current processing state of a shared interaction",
@@ -3444,6 +3476,20 @@
                 },
                 "chat_uuid": {
                     "type": "string"
+                }
+            }
+        },
+        "chats.SharedInteractionAccessResponse": {
+            "type": "object",
+            "properties": {
+                "authenticated": {
+                    "type": "boolean"
+                },
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "has_access": {
+                    "type": "boolean"
                 }
             }
         },

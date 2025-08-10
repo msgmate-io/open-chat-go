@@ -1372,7 +1372,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			if marshalErr != nil {
 				return marshalErr
 			}
-			message.MetaData = metaBytes
+			message.MetaData = database.JSONRaw(metaBytes)
 		}
 		if err := tx.Create(&message).Error; err != nil {
 			return err
