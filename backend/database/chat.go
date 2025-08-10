@@ -19,7 +19,7 @@ type Message struct {
 	Text       *string            `json:"text"`
 	Reasoning  *[]string          `json:"reasoning,omitempty" gorm:"type:jsonb;serializer:json"`
 	ToolCalls  *[]json.RawMessage `json:"tool_calls,omitempty" gorm:"type:jsonb;serializer:json"`
-	MetaData   json.RawMessage    `json:"meta_data" gorm:"type:jsonb"`
+	MetaData   JSONRaw            `json:"meta_data" gorm:"type:jsonb"`
 }
 
 // SharedChatConfig stores the shared LLM/tool configuration for a chat.
