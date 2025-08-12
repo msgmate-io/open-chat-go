@@ -40,6 +40,14 @@ func GetDB(r *http.Request) (*gorm.DB, error) {
 	return DB, nil
 }
 
+// GetOptionalUser returns the authenticated user from the request context, or
+// nil when the request is anonymous. It is intended for handlers mounted behind
+// OptionalAuthMiddleware.
+func GetOptionalUser(r *http.Request) *database.User {
+	user, _ := r.Context().Value("user").(*database.User)
+	return user
+}
+
 func GetWebsocket(r *http.Request) (*websocket.WebSocketHandler, error) {
 	websocket, ok := r.Context().Value("websocket").(*websocket.WebSocketHandler)
 	if !ok {
