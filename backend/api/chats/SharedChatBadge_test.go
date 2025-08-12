@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"backend/database"
+	"backend/runtimecfg"
 
 	"gorm.io/gorm"
 )
@@ -57,8 +58,20 @@ func createBotUserForChatsTest(t *testing.T, DB *gorm.DB, name string) *database
 
 func runBadgeRequest(t *testing.T, DB *gorm.DB, shareUUID string) *httptest.ResponseRecorder {
 	t.Helper()
+	return runBadgeRequestWith(t, DB, shareUUID, "", "")
+}
+
+func runBadgeRequestWith(t *testing.T, DB *gorm.DB, shareUUID, query, host string) *httptest.ResponseRecorder {
+	t.Helper()
 	h := &ChatsHandler{}
-	req := httptest.NewRequest("GET", "/api/interaction/"+shareUUID+"/badge.svg", nil)
+	target := "/api/interaction/" + shareUUID + "/badge.svg"
+	if query != "" {
+		target += "?" + query
+	}
+	req := httptest.NewRequest("GET", target, nil)
+	if host != "" {
+		req.Host = host
+	}
 	req.SetPathValue("chat_share_uuid", shareUUID)
 	req = req.WithContext(context.WithValue(req.Context(), "db", DB))
 	recorder := httptest.NewRecorder()
@@ -151,5 +164,145 @@ func TestBadgeUnknownShareRendersNotFoundSVG(t *testing.T) {
 	}
 	if !strings.Contains(body, ">not found</text>") {
 		t.Fatalf("expected not found state text in badge, got: %s", body)
+	}
+}
+
+func TestBadgeDetailedIncludesHostAndRuntime(t *testing.T) {
+	previous := runtimecfg.GetAll()
+	runtimecfg.SetAll(map[string]runtimecfg.Value{})
+	t.Cleanup(func() { runtimecfg.SetAll(previous) })
+
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	botUser := createBotUserForChatsTest(t, DB, "bot@example.com")
+	chat, share := createInteractionChatForBadge(t, DB, owner, botUser)
+
+	finishBadgeInteraction(t, DB, chat, botUser, map[string]interface{}{"finished": true, "total_time": "1.5s"})
+
+	recorder := runBadgeRequestWith(t, DB, share.ChatShareUUID, "", "badge.example.com")
+	body := recorder.Body.String()
+	if recorder.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, body)
+	}
+	if !strings.Contains(body, "badge.example.com") {
+		t.Fatalf("expected server host in detailed badge, got: %s", body)
+	}
+	if !strings.Contains(body, ">finished</text>") {
+		t.Fatalf("expected finished state text in detailed badge, got: %s", body)
+	}
+	if !strings.Contains(body, ">00:01</text>") {
+		t.Fatalf("expected formatted runtime from total_time metadata, got: %s", body)
+	}
+	if strings.Contains(body, "<animateTransform") {
+		t.Fatalf("expected no ticker for finished badge, got: %s", body)
+	}
+	if cc := recorder.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age=60") {
+		t.Fatalf("expected terminal badge to be cacheable, got %q", cc)
+	}
+}
+
+func TestBadgeSimpleVariantRendersLegacyBadge(t *testing.T) {
+	previous := runtimecfg.GetAll()
+	runtimecfg.SetAll(map[string]runtimecfg.Value{})
+	t.Cleanup(func() { runtimecfg.SetAll(previous) })
+
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	botUser := createBotUserForChatsTest(t, DB, "bot@example.com")
+	chat, share := createInteractionChatForBadge(t, DB, owner, botUser)
+
+	finishBadgeInteraction(t, DB, chat, botUser, map[string]interface{}{"finished": true, "total_time": "1.5s"})
+
+	recorder := runBadgeRequestWith(t, DB, share.ChatShareUUID, "variant=simple", "badge.example.com")
+	body := recorder.Body.String()
+	if recorder.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, body)
+	}
+	if !strings.Contains(body, ">finished</text>") {
+		t.Fatalf("expected finished state text in simple badge, got: %s", body)
+	}
+	if strings.Contains(body, "badge.example.com") {
+		t.Fatalf("expected simple badge to omit the host, got: %s", body)
+	}
+	if strings.Contains(body, "<animateTransform") {
+		t.Fatalf("expected simple badge to omit the ticker, got: %s", body)
+	}
+	if strings.Contains(body, ">00:01</text>") {
+		t.Fatalf("expected simple badge to omit the runtime, got: %s", body)
+	}
+}
+
+func TestRenderBadgeSVGActiveUsesTicker(t *testing.T) {
+	svg := string(renderBadgeSVG(badgeData{
+		Label:   "open-chat",
+		Host:    "badge.example.com",
+		State:   "running",
+		Color:   "#0969da",
+		Runtime: &badgeRuntime{Seconds: 125, Active: true},
+	}))
+
+	for _, want := range []string{
+		"badge.example.com",
+		">running</text>",
+		`<animateTransform`,
+		`calcMode="discrete"`,
+		`repeatCount="indefinite"`,
+		`dur="6000s"`,
+		`dur="600s"`,
+		`dur="60s"`,
+		`dur="10s"`,
+		`begin="-125s"`,
+		`begin="-5s"`,
+		`transform="translate(0,-28)"`,
+		`transform="translate(0,-70)"`,
+	} {
+		if !strings.Contains(svg, want) {
+			t.Fatalf("expected %q in active ticker badge, got: %s", want, svg)
+		}
+	}
+}
+
+func TestRenderBadgeSVGStaticRuntimeIsFormattedText(t *testing.T) {
+	svg := string(renderBadgeSVG(badgeData{
+		Label:   "open-chat",
+		Host:    "badge.example.com",
+		State:   "finished",
+		Color:   "#2ecc40",
+		Runtime: &badgeRuntime{Seconds: 3725, Active: false},
+	}))
+
+	if strings.Contains(svg, "<animateTransform") {
+		t.Fatalf("expected no ticker for static runtime, got: %s", svg)
+	}
+	if !strings.Contains(svg, ">1:02:05</text>") {
+		t.Fatalf("expected H:MM:SS runtime text, got: %s", svg)
+	}
+}
+
+func TestResolveBadgeHostPrefersPublicBaseURL(t *testing.T) {
+	previous := runtimecfg.GetAll()
+	runtimecfg.SetAll(map[string]runtimecfg.Value{
+		"PUBLIC_BASE_URL": {Value: "https://ci.msgmate.io/"},
+	})
+	t.Cleanup(func() { runtimecfg.SetAll(previous) })
+
+	req := httptest.NewRequest("GET", "/api/interaction/share/badge.svg", nil)
+	req.Host = "ignored.example.com"
+
+	if host := resolveBadgeHost(req); host != "ci.msgmate.io" {
+		t.Fatalf("expected ci.msgmate.io, got %q", host)
+	}
+}
+
+func TestResolveBadgeHostFallsBackToRequestHost(t *testing.T) {
+	previous := runtimecfg.GetAll()
+	runtimecfg.SetAll(map[string]runtimecfg.Value{})
+	t.Cleanup(func() { runtimecfg.SetAll(previous) })
+
+	req := httptest.NewRequest("GET", "/api/interaction/share/badge.svg", nil)
+	req.Host = "badge.example.com"
+
+	if host := resolveBadgeHost(req); host != "badge.example.com" {
+		t.Fatalf("expected badge.example.com, got %q", host)
 	}
 }
