@@ -4,8 +4,12 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
+
+	"gorm.io/gorm"
 )
 
 type ListedMessage struct {
@@ -112,7 +116,12 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		First(&chat)
 
 	if result.Error != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+			return
+		}
+		log.Printf("Failed to load chat %s: %v", chatUuid, result.Error)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -128,7 +137,8 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		Find(&messages)
 
 	if result.Error != nil {
-		http.Error(w, "Couldn't find messages", http.StatusBadRequest)
+		log.Printf("Failed to list messages for chat %s: %v", chatUuid, result.Error)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
