@@ -11,9 +11,12 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 
 	ufcli "github.com/urfave/cli/v3"
+
+	goyaml "go.yaml.in/yaml/v3"
 )
 
 type openChatConfigBootstrap struct {
@@ -25,6 +28,9 @@ type openChatConfig struct {
 	Env          map[string]interface{}            `json:"env"`
 	Integrations map[string]map[string]interface{} `json:"integrations"`
 	Bootstrap    *openChatBootstrapConfig          `json:"bootstrap,omitempty"`
+	// Anchors is consumed by authoring tools (YAML aliases); it is never
+	// used by the runtime and is ignored here.
+	Anchors map[string]interface{} `json:"anchors,omitempty"`
 }
 
 type openChatBootstrapConfig struct {
@@ -81,7 +87,7 @@ func parseOpenChatConfigBootstrap(args []string) openChatConfigBootstrap {
 	}
 
 	if strings.TrimSpace(cfg.Spec) == "" {
-		if file := firstExistingPath([]string{".open-chat.json", "open-chat.json"}); file != "" {
+		if file := firstExistingPath([]string{".open-chat.json", "open-chat.json", ".open-chat.yaml", "open-chat.yaml", ".open-chat.yml", "open-chat.yml"}); file != "" {
 			cfg.Spec = file
 		}
 	}
@@ -122,6 +128,182 @@ func loadOpenChatConfig(raw []byte, source string) (openChatConfig, error) {
 		return openChatConfig{}, nil
 	}
 
+	if cfg, err := decodeOpenChatConfigJSON(raw, source); err == nil {
+		return cfg, nil
+	} else if !isOpenChatConfigSyntaxError(err) {
+		return openChatConfig{}, err
+	}
+
+	// Not JSON: treat the document as YAML (anchors/aliases and multi-line
+	// strings included), convert it to the canonical JSON shape and apply the
+	// same strict schema as before.
+	intermediate := map[string]interface{}{}
+	if err := goyaml.Unmarshal(raw, &intermediate); err != nil {
+		return openChatConfig{}, fmt.Errorf("invalid open-chat config (%s): not valid JSON or YAML: %w", source, err)
+	}
+	if err := resolveOpenChatConfigYamlRefs(intermediate); err != nil {
+		return openChatConfig{}, fmt.Errorf("invalid open-chat config (%s): %w", source, err)
+	}
+	converted, err := json.Marshal(intermediate)
+	if err != nil {
+		return openChatConfig{}, fmt.Errorf("invalid open-chat config (%s): %w", source, err)
+	}
+	return decodeOpenChatConfigJSON(converted, source)
+}
+
+// openChatYamlRefPrefix marks a YAML config value as a reference into the
+// trailing `anchors` block: "$anchors.<name>". This keeps long artifacts
+// (kubeconfigs, SSH private keys, ...) out of the functional part of the
+// config — standard YAML aliases cannot be forward-referenced, so the loader
+// resolves these markers itself after parsing.
+const openChatYamlRefPrefix = "$anchors."
+
+// resolveOpenChatConfigYamlRefs removes the trailing `anchors` block from the
+// decoded document and substitutes every "$anchors.<name>" string value with
+// the matching anchored value. Nested references inside the anchors block
+// itself are resolved first (bounded passes).
+func resolveOpenChatConfigYamlRefs(doc map[string]interface{}) error {
+	anchorsRaw, ok := doc["anchors"]
+	hasRefs, err := docHasRefMarker(doc)
+	if err != nil {
+		return err
+	}
+	if !ok || anchorsRaw == nil {
+		if hasRefs {
+			return fmt.Errorf("a $anchors. reference was used but no top-level `anchors` block exists")
+		}
+		return nil
+	}
+	if !hasRefs {
+		// No "$anchors." markers anywhere: keep the top-level `anchors` block
+		// intact (carried through for authoring tools, e.g. YAML-style alias
+		// documents) and let the schema handle the rest.
+		return nil
+	}
+	anchors, ok := anchorsRaw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("top-level `anchors` must be a mapping of name -> value")
+	}
+	delete(doc, "anchors")
+
+	resolve := func(value interface{}) (interface{}, bool, error) {
+		str, isStr := value.(string)
+		if !isStr || !strings.HasPrefix(str, openChatYamlRefPrefix) {
+			return nil, false, nil
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(str, openChatYamlRefPrefix))
+		resolved, ok := anchors[name]
+		if !ok {
+			return nil, false, fmt.Errorf("reference %q points to an unknown anchor (known: %v)", str, anchorNames(anchors))
+		}
+		return resolved, true, nil
+	}
+
+	// Anchors may reference other anchors; resolve with a bounded number of
+	// passes so self/cyclic references fail instead of looping forever.
+	lastErr := error(nil)
+	for pass := 0; pass <= len(anchors); pass++ {
+		changed := false
+		for name, value := range anchors {
+			resolved, isRef, err := resolve(value)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if isRef {
+				anchors[name] = resolved
+				changed = true
+			}
+		}
+		if lastErr != nil {
+			return lastErr
+		}
+		if !changed {
+			break
+		}
+		if pass == len(anchors) {
+			return fmt.Errorf("cyclic reference chain inside top-level `anchors`")
+		}
+	}
+
+	if err := resolveRefsInValue(doc, resolve); err != nil {
+		return err
+	}
+	// Multi-hop references could leave an intermediate ref in place if it was
+	// substituted before its target anchor finished resolving; verify none are
+	// left over at the end.
+	found, err := docHasRefMarker(doc)
+	if err != nil {
+		return err
+	}
+	if found {
+		return fmt.Errorf("a $anchors. reference was not resolved")
+	}
+	return nil
+}
+
+// docHasRefMarker reports whether any string value in the document carries an
+// "$anchors." reference marker.
+func docHasRefMarker(value interface{}) (bool, error) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for _, item := range typed {
+			found, err := docHasRefMarker(item)
+			if err != nil || found {
+				return found, err
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			found, err := docHasRefMarker(item)
+			if err != nil || found {
+				return found, err
+			}
+		}
+	case string:
+		if strings.HasPrefix(typed, openChatYamlRefPrefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func resolveRefsInValue(value interface{}, resolve func(interface{}) (interface{}, bool, error)) error {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if resolved, isRef, err := resolve(item); err != nil {
+				return err
+			} else if isRef {
+				typed[key] = resolved
+			} else if err := resolveRefsInValue(item, resolve); err != nil {
+				return err
+			}
+		}
+	case []interface{}:
+		for idx, item := range typed {
+			if resolved, isRef, err := resolve(item); err != nil {
+				return err
+			} else if isRef {
+				typed[idx] = resolved
+			} else if err := resolveRefsInValue(item, resolve); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func anchorNames(anchors map[string]interface{}) []string {
+	names := make([]string, 0, len(anchors))
+	for name := range anchors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func decodeOpenChatConfigJSON(raw []byte, source string) (openChatConfig, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	cfg := openChatConfig{}
@@ -138,6 +320,27 @@ func loadOpenChatConfig(raw []byte, source string) (openChatConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// isOpenChatConfigSyntaxError reports whether a decode error is a pure
+// document-syntax problem (justifying the YAML fallback) rather than a real
+// schema violation that must fail hard.
+func isOpenChatConfigSyntaxError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"invalid character",
+		"unexpected end of JSON input",
+		"unterminated",
+		"looking for beginning of value",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeTokenForEnv(raw string) string {
