@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 
 	ufcli "github.com/urfave/cli/v3"
 
@@ -116,11 +118,34 @@ func resolveConfigSource(raw string) ([]byte, string, error) {
 	if strings.HasPrefix(trimmed, "{") {
 		return []byte(trimmed), "inline --config JSON", nil
 	}
+	if strings.ContainsAny(trimmed, "\n\r") {
+		// A file path can never span lines, so a spec containing line breaks
+		// must be an inline config document (e.g. the whole YAML config passed
+		// through the OPEN_CHAT_CONFIG env var).
+		return []byte(trimmed), "inline --config YAML", nil
+	}
 	content, err := os.ReadFile(trimmed)
 	if err != nil {
+		// Extremely long single-line specs may be a single-line inline
+		// document misused as a path; try parsing it as inline YAML/JSON
+		// before failing on the unreadable path.
+		if isPathTooLongError(err) {
+			return []byte(trimmed), "inline --config YAML", nil
+		}
 		return nil, "", fmt.Errorf("failed reading config path %q: %w", trimmed, err)
 	}
 	return content, trimmed, nil
+}
+
+func isPathTooLongError(err error) bool {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return errno == syscall.ENAMETOOLONG
+	}
+	if unwrapped, ok := err.(*os.PathError); ok {
+		return unwrapped.Err == syscall.ENAMETOOLONG
+	}
+	return strings.Contains(err.Error(), "file name too long")
 }
 
 func loadOpenChatConfig(raw []byte, source string) (openChatConfig, error) {
