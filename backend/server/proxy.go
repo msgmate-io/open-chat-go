@@ -42,6 +42,7 @@ func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	proxy.Director = func(r *http.Request) {
 		baseDirector(r)
 		rewriteMobileProxyRequestCookies(r, namespacedSessionCookie)
+		rewriteMobileProxyRequestOrigin(r, target)
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
@@ -176,6 +177,31 @@ func rewriteSessionCookieName(cookiePair string, namespacedSessionCookie string)
 		return cookiePair
 	}
 	return namespacedSessionCookie + cookiePair[idx:]
+}
+
+// rewriteMobileProxyRequestOrigin aligns the browser Origin header with the
+// proxy target for WebSocket upgrade requests. Upstream integration handlers
+// accept WebSockets with the default same-origin check, which compares the
+// Origin host against the request Host. The mobile proxy rewrites Host to the
+// upstream host but would otherwise forward the browser Origin (e.g.
+// http://localhost:1984) unchanged, so the upstream handshake is rejected with
+// HTTP 403. Scoped strictly to upgrades so normal API CORS behavior is
+// unaffected.
+func rewriteMobileProxyRequestOrigin(r *http.Request, target *url.URL) {
+	if r == nil || target == nil || target.Host == "" {
+		return
+	}
+	if !isWebSocketUpgradeRequest(r) {
+		return
+	}
+	r.Header.Set("Origin", target.Scheme+"://"+target.Host)
+}
+
+func isWebSocketUpgradeRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
 
 func rewriteMobileProxyRequestCookies(r *http.Request, namespacedSessionCookie string) {
