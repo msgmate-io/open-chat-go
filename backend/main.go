@@ -653,6 +653,10 @@ func main() {
 			cmd.ServerCli(),
 			cmd.WorkerCli(),
 			cmd.ClientCli(),
+			cmd.InstallCli(),
+			cmd.UninstallCli(),
+			cmd.StatusCli(),
+			cmd.ServiceRunCli(),
 		},
 	}
 
