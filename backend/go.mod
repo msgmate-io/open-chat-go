@@ -66,7 +66,7 @@ replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_int
 
 replace github.com/msgmate-io/voice-integration => ../clients/integrations/voice_integration
 
-replace github.com/msgmate-io/docker-sandbox-integration => ../clients/docker_sandbox_integration
+replace github.com/msgmate-io/docker-sandbox-integration => ../clients/integrations/docker_sandbox_integration
 
 replace github.com/msgmate-io/git-integration => ../clients/integrations/git_integration
 
