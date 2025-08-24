@@ -345,6 +345,110 @@
                 }
             }
         },
+        "/api/v1/admin/integration-settings": {
+            "get": {
+                "description": "Returns deployment capabilities and masked settings for every integration that declares runtime env vars.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrationsettings.IntegrationSettingsListResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/restart": {
+            "post": {
+                "description": "Asks the OS service manager to restart the server when service-managed; otherwise returns 409.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Restart the server",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/admin.restartServerResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/{integration_name}": {
+            "get": {
+                "description": "Returns masked settings and field descriptors for one integration.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrationsettings.IntegrationSettingsDetailResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Validates, applies, and (when possible) persists runtime values for one integration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Save integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.saveIntegrationSettingsResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/{integration_name}/reveal": {
+            "post": {
+                "description": "Reveals unmasked runtime values for one integration after password confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Reveal integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrationsettings.IntegrationSettingsDetailResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/bots": {
             "post": {
                 "security": [
@@ -3014,6 +3118,40 @@
         }
     },
     "definitions": {
+        "admin.restartServerResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "admin.saveIntegrationSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "integration": {
+                    "$ref": "#/definitions/integrationsettings.IntegrationSnapshot"
+                },
+                "persist_error": {
+                    "type": "string"
+                },
+                "persisted": {
+                    "type": "boolean"
+                },
+                "restart_required": {
+                    "type": "boolean"
+                }
+            }
+        },
         "bots.BotDTO": {
             "type": "object",
             "properties": {
@@ -3909,6 +4047,127 @@
                     "items": {
                         "$ref": "#/definitions/integrations.IntegrationListRow"
                     }
+                }
+            }
+        },
+        "integrationsettings.DeploymentInfo": {
+            "type": "object",
+            "properties": {
+                "can_persist": {
+                    "type": "boolean"
+                },
+                "can_restart": {
+                    "type": "boolean"
+                },
+                "config_format": {
+                    "type": "string"
+                },
+                "config_source": {
+                    "type": "string"
+                },
+                "reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrationsettings.FieldDescriptor": {
+            "type": "object",
+            "properties": {
+                "advanced": {
+                    "type": "boolean"
+                },
+                "config_target": {
+                    "type": "string"
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "default": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "group": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "order": {
+                    "type": "integer"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "sensitive": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrationsettings.IntegrationSettingsDetailResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "integration": {
+                    "$ref": "#/definitions/integrationsettings.IntegrationSnapshot"
+                }
+            }
+        },
+        "integrationsettings.IntegrationSettingsListResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "integrations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrationsettings.IntegrationSnapshot"
+                    }
+                }
+            }
+        },
+        "integrationsettings.IntegrationSnapshot": {
+            "type": "object",
+            "properties": {
+                "field_count": {
+                    "type": "integer"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrationsettings.FieldDescriptor"
+                    }
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
