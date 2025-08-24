@@ -1,7 +1,6 @@
 package admin
 
 import (
-	backendintegrations "backend/integrations"
 	"backend/integrationsettings"
 	"backend/runtimecfg"
 	"backend/server/util"
@@ -16,8 +15,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// settingsDefinitions returns the registered integration definitions. It uses
+// the interface registry directly (rather than backend/integrations) to avoid
+// an import cycle with integration packages that import backend/api/user.
 func settingsDefinitions() []integrationinterface.Definition {
-	return backendintegrations.List()
+	return integrationinterface.List()
 }
 
 type revealIntegrationSettingsRequest struct {
