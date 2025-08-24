@@ -729,6 +729,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		"OPENROUTER_API_KEY":                {Value: os.Getenv("OPENROUTER_API_KEY"), Sensitive: true},
 		"IONOS_API_KEY":                     {Value: os.Getenv("IONOS_API_KEY"), Sensitive: true},
 		"OPEN_CHAT_SEAL_KEY":                {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+		"OPEN_CHAT_DEPLOYMENT_TYPE":         {Value: os.Getenv("OPEN_CHAT_DEPLOYMENT_TYPE"), Sensitive: false},
 		"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
 			Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
 			Sensitive: false,
