@@ -10,6 +10,7 @@ type Value struct {
 var (
 	mu                sync.RWMutex
 	values            = map[string]Value{}
+	configSource      string
 	openChatBootstrap OpenChatBootstrap
 )
 
@@ -42,6 +43,40 @@ func GetAll() map[string]Value {
 		out[key] = value
 	}
 	return out
+}
+
+// SetValue updates or inserts a single runtime value under lock. It lets the
+// admin settings API mutate live values without replacing the whole map.
+func SetValue(key string, value Value) {
+	mu.Lock()
+	defer mu.Unlock()
+	if values == nil {
+		values = map[string]Value{}
+	}
+	values[key] = value
+}
+
+// DeleteValue removes a runtime value. Missing keys are ignored.
+func DeleteValue(key string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(values, key)
+}
+
+// SetConfigSource records the on-disk path the server was configured from. An
+// empty value (or an inline config label) means the configuration cannot be
+// persisted back to a file.
+func SetConfigSource(path string) {
+	mu.Lock()
+	defer mu.Unlock()
+	configSource = path
+}
+
+// GetConfigSource returns the recorded on-disk config path, if any.
+func GetConfigSource() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return configSource
 }
 
 func SetOpenChatBootstrap(next OpenChatBootstrap) {
