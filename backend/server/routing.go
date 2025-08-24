@@ -476,6 +476,11 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks/{task_id}", admin.GetAsynqTask)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/stats", admin.GetAsynqQueueStats)
 	v1PrivateApis.HandleFunc("POST /admin/bots/{bot_uuid}/models/selection", admin.UpdateBotModelSelection)
+	v1PrivateApis.HandleFunc("GET /admin/integration-settings", admin.ListIntegrationSettings)
+	v1PrivateApis.HandleFunc("GET /admin/integration-settings/{integration_name}", admin.GetIntegrationSettings)
+	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/{integration_name}", admin.SaveIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/{integration_name}/reveal", admin.RevealIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/restart", admin.RestartServer)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
 
