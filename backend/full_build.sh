@@ -226,8 +226,15 @@ fi
 
 echo "Using GOFLAGS=${GOFLAGS}"
 
+# IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
+# `go run` executes the compiled tool locally, so build-time tools must be built
+# for the *host* platform (otherwise cross-compiled targets fail with
+# "exec format error"). Capture the host platform before overriding.
+HOST_GOOS="$(go env GOHOSTOS)"
+HOST_GOARCH="$(go env GOHOSTARCH)"
+
 echo "Syncing external integration dependencies from effective integration manifest..."
-go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync=false
+GOOS="$HOST_GOOS" GOARCH="$HOST_GOARCH" go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync=false
 
 echo "Downloading and tidying effective module dependencies..."
 # Network hiccups (eg module proxy stream errors mid-download) can abort the
@@ -248,12 +255,9 @@ else
     go mod tidy
 fi
 
-# IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.
 TARGET_GOOS="${GOOS:-}"
 TARGET_GOARCH="${GOARCH:-}"
-HOST_GOOS="$(go env GOHOSTOS)"
-HOST_GOARCH="$(go env GOHOSTARCH)"
 
 # Install swag tool if not already installed (install into a repo-local bin dir)
 TOOLS_BIN="$PWD/.tools/bin"
