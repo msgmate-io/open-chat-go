@@ -1,0 +1,605 @@
+# Reusable Docker Sandbox Benchmark workflow.
+#
+# Runs the opencode sandbox benchmark suite (`development/ci/sandbox_tests`)
+# against a backend image, with tag filtering, model selection and optional
+# result artifacts/comment posting.
+#
+# Callers (same repository):
+#
+#   jobs:
+#     sandbox-benchmark:
+#       uses: ./.github/workflows/reusable-sandbox-benchmark.yaml
+#       with:
+#         target_ref: ${{ github.sha }}
+#         backend_image: ghcr.io/msgmate-io/open-chat-go:some-tag
+#         tags: parallel
+#         post_results: true
+#         results_target: pr
+#         pr_number: "123"
+#       secrets: inherit
+#
+# Manual runs use the thin `sandbox-benchmark.yaml` dispatcher.
+name: Reusable Sandbox Benchmark
+
+on:
+  workflow_call:
+    inputs:
+      target_ref:
+        description: Ref or SHA to check out for the benchmark sources
+        required: false
+        type: string
+        default: main
+      backend_image:
+        description: Prebuilt backend image to test; when empty one is built from target_ref
+        required: false
+        type: string
+        default: ""
+      sandbox_image_url:
+        description: Optional prebuilt coding sandbox image; when empty it is resolved/built by content hash
+        required: false
+        type: string
+        default: ""
+      opencode_provider:
+        description: opencode provider id (default openrouter; only its key is configured by default)
+        required: false
+        type: string
+        default: openrouter
+      opencode_model:
+        description: opencode model id to pin for the benchmark interactions
+        required: false
+        type: string
+        default: deepseek/deepseek-v4-flash
+      tags:
+        description: Comma-separated sandbox test tags to run (empty = all tests)
+        required: false
+        type: string
+        default: ""
+      sandbox_interaction_timeout:
+        description: Per-test interaction timeout in seconds
+        required: false
+        type: string
+        default: "720"
+      upload_artifacts:
+        description: Upload per-test result artifacts
+        required: false
+        type: boolean
+        default: true
+      post_results:
+        description: Post the benchmark summary (comment and/or step summary)
+        required: false
+        type: boolean
+        default: false
+      results_target:
+        description: Where to post results - pr, issue or step-summary
+        required: false
+        type: string
+        default: step-summary
+      pr_number:
+        description: Pull request number for result posting
+        required: false
+        type: string
+        default: ""
+      issue_number:
+        description: Issue number for result posting (used when results_target=issue)
+        required: false
+        type: string
+        default: ""
+      source_repo:
+        description: Repository (owner/name) that owns the PR/issue; defaults to the current repository
+        required: false
+        type: string
+        default: ""
+      bot_user:
+        description: GitHub login that owns the bot comments
+        required: false
+        type: string
+        default: cur1ousdude
+      gh_pr_repo:
+        description: Repository for the gh_pr_comment test; defaults to source_repo/current repo
+        required: false
+        type: string
+        default: ""
+      gh_pr_number:
+        description: Pull request number for the gh_pr_comment test
+        required: false
+        type: string
+        default: ""
+    secrets:
+      BOT_TOKEN:
+        required: false
+      AI_TEST_API_HOST:
+        required: false
+      AI_TEST_API_KEY:
+        required: false
+      OPENROUTER_API_KEY:
+        required: false
+      SANDBOX_OPENROUTER_API_KEY:
+        required: false
+      DEEPINFRA_API_KEY:
+        required: false
+      IONOS_API_KEY:
+        required: false
+      SANDBOX_GH_TOKEN:
+        required: false
+      GIST_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  packages: write
+
+jobs:
+  discover:
+    name: Discover Sandbox Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.discover.outputs.tests }}
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Enumerate sandbox test directories
+        id: discover
+        env:
+          REQUESTED_TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          requested="$(printf '%s' "$REQUESTED_TAGS" | tr ',' ' ' | xargs)"
+          mapfile -t dirs < <(
+            find development/ci/sandbox_tests -mindepth 2 -maxdepth 2 -name verify.sh \
+              -printf '%h\n' 2>/dev/null \
+              | sed 's#development/ci/sandbox_tests/##' \
+              | sort -u
+          )
+          selected=()
+          for d in "${dirs[@]:-}"; do
+            [ -n "$d" ] || continue
+            tag_file="development/ci/sandbox_tests/${d}/tags"
+            if [ -f "$tag_file" ]; then
+              tags="$(tr ',' ' ' < "$tag_file" | xargs)"
+            else
+              tags="untagged"
+            fi
+            if [ -z "$requested" ]; then
+              selected+=("$d")
+              continue
+            fi
+            match=false
+            for rt in $requested; do
+              for t in $tags; do
+                if [ "$rt" = "$t" ]; then match=true; fi
+              done
+            done
+            if [ "$match" = true ]; then
+              selected+=("$d")
+            fi
+          done
+          if [ "${#selected[@]}" -gt 0 ]; then
+            tests_json="$(printf '%s\n' "${selected[@]}" | jq -R -s -c 'split("\n") | map(select(. != ""))')"
+          else
+            tests_json="[]"
+          fi
+          if [ "$tests_json" = "[]" ]; then
+            if [ -z "$requested" ]; then
+              # Defensive: never silently run nothing when no filter was asked.
+              tests_json="[\"basic_smoke\"]"
+            else
+              echo "::warning::No sandbox tests match tags '${REQUESTED_TAGS}'."
+            fi
+          fi
+          echo "tests=$tests_json" >> "$GITHUB_OUTPUT"
+          echo "Discovered sandbox tests: $tests_json (requested tags: '${REQUESTED_TAGS:-<all>}')"
+
+  backend-image:
+    name: Resolve Backend Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_url: ${{ steps.resolve.outputs.image_url }}
+    steps:
+      - name: Checkout source repository
+        if: inputs.backend_image == ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Login to GHCR
+        if: inputs.backend_image == ''
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up Docker Buildx
+        if: inputs.backend_image == ''
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve backend image tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.backend_image }}" ]; then
+            echo "image_url=${{ inputs.backend_image }}" >> "$GITHUB_OUTPUT"
+            echo "Using provided backend image ${{ inputs.backend_image }}"
+            exit 0
+          fi
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          SHA="$(git rev-parse --short=12 HEAD)"
+          echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-benchmark-${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        if: inputs.backend_image == ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: prod-alpine
+          push: true
+          tags: ${{ steps.resolve.outputs.image_url }}
+          build-args: |
+            INTEGRATION_PROFILE=full
+
+  sandbox-image-ensure:
+    name: Ensure Sandbox Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_url: ${{ steps.image.outputs.image_url }}
+    steps:
+      - name: Checkout sandbox-integration submodule
+        if: inputs.sandbox_image_url == ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Resolve sandbox image tag from content hash
+        id: image
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.sandbox_image_url }}" ]; then
+            echo "image_url=${{ inputs.sandbox_image_url }}" >> "$GITHUB_OUTPUT"
+            echo "Using provided sandbox image ${{ inputs.sandbox_image_url }}"
+            exit 0
+          fi
+          HASH="$(find clients/integrations/docker_sandbox_integration/sandboxes/coding -type f \
+            ! -name 'recent-repo-changes-summary.md' -print0 \
+            | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "sandbox image content hash: ${HASH}"
+
+      - name: Login to GHCR
+        if: inputs.sandbox_image_url == ''
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Check whether sandbox image already exists
+        id: probe
+        if: inputs.sandbox_image_url == ''
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE_URL" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Sandbox image ${IMAGE_URL} already in registry; skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refresh sandbox-latest alias for existing image
+        if: inputs.sandbox_image_url == '' && steps.probe.outputs.exists == 'true'
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-.*/:sandbox-latest/')"
+          docker buildx imagetools create -t "$LATEST_URL" "$IMAGE_URL"
+
+      - name: Set up Docker Buildx
+        if: inputs.sandbox_image_url == '' && steps.probe.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push sandbox image (with retries)
+        if: inputs.sandbox_image_url == '' && steps.probe.outputs.exists != 'true'
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-.*/:sandbox-latest/')"
+          attempt=0
+          until docker buildx build \
+            --push \
+            -f clients/integrations/docker_sandbox_integration/sandboxes/coding/Dockerfile \
+            -t "$IMAGE_URL" \
+            -t "$LATEST_URL" \
+            clients/integrations/docker_sandbox_integration/sandboxes/coding; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::sandbox image build failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            echo "sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
+            sleep 15
+          done
+
+  run-tests:
+    name: Sandbox Test ${{ matrix.test }}
+    runs-on: ubuntu-latest
+    # Hard cap for the whole matrix job. The LLM interaction is capped via
+    # SANDBOX_INTERACTION_TIMEOUT; tests may override per-test via config.json
+    # "interaction_timeout". Extra minutes cover startup/verification/upload.
+    timeout-minutes: 22
+    needs: [discover, backend-image, sandbox-image-ensure]
+    if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJson(needs.discover.outputs.tests) }}
+    env:
+      BACKEND_IMAGE: ${{ needs.backend-image.outputs.image_url }}
+      # Prebuilt sandbox image (only rebuilt when the sandbox Dockerfile dir
+      # content changes); empty = build locally.
+      SANDBOX_IMAGE_URL: ${{ needs.sandbox-image-ensure.outputs.image_url }}
+      # Scratch dir on host so the bot's own git clone can never land inside a
+      # tracked checkout (avoids the accidental-submodule footgun).
+      SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
+      SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
+      SANDBOX_INTERACTION_TIMEOUT: ${{ inputs.sandbox_interaction_timeout }}
+      # Model/provider pin for the opencode runtime. Only the openrouter API
+      # key is configured by default; other providers need their own secret.
+      SANDBOX_OPENCODE_PROVIDER: ${{ inputs.opencode_provider }}
+      SANDBOX_OPENCODE_MODEL: ${{ inputs.opencode_model }}
+      LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
+      LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
+      DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+      IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
+      OPENCODE_PERMISSION_MODE: auto
+      # gh_pr_comment test: the git integration pre-authenticates the gh CLI on
+      # the sandbox VM with this token and the verification re-reads the posted
+      # comment with it.
+      SANDBOX_GH_TOKEN: ${{ secrets.SANDBOX_GH_TOKEN || secrets.BOT_TOKEN || github.token }}
+      SANDBOX_GH_PR_REPO: ${{ inputs.gh_pr_repo || inputs.source_repo || github.repository }}
+      SANDBOX_GH_PR_NUMBER: ${{ inputs.gh_pr_number || inputs.pr_number }}
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+          # Full history: the repo_changes_summary benchmark summarizes the
+          # last 3 commits from the pre-staged sandbox clone.
+          fetch-depth: 0
+
+      - name: Login to GHCR for backend image pull
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Run sandbox test ${{ matrix.test }}
+        id: test
+        # Independent wall-clock backstop below the 22-minute job cap.
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          timeout --foreground --kill-after=30 1020 \
+            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
+
+      - name: Post repo_changes_summary to the PR
+        if: >-
+          inputs.post_results &&
+          inputs.results_target == 'pr' &&
+          inputs.pr_number != '' &&
+          matrix.test == 'repo_changes_summary' &&
+          steps.test.outcome == 'success'
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          BOT_USER: ${{ inputs.bot_user }}
+          SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          summary="$(
+            jq -r '.last_bot.text // empty' \
+              ".sandbox-results/repo_changes_summary.last_bot.json"
+          )"
+          if [ -z "$summary" ]; then
+            echo "::warning::No summary text available; skipping PR comment."
+            exit 0
+          fi
+          # Defensive: if the model wrapped the summary in a markdown code
+          # fence, unwrap it so the comment renders the markdown directly.
+          if printf '%s' "$summary" | head -n1 | grep -q '^```'; then
+            summary="$(printf '%s' "$summary" | sed '1d' | sed '${/^```[[:space:]]*$/d}')"
+          fi
+          if [ "${#summary}" -gt 55000 ]; then
+            summary="${summary:0:55000}
+          ... (truncated)"
+          fi
+          export TPL_SUMMARY_BODY="$summary"
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/009-sandbox-repo-changes-summary.md)"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comments_json="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments"
+          })"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-sandbox-summary-repo_changes_summary -->")))][0].id // ""' <<< "$comments_json")"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
+              -d "$payload" >/dev/null
+            echo "Updated PR summary comment ${comment_id}."
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments" \
+              -d "$payload" >/dev/null
+            echo "Posted new PR summary comment."
+          fi
+
+      - name: Upload sandbox test result
+        if: always() && inputs.upload_artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-result-${{ matrix.test }}
+          path: |
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
+            ${{ github.workspace }}/.sandbox-results/*.last_bot.json
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
+            ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
+            ${{ github.workspace }}/.sandbox-results/*.run_config.json
+            ${{ github.workspace }}/.sandbox-results/*.interaction.json
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  summary:
+    name: Post Sandbox Benchmark Summary
+    runs-on: ubuntu-latest
+    needs: [run-tests, discover]
+    if: ${{ always() && inputs.post_results && needs.run-tests.result != 'skipped' }}
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.BOT_TOKEN || github.token }}
+      BOT_USER: ${{ inputs.bot_user }}
+      SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
+      RESULTS_TARGET: ${{ inputs.results_target }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      ISSUE_NUMBER: ${{ inputs.issue_number }}
+    steps:
+      - name: Download sandbox test results
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ github.workspace }}/.sandbox-results
+          pattern: sandbox-result-*
+
+      - name: Build and post summary table
+        env:
+          RENDERER_BASE: ${{ vars.INTERACTION_RENDERER_BASE || 'https://stage.msgmate.io' }}
+        run: |
+          set -euo pipefail
+          results_dir="${{ github.workspace }}/.sandbox-results"
+
+          header="| Test | Status | Model | Runtime | Interaction | Notes |"
+          sep="|---|---|---|---|---|---|"
+          : > /tmp/summary-rows.txt
+          # Artifacts are extracted per artifact into their own subdirectory
+          # (no merge-multiple: merging multiple artifacts into one directory
+          # has proven lossy in practice). TSV files are single-line; locate
+          # them with find so nested artifact dirs are handled uniformly.
+          for f in $(find "$results_dir" -name '*.tsv' 2>/dev/null | sort); do
+            artifact_dir="$(dirname "$f")"
+            name="$(cut -f1 "$f")"
+            status="$(cut -f2 "$f")"
+            detail="$(cut -f3 "$f" | tr -d '\t\r\n' | head -c 60)"
+            runtime="$(cut -f4 "$f" | tr -d '\t\r\n')"
+            if [ -n "$runtime" ] && [ "$runtime" != "-" ] && [ "$runtime" != "null" ]; then
+              secs="${runtime%s}"
+              runtime="≈ $(( secs / 60 ))m $(( secs % 60 ))s"
+            else
+              runtime="-"
+            fi
+            tokens="$(cut -f6 "$f" | tr -d '\t\r\n')"
+            if [ -n "$tokens" ] && [ "$tokens" != "-" ] && [ "$tokens" != "null" ]; then
+              tokens_cell="$(printf '%s' "$tokens" | sed -E 's/^in:([0-9]+) out:([0-9]+)$/in: \1 · out: \2/')"
+              if [ -n "$tokens_cell" ] && [ "$tokens_cell" != "$tokens" ]; then
+                runtime="${runtime}<br/>${tokens_cell}"
+              else
+                echo "::warning::unexpected token usage format in $f: '$tokens'"
+              fi
+            fi
+            model="$(cut -f5 "$f" | tr -d '\t\r\n')"
+            [ -z "$model" ] && model="-"
+            # Upload the sanitized interaction export as a gist so reviewers can
+            # open the full chat in the interaction renderer without login.
+            interaction_link="-"
+            export_file="$artifact_dir/${name}.interaction.json"
+            if [ -s "$export_file" ] && jq -e . "$export_file" >/dev/null 2>&1; then
+              gist_code="$(curl -sS -o /tmp/gist-resp.json -w '%{http_code}' -X POST \
+                -H "Authorization: Bearer ${GIST_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/gists" \
+                -d "$(jq -n --arg content "$(cat "$export_file")" \
+                  '{files:{"interaction.json":{content: $content}}}')")" || gist_code="curl-error"
+              raw_url="$(jq -r '.files["interaction.json"].raw_url // empty' /tmp/gist-resp.json 2>/dev/null || true)"
+              if [ -n "$raw_url" ]; then
+                encoded_raw_url="$(jq -Rr @uri <<< "$raw_url")"
+                interaction_link="[open](${RENDERER_BASE}/interaction_renderer/?url=${encoded_raw_url})"
+              else
+                echo "::warning::Could not create gist for ${name} interaction export (http=${gist_code}; token may lack gist scope). Response: $(head -c 300 /tmp/gist-resp.json 2>/dev/null || true)"
+              fi
+            fi
+            if [ "$status" = "passed" ]; then
+              icon="✅ passed"
+            else
+              icon="❌ failed"
+            fi
+            printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
+          done
+
+          rows="$(cat /tmp/summary-rows.txt)"
+          if [ -z "$rows" ]; then
+            rows="| _no sandbox tests ran_ | - | - | - | - | - |"
+          fi
+
+          body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
+            "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows")"
+
+          # Always make the result visible in the run itself.
+          printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          target_number=""
+          case "$RESULTS_TARGET" in
+            pr) target_number="$PR_NUMBER" ;;
+            issue) target_number="$ISSUE_NUMBER" ;;
+            step-summary|"") target_number="" ;;
+            *) echo "::warning::Unknown results_target '${RESULTS_TARGET}'; only writing the step summary." ; target_number="" ;;
+          esac
+          if [ -z "$target_number" ]; then
+            echo "No comment target configured (results_target=${RESULTS_TARGET}); step summary only."
+            exit 0
+          fi
+
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comments_json="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${target_number}/comments"
+          })"
+          comment_id="$(jq -r --arg bot "$BOT_USER" '[.[] | select(.user.login == $bot and (.body | contains("<!-- open-chat-sandbox-benchmark-summary -->")))][0].id // ""' <<< "$comments_json")"
+
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${target_number}/comments" \
+              -d "$payload"
+          fi
