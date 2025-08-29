@@ -15,6 +15,21 @@
 - Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and place integrations in `backend/integrationdeps.json`
 - Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
+### Install
+
+macOS (Apple Silicon and Intel), via [Homebrew](https://brew.sh):
+
+```sh
+brew install msgmate-io/tap/open-chat
+brew services start open-chat
+open-chat status
+```
+
+The server listens on `127.0.0.1:1984`; data and logs live under
+`$(brew --prefix)/var/open-chat` and `$(brew --prefix)/var/log`. See
+[`development/homebrew/README.md`](development/homebrew/README.md) for details and
+maintainer instructions.
+
 ### Releases
 
 We release all versions always ( after admin confirmation ):
