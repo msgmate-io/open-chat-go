@@ -80,6 +80,8 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
       HOMEBREW_NO_ENV_HINTS: "1"
+      HOMEBREW_NO_COLOR: "1"
+      NO_COLOR: "1"
 
     steps:
       - name: Show runner information
@@ -108,7 +110,8 @@ jobs:
         run: |
           set -euo pipefail
           command -v open-chat
-          open-chat --help | head -n 5
+          open-chat --help >/tmp/open-chat-help.txt
+          sed -n '1,5p' /tmp/open-chat-help.txt
           brew test "${FORMULA}"
 
       - name: Start and register the service with brew services
@@ -121,10 +124,16 @@ jobs:
           set -euo pipefail
           brew services list | tee /tmp/brew-services.txt
           grep -Eq "^${FORMULA}[[:space:]]+started" /tmp/brew-services.txt
-          plist="${HOME}/Library/LaunchAgents/homebrew.mxcl.${FORMULA}.plist"
+          # Homebrew >= 4.5 uses the sh.brew.<formula> label; older versions use
+          # homebrew.mxcl.<formula>. Derive the plist from brew services output so
+          # the check works with either scheme.
+          plist="$(awk -v f="${FORMULA}" '$1 == f { print $NF }' /tmp/brew-services.txt)"
+          plist="${plist/#\~/$HOME}"
+          echo "plist=${plist}"
           test -f "${plist}"
           ls -l "${plist}"
-          launchctl list | grep -F "homebrew.mxcl.${FORMULA}"
+          label="$(basename "${plist}" .plist)"
+          launchctl list | grep -F "${label}"
 
       - name: Wait for the server to answer
         run: |
@@ -141,7 +150,9 @@ jobs:
           echo "--- brew services list ---"
           brew services list || true
           echo "--- launchd plist ---"
-          cat "${HOME}/Library/LaunchAgents/homebrew.mxcl.${FORMULA}.plist" || true
+          plist="$(awk -v f="${FORMULA}" '$1 == f { print $NF }' /tmp/brew-services.txt 2>/dev/null || true)"
+          plist="${plist/#\~/$HOME}"
+          cat "${plist}" 2>/dev/null || true
           echo "--- open-chat.log ---"
           tail -n 200 "$(brew --prefix)/var/log/open-chat.log" 2>/dev/null || true
           echo "--- open-chat.err.log ---"
