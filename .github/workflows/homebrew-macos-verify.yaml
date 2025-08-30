@@ -139,7 +139,9 @@ jobs:
         run: |
           set -euo pipefail
           endpoint="http://127.0.0.1:${SERVICE_PORT}/api/version"
-          for attempt in $(seq 1 60); do
+          # First boot seeds the SQLite database and registers every integration
+          # route, which takes ~2 minutes on a cold macOS runner.
+          for attempt in $(seq 1 180); do
             if curl -fsS "${endpoint}" >/tmp/open-chat-version.json 2>/dev/null; then
               echo "Server answered on attempt ${attempt}: $(cat /tmp/open-chat-version.json)"
               exit 0
