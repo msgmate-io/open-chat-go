@@ -177,7 +177,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test')
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test') && !contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test')
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -255,7 +255,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test')))
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -270,6 +270,7 @@ jobs:
       should_test: ${{ steps.context.outputs.should_test }}
       should_e2e_test: ${{ steps.context.outputs.should_e2e_test }}
       should_sandbox_test: ${{ steps.context.outputs.should_sandbox_test }}
+      should_sandbox_tags: ${{ steps.context.outputs.should_sandbox_tags }}
       should_build: ${{ steps.context.outputs.should_build }}
       should_release_android: ${{ steps.context.outputs.should_release_android }}
       should_ai_test_mock: ${{ steps.context.outputs.should_ai_test_mock }}
@@ -336,7 +337,14 @@ jobs:
             # multiple lines and a multi-line GITHUB_OUTPUT value breaks the
             # job ("Invalid format"). Keep alias support, emit one token only.
             SHOULD_E2E_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x '(e2e|test-e2e|test)' | head -n1 || true)"
-            SHOULD_SANDBOX_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'sandbox-test' || true)"
+            # Sandbox suite trigger: plain `sandbox-test` runs all tests, while
+            # `sandbox-test:<tag>` labels run only tests carrying that tag
+            # (multiple labels are unioned). Any matching label triggers the
+            # suite.
+            SHOULD_SANDBOX_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x 'sandbox-test(:.*)?' | head -n1 || true)"
+            SHOULD_SANDBOX_TAGS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" \
+              | sed -n 's/^sandbox-test://p' \
+              | tr '\n' ',' | sed 's/,\+/,/g; s/^,//; s/,$//' || true)"
             SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
             SHOULD_RELEASE_ANDROID="$(jq -r '
               ([.pull_request.labels[]?.name // ""]
@@ -361,6 +369,7 @@ jobs:
               SHOULD_TEST="test"
               SHOULD_E2E_TEST="e2e"
               SHOULD_SANDBOX_TEST="sandbox-test"
+              SHOULD_SANDBOX_TAGS=""
               SHOULD_BUILD="build"
               SHOULD_RELEASE_ANDROID="release-android"
               SHOULD_AI_TEST_MOCK="ai-test-mock"
@@ -383,6 +392,7 @@ jobs:
             SHOULD_TEST=""
             SHOULD_E2E_TEST=""
             SHOULD_SANDBOX_TEST=""
+            SHOULD_SANDBOX_TAGS=""
             SHOULD_BUILD=""
             SHOULD_RELEASE_ANDROID=""
             SHOULD_AI_TEST_MOCK=""
@@ -441,6 +451,7 @@ jobs:
           echo "should_test=$SHOULD_TEST" >> "$GITHUB_OUTPUT"
           echo "should_e2e_test=$SHOULD_E2E_TEST" >> "$GITHUB_OUTPUT"
           echo "should_sandbox_test=$SHOULD_SANDBOX_TEST" >> "$GITHUB_OUTPUT"
+          echo "should_sandbox_tags=$SHOULD_SANDBOX_TAGS" >> "$GITHUB_OUTPUT"
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
           echo "should_release_android=$SHOULD_RELEASE_ANDROID" >> "$GITHUB_OUTPUT"
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
@@ -448,7 +459,7 @@ jobs:
           echo "should_test_core_only=$SHOULD_TEST_CORE_ONLY" >> "$GITHUB_OUTPUT"
           echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
           echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
-          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} e2e=${SHOULD_E2E_TEST:-false} sandbox=${SHOULD_SANDBOX_TEST:-false} build=${SHOULD_BUILD:-false} release-android=${SHOULD_RELEASE_ANDROID:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
+          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} e2e=${SHOULD_E2E_TEST:-false} sandbox=${SHOULD_SANDBOX_TEST:-false} sandbox-tags=${SHOULD_SANDBOX_TAGS:-<all>} build=${SHOULD_BUILD:-false} release-android=${SHOULD_RELEASE_ANDROID:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
 
       - name: Dispatch Android release workflow in open-chat-go-mobile
         id: android_release_dispatch
@@ -1296,125 +1307,6 @@ jobs:
             exit 1
           fi
 
-  sandbox-tests-discover:
-    name: Discover Sandbox Tests
-    runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
-    if: |
-      always() &&
-      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
-      needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != ''
-    outputs:
-      tests: ${{ steps.discover.outputs.tests }}
-    steps:
-      - name: Checkout source repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
-          token: ${{ secrets.BOT_TOKEN || github.token }}
-          submodules: recursive
-
-      - name: Enumerate sandbox test directories
-        id: discover
-        run: |
-          set -euo pipefail
-          tests_json="$({
-            find development/ci/sandbox_tests -mindepth 2 -maxdepth 2 -name verify.sh \
-              -printf '%h\n' 2>/dev/null \
-              | sed 's#development/ci/sandbox_tests/##' \
-              | sort -u \
-              | jq -R -s -c 'split("\n") | map(select(. != ""))'
-          })"
-          if [ "$tests_json" = "[]" ] || [ -z "$tests_json" ]; then
-            tests_json="[\"basic_smoke\"]"
-          fi
-          echo "tests=$tests_json" >> "$GITHUB_OUTPUT"
-          echo "Discovered sandbox tests: $tests_json"
-
-  sandbox-image-ensure:
-    name: Ensure Sandbox Image
-    runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once]
-    if: |
-      always() &&
-      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
-      (needs.build-backend-image-once.result == 'success' ||
-       needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != '')
-    outputs:
-      image_url: ${{ steps.image.outputs.image_url }}
-    steps:
-      - name: Checkout sandbox-integration submodule
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
-          token: ${{ secrets.BOT_TOKEN || github.token }}
-          submodules: recursive
-
-      - name: Resolve sandbox image tag from content hash
-        id: image
-        run: |
-          set -euo pipefail
-          HASH="$(find clients/integrations/docker_sandbox_integration/sandboxes/coding -type f \
-            ! -name 'recent-repo-changes-summary.md' -print0 \
-            | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
-          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
-          echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-${HASH}" >> "$GITHUB_OUTPUT"
-          echo "sandbox image content hash: ${HASH}"
-
-      - name: Login to GHCR
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Check whether sandbox image already exists
-        id: probe
-        env:
-          IMAGE_URL: ${{ steps.image.outputs.image_url }}
-        run: |
-          set -euo pipefail
-          if docker manifest inspect "$IMAGE_URL" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Sandbox image ${IMAGE_URL} already in registry; skipping build."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Refresh sandbox-latest alias for existing image
-        if: steps.probe.outputs.exists == 'true'
-        env:
-          IMAGE_URL: ${{ steps.image.outputs.image_url }}
-        run: |
-          set -euo pipefail
-          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-.*/:sandbox-latest/')"
-          docker buildx imagetools create -t "$LATEST_URL" "$IMAGE_URL"
-
-      - name: Set up Docker Buildx
-        if: steps.probe.outputs.exists != 'true'
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push sandbox image (with retries)
-        if: steps.probe.outputs.exists != 'true'
-        env:
-          IMAGE_URL: ${{ steps.image.outputs.image_url }}
-        run: |
-          set -euo pipefail
-          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-.*/:sandbox-latest/')"
-          attempt=0
-          until docker buildx build \
-            --push \
-            -f clients/integrations/docker_sandbox_integration/sandboxes/coding/Dockerfile \
-            -t "$IMAGE_URL" \
-            -t "$LATEST_URL" \
-            clients/integrations/docker_sandbox_integration/sandboxes/coding; do
-            attempt=$((attempt + 1))
-            if [ "$attempt" -ge 3 ]; then
-              echo "::error::sandbox image build failed after ${attempt} attempts" >&2
-              exit 1
-            fi
-            echo "sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
-            sleep 15
-          done
-
   sandbox-android-image-ensure:
     name: Ensure Android Sandbox Image
     runs-on: ubuntu-latest
@@ -1597,286 +1489,37 @@ jobs:
           if-no-files-found: warn
 
   run-pr-ci-sandbox-tests-after-deploy:
-    name: Sandbox Test ${{ matrix.test }} After Deploy
-    runs-on: ubuntu-latest
-    # Hard cap for the whole matrix job. The LLM interaction is capped at
-    # 12 min via SANDBOX_INTERACTION_TIMEOUT by default; tests may override
-    # per-test via config.json "interaction_timeout" (repo_changes_summary
-    # uses 900s). The extra minutes cover sandbox/backend startup,
-    # verification and artifact upload.
-    timeout-minutes: 22
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-tests-discover, sandbox-image-ensure, approve-and-dispatch-deploy]
+    name: Sandbox Benchmark (after deploy)
+    # Reusable sandbox benchmark suite: tag-filtered discovery, sandbox/backend
+    # image resolution, the per-test matrix and summary posting all live in
+    # reusable-sandbox-benchmark.yaml.
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, approve-and-dispatch-deploy]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
-      (needs.sandbox-image-ensure.result == 'success' || needs.sandbox-image-ensure.result == 'skipped') &&
-      needs.sandbox-tests-discover.result == 'success' &&
+      needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != '' &&
       (needs.approve-and-dispatch-deploy.result == 'success' ||
        (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production'))
-    strategy:
-      fail-fast: false
-      matrix:
-        test: ${{ fromJson(needs.sandbox-tests-discover.outputs.tests) }}
-    outputs:
-      tests: ${{ needs.sandbox-tests-discover.outputs.tests }}
-    env:
-      BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
-      # Prebuilt sandbox image (only rebuilt when the sandbox Dockerfile dir
-      # content changes); empty = build locally.
-      SANDBOX_IMAGE_URL: ${{ needs.sandbox-image-ensure.outputs.image_url }}
-      # Scratch dir on host so the bot's own git clone can never land inside a
-      # tracked checkout (avoids the accidental-submodule footgun).
-      SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
-      SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
-      # 12-minute cap per sandbox test interaction: all benchmark tasks are
-      # designed to finish well within that on the pinned openrouter model
-      # (observed: basic_smoke ≈1min, repo_changes_summary ≈3min).
-      SANDBOX_INTERACTION_TIMEOUT: "720"
-      LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
-      LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
-      DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
-      IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
-      OPENCODE_PERMISSION_MODE: auto
-      # Pin the benchmark opencode runtime model: deepseek v4 flash (fast,
-      # stable tool-use via openrouter) - matches the sandbox test config.json
-      # pins and the default model catalog.
-      SANDBOX_OPENCODE_MODEL: deepseek/deepseek-v4-flash
-      # gh_pr_comment test: the git integration pre-authenticates the gh CLI on
-      # the sandbox VM with this token and the verification re-reads the posted
-      # comment with it. BOT_TOKEN already has PR comment rights (used by the
-      # summary-posting step); a dedicated secret can override it.
-      SANDBOX_GH_TOKEN: ${{ secrets.SANDBOX_GH_TOKEN || secrets.BOT_TOKEN || github.token }}
-      SANDBOX_GH_PR_REPO: ${{ github.repository }}
-      SANDBOX_GH_PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
-    steps:
-      - name: Checkout source repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
-          token: ${{ secrets.BOT_TOKEN || github.token }}
-          submodules: recursive
-          # Full history: the repo_changes_summary benchmark summarizes the
-          # last 3 commits from the pre-staged sandbox clone; a shallow
-          # checkout would surface a single grafted root commit (full tree
-          # diff) instead of the real commit history.
-          fetch-depth: 0
-
-      - name: Login to GHCR for backend image pull
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Run sandbox test ${{ matrix.test }}
-        id: test
-        # Independent wall-clock backstop below the 22-minute job cap: even if a
-        # test hook wedges (eg docker exec against an unresponsive k3s API
-        # server), the harness is killed and the job fails fast instead of
-        # hanging until the runner cancels everything.
-        timeout-minutes: 18
-        run: |
-          set -euo pipefail
-          timeout --foreground --kill-after=30 1020 \
-            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
-
-      - name: Post repo_changes_summary to the PR
-        if: matrix.test == 'repo_changes_summary' && steps.test.outcome == 'success' && needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
-        env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
-          SOURCE_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-          summary="$(
-            jq -r '.last_bot.text // empty' \
-              ".sandbox-results/repo_changes_summary.last_bot.json"
-          )"
-          if [ -z "$summary" ]; then
-            echo "::warning::No summary text available; skipping PR comment."
-            exit 0
-          fi
-          # Defensive: if the model wrapped the summary in a markdown code
-          # fence, unwrap it so the comment renders the markdown directly.
-          if printf '%s' "$summary" | head -n1 | grep -q '^```'; then
-            summary="$(printf '%s' "$summary" | sed '1d' | sed '${/^```[[:space:]]*$/d}')"
-          fi
-          if [ "${#summary}" -gt 55000 ]; then
-            summary="${summary:0:55000}
-          ... (truncated)"
-          fi
-          export TPL_SUMMARY_BODY="$summary"
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/009-sandbox-repo-changes-summary.md)"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comments_json="$({
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments"
-          })"
-          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-sandbox-summary-repo_changes_summary -->")))][0].id // ""' <<< "$comments_json")"
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
-              -d "$payload" >/dev/null
-            echo "Updated PR summary comment ${comment_id}."
-          else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments" \
-              -d "$payload" >/dev/null
-            echo "Posted new PR summary comment."
-          fi
-
-      - name: Upload sandbox test result
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sandbox-result-${{ matrix.test }}
-          path: |
-            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
-            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
-            ${{ github.workspace }}/.sandbox-results/*.last_bot.json
-            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
-            ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
-            ${{ github.workspace }}/.sandbox-results/*.run_config.json
-            ${{ github.workspace }}/.sandbox-results/*.interaction.json
-          include-hidden-files: true
-          if-no-files-found: warn
-
-  sandbox-tests-summary:
-    name: Post Sandbox Tests Summary
-    runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-sandbox-tests-after-deploy]
-    if: |
-      always() &&
-      github.event_name == 'pull_request' &&
-      github.event.action != 'closed' &&
-      needs.run-pr-ci-tests-and-deployments.result == 'success'
-    env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
-      SOURCE_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
-      PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
-    steps:
-      - name: Download sandbox test results
-        uses: actions/download-artifact@v4
-        with:
-          path: ${{ github.workspace }}/.sandbox-results
-          pattern: sandbox-result-*
-
-      - name: Build and post summary table
-        env:
-          RENDERER_BASE: ${{ vars.INTERACTION_RENDERER_BASE || 'https://stage.msgmate.io' }}
-        run: |
-          set -euo pipefail
-          results_dir="${{ github.workspace }}/.sandbox-results"
-
-          header="| Test | Status | Model | Runtime | Interaction | Notes |"
-          sep="|---|---|---|---|---|---|"
-          : > /tmp/summary-rows.txt
-          # Artifacts are extracted per artifact into their own subdirectory
-          # (no merge-multiple: merging multiple artifacts into one directory
-          # has proven lossy in practice). TSV files are single-line; locate
-          # them with find so nested artifact dirs are handled uniformly.
-          for f in $(find "$results_dir" -name '*.tsv' | sort); do
-            artifact_dir="$(dirname "$f")"
-            name="$(cut -f1 "$f")"
-            status="$(cut -f2 "$f")"
-            detail="$(cut -f3 "$f" | tr -d '\t\r\n' | head -c 60)"
-            # Column 4 is the wall-clock duration as "<n>s" (run_test.sh timer).
-            runtime="$(cut -f4 "$f" | tr -d '\t\r\n')"
-            if [ -n "$runtime" ] && [ "$runtime" != "-" ] && [ "$runtime" != "null" ]; then
-              secs="${runtime%s}"
-              runtime="≈ $(( secs / 60 ))m $(( secs % 60 ))s"
-            else
-              runtime="-"
-            fi
-            # Column 6 is the aggregated opencode token usage of the run
-            # ("in:<n> out:<n>", or "-" when the session export was
-            # unavailable). Rendered under the runtime value in the same cell.
-            tokens="$(cut -f6 "$f" | tr -d '\t\r\n')"
-            if [ -n "$tokens" ] && [ "$tokens" != "-" ] && [ "$tokens" != "null" ]; then
-              tokens_cell="$(printf '%s' "$tokens" | sed -E 's/^in:([0-9]+) out:([0-9]+)$/in: \1 · out: \2/')"
-              if [ -n "$tokens_cell" ] && [ "$tokens_cell" != "$tokens" ]; then
-                runtime="${runtime}<br/>${tokens_cell}"
-              else
-                echo "::warning::unexpected token usage format in $f: '$tokens'"
-              fi
-            fi
-            # Column 5 is the pinned provider/model the benchmark ran with.
-            model="$(cut -f5 "$f" | tr -d '\t\r\n')"
-            [ -z "$model" ] && model="-"
-            # Upload the sanitized interaction export as a gist so reviewers can
-            # open the full chat in the interaction renderer without login.
-            interaction_link="-"
-            export_file="$artifact_dir/${name}.interaction.json"
-            if [ -s "$export_file" ] && jq -e . "$export_file" >/dev/null 2>&1; then
-              gist_code="$(curl -sS -o /tmp/gist-resp.json -w '%{http_code}' -X POST \
-                -H "Authorization: Bearer ${GIST_TOKEN}" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/gists" \
-                -d "$(jq -n --arg content "$(cat "$export_file")" \
-                  '{files:{"interaction.json":{content: $content}}}')")" || gist_code="curl-error"
-              raw_url="$(jq -r '.files["interaction.json"].raw_url // empty' /tmp/gist-resp.json 2>/dev/null || true)"
-              if [ -n "$raw_url" ]; then
-                encoded_raw_url="$(jq -Rr @uri <<< "$raw_url")"
-                interaction_link="[open](${RENDERER_BASE}/interaction_renderer/?url=${encoded_raw_url})"
-              else
-                echo "::warning::Could not create gist for ${name} interaction export (http=${gist_code}; token may lack gist scope). Response: $(head -c 300 /tmp/gist-resp.json 2>/dev/null || true)"
-              fi
-            fi
-            if [ "$status" = "passed" ]; then
-              icon="✅ passed"
-            else
-              icon="❌ failed"
-            fi
-            printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
-          done
-
-          failed_count="$(grep -c '❌' /tmp/summary-rows.txt || true)"
-          rows="$(cat /tmp/summary-rows.txt)"
-          if [ -z "$rows" ]; then
-            rows="| _no sandbox tests ran_ | - | - | - | - | - |"
-          fi
-
-          body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
-            "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows")"
-
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-
-          comments_json="$({
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments"
-          })"
-          comment_id="$(jq -r --arg bot "$BOT_USER" '[.[] | select(.user.login == $bot and (.body | contains("<!-- open-chat-sandbox-benchmark-summary -->")))][0].id // ""' <<< "$comments_json")"
-
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
-              -d "$payload"
-          else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments" \
-              -d "$payload"
-          fi
+    uses: ./.github/workflows/reusable-sandbox-benchmark.yaml
+    with:
+      target_ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+      backend_image: ${{ needs.build-backend-image-once.outputs.image_url }}
+      # Plain `sandbox-test` runs all tests; `sandbox-test:<tag>` labels narrow
+      # the suite to matching tests (union of all such labels).
+      tags: ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_tags }}
+      opencode_provider: openrouter
+      opencode_model: deepseek/deepseek-v4-flash
+      sandbox_interaction_timeout: "720"
+      upload_artifacts: true
+      post_results: true
+      results_target: pr
+      pr_number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+      source_repo: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
+      bot_user: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+      gh_pr_repo: ${{ github.repository }}
+      gh_pr_number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+    secrets: inherit
 
   update-progress-comment-after-tests:
     name: Update Progress Comment After Tests
@@ -2187,7 +1830,7 @@ jobs:
           # Production promotion PRs run the full suite without relying on
           # labels (burst label-adds race with the event payload snapshot).
           if [ "${{ github.event.pull_request.base.ref }}" != "production" ] &&
-             ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test)'; then
+             ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test(:.*)?)'; then
             echo "::error::PR is missing the required test label."
             exit 1
           fi
@@ -2263,7 +1906,7 @@ jobs:
           case "${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'sandbox-test'; then
+              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx 'sandbox-test(:.*)?'; then
                 echo "::error::PR CI sandbox tests did not run for this commit."
                 exit 1
               fi
@@ -3080,7 +2723,7 @@ jobs:
           | Promoted commit | \`${PROMOTED_SHA}\` |
           | Source merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) — ${MERGED_PR_TITLE} |
 
-          Automated labels: \`ai-test-mock\`, \`ai-test-real\`, \`build\`, \`test\`, \`e2e\`, \`test-e2e\`, \`test-core-only\`, \`sandbox-test\`, \`release-android\` — the full test suite (incl. post-deploy suites, which run in parallel since the staging deploy was already confirmed on the merge to \`main\`) must all pass before this PR can be merged. Merging gates on **PR Test Merge Requirement** and **Full Suite Gate**.
+          Automated labels: \`ai-test-mock\`, \`ai-test-real\`, \`build\`, \`test\`, \`e2e\`, \`test-e2e\`, \`test-core-only\`, \`sandbox-test\` (or \`sandbox-test:<tag>\` to run a tagged subset), \`release-android\` — the full test suite (incl. post-deploy suites, which run in parallel since the staging deploy was already confirmed on the merge to \`main\`) must all pass before this PR can be merged. Merging gates on **PR Test Merge Requirement** and **Full Suite Gate**.
           EOF
           )"
 
