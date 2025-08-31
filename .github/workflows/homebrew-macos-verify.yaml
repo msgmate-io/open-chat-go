@@ -82,6 +82,7 @@ jobs:
       HOMEBREW_NO_ENV_HINTS: "1"
       HOMEBREW_NO_COLOR: "1"
       NO_COLOR: "1"
+      WAIT_ATTEMPTS: "24"
 
     steps:
       - name: Show runner information
@@ -144,21 +145,34 @@ jobs:
           # First boot seeds the SQLite database, registers every integration
           # route and runs the (network-bound) bootstrap, which can take well
           # over 10 minutes on a cold runner. Poll for up to 25 minutes.
-          for attempt in $(seq 1 300); do
+          for attempt in $(seq 1 "${WAIT_ATTEMPTS:-300}"); do
             if curl -fsS --max-time 5 --noproxy '*' "${endpoint}" >/tmp/open-chat-version.json 2>/dev/null; then
               echo "Server answered on attempt ${attempt}: $(cat /tmp/open-chat-version.json)"
               exit 0
             fi
             if [ $((attempt % 30)) -eq 0 ]; then
-              echo "still waiting for ${endpoint} (attempt ${attempt}/300, $((attempt * 5))s elapsed)"
+              echo "still waiting for ${endpoint} (attempt ${attempt}/${WAIT_ATTEMPTS:-300}, $((attempt * 5))s elapsed)"
             fi
             sleep 5
           done
           echo "::error::open-chat did not answer on ${endpoint}"
           echo "--- listeners on port ${SERVICE_PORT} ---"
           lsof -nP -iTCP:"${SERVICE_PORT}" || true
+          netstat -an | grep -F ".${SERVICE_PORT} " || true
           echo "--- direct curl ---"
           curl -v --max-time 5 --noproxy '*' "${endpoint}" || true
+          echo "--- open-chat processes ---"
+          pgrep -fl open-chat || true
+          pid="$(pgrep -f 'open-chat service run' | head -n 1 || true)"
+          if [ -n "${pid}" ]; then
+            echo "--- process ${pid} state ---"
+            ps -o pid,ppid,state,etime,command -p "${pid}" || true
+            echo "--- open files for ${pid} ---"
+            lsof -p "${pid}" 2>/dev/null | grep -E "TCP|LISTEN|open-chat.log|open-chat.err.log" || true
+            echo "--- goroutine dump (SIGQUIT pid ${pid}) ---"
+            kill -QUIT "${pid}" || true
+            sleep 8
+          fi
           echo "--- brew services list ---"
           brew services list || true
           echo "--- launchd plist ---"
@@ -168,7 +182,7 @@ jobs:
           echo "--- open-chat.log ---"
           tail -n 200 "$(brew --prefix)/var/log/open-chat.log" 2>/dev/null || true
           echo "--- open-chat.err.log ---"
-          tail -n 200 "$(brew --prefix)/var/log/open-chat.err.log" 2>/dev/null || true
+          tail -n 400 "$(brew --prefix)/var/log/open-chat.err.log" 2>/dev/null || true
           exit 1
 
       - name: Verify open-chat status reports the server running
