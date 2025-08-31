@@ -22,3 +22,32 @@ We release all versions always ( after admin confirmation ):
 - PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
+
+### Windows
+
+winget is the recommended Windows channel (Scoop is a secondary, admin-free
+option). Until the package is listed, download the `windows-amd64` or
+`windows-arm64` asset from the [latest release](https://github.com/msgmate-io/open-chat-go/releases)
+and register the native Windows service from an **elevated** PowerShell:
+
+```powershell
+# winget (once published)
+winget install Msgmate.OpenChat
+
+# or Scoop (once the bucket is published)
+scoop bucket add msgmate https://github.com/msgmate-io/scoop-bucket
+scoop install msgmate/open-chat
+
+# register and start the service (admin shell)
+open-chat install
+open-chat status   # service: running, server: running on 127.0.0.1:1984
+```
+
+`open-chat install` copies the binary to `%ProgramFiles%\OpenChat`, stores its
+data and config under `%ProgramData%\OpenChat` and registers the service with the
+Windows SCM. Because the service runs that copied binary, re-run
+`open-chat install --force` from an elevated shell after every
+`winget upgrade`/`scoop update` so the service picks up the new version.
+
+See [`development/windows/README.md`](development/windows/README.md) for the full
+channel comparison, the winget/Scoop manifest templates and the upgrade runbook.
