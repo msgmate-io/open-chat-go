@@ -1,0 +1,43 @@
+# This manifest is maintained by development/windows/winget/render_manifest.sh
+# in msgmate-io/open-chat-go. Do not edit the version, URLs or checksums by
+# hand: run the script so they stay in sync with the published release assets.
+#
+# Installer manifest. The release ships per-architecture .zip archives that each
+# contain a stable `open-chat.exe`. Using InstallerType: zip with
+# NestedInstallerType: portable lets winget expose a clean `open-chat` command
+# (PortableCommandAlias is only valid for the archive+nested-portable case).
+#
+# Installing the service itself is a separate, elevated step:
+#   open-chat install
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: Msgmate.OpenChat
+PackageVersion: "@VERSION@"
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: "10.0.0.0"
+InstallModes:
+  - silent
+  - silentWithProgress
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: open-chat.exe
+        PortableCommandAlias: open-chat
+    InstallerUrl: "@WINDOWS_AMD64_URL@"
+    InstallerSha256: "@WINDOWS_AMD64_SHA256@"
+    Scope: user
+    UpgradeBehavior: install
+  - Architecture: arm64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: open-chat.exe
+        PortableCommandAlias: open-chat
+    InstallerUrl: "@WINDOWS_ARM64_URL@"
+    InstallerSha256: "@WINDOWS_ARM64_SHA256@"
+    Scope: user
+    UpgradeBehavior: install
+ManifestType: installer
+ManifestVersion: 1.10.0
