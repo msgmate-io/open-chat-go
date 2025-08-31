@@ -22,3 +22,18 @@ We release all versions always ( after admin confirmation ):
 - PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
+
+### Nix / NixOS
+
+A flake provides `packages.<system>.open-chat`, an overlay and a hardened
+`nixosModules.open-chat` / `services.open-chat` module:
+
+```bash
+nix run github:msgmate-io/open-chat-go
+nix build .#open-chat
+```
+
+The flake packages the official release binary (frontend, swagger and
+integrations embedded). See [`nix/README.md`](nix/README.md) for the NixOS
+module options and for why building Go from source in the sandbox is not
+supported yet.
