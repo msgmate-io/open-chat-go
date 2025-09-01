@@ -22,3 +22,20 @@ We release all versions always ( after admin confirmation ):
 - PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
+
+### Portable Linux AppImage
+
+Every release also ships a portable `.AppImage` (x86_64, plus aarch64) that runs
+without installation on Ubuntu 22.04/24.04, Fedora and similar distributions:
+
+```bash
+chmod +x open-chat-<version>-x86_64.AppImage
+./open-chat-<version>-x86_64.AppImage
+```
+
+It starts `open-chat server` on `http://127.0.0.1:1984` with an embedded Redis,
+a sqlite database under `$XDG_DATA_HOME/open-chat/` and a generated admin
+password stored in `$XDG_CONFIG_HOME/open-chat/root-credentials`. See
+[`development/packaging/appimage`](./development/packaging/appimage) for build
+and usage details, including the `--appimage-extract-and-run` fallback for hosts
+without FUSE.
