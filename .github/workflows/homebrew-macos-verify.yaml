@@ -82,7 +82,6 @@ jobs:
       HOMEBREW_NO_ENV_HINTS: "1"
       HOMEBREW_NO_COLOR: "1"
       NO_COLOR: "1"
-      WAIT_ATTEMPTS: "24"
 
     steps:
       - name: Show runner information
@@ -142,16 +141,16 @@ jobs:
         run: |
           set -euo pipefail
           endpoint="http://127.0.0.1:${SERVICE_PORT}/api/version"
-          # First boot seeds the SQLite database, registers every integration
-          # route and runs the (network-bound) bootstrap, which can take well
-          # over 10 minutes on a cold runner. Poll for up to 25 minutes.
-          for attempt in $(seq 1 "${WAIT_ATTEMPTS:-300}"); do
+          # First boot seeds the SQLite database and registers every integration
+          # route; this normally takes a couple of seconds but allow a generous
+          # 10 minutes so a slow runner does not produce a false failure.
+          for attempt in $(seq 1 120); do
             if curl -fsS --max-time 5 --noproxy '*' "${endpoint}" >/tmp/open-chat-version.json 2>/dev/null; then
               echo "Server answered on attempt ${attempt}: $(cat /tmp/open-chat-version.json)"
               exit 0
             fi
             if [ $((attempt % 30)) -eq 0 ]; then
-              echo "still waiting for ${endpoint} (attempt ${attempt}/${WAIT_ATTEMPTS:-300}, $((attempt * 5))s elapsed)"
+              echo "still waiting for ${endpoint} (attempt ${attempt}/120, $((attempt * 5))s elapsed)"
             fi
             sleep 5
           done
