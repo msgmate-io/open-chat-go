@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# AppRun entrypoint for the open-chat AppImage.
+#
+# Launches `open-chat server` with portable, XDG-compliant defaults so the
+# application works without an installer:
+#
+#   * sqlite database   -> $XDG_DATA_HOME/open-chat/data.db
+#   * credentials/config-> $XDG_CONFIG_HOME/open-chat/
+#   * embedded Redis    -> no external service required
+#   * HTTP server       -> http://127.0.0.1:1984
+#
+# All settings can be overridden through the usual open-chat environment
+# variables (HOST, PORT, DB_PATH, REDIS_MODE, DEBUG, ROOT_CREDENTIALS,
+# OPEN_CHAT_CONFIG, ...). AppImage specific knobs:
+#
+#   OPEN_CHAT_DATA_DIR          override the data directory
+#   OPEN_CHAT_CONFIG_DIR        override the config directory
+#   OPEN_CHAT_OPEN_BROWSER=1    open the UI in a browser once the server is up
+#   OPEN_CHAT_APPIMAGE_COMMAND  subcommand to run (default: server)
+#
+set -euo pipefail
+
+HERE="${APPDIR:-$(cd "$(dirname "$(readlink -f "$0")")" && pwd)}"
+APP_BIN="${HERE}/usr/bin/open-chat"
+
+XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}"
+
+DATA_DIR="${OPEN_CHAT_DATA_DIR:-${XDG_DATA_HOME}/open-chat}"
+CONF_DIR="${OPEN_CHAT_CONFIG_DIR:-${XDG_CONFIG_HOME}/open-chat}"
+CACHE_DIR="${XDG_CACHE_HOME}/open-chat"
+mkdir -p "${DATA_DIR}" "${CONF_DIR}" "${CACHE_DIR}"
+
+# Portable defaults. Everything is overridable from the environment.
+export HOST="${HOST:-127.0.0.1}"
+export PORT="${PORT:-1984}"
+export DB_PATH="${DB_PATH:-${DATA_DIR}/data.db}"
+export REDIS_MODE="${REDIS_MODE:-embedded}"
+export DEBUG="${DEBUG:-false}"
+export TMPDIR="${TMPDIR:-${CACHE_DIR}}"
+
+CRED_FILE="${CONF_DIR}/root-credentials"
+
+# Reuse persisted credentials across runs.
+if [[ -z "${ROOT_CREDENTIALS:-}" && -f "${CRED_FILE}" ]]; then
+  ROOT_CREDENTIALS="$(cat "${CRED_FILE}")"
+  export ROOT_CREDENTIALS
+fi
+
+# First run: generate credentials that satisfy the server's password policy
+# (letter + number + special character) and persist them for later runs.
+if [[ -z "${ROOT_CREDENTIALS:-}" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    PASSWORD="$(openssl rand -hex 16)!"
+  else
+    PASSWORD="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')!"
+  fi
+  ROOT_CREDENTIALS="admin:${PASSWORD}"
+  export ROOT_CREDENTIALS
+
+  old_umask="$(umask)"
+  umask 077
+  printf '%s\n' "${ROOT_CREDENTIALS}" > "${CRED_FILE}"
+  umask "${old_umask}"
+
+  echo "=================================================================="
+  echo " Generated Open Chat admin credentials (first run)"
+  echo "   username: admin"
+  echo "   password: ${PASSWORD}"
+  echo "   saved to: ${CRED_FILE}"
+  echo "=================================================================="
+fi
+
+URL="http://${HOST}:${PORT}"
+
+is_listening() {
+  (exec 3<>"/dev/tcp/${HOST}/${PORT}") >/dev/null 2>&1
+}
+
+open_browser() {
+  if [[ "${OPEN_CHAT_OPEN_BROWSER:-0}" == "1" ]] && command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "${URL}" >/dev/null 2>&1 || true
+  fi
+}
+
+# Single-instance behaviour: if something already answers on the configured
+# address, do not start a second server.
+if is_listening; then
+  echo "Open Chat already appears to be running at ${URL}."
+  open_browser
+  exit 0
+fi
+
+echo "Starting Open Chat at ${URL} (database: ${DB_PATH})"
+
+if [[ "${OPEN_CHAT_OPEN_BROWSER:-0}" == "1" ]]; then
+  (
+    for _ in $(seq 1 120); do
+      if is_listening; then
+        open_browser
+        break
+      fi
+      sleep 0.5
+    done
+  ) &
+fi
+
+COMMAND="${OPEN_CHAT_APPIMAGE_COMMAND:-server}"
+if [[ "$#" -gt 0 ]]; then
+  case "$1" in
+    server | run | worker | client | install | uninstall | status | service)
+      COMMAND="$1"
+      shift
+      ;;
+  esac
+fi
+
+exec "${APP_BIN}" "${COMMAND}" "$@"
