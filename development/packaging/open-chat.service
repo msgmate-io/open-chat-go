@@ -1,0 +1,30 @@
+[Unit]
+Description=Open Chat server and background worker
+Documentation=https://github.com/msgmate-io/open-chat-go
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=open-chat
+Group=open-chat
+WorkingDirectory=/var/lib/open-chat
+EnvironmentFile=-/etc/open-chat/open-chat.env
+ExecStart=/usr/bin/open-chat --config /etc/open-chat/open-chat.json service run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/open-chat
+
+[Install]
+WantedBy=multi-user.target
