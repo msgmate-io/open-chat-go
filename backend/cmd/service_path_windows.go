@@ -37,6 +37,19 @@ func defaultWorkDir() string {
 	return filepath.Join(base, "OpenChat")
 }
 
+// extraBinarySearchPaths lists additional locations a distribution-managed
+// open-chat binary may live in. Windows has no distro packages, so there are
+// none.
+func extraBinarySearchPaths() []string {
+	return nil
+}
+
+// isPackageManagedService reports whether the service comes from a distribution
+// package. Always false on Windows.
+func isPackageManagedService() bool {
+	return false
+}
+
 // isElevated reports whether the process runs with an elevated (admin) token.
 func isElevated() bool {
 	token, err := windows.OpenCurrentProcessToken()

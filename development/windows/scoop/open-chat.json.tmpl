@@ -1,0 +1,35 @@
+{
+  "$comment": "Maintained by development/windows/scoop/render or development/windows/winget/render_manifest.sh. Do not edit version/urls/hashes by hand.",
+  "version": "@VERSION@",
+  "description": "Open source, privacy focused Chat-GPT alternative with tools and integrations",
+  "homepage": "https://github.com/msgmate-io/open-chat-go",
+  "license": "@LICENSE@",
+  "architecture": {
+    "64bit": {
+      "url": "@WINDOWS_AMD64_URL@",
+      "hash": "@WINDOWS_AMD64_SHA256@"
+    },
+    "arm64": {
+      "url": "@WINDOWS_ARM64_URL@",
+      "hash": "@WINDOWS_ARM64_SHA256@"
+    }
+  },
+  "bin": "open-chat.exe",
+  "checkver": {
+    "github": "https://github.com/msgmate-io/open-chat-go",
+    "regex": "open-chat-([\\d.]+)-windows-amd64"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-$version/open-chat-$version-windows-amd64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-$version/open-chat-$version-windows-arm64.zip"
+      }
+    },
+    "hash": {
+      "mode": "download"
+    }
+  }
+}
