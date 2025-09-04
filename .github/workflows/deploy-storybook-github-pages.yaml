@@ -1,10 +1,12 @@
-name: Deploy Storybook to GitHub Pages
+name: Deploy Storybook and APT repository to GitHub Pages
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+  release:
+    types: [published]
 
 concurrency:
   group: deploy-storybook-github-pages
@@ -21,14 +23,11 @@ env:
 
 jobs:
   deploy:
-    name: Deploy Storybook
+    name: Deploy Pages
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,15 +43,84 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
+        working-directory: frontend
         run: npm ci
 
       - name: Build Storybook
+        working-directory: frontend
         run: npm run build-storybook
+
+      - name: Assemble Pages site (Storybook)
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -a frontend/packages/ui/storybook-static/. site/
+
+      - name: Detect APT signing key
+        id: apt_key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -n "$APT_GPG_PRIVATE_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "APT_GPG_PRIVATE_KEY not set; skipping APT repository publication."
+          fi
+
+      - name: Import APT signing key
+        if: steps.apt_key.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.gnupg"
+          chmod 700 "$HOME/.gnupg"
+          printf '%s' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Build and sign APT repository
+        if: steps.apt_key.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          mkdir -p apt-debs
+          # Publish only the most recent production releases to stay well
+          # within the GitHub Pages site size limit.
+          mapfile -t tags < <(gh release list \
+            --repo "${{ github.repository }}" \
+            --exclude-pre-releases --exclude-drafts \
+            --limit 8 --json tagName --jq '.[].tagName' \
+            | grep -E '^open-chat-[0-9]' | head -n 3 || true)
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "No production releases found; skipping APT publication."
+            exit 0
+          fi
+          for tag in "${tags[@]}"; do
+            echo "Downloading .deb assets from ${tag}"
+            gh release download "${tag}" \
+              --repo "${{ github.repository }}" \
+              --pattern '*.deb' \
+              --dir apt-debs \
+              --clobber || true
+          done
+          if ! compgen -G "apt-debs/*.deb" > /dev/null; then
+            echo "No .deb assets found on the selected releases; skipping APT publication."
+            exit 0
+          fi
+          KEY_ID="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')"
+          if [ -z "$KEY_ID" ]; then
+            echo "::error::No secret key available after import."
+            exit 1
+          fi
+          DEB_DIR="$PWD/apt-debs" OUT_DIR="$PWD/site/apt" KEY_ID="$KEY_ID" \
+            development/packaging/build-apt-repo.sh
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: frontend/packages/ui/storybook-static
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deploy
