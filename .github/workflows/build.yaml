@@ -43,9 +43,6 @@ on:
         description: Mark release as prerelease (true/false)
         required: false
         default: "true"
-  push:
-    branches:
-      - fix-build-matrix
 
 permissions:
   contents: write
@@ -117,6 +114,10 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           INTEGRATION_PROFILE: core-only
+          # Static binaries keep the portable .AppImage working on older
+          # glibc distributions (Ubuntu 22.04, Fedora) without bundling glibc.
+          CGO_ENABLED: "0"
+          OPEN_CHAT_RELEASE_BUILD: "1"
         run: |
           chmod +x ./full_build.sh
           ./full_build.sh
@@ -128,6 +129,8 @@ jobs:
           VERSION=$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)
           echo "Detected version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          mkdir -p dist
+          echo "$VERSION" > dist/version.txt
 
       - name: Prepare artifacts
         if: ${{ success() }}
@@ -156,14 +159,180 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/open-chat*${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}*
+          path: |
+            dist/open-chat*${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}*
+            dist/version.txt
+          if-no-files-found: error
+
+  package-deb:
+    name: Package .deb (${{ matrix.deb_arch }})
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            deb_arch: amd64
+          - goarch: arm64
+            deb_arch: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open-chat-*-linux-${{ matrix.goarch }}
+          path: packaged-artifact
+
+      - name: Build .deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_FILE="$(find packaged-artifact -type f -name version.txt -print -quit)"
+          if [ -z "$VERSION_FILE" ]; then
+            echo "::error::version.txt not found in build artifact"
+            exit 1
+          fi
+          VERSION="$(cat "$VERSION_FILE")"
+          BIN="$(find packaged-artifact -type f -name "open-chat-*-linux-${{ matrix.goarch }}" -print -quit)"
+          if [ -z "$BIN" ]; then
+            echo "::error::linux binary not found in build artifact"
+            exit 1
+          fi
+          chmod +x "$BIN"
+          ARCH="${{ matrix.goarch }}" VERSION="$VERSION" BIN="$BIN" OUT_DIR="$PWD/deb-out" \
+            development/packaging/build-deb.sh
+          ls -la deb-out
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-chat-deb-${{ matrix.deb_arch }}
+          path: deb-out/open-chat_*.deb
+          if-no-files-found: error
+
+  package-appimage:
+    name: Package .AppImage (${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+          - goarch: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends file
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: open-chat-*-linux-${{ matrix.goarch }}
+          path: packaged-artifact
+
+      - name: Build .AppImage
+        shell: bash
+        env:
+          ARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          BIN="$(find packaged-artifact -type f -name "open-chat-*-linux-${{ matrix.goarch }}" -print -quit)"
+          if [ -z "$BIN" ]; then
+            echo "::error::linux binary not found in build artifact"
+            exit 1
+          fi
+          chmod +x "$BIN"
+          VERSION="$(basename "$BIN" | sed -E "s/^open-chat-(.*)-linux-${{ matrix.goarch }}\$/\1/")"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$(basename "$BIN")" ]; then
+            echo "::error::could not determine version from $BIN"
+            exit 1
+          fi
+          ARCH="$ARCH" VERSION="$VERSION" BIN="$BIN" OUT_DIR="$PWD/appimage-out" \
+            development/packaging/appimage/build-appimage.sh
+          ls -la appimage-out
+
+      - name: Smoke test AppImage (amd64, no FUSE)
+        if: matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPIMAGE="$(find appimage-out -type f -name '*.AppImage' -print -quit)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "::error::AppImage not found"
+            exit 1
+          fi
+          chmod +x "$APPIMAGE"
+          export HOME="$(mktemp -d)"
+          export XDG_DATA_HOME="$HOME/.local/share"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          # FUSE is unavailable on GitHub-hosted runners, so exercise the
+          # documented --appimage-extract-and-run fallback.
+          "$APPIMAGE" --appimage-extract-and-run >"$HOME/appimage.log" 2>&1 &
+          APP_PID=$!
+          status=""
+          for _ in $(seq 1 90); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$APP_PID" 2>/dev/null || true
+          if [ "$status" != "200" ]; then
+            echo "::error::AppImage server did not become reachable (last status: ${status:-none})"
+            tail -50 "$HOME/appimage.log" || true
+            exit 1
+          fi
+          echo "AppImage server reachable at http://127.0.0.1:1984 (HTTP ${status})"
+          test -f "$XDG_CONFIG_HOME/open-chat/root-credentials" || {
+            echo "::error::expected generated root credentials under the XDG config dir"
+            exit 1
+          }
+          test -f "$XDG_DATA_HOME/open-chat/data.db" || {
+            echo "::error::expected sqlite database under the XDG data dir"
+            exit 1
+          }
+          tail -20 "$HOME/appimage.log" || true
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-chat-appimage-${{ matrix.goarch }}
+          path: appimage-out/*.AppImage
           if-no-files-found: error
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build, package-deb, package-appimage]
     if: always()
+    outputs:
+      tag_name: ${{ steps.release_meta.outputs.tag_name }}
+      version: ${{ steps.release_meta.outputs.version }}
+      prerelease: ${{ steps.release_meta.outputs.prerelease }}
     steps:
       - name: Checkout repository (for source archive)
         uses: actions/checkout@v4
@@ -172,12 +341,25 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
       - name: Resolve release metadata
         id: release_meta
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)"
+          VERSION_FILE="$(find all-artifacts -type f -name version.txt -print -quit 2>/dev/null || true)"
+          VERSION=""
+          if [ -n "$VERSION_FILE" ]; then
+            VERSION="$(cat "$VERSION_FILE")"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)"
+          fi
+          echo "Resolved release version: $VERSION"
           SHORT_SHA="$(git rev-parse --short=12 HEAD)"
 
           RELEASE_KIND="${{ github.event.inputs.release_kind || 'manual' }}"
@@ -232,11 +414,6 @@ jobs:
           echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE_VALUE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: all-artifacts
 
       - name: Summarize collected artifacts
         run: |
@@ -342,3 +519,17 @@ jobs:
             cat /tmp/pr_comment_update.json || true
             exit 1
           fi
+
+  homebrew:
+    name: Bump Homebrew formula
+    needs: [release]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_kind == 'production' && needs.release.outputs.tag_name != '' }}
+    uses: ./.github/workflows/homebrew-formula.yaml
+    with:
+      release_tag: ${{ needs.release.outputs.tag_name }}
+      source_repository: ${{ github.repository }}
+      tap_repository: msgmate-io/homebrew-tap
+      bot_user: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+      source_pr_number: ${{ github.event.inputs.source_pr_number }}
+    secrets:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
