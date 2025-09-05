@@ -307,7 +307,9 @@ func runUninstall(c *cli.Command) error {
 	}
 
 	if installed {
-		if err := s.Uninstall(); err != nil {
+		if isPackageManagedService() {
+			fmt.Printf("Service %q is managed by the system package manager; use `apt remove open-chat` (or the distro equivalent) to remove it\n", ServiceName)
+		} else if err := s.Uninstall(); err != nil {
 			if errors.Is(err, os.ErrNotExist) || errors.Is(err, service.ErrNotInstalled) {
 				fmt.Printf("Service %q is not installed\n", ServiceName)
 			} else {
@@ -403,8 +405,15 @@ func runStatus(c *cli.Command) error {
 	}
 
 	binaryState := "missing"
-	if _, err := os.Stat(target); err == nil {
+	if info, err := os.Stat(target); err == nil && !info.IsDir() {
 		binaryState = target
+	} else {
+		for _, candidate := range extraBinarySearchPaths() {
+			if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+				binaryState = candidate
+				break
+			}
+		}
 	}
 
 	host := strings.TrimSpace(c.String("host"))
