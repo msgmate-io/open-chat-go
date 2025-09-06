@@ -24,6 +24,11 @@ type OpenChatBootstrap struct {
 	SSHServerGrantSpecs   []string
 	OpencodeDefaultOwners []string
 	OpencodeProjectSpecs  []string
+	GitDefaultOwners      []string
+	GitTokenSpecs         []string
+	GitRepositorySpecs    []string
+	GitWorkspaceSpecs     []string
+	GitWorkspaceGrantSpecs []string
 }
 
 func SetAll(next map[string]Value) {
@@ -92,6 +97,11 @@ func SetOpenChatBootstrap(next OpenChatBootstrap) {
 		SSHServerGrantSpecs:   append([]string(nil), next.SSHServerGrantSpecs...),
 		OpencodeDefaultOwners: append([]string(nil), next.OpencodeDefaultOwners...),
 		OpencodeProjectSpecs:  append([]string(nil), next.OpencodeProjectSpecs...),
+		GitDefaultOwners:      append([]string(nil), next.GitDefaultOwners...),
+		GitTokenSpecs:         append([]string(nil), next.GitTokenSpecs...),
+		GitRepositorySpecs:    append([]string(nil), next.GitRepositorySpecs...),
+		GitWorkspaceSpecs:     append([]string(nil), next.GitWorkspaceSpecs...),
+		GitWorkspaceGrantSpecs: append([]string(nil), next.GitWorkspaceGrantSpecs...),
 	}
 }
 
@@ -108,5 +118,10 @@ func GetOpenChatBootstrap() OpenChatBootstrap {
 		SSHServerGrantSpecs:   append([]string(nil), openChatBootstrap.SSHServerGrantSpecs...),
 		OpencodeDefaultOwners: append([]string(nil), openChatBootstrap.OpencodeDefaultOwners...),
 		OpencodeProjectSpecs:  append([]string(nil), openChatBootstrap.OpencodeProjectSpecs...),
+		GitDefaultOwners:      append([]string(nil), openChatBootstrap.GitDefaultOwners...),
+		GitTokenSpecs:         append([]string(nil), openChatBootstrap.GitTokenSpecs...),
+		GitRepositorySpecs:    append([]string(nil), openChatBootstrap.GitRepositorySpecs...),
+		GitWorkspaceSpecs:     append([]string(nil), openChatBootstrap.GitWorkspaceSpecs...),
+		GitWorkspaceGrantSpecs: append([]string(nil), openChatBootstrap.GitWorkspaceGrantSpecs...),
 	}
 }
