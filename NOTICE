@@ -1,8 +1,8 @@
 NOTICE
 
-This repository is licensed under the GNU Lesser General Public License,
-version 3.0 or (at your option) any later version (LGPL-3.0-or-later).
-See LICENSE (LGPLv3) and LICENSE.GPL (GPLv3).
+This repository is licensed under the GNU Affero General Public License,
+version 3.0 or (at your option) any later version (AGPL-3.0-or-later).
+See LICENSE for the full license text.
 
 The licensing of this project is currently being drafted. The statements
 below describe the intended terms and may change.
@@ -11,35 +11,53 @@ Intellectual property
   All original source code in this repository is the intellectual property
   of Tim Schupp / Tim Benjamin Software, unless otherwise stated.
 
-Special licensing
-  LGPL-3.0-or-later may not fit every use case. Alternative, special, or
-  commercial licensing can be investigated and provided on request.
-  Contact: tim+licensing@timschupp.de
+Copyright owner exemption (proprietary submodules)
+  Tim Schupp / Tim Benjamin Software is the sole copyright owner and
+  intellectual property holder of the OpenChat project and of this
+  repository. As the copyright owner, Tim Schupp / Tim Benjamin Software is
+  not bound by the terms of the AGPL-3.0-or-later grant that it makes to the
+  public. It therefore reserves the right to use, combine, link, distribute,
+  and keep private its own proprietary submodules without being subject to
+  the source-disclosure obligations of AGPLv3, including Section 13 (Remote
+  Network Interaction).
 
-Excluded components
-  The following components are NOT covered by the LGPL-3.0-or-later grant
-  of this repository. They are either proprietary, private, or separately
-  licensed, and are explicitly excluded:
+  This exemption is personal to Tim Schupp / Tim Benjamin Software and does
+  NOT extend to any third party. Third parties who receive this software
+  under AGPL-3.0-or-later remain fully bound by AGPLv3. In particular, third
+  parties may not reproduce, distribute, or operate builds that combine this
+  software with the proprietary submodules listed below.
 
-    frontend
-    development/helm
-    development/ci
-    clients/gomobile
-    clients/llm_coding_agents
-    clients/integrations/rest_api_tool_integration
-    clients/integrations/admin_db_managemnt_integration
-    clients/integrations/ssh_integration
-    clients/integrations/account_management
-    clients/integrations/email_integration
-    clients/integrations/voice_integration
-    clients/integrations/opencode_integration
-    clients/integrations/matrix_integration
-    clients/integrations/docker_sandbox_integration
-    clients/integrations/git_integration
-    clients/integrations/kubernetes_integration
+Private submodules excluded from the public grant
+  The submodules listed below are proprietary and are being kept private for
+  now. They are NOT licensed under AGPL-3.0-or-later and are explicitly
+  excluded from the public grant in this repository. Paths are relative to
+  the root of this repository; the repository reference is given in
+  parentheses:
+
+    frontend/                                          (https://github.com/msgmate-io/open-chat-go-frontend)
+    development/helm/                                  (https://github.com/msgmate-io/open-chat-go-helm-chart)
+    development/ci/                                    (https://github.com/msgmate-io/open-chat-go-ci)
+    clients/gomobile/                                  (https://github.com/msgmate-io/open-chat-go-mobile)
+    clients/llm_coding_agents/                         (https://github.com/msgmate-io/open-chat-go-llm-coding-context)
+    clients/integrations/rest_api_tool_integration/    (https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration)
+    clients/integrations/admin_db_managemnt_integration/ (https://github.com/msgmate-io/open-chat-go-admin-db-management-integration)
+    clients/integrations/ssh_integration/              (https://github.com/msgmate-io/open-chat-go-ssh-integration)
+    clients/integrations/account_management/           (https://github.com/msgmate-io/open-chat-go-account-management-integration)
+    clients/integrations/email_integration/            (https://github.com/msgmate-io/open-chat-go-email-integration)
+    clients/integrations/voice_integration/            (https://github.com/msgmate-io/open-chat-go-voice-integration)
+    clients/integrations/opencode_integration/         (https://github.com/msgmate-io/open-chat-go-opencode-integration)
+    clients/integrations/matrix_integration/           (https://github.com/msgmate-io/open-chat-go-matrix-integration)
+    clients/integrations/docker_sandbox_integration/   (https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration)
+    clients/integrations/git_integration/              (https://github.com/msgmate-io/open-chat-go-git-integration)
+    clients/integrations/kubernetes_integration/       (https://github.com/msgmate-io/open-chat-go-kubernetes-integration)
 
   Compiled or embedded frontend build output (backend/server/frontend),
   which is generated from the private `frontend` submodule, is likewise
-  excluded from this license.
+  excluded from the public grant.
 
-  Third-party dependencies remain under their own respective licenses.
+Special licensing
+  AGPL-3.0-or-later may not fit every use case. Alternative, special, or
+  commercial licensing can be investigated and provided on request.
+  Contact: tim+licensing@timschupp.de
+
+Third-party dependencies remain under their own respective licenses.
