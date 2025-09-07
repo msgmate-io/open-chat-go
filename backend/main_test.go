@@ -54,3 +54,35 @@ func TestToOpenChatBootstrapRuntimeIncludesSSHGrantSpecs(t *testing.T) {
 		t.Fatalf("unexpected SSHServerGrantSpecs: %+v", out.SSHServerGrantSpecs)
 	}
 }
+
+func TestToOpenChatBootstrapRuntimeIncludesGitSpecs(t *testing.T) {
+	cfg := openChatConfig{
+		Bootstrap: &openChatBootstrapConfig{
+			Git: &openChatGitBootstrapConfig{
+				Owner:           openChatOwnerList{"admin"},
+				Tokens:          json.RawMessage(`[{"name":"github-main","provider":"github","token":"ghp_x","account_username":"cur1ousdude"}]`),
+				Repositories:    json.RawMessage(`[{"name":"my-app","remote_url":"https://github.com/org/my-app.git","auth_mode":"token","token_name":"github-main"}]`),
+				Workspaces:      json.RawMessage(`[{"name":"my-app-dev","repository_name":"my-app","ssh_server_name":"devhost","project_path":"/srv/git/my-app","git_user_name":"cur1ousdude"}]`),
+				WorkspaceGrants: json.RawMessage(`[{"workspace_name":"my-app-dev","grantee":"bot"}]`),
+			},
+		},
+	}
+
+	out := toOpenChatBootstrapRuntime(cfg)
+
+	if len(out.GitDefaultOwners) != 1 || out.GitDefaultOwners[0] != "admin" {
+		t.Fatalf("unexpected GitDefaultOwners: %+v", out.GitDefaultOwners)
+	}
+	if len(out.GitTokenSpecs) != 1 || out.GitTokenSpecs[0] != `[{"name":"github-main","provider":"github","token":"ghp_x","account_username":"cur1ousdude"}]` {
+		t.Fatalf("unexpected GitTokenSpecs: %+v", out.GitTokenSpecs)
+	}
+	if len(out.GitRepositorySpecs) != 1 || out.GitRepositorySpecs[0] != `[{"name":"my-app","remote_url":"https://github.com/org/my-app.git","auth_mode":"token","token_name":"github-main"}]` {
+		t.Fatalf("unexpected GitRepositorySpecs: %+v", out.GitRepositorySpecs)
+	}
+	if len(out.GitWorkspaceSpecs) != 1 || out.GitWorkspaceSpecs[0] != `[{"name":"my-app-dev","repository_name":"my-app","ssh_server_name":"devhost","project_path":"/srv/git/my-app","git_user_name":"cur1ousdude"}]` {
+		t.Fatalf("unexpected GitWorkspaceSpecs: %+v", out.GitWorkspaceSpecs)
+	}
+	if len(out.GitWorkspaceGrantSpecs) != 1 || out.GitWorkspaceGrantSpecs[0] != `[{"workspace_name":"my-app-dev","grantee":"bot"}]` {
+		t.Fatalf("unexpected GitWorkspaceGrantSpecs: %+v", out.GitWorkspaceGrantSpecs)
+	}
+}
