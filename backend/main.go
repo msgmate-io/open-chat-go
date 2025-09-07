@@ -40,6 +40,42 @@ type openChatBootstrapConfig struct {
 	Bots     json.RawMessage                  `json:"bots,omitempty"`
 	SSH      *openChatSSHBootstrapConfig      `json:"ssh,omitempty"`
 	Opencode *openChatOpencodeBootstrapConfig `json:"opencode,omitempty"`
+	Git      *openChatGitBootstrapConfig      `json:"git,omitempty"`
+}
+
+type openChatGitBootstrapConfig struct {
+	Owner           openChatOwnerList `json:"owner,omitempty"`
+	Owners          []string          `json:"owners,omitempty"`
+	Tokens          json.RawMessage   `json:"tokens,omitempty"`
+	Repositories    json.RawMessage   `json:"repositories,omitempty"`
+	Workspaces      json.RawMessage   `json:"workspaces,omitempty"`
+	WorkspaceGrants json.RawMessage   `json:"workspace_grants,omitempty"`
+}
+
+// openChatOwnerList accepts either a single owner string (`owner: admin`) or a
+// list of owners (`owner: [admin]`) so the documented git bootstrap examples
+// keep working.
+type openChatOwnerList []string
+
+func (o *openChatOwnerList) UnmarshalJSON(raw []byte) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var list []string
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return err
+		}
+		*o = list
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(trimmed, &single); err != nil {
+		return err
+	}
+	*o = []string{single}
+	return nil
 }
 
 type openChatOpencodeBootstrapConfig struct {
@@ -552,6 +588,25 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 
 		if len(bytes.TrimSpace(cfg.Bootstrap.Opencode.Projects)) > 0 {
 			out.OpencodeProjectSpecs = append(out.OpencodeProjectSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Opencode.Projects)))
+		}
+	}
+
+	if cfg.Bootstrap.Git != nil {
+		owners := append([]string{}, cfg.Bootstrap.Git.Owners...)
+		owners = append(owners, cfg.Bootstrap.Git.Owner...)
+		out.GitDefaultOwners = normalizeOwners(owners)
+
+		if len(bytes.TrimSpace(cfg.Bootstrap.Git.Tokens)) > 0 {
+			out.GitTokenSpecs = append(out.GitTokenSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.Tokens)))
+		}
+		if len(bytes.TrimSpace(cfg.Bootstrap.Git.Repositories)) > 0 {
+			out.GitRepositorySpecs = append(out.GitRepositorySpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.Repositories)))
+		}
+		if len(bytes.TrimSpace(cfg.Bootstrap.Git.Workspaces)) > 0 {
+			out.GitWorkspaceSpecs = append(out.GitWorkspaceSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.Workspaces)))
+		}
+		if len(bytes.TrimSpace(cfg.Bootstrap.Git.WorkspaceGrants)) > 0 {
+			out.GitWorkspaceGrantSpecs = append(out.GitWorkspaceGrantSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.WorkspaceGrants)))
 		}
 	}
 
