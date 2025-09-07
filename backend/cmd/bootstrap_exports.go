@@ -28,3 +28,9 @@ func ApplySSHBootstrapSourcesWithGrants(DB *gorm.DB, fallbackOwner string, defau
 func ApplyOpencodeBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners []string, projectSpecs []string) error {
 	return applyOpencodeBootstrapSources(DB, fallbackOwner, defaultOwners, projectSpecs)
 }
+
+// ApplyGitBootstrapSources exposes the git bootstrap wiring to mobile/other
+// embedders that reuse the cmd package helpers.
+func ApplyGitBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners []string, tokenSpecs []string, repositorySpecs []string, workspaceSpecs []string, workspaceGrantSpecs []string) error {
+	return applyGitBootstrapSources(DB, fallbackOwner, defaultOwners, tokenSpecs, repositorySpecs, workspaceSpecs, workspaceGrantSpecs)
+}
