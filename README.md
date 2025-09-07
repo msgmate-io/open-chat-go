@@ -25,11 +25,12 @@ We release all versions always ( after admin confirmation ):
 
 ### License
 
-Licensed under the [GNU Lesser General Public License v3.0 or later](./LICENSE)
-(`LGPL-3.0-or-later`), with the GNU GPLv3 text in [`LICENSE.GPL`](./LICENSE.GPL).
+Licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE)
+(`AGPL-3.0-or-later`).
 
 See [`NOTICE`](./NOTICE) and [`COPYRIGHT`](./COPYRIGHT) for the intellectual
 property owner, the current licensing draft status, special-licensing
-requests, and the list of excluded (private) submodules. Alternative or
-commercial licensing can be investigated on request.
+requests, and the copyright-owner exemption covering the proprietary
+(private) submodules. Alternative or commercial licensing can be
+investigated on request.
 
