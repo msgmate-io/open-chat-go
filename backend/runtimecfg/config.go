@@ -29,6 +29,8 @@ type OpenChatBootstrap struct {
 	GitRepositorySpecs     []string
 	GitWorkspaceSpecs      []string
 	GitWorkspaceGrantSpecs []string
+	MCPDefaultOwners       []string
+	MCPServerSpecs         []string
 }
 
 func SetAll(next map[string]Value) {
@@ -102,6 +104,8 @@ func SetOpenChatBootstrap(next OpenChatBootstrap) {
 		GitRepositorySpecs:     append([]string(nil), next.GitRepositorySpecs...),
 		GitWorkspaceSpecs:      append([]string(nil), next.GitWorkspaceSpecs...),
 		GitWorkspaceGrantSpecs: append([]string(nil), next.GitWorkspaceGrantSpecs...),
+		MCPDefaultOwners:       append([]string(nil), next.MCPDefaultOwners...),
+		MCPServerSpecs:         append([]string(nil), next.MCPServerSpecs...),
 	}
 }
 
@@ -123,5 +127,7 @@ func GetOpenChatBootstrap() OpenChatBootstrap {
 		GitRepositorySpecs:     append([]string(nil), openChatBootstrap.GitRepositorySpecs...),
 		GitWorkspaceSpecs:      append([]string(nil), openChatBootstrap.GitWorkspaceSpecs...),
 		GitWorkspaceGrantSpecs: append([]string(nil), openChatBootstrap.GitWorkspaceGrantSpecs...),
+		MCPDefaultOwners:       append([]string(nil), openChatBootstrap.MCPDefaultOwners...),
+		MCPServerSpecs:         append([]string(nil), openChatBootstrap.MCPServerSpecs...),
 	}
 }
