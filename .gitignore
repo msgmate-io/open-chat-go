@@ -1,4 +1,5 @@
 backend/backend
+backend/server/frontend/
 backend/data.db
 backend/test/data.db
 bin
