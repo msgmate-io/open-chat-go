@@ -29,20 +29,24 @@ jobs:
             goos: linux
             goarch: arm64
             artifact_name: backend-linux-arm64
-          - os: macos-14
+          - os: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            artifact_name: backend-windows-amd64.exe
+          - os: ubuntu-latest
+            goos: windows
+            goarch: arm64
+            artifact_name: backend-windows-arm64.exe
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
+            artifact_name: backend-darwin-amd64
+          - os: ubuntu-latest
             goos: darwin
             goarch: arm64
             artifact_name: backend-darwin-arm64
 
           # --- Additional targets (disabled for now) ---
-          # - os: windows-latest
-          #   goos: windows
-          #   goarch: amd64
-          #   artifact_name: backend-windows-amd64.exe
-          # - os: windows-latest
-          #   goos: windows
-          #   goarch: arm64
-          #   artifact_name: backend-windows-arm64.exe
           # - os: macos-13  # Intel runner
           #   goos: darwin
           #   goarch: amd64
@@ -88,12 +92,14 @@ jobs:
         working-directory: backend
         run: |
           mkdir -p ../dist
-          BIN_NAME="backend"
-          EXT=""
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then EXT=".exe"; fi
-          OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [[ "$EXT" == ".exe" ]]; then OUT_NAME+="$EXT"; fi
-          mv -f "$BIN_NAME$EXT" "../dist/$OUT_NAME"
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            BIN_NAME="backend.exe"
+            OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+          else
+            BIN_NAME="backend"
+            OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          fi
+          mv -f "$BIN_NAME" "../dist/$OUT_NAME"
 
       - name: Upload artifact
         if: ${{ success() }}
@@ -127,9 +133,9 @@ jobs:
 
       - name: Create source archive
         run: |
-          git archive --format=zip --output=source-clean.zip HEAD -- . ':!frontend' ':!backend/federation' ':!backend/federation_factory' ':!backend/api/federation' ':!backend/api/federation_disabled.go' ':!backend/api/federation_interface.go' ':!backend/server/federation.go' ':!backend/database/federation.go'
-          echo "Created source-clean.zip without frontend and federation code"
-          ls -la source-clean.zip
+          git archive --format=zip --output=code.zip HEAD -- . ':!frontend' ':!backend/federation' ':!backend/federation_factory' ':!backend/api/federation' ':!backend/api/federation_disabled.go' ':!backend/api/federation_interface.go' ':!backend/server/federation.go' ':!backend/database/federation.go'
+          echo "Created code.zip without frontend and federation code"
+          ls -la code.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -141,6 +147,6 @@ jobs:
           prerelease: false
           files: |
             all-artifacts/**/*
-            source-clean.zip
+            code.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
