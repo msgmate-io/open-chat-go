@@ -92,11 +92,10 @@ jobs:
         working-directory: backend
         run: |
           mkdir -p ../dist
+          BIN_NAME="backend"
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            BIN_NAME="backend.exe"
             OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
           else
-            BIN_NAME="backend"
             OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
           fi
           mv -f "$BIN_NAME" "../dist/$OUT_NAME"
