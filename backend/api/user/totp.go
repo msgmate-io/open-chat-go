@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/base32"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -31,9 +32,26 @@ func hotp(secret []byte, counter uint64, digits int) string {
 	return s
 }
 
+// NormalizeTOTPSecret trims, uppercases and strips whitespace from a base32
+// TOTP secret, validating that it can be base32-decoded, and returns the
+// canonical form used for storage and verification.
+func NormalizeTOTPSecret(secretBase32 string) (string, error) {
+	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(secretBase32), " ", ""))
+	if normalized == "" {
+		return "", fmt.Errorf("two-factor secret is empty")
+	}
+	if _, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(normalized); err != nil {
+		return "", fmt.Errorf("invalid base32 two-factor secret: %w", err)
+	}
+	return normalized, nil
+}
+
 // VerifyTOTP verifies a TOTP code for a base32 secret using a +/-1 time-step window.
 func VerifyTOTP(secretBase32 string, code string, t time.Time) bool {
-	normalized := strings.ToUpper(strings.ReplaceAll(secretBase32, " ", ""))
+	normalized, err := NormalizeTOTPSecret(secretBase32)
+	if err != nil {
+		return false
+	}
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(normalized)
 	if err != nil {
 		return false
