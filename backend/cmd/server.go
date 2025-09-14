@@ -329,6 +329,7 @@ func GetServerFlags() []cli.Flag {
 	}
 
 	flags = append(flags, GetRedisFlags()...)
+	flags = append(flags, GetTriggerPollFlags()...)
 	return flags
 }
 
@@ -994,6 +995,15 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			return fmt.Errorf("embedded asynq worker failed to start: %w", workerErr)
 		}
 		log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
+	}
+
+	var triggerScheduler *asynq.Scheduler
+	if resolveTriggerPollEnabled(c) {
+		triggerScheduler, err = queue.StartTriggerScheduler(redisRuntime.ConnOpt, resolveTriggerPollInterval(c))
+		if err != nil {
+			return err
+		}
+		defer triggerScheduler.Shutdown()
 	}
 
 	serverErrCh := make(chan error, 1)
