@@ -1,9 +1,6 @@
 name: Build and Release
 
 on:
-  push:
-    branches:
-      - ci
   workflow_dispatch:
 
 permissions:
