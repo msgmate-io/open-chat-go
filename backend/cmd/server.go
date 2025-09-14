@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"backend/api/msgmate"
+	userapi "backend/api/user"
 	"backend/database"
 	"backend/integrations"
 	"backend/queue"
@@ -417,6 +418,8 @@ type bootstrapUserSpec struct {
 	SingletonAdmin               bool
 	ValidateStrength             bool
 	SuppressGeneratedPasswordLog bool
+	TwoFactorSecret              string
+	TwoFactorRecoveryCodes       []string
 }
 
 func nextAvailableUsername(DB *gorm.DB, base string) (string, error) {
@@ -589,6 +592,74 @@ func resolveBootstrapPassword(rawPassword string, validateStrength bool, label s
 	return rawPassword, nil
 }
 
+// applyBootstrapTwoFactor pre-configures TOTP two-factor authentication for a
+// bootstrap user. When a secret is declared it is normalized, stored and 2FA is
+// enabled so the existing login enforcement (TOTP or recovery code) applies.
+// Rotating the secret invalidates previously issued recovery codes; declared
+// recovery codes are (bcrypt-)seeded when the user has no unused codes left, so
+// repeated bootstrap runs remain idempotent.
+func applyBootstrapTwoFactor(DB *gorm.DB, user *database.User, spec bootstrapUserSpec) error {
+	if user == nil || strings.TrimSpace(spec.TwoFactorSecret) == "" {
+		return nil
+	}
+
+	normalized, err := userapi.NormalizeTOTPSecret(spec.TwoFactorSecret)
+	if err != nil {
+		return fmt.Errorf("%s: invalid two_factor_secret: %w", spec.Label, err)
+	}
+
+	if !user.TwoFactorEnabled || user.TwoFactorSecret != normalized {
+		user.TwoFactorEnabled = true
+		user.TwoFactorSecret = normalized
+		if err := DB.Save(user).Error; err != nil {
+			return fmt.Errorf("failed to enable two-factor authentication for %s: %w", spec.Label, err)
+		}
+		if err := DB.Where("user_id = ?", user.ID).Delete(&database.TwoFactorRecoveryCode{}).Error; err != nil {
+			return fmt.Errorf("failed to reset two-factor recovery codes for %s: %w", spec.Label, err)
+		}
+		fmt.Printf("Enabled two-factor authentication for %s\n", spec.Label)
+	}
+
+	if len(spec.TwoFactorRecoveryCodes) == 0 {
+		return nil
+	}
+
+	var unusedCodes int64
+	if err := DB.Model(&database.TwoFactorRecoveryCode{}).
+		Where("user_id = ? AND used_at IS NULL", user.ID).
+		Count(&unusedCodes).Error; err != nil {
+		return fmt.Errorf("failed to inspect two-factor recovery codes for %s: %w", spec.Label, err)
+	}
+	if unusedCodes > 0 {
+		return nil
+	}
+
+	seeded := 0
+	for _, code := range spec.TwoFactorRecoveryCodes {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		hashedCode, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("failed to hash two-factor recovery code for %s: %w", spec.Label, err)
+		}
+		recoveryCode := database.TwoFactorRecoveryCode{
+			UserId:   user.ID,
+			CodeHash: string(hashedCode),
+		}
+		if err := DB.Create(&recoveryCode).Error; err != nil {
+			return fmt.Errorf("failed to seed two-factor recovery code for %s: %w", spec.Label, err)
+		}
+		seeded++
+	}
+	if seeded > 0 {
+		fmt.Printf("Seeded %d pre-configured two-factor recovery code(s) for %s\n", seeded, spec.Label)
+	}
+
+	return nil
+}
+
 func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, error) {
 	username, rawPassword, err := parseCredentials(spec.Credentials, spec.Label)
 	if err != nil {
@@ -601,7 +672,14 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 	}
 
 	if spec.SingletonAdmin {
-		return ensureSingletonAdminUser(DB, password, spec.IsAutomated)
+		admin, err := ensureSingletonAdminUser(DB, password, spec.IsAutomated)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyBootstrapTwoFactor(DB, admin, spec); err != nil {
+			return nil, err
+		}
+		return admin, nil
 	}
 
 	var user *database.User
@@ -627,6 +705,9 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 			if err := DB.Save(user).Error; err != nil {
 				return nil, fmt.Errorf("failed to update email for %s: %w", spec.Label, err)
 			}
+		}
+		if err := applyBootstrapTwoFactor(DB, user, spec); err != nil {
+			return nil, err
 		}
 	}
 
