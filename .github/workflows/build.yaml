@@ -66,7 +66,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build
+      - name: Build (with federation)
         working-directory: backend
         env:
           GOOS: ${{ matrix.goos }}
@@ -74,6 +74,19 @@ jobs:
         run: |
           chmod +x ./full_build.sh
           ./full_build.sh
+          # Rename the federation binary to avoid overwriting
+          mv backend backend-federation
+
+      - name: Build (without federation)
+        working-directory: backend
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          chmod +x ./full_build.sh
+          ./full_build.sh --no-federation
+          # Rename the non-federation binary
+          mv backend backend-no-federation
 
       - name: Read version from metrics handler
         id: get_version
@@ -83,26 +96,40 @@ jobs:
           echo "Detected version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Prepare artifact
+      - name: Prepare artifacts
         if: ${{ success() }}
         shell: bash
         working-directory: backend
         run: |
           mkdir -p ../dist
-          BIN_NAME="backend"
+          
+          # Prepare final artifact names
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+            FED_OUT_NAME="open-chat-federation-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+            NO_FED_OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+            FED_SOURCE="backend-federation"
+            NO_FED_SOURCE="backend-no-federation"
           else
-            OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            FED_OUT_NAME="open-chat-federation-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            NO_FED_OUT_NAME="open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            FED_SOURCE="backend-federation"
+            NO_FED_SOURCE="backend-no-federation"
           fi
-          mv -f "$BIN_NAME" "../dist/$OUT_NAME"
+          
+          # Copy the pre-built binaries to the dist directory with final names
+          cp -f "$FED_SOURCE" "../dist/$FED_OUT_NAME"
+          cp -f "$NO_FED_SOURCE" "../dist/$NO_FED_OUT_NAME"
+          
+          echo "Prepared artifacts:"
+          echo "  Federation: $FED_OUT_NAME"
+          echo "  Non-federation: $NO_FED_OUT_NAME"
 
-      - name: Upload artifact
+      - name: Upload artifacts
         if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
           name: open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/open-chat-${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}*
+          path: dist/open-chat*${{ steps.get_version.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}*
           if-no-files-found: error
 
   release:
