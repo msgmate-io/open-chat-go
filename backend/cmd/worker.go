@@ -98,6 +98,14 @@ func WorkerCli() *cli.Command {
 				},
 			)
 
+			integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
+			if err != nil {
+				return err
+			}
+			if integrationScheduler != nil {
+				defer integrationScheduler.Shutdown()
+			}
+
 			log.Printf("Starting asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 			if err := server.Run(processor.NewServeMux()); err != nil {
 				return fmt.Errorf("asynq worker failed: %w", err)
