@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"gorm.io/gorm"
@@ -175,6 +176,39 @@ func TestCreateOrUpdateBotProfileKeepsChatBackendOnFallback(t *testing.T) {
 	}
 	if got := models[0].Configuration.Backend; got != "deepinfra" {
 		t.Fatalf("expected fallback profile model backend %q, got %q", "deepinfra", got)
+	}
+}
+
+func TestCreateOrUpdateBotProfileMergesRuntimeToolsIntoAssignedModels(t *testing.T) {
+	DB := setupBotProfilesTestDB(t)
+	botUser := createBotProfilesTestBot(t, DB, "runtime-tools-bot", map[string]interface{}{
+		"backend":       "deepinfra",
+		"model":         "runtime-default-model",
+		"tools":         []string{"kubernetes_select_cluster", "kubernetes_get"},
+		"system_prompt": "kubernetes operations",
+	})
+	// Assigned default model configs carry shared, non bot-specific tools; the
+	// chat-start init screen must instead see the runtime's tool list.
+	createBotProfilesTestModelConfig(t, DB, botUser.Name, `{"backend":"litellm","model":"assigned-model-id","tools":["get_current_time"]}`)
+
+	if err := CreateOrUpdateBotProfile(DB, botUser); err != nil {
+		t.Fatalf("CreateOrUpdateBotProfile failed: %v", err)
+	}
+
+	models := readBotProfilesTestModels(t, DB, botUser)
+	if len(models) != 1 {
+		t.Fatalf("expected 1 profile model, got %d", len(models))
+	}
+	wantTools := []string{"kubernetes_select_cluster", "kubernetes_get"}
+	if !reflect.DeepEqual(models[0].Configuration.Tools, wantTools) {
+		t.Fatalf("profile model tools = %v, want runtime tools %v", models[0].Configuration.Tools, wantTools)
+	}
+	if models[0].Configuration.SystemPrompt != "kubernetes operations" {
+		t.Fatalf("profile model system prompt = %q, want runtime system prompt", models[0].Configuration.SystemPrompt)
+	}
+	// Provider/model assignment from the model config must be preserved.
+	if models[0].Configuration.Backend != "litellm" {
+		t.Fatalf("profile model backend = %q, want assigned backend litellm", models[0].Configuration.Backend)
 	}
 }
 
