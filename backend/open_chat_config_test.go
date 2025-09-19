@@ -72,6 +72,7 @@ bootstrap:
         plan_bot_uuid: issue-plan-bot
         coding_bot_uuid: coding-agent
         prompt_template: "Handle {{url}}"
+        post_badge_comment: false
 anchors:
   github-main-token: ghp_x
 `)
@@ -101,6 +102,9 @@ anchors:
 	}
 	if !strings.Contains(out.GitTriggerSpecs[0], "issue-plan-bot") {
 		t.Fatalf("trigger bot missing from git trigger spec: %s", out.GitTriggerSpecs[0])
+	}
+	if !strings.Contains(out.GitTriggerSpecs[0], "post_badge_comment") {
+		t.Fatalf("trigger badge-comment setting missing from git trigger spec: %s", out.GitTriggerSpecs[0])
 	}
 }
 
