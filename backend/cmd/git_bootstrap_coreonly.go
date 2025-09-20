@@ -16,6 +16,7 @@ var gitBootstrapEnvKeys = []string{
 	"OCI_GIT_BOOTSTRAP_WORKSPACES",
 	"OCI_GIT_BOOTSTRAP_WORKSPACE_GRANTS",
 	"OCI_GIT_BOOTSTRAP_DEFAULT_OWNERS",
+	"OCI_GIT_BOOTSTRAP_TRIGGERS",
 }
 
 func hasNonEmptyGitBootstrapSpec(specs ...[]string) bool {
@@ -29,13 +30,13 @@ func hasNonEmptyGitBootstrapSpec(specs ...[]string) bool {
 	return false
 }
 
-func applyGitBootstrapSources(_ *gorm.DB, _ string, defaultOwners []string, tokenSpecs []string, repositorySpecs []string, workspaceSpecs []string, workspaceGrantSpecs []string) error {
+func applyGitBootstrapSources(_ *gorm.DB, _ string, defaultOwners []string, tokenSpecs []string, repositorySpecs []string, workspaceSpecs []string, workspaceGrantSpecs []string, triggerSpecs []string) error {
 	for _, envKey := range gitBootstrapEnvKeys {
 		if value, ok := runtimecfg.GetAll()[envKey]; ok && value.Value != "" {
 			return fmt.Errorf("git bootstrap requested via %s, but git integration is not included in this build", envKey)
 		}
 	}
-	if hasNonEmptyGitBootstrapSpec(defaultOwners, tokenSpecs, repositorySpecs, workspaceSpecs, workspaceGrantSpecs) {
+	if hasNonEmptyGitBootstrapSpec(defaultOwners, tokenSpecs, repositorySpecs, workspaceSpecs, workspaceGrantSpecs, triggerSpecs) {
 		return fmt.Errorf("git bootstrap requested via bootstrap.git, but git integration is not included in this build")
 	}
 	return nil
