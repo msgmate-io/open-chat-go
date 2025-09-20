@@ -19,7 +19,11 @@ import (
 // the interface registry directly (rather than backend/integrations) to avoid
 // an import cycle with integration packages that import backend/api/user.
 func settingsDefinitions() []integrationinterface.Definition {
-	return integrationinterface.List()
+	defs := integrationinterface.List()
+	// Synthetic group exposing global deployment env values (provider keys etc.)
+	// for editing in the same UI.
+	defs = append(defs, integrationsettings.DeploymentDefinition())
+	return defs
 }
 
 type revealIntegrationSettingsRequest struct {
@@ -114,7 +118,7 @@ func GetIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // SaveIntegrationSettings validates and applies runtime values for one
-// integration, then attempts to persist them to the active JSON config file.
+// integration, then attempts to persist them to the active config file.
 //
 //	@Summary      Save integration settings
 //	@Description  Validates, applies, and (when possible) persists runtime values for one integration.
