@@ -60,6 +60,26 @@ func TestBuildDeploymentInfoExplicitType(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentInfoYAMLPersistable(t *testing.T) {
+	prev := runtimecfg.GetConfigSource()
+	t.Cleanup(func() { runtimecfg.SetConfigSource(prev) })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "open-chat.yaml")
+	if err := os.WriteFile(path, []byte("env:\n  A: b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimecfg.SetConfigSource(path)
+
+	info := BuildDeploymentInfo()
+	if info.ConfigFormat != "yaml" {
+		t.Fatalf("expected yaml config format, got %q", info.ConfigFormat)
+	}
+	if !info.CanPersist {
+		t.Fatalf("expected writable YAML config to be persistable, reasons: %v", info.Reasons)
+	}
+}
+
 func TestBuildDeploymentInfoInlineNotPersistable(t *testing.T) {
 	prev := runtimecfg.GetConfigSource()
 	t.Cleanup(func() { runtimecfg.SetConfigSource(prev) })
