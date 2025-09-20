@@ -66,6 +66,13 @@ bootstrap:
         project_path: /srv/git/my-app
         git_user_name: cur1ousdude
         git_user_email: "123456+cur1ousdude@users.noreply.github.com"
+    triggers:
+      - repository_name: my-app
+        events: [assign, mention]
+        plan_bot_uuid: issue-plan-bot
+        coding_bot_uuid: coding-agent
+        prompt_template: "Handle {{url}}"
+        post_badge_comment: false
 anchors:
   github-main-token: ghp_x
 `)
@@ -89,6 +96,15 @@ anchors:
 	}
 	if len(out.GitDefaultOwners) != 1 || out.GitDefaultOwners[0] != "admin" {
 		t.Fatalf("unexpected GitDefaultOwners: %+v", out.GitDefaultOwners)
+	}
+	if len(out.GitTriggerSpecs) != 1 {
+		t.Fatalf("bootstrap.git.triggers not mapped to runtime specs: %+v", out)
+	}
+	if !strings.Contains(out.GitTriggerSpecs[0], "issue-plan-bot") {
+		t.Fatalf("trigger bot missing from git trigger spec: %s", out.GitTriggerSpecs[0])
+	}
+	if !strings.Contains(out.GitTriggerSpecs[0], "post_badge_comment") {
+		t.Fatalf("trigger badge-comment setting missing from git trigger spec: %s", out.GitTriggerSpecs[0])
 	}
 }
 
@@ -434,6 +450,34 @@ anchors:
 				t.Fatalf("unresolved $anchors reference found: %q", str)
 			}
 		}
+	}
+}
+
+// TestLoadOpenChatConfigYamlEmbeddedAnchorRef verifies anchors can be embedded
+// inside larger strings (e.g. multi-line setup commands), not only as whole
+// values.
+func TestLoadOpenChatConfigYamlEmbeddedAnchorRef(t *testing.T) {
+	raw := []byte(`
+env:
+  SETUP_SCRIPT: |
+    echo start
+    printf '%s' "$anchors.blob" | base64 -d > /tmp/blob
+    echo "$anchors.marker done"
+anchors:
+  blob: "BASE64DATA"
+  marker: "MARK"
+`)
+
+	cfg, err := loadOpenChatConfig(raw, "embedded anchor yaml")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected embedded-anchor YAML: %v", err)
+	}
+	script, _ := cfg.Env["SETUP_SCRIPT"].(string)
+	if !strings.Contains(script, "BASE64DATA") || !strings.Contains(script, "MARK done") {
+		t.Fatalf("embedded anchors not resolved: %q", script)
+	}
+	if strings.Contains(script, "$anchors.") {
+		t.Fatalf("unresolved embedded anchor reference left in %q", script)
 	}
 }
 
