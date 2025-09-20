@@ -53,6 +53,11 @@ type toolsFilters struct {
 	Types []string `json:"types"`
 }
 
+// maxToolListPageSize bounds the page_size query parameter. It must stay large
+// enough for clients that fetch the whole catalog in one request (the chat
+// start and bot edit screens request 400 to discover tool init schemas).
+const maxToolListPageSize = 1000
+
 type ToolsListResponse struct {
 	Page       int            `json:"page"`
 	PageSize   int            `json:"page_size"`
@@ -69,7 +74,7 @@ type ToolsListResponse struct {
 //	@Tags			tools
 //	@Produce		json
 //	@Param			page query int false "Page number" minimum(1)
-//	@Param			page_size query int false "Page size" minimum(1) maximum(100)
+//	@Param			page_size query int false "Page size" minimum(1) maximum(1000)
 //	@Param			type query string false "Filter by tool type"
 //	@Param			q query string false "Search by tool name or description"
 //	@Param			requires_init query string false "Authenticated only: true/false filter"
@@ -93,7 +98,7 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if pageSizeParam := strings.TrimSpace(r.URL.Query().Get("page_size")); pageSizeParam != "" {
-		if parsed, err := strconv.Atoi(pageSizeParam); err == nil && parsed > 0 && parsed <= 100 {
+		if parsed, err := strconv.Atoi(pageSizeParam); err == nil && parsed > 0 && parsed <= maxToolListPageSize {
 			pageSize = parsed
 		}
 	}
