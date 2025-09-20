@@ -177,11 +177,41 @@ func mergeRuntimeConfigIntoProfileModels(defaultSharedConfig []byte, models []Bo
 			models[i].Configuration.Integrations = append([]string(nil), runtimeProfile.Integrations...)
 		}
 		if len(runtimeProfile.MCPTools) > 0 {
-			models[i].Configuration.MCPTools = runtimeProfile.MCPTools
+			models[i].Configuration.MCPTools = deepCopyJSONMap(runtimeProfile.MCPTools)
 		}
 		if len(runtimeProfile.DynamicTools) > 0 {
-			models[i].Configuration.DynamicTools = runtimeProfile.DynamicTools
+			models[i].Configuration.DynamicTools = deepCopyJSONMap(runtimeProfile.DynamicTools)
 		}
+	}
+}
+
+// deepCopyJSONMap returns a deep copy of a JSON-like map so that profile models
+// never share nested maps or slices with the runtime config, which would allow
+// cross-model mutation through aliasing.
+func deepCopyJSONMap(in map[string]interface{}) map[string]interface{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = deepCopyJSONValue(v)
+	}
+	return out
+}
+
+// deepCopyJSONValue recursively copies maps and slices, leaving scalars as-is.
+func deepCopyJSONValue(v interface{}) interface{} {
+	switch typed := v.(type) {
+	case map[string]interface{}:
+		return deepCopyJSONMap(typed)
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for i, item := range typed {
+			out[i] = deepCopyJSONValue(item)
+		}
+		return out
+	default:
+		return v
 	}
 }
 
