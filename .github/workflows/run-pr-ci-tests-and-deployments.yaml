@@ -177,7 +177,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test') && !contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test')
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test') && !contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') && !contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -255,7 +255,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test')))
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -1316,10 +1316,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (github.event.pull_request.base.ref == 'production' ||
-         contains(github.event.pull_request.labels.*.name, 'test') ||
-         contains(github.event.pull_request.labels.*.name, 'build') ||
-         contains(github.event.pull_request.labels.*.name, 'release-android'))))
+        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
@@ -1421,10 +1418,7 @@ jobs:
       (needs.sandbox-android-image-ensure.result == 'success' || needs.sandbox-android-image-ensure.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (github.event.pull_request.base.ref == 'production' ||
-         contains(github.event.pull_request.labels.*.name, 'test') ||
-         contains(github.event.pull_request.labels.*.name, 'build') ||
-         contains(github.event.pull_request.labels.*.name, 'release-android'))))
+        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
     steps:
       - name: Free runner disk space
         uses: jlumbroso/free-disk-space@main
@@ -2723,7 +2717,7 @@ jobs:
           | Promoted commit | \`${PROMOTED_SHA}\` |
           | Source merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) — ${MERGED_PR_TITLE} |
 
-          Automated labels: \`ai-test-mock\`, \`ai-test-real\`, \`build\`, \`test\`, \`e2e\`, \`test-e2e\`, \`test-core-only\`, \`sandbox-test\` (or \`sandbox-test:<tag>\` to run a tagged subset), \`release-android\` — the full test suite (incl. post-deploy suites, which run in parallel since the staging deploy was already confirmed on the merge to \`main\`) must all pass before this PR can be merged. Merging gates on **PR Test Merge Requirement** and **Full Suite Gate**.
+          Automated labels: \`ai-test-mock\`, \`ai-test-real\`, \`build\`, \`test\`, \`e2e\`, \`test-e2e\`, \`test-core-only\`, \`sandbox-test\` (or \`sandbox-test:<tag>\` to run a tagged subset), \`release-android\`, \`slow-android-build-test\` (very slow Android build test) — the full test suite (incl. post-deploy suites, which run in parallel since the staging deploy was already confirmed on the merge to \`main\`) must all pass before this PR can be merged. Merging gates on **PR Test Merge Requirement** and **Full Suite Gate**.
           EOF
           )"
 
@@ -2773,7 +2767,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPOSITORY}/issues/${pr_number}/labels" \
-            -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android"]}'
+            -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android","slow-android-build-test"]}'
 
           echo "Production promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
 
