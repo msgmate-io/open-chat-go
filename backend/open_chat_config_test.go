@@ -437,6 +437,34 @@ anchors:
 	}
 }
 
+// TestLoadOpenChatConfigYamlEmbeddedAnchorRef verifies anchors can be embedded
+// inside larger strings (e.g. multi-line setup commands), not only as whole
+// values.
+func TestLoadOpenChatConfigYamlEmbeddedAnchorRef(t *testing.T) {
+	raw := []byte(`
+env:
+  SETUP_SCRIPT: |
+    echo start
+    printf '%s' "$anchors.blob" | base64 -d > /tmp/blob
+    echo "$anchors.marker done"
+anchors:
+  blob: "BASE64DATA"
+  marker: "MARK"
+`)
+
+	cfg, err := loadOpenChatConfig(raw, "embedded anchor yaml")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected embedded-anchor YAML: %v", err)
+	}
+	script, _ := cfg.Env["SETUP_SCRIPT"].(string)
+	if !strings.Contains(script, "BASE64DATA") || !strings.Contains(script, "MARK done") {
+		t.Fatalf("embedded anchors not resolved: %q", script)
+	}
+	if strings.Contains(script, "$anchors.") {
+		t.Fatalf("unresolved embedded anchor reference left in %q", script)
+	}
+}
+
 // TestLoadOpenChatConfigYamlUnknownAnchorRef makes sure references to missing
 // anchors fail with a helpful message instead of silently passing through.
 func TestLoadOpenChatConfigYamlUnknownAnchorRef(t *testing.T) {
