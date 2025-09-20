@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"gorm.io/gorm"
@@ -175,6 +176,78 @@ func TestCreateOrUpdateBotProfileKeepsChatBackendOnFallback(t *testing.T) {
 	}
 	if got := models[0].Configuration.Backend; got != "deepinfra" {
 		t.Fatalf("expected fallback profile model backend %q, got %q", "deepinfra", got)
+	}
+}
+
+func TestCreateOrUpdateBotProfileMergesRuntimeToolsIntoAssignedModels(t *testing.T) {
+	DB := setupBotProfilesTestDB(t)
+	botUser := createBotProfilesTestBot(t, DB, "runtime-tools-bot", map[string]interface{}{
+		"backend":       "deepinfra",
+		"model":         "runtime-default-model",
+		"tools":         []string{"kubernetes_select_cluster", "kubernetes_get"},
+		"system_prompt": "kubernetes operations",
+	})
+	// Assigned default model configs carry shared, non bot-specific tools; the
+	// chat-start init screen must instead see the runtime's tool list.
+	createBotProfilesTestModelConfig(t, DB, botUser.Name, `{"backend":"litellm","model":"assigned-model-id","tools":["get_current_time"]}`)
+
+	if err := CreateOrUpdateBotProfile(DB, botUser); err != nil {
+		t.Fatalf("CreateOrUpdateBotProfile failed: %v", err)
+	}
+
+	models := readBotProfilesTestModels(t, DB, botUser)
+	if len(models) != 1 {
+		t.Fatalf("expected 1 profile model, got %d", len(models))
+	}
+	wantTools := []string{"kubernetes_select_cluster", "kubernetes_get"}
+	if !reflect.DeepEqual(models[0].Configuration.Tools, wantTools) {
+		t.Fatalf("profile model tools = %v, want runtime tools %v", models[0].Configuration.Tools, wantTools)
+	}
+	if models[0].Configuration.SystemPrompt != "kubernetes operations" {
+		t.Fatalf("profile model system prompt = %q, want runtime system prompt", models[0].Configuration.SystemPrompt)
+	}
+	// Provider/model assignment from the model config must be preserved.
+	if models[0].Configuration.Backend != "litellm" {
+		t.Fatalf("profile model backend = %q, want assigned backend litellm", models[0].Configuration.Backend)
+	}
+}
+
+func TestMergeRuntimeConfigIntoProfileModelsDeepCopiesJSONMaps(t *testing.T) {
+	raw, err := json.Marshal(map[string]interface{}{
+		"mcp_tools": map[string]interface{}{
+			"cluster_server": map[string]interface{}{
+				"enabled": true,
+				"tags":    []interface{}{"kubernetes", "read"},
+			},
+		},
+		"dynamic_tools": map[string]interface{}{
+			"cluster_tool": map[string]interface{}{"endpoint": "https://example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed marshaling runtime config: %v", err)
+	}
+
+	models := []BotModel{{Title: "model-a"}, {Title: "model-b"}}
+	mergeRuntimeConfigIntoProfileModels(raw, models)
+
+	// Mutating one model's nested MCP tool map must not leak into the other
+	// model or back into the runtime config.
+	mcpA := models[0].Configuration.MCPTools["cluster_server"].(map[string]interface{})
+	mcpA["enabled"] = false
+	mcpA["tags"].([]interface{})[0] = "mutated"
+
+	mcpB := models[1].Configuration.MCPTools["cluster_server"].(map[string]interface{})
+	if mcpB["enabled"] != true {
+		t.Fatalf("model-b mcp_tools.enabled = %v, want true (shared map alias)", mcpB["enabled"])
+	}
+	if got := mcpB["tags"].([]interface{})[0]; got != "kubernetes" {
+		t.Fatalf("model-b mcp_tools.tags[0] = %v, want kubernetes (shared slice alias)", got)
+	}
+
+	models[0].Configuration.DynamicTools["cluster_tool"].(map[string]interface{})["endpoint"] = "https://mutated"
+	if got := models[1].Configuration.DynamicTools["cluster_tool"].(map[string]interface{})["endpoint"]; got != "https://example.com" {
+		t.Fatalf("model-b dynamic_tools endpoint = %v, want https://example.com", got)
 	}
 }
 
