@@ -66,6 +66,13 @@ bootstrap:
         project_path: /srv/git/my-app
         git_user_name: cur1ousdude
         git_user_email: "123456+cur1ousdude@users.noreply.github.com"
+    triggers:
+      - repository_name: my-app
+        events: [assign, mention]
+        plan_bot_uuid: issue-plan-bot
+        coding_bot_uuid: coding-agent
+        prompt_template: "Handle {{url}}"
+        post_badge_comment: false
 anchors:
   github-main-token: ghp_x
 `)
@@ -89,6 +96,15 @@ anchors:
 	}
 	if len(out.GitDefaultOwners) != 1 || out.GitDefaultOwners[0] != "admin" {
 		t.Fatalf("unexpected GitDefaultOwners: %+v", out.GitDefaultOwners)
+	}
+	if len(out.GitTriggerSpecs) != 1 {
+		t.Fatalf("bootstrap.git.triggers not mapped to runtime specs: %+v", out)
+	}
+	if !strings.Contains(out.GitTriggerSpecs[0], "issue-plan-bot") {
+		t.Fatalf("trigger bot missing from git trigger spec: %s", out.GitTriggerSpecs[0])
+	}
+	if !strings.Contains(out.GitTriggerSpecs[0], "post_badge_comment") {
+		t.Fatalf("trigger badge-comment setting missing from git trigger spec: %s", out.GitTriggerSpecs[0])
 	}
 }
 
