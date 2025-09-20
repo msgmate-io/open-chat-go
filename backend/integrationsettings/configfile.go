@@ -1,19 +1,23 @@
 package integrationsettings
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
+	goyaml "go.yaml.in/yaml/v3"
 )
 
 // ErrNotPersistable indicates that the active config source cannot be written
-// back to disk (inline config, YAML, missing file, or read-only path).
+// back to disk (inline config, missing file, unsupported format, or read-only
+// path).
 var ErrNotPersistable = errors.New("configuration is not persistable")
 
 var configFileMu sync.Mutex
@@ -28,9 +32,11 @@ func isSensitiveKey(def integrationinterface.Definition, key string) bool {
 	return false
 }
 
-// MergeValues writes the given values into the JSON config document at path.
-// A nil value removes the key. Unknown top-level keys are preserved. The write
-// is atomic (temp file + rename) and keeps the original file permissions.
+// MergeValues writes the given values into the config document at path. A nil
+// value removes the key. Unknown top-level keys are preserved. JSON and YAML
+// documents are both supported; the document is written back in its original
+// format. The write is atomic (temp file + rename) and keeps the original file
+// permissions.
 func MergeValues(path string, def integrationinterface.Definition, values map[string]*string) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()
@@ -45,12 +51,9 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		return fmt.Errorf("%w: %v", ErrNotPersistable, err)
 	}
 
-	var root map[string]interface{}
-	if err := json.Unmarshal(original, &root); err != nil {
-		return fmt.Errorf("%w: config is not a JSON object", ErrNotPersistable)
-	}
-	if root == nil {
-		root = map[string]interface{}{}
+	root, format, err := decodeConfigDocument(original)
+	if err != nil {
+		return err
 	}
 
 	envSection, _ := root["env"].(map[string]interface{})
@@ -117,11 +120,10 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		delete(root, "integrations")
 	}
 
-	encoded, err := json.MarshalIndent(root, "", "  ")
+	encoded, err := encodeConfigDocument(root, format)
 	if err != nil {
-		return fmt.Errorf("failed to encode config: %w", err)
+		return err
 	}
-	encoded = append(encoded, '\n')
 
 	info, err := os.Stat(trimmedPath)
 	if err != nil {
@@ -173,9 +175,12 @@ func coerceConfigValue(fieldType string, raw string) interface{} {
 			return parsed
 		}
 	case FieldTypeNumber:
-		var num json.Number
-		if err := json.Unmarshal([]byte(raw), &num); err == nil {
-			return num
+		trimmed := strings.TrimSpace(raw)
+		if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return i
+		}
+		if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return f
 		}
 	case FieldTypeJSON:
 		trimmed := strings.TrimSpace(raw)
@@ -187,4 +192,48 @@ func coerceConfigValue(fieldType string, raw string) interface{} {
 		}
 	}
 	return raw
+}
+
+// decodeConfigDocument parses a config document as JSON when possible and falls
+// back to YAML otherwise. It returns the decoded root mapping and the detected
+// format ("json" or "yaml") so the document can be written back unchanged.
+func decodeConfigDocument(raw []byte) (map[string]interface{}, string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return map[string]interface{}{}, "json", nil
+	}
+
+	var jsonRoot map[string]interface{}
+	if err := json.Unmarshal(trimmed, &jsonRoot); err == nil {
+		if jsonRoot == nil {
+			jsonRoot = map[string]interface{}{}
+		}
+		return jsonRoot, "json", nil
+	}
+
+	var yamlRoot map[string]interface{}
+	if err := goyaml.Unmarshal(trimmed, &yamlRoot); err != nil {
+		return nil, "", fmt.Errorf("%w: config is neither a JSON nor a YAML object", ErrNotPersistable)
+	}
+	if yamlRoot == nil {
+		yamlRoot = map[string]interface{}{}
+	}
+	return yamlRoot, "yaml", nil
+}
+
+// encodeConfigDocument serializes a config document in the given format.
+func encodeConfigDocument(root map[string]interface{}, format string) ([]byte, error) {
+	if format == "yaml" {
+		encoded, err := goyaml.Marshal(root)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode YAML config: %w", err)
+		}
+		return encoded, nil
+	}
+	encoded, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode config: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	return encoded, nil
 }
