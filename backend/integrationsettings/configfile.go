@@ -84,6 +84,27 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		if key == "" {
 			continue
 		}
+
+		if def.Name == CoreSettingsName {
+			if section, ok := coreBootstrapSectionForKey(key); ok {
+				bootstrapSection, _ := root["bootstrap"].(map[string]interface{})
+				if bootstrapSection == nil {
+					bootstrapSection = map[string]interface{}{}
+				}
+				if rawValue == nil {
+					delete(bootstrapSection, section)
+				} else {
+					bootstrapSection[section] = coerceConfigValue(FieldTypeJSON, *rawValue)
+				}
+				if len(bootstrapSection) > 0 {
+					root["bootstrap"] = bootstrapSection
+				} else {
+					delete(root, "bootstrap")
+				}
+				continue
+			}
+		}
+
 		fieldType := inferredTypeForKey(def, key)
 		jsonKey, hasAlias := aliasByEnvKey[key]
 
