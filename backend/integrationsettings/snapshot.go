@@ -31,6 +31,14 @@ type IntegrationSettingsDetailResponse struct {
 
 // BuildIntegrationSnapshot builds the settings snapshot for one integration.
 func BuildIntegrationSnapshot(def integrationinterface.Definition, values map[string]runtimecfg.Value, reveal bool) IntegrationSnapshot {
+	if def.Name == CoreSettingsName {
+		if values == nil {
+			values = map[string]runtimecfg.Value{}
+		}
+		for key, value := range LoadCoreBootstrapValues(runtimecfg.GetConfigSource()) {
+			values[key] = runtimecfg.Value{Value: value, Sensitive: false}
+		}
+	}
 	fields := BuildDescriptors(def, values, reveal)
 	return IntegrationSnapshot{
 		Name:       def.Name,
