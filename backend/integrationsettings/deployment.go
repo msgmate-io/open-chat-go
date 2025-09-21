@@ -8,47 +8,7 @@ import (
 
 	"backend/runtimecfg"
 	"backend/servicecontrol"
-
-	"github.com/msgmate-io/go-integration-interface/integrationinterface"
 )
-
-// DeploymentSettingsName is the synthetic settings group that surfaces global
-// deployment environment values (model provider keys, hosts, ...) in the admin
-// integrations settings UI. Values saved for it are written to the config's
-// global `env` section.
-const DeploymentSettingsName = "deployment"
-
-// deploymentEnvVars lists the global env keys exposed for editing. They are
-// intentionally not OCI_-prefixed (they are deployment-wide provider/runtime
-// values rather than integration-scoped settings).
-func deploymentEnvVars() []integrationinterface.RuntimeEnvVar {
-	return []integrationinterface.RuntimeEnvVar{
-		{Key: "OPENROUTER_API_KEY", Sensitive: true, Description: "OpenRouter API key (openrouter model provider)."},
-		{Key: "DEEPINFRA_API_KEY", Sensitive: true, Description: "DeepInfra API key (deepinfra model provider)."},
-		{Key: "LITELLM_API_KEY", Sensitive: true, Description: "LiteLLM API key (litellm model provider)."},
-		{Key: "LITELLM_API_HOST", Sensitive: false, Description: "LiteLLM API base URL."},
-		{Key: "OPENAI_API_KEY", Sensitive: true, Description: "OpenAI API key (openai model provider)."},
-		{Key: "ANTHROPIC_API_KEY", Sensitive: true, Description: "Anthropic API key (anthropic model provider)."},
-		{Key: "ANTHROPIC_API_HOST", Sensitive: false, Description: "Anthropic API base URL override."},
-		{Key: "IONOS_API_KEY", Sensitive: true, Description: "Ionos API key (ionos model provider)."},
-		{Key: "GROQ_API_KEY", Sensitive: true, Description: "Groq API key (groq model provider)."},
-		{Key: "MSGMATE_CLUSTER_API_KEY", Sensitive: true, Description: "Msgmate cluster API key (msgmate_cluster model provider)."},
-		{Key: "MSGMATE_CLUSTER_HOST", Sensitive: false, Description: "Msgmate cluster API base URL."},
-		{Key: "OPEN_CHAT_GITHUB_POST_TOKEN", Sensitive: true, Description: "GitHub token used by the server for posting comments (CI bots)."},
-		{Key: "CORS_ALLOWED_ORIGINS", Sensitive: false, Description: "Comma-separated list of allowed CORS origins."},
-		{Key: "PUBLIC_BASE_URL", Sensitive: false, Description: "Public base URL of this deployment."},
-	}
-}
-
-// DeploymentDefinition returns the synthetic definition backing the deployment
-// settings group.
-func DeploymentDefinition() integrationinterface.Definition {
-	return integrationinterface.Definition{
-		Name:           DeploymentSettingsName,
-		AdminOnly:      true,
-		RuntimeEnvVars: deploymentEnvVars(),
-	}
-}
 
 // DeploymentInfo describes where the server runs and whether settings can be
 // persisted to disk and the process restarted by the server itself.
