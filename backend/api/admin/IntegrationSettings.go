@@ -20,9 +20,9 @@ import (
 // an import cycle with integration packages that import backend/api/user.
 func settingsDefinitions() []integrationinterface.Definition {
 	defs := integrationinterface.List()
-	// Synthetic group exposing global deployment env values (provider keys etc.)
-	// for editing in the same UI.
-	defs = append(defs, integrationsettings.DeploymentDefinition())
+	// Synthetic group exposing the backend core's own configuration (effective
+	// env values and bootstrap specs) for editing in the same UI.
+	defs = append(defs, integrationsettings.CoreDefinition())
 	return defs
 }
 
