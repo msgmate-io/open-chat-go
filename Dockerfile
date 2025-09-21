@@ -35,6 +35,18 @@ ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
 COPY --from=frontend_selected /frontend/routes.json server/routes.json
 COPY --from=frontend_selected /frontend/dist/client server/frontend/
 
+# Refresh the integration-owned frontend pages from the freshly built frontend
+# before compiling the backend. Each integration embeds its own prerendered
+# HTML, which references content-hashed JS/CSS chunk filenames. Those hashes
+# change on every frontend rebuild, so the committed copies go stale and the
+# pages then 404 on their entry chunks. Re-exporting here guarantees the
+# embedded HTML always matches the chunks served from this exact image.
+COPY frontend/scripts/export_integration_pages.sh /build/frontend/scripts/export_integration_pages.sh
+RUN mkdir -p /build/frontend/dist \
+    && ln -s /backend/server/frontend /build/frontend/dist/client \
+    && ln -s /clients /build/clients
+RUN bash /build/frontend/scripts/export_integration_pages.sh
+
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
 RUN bash full_build.sh --no-frontend
