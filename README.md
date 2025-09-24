@@ -21,6 +21,32 @@
 - Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and register via `integrationinterface.MustRegister`.
 - Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
+### Building with integration profiles
+
+Profiles select which integrations are compiled:
+
+| Profile | Includes |
+| --- | --- |
+| `core-only` (default) | `mcp`, `rest_api_tool`, `go_client` |
+| `default` | core + `matrix`, `docker_sandbox`, `git`, `kubernetes` |
+| `full` | every integration (some private; needs repo access) |
+
+```bash
+# Local development (compose runs the integration-sync service for you)
+INTEGRATION_PROFILE=core-only docker compose up
+INTEGRATION_PROFILE=full      docker compose up
+
+# Host build
+cd backend && INTEGRATION_PROFILE=full ./full_build.sh
+
+# Production image
+INTEGRATION_PROFILE=full docker compose -f docker-compose.pro.yaml build backend
+```
+
+See [`development/integrations/README.md`](./development/integrations/README.md)
+for the manager CLI, local integration development, and reproducible
+`--frozen` builds.
+
 ### Releases
 
 We release all versions always ( after admin confirmation ):
