@@ -97,6 +97,12 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
+      - name: Materialize core-only integrations
+        run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
+            python3 -m openchat_integrations sync --frozen --profile core-only
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

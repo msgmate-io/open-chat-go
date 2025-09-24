@@ -1032,6 +1032,12 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
+	// Integration-owned bootstrap hooks. New integrations declare
+	// Definition.Bootstrap instead of adding core bootstrap files/build tags.
+	if err := applyIntegrationBootstrapHooks(ctx, DB, adminUser.Username); err != nil {
+		return err
+	}
+
 	providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
 	if err != nil {
 		return err
