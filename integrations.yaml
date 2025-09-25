@@ -76,7 +76,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
     ref: main
     path: clients/integrations/rest_api_tool_integration
-    private: false
+    private: true
     frontend:
       name: rest_api_tool
       pages:
@@ -99,7 +99,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-matrix-integration
     ref: main
     path: clients/integrations/matrix_integration
-    private: false
+    private: true
     tags:
       - goolm
     depends_on:
@@ -113,7 +113,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration
     ref: main
     path: clients/integrations/docker_sandbox_integration
-    private: false
+    private: true
     depends_on:
       - go_client
       - opencode
@@ -132,7 +132,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-git-integration
     ref: main
     path: clients/integrations/git_integration
-    private: false
+    private: true
     tags:
       - gitintegration
     bootstrap: git
@@ -164,7 +164,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-kubernetes-integration
     ref: main
     path: clients/integrations/kubernetes_integration
-    private: false
+    private: true
     tags:
       - kubernetesintegration
     bootstrap: kubernetes
@@ -182,7 +182,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-opencode-integration
     ref: main
     path: clients/integrations/opencode_integration
-    private: false
+    private: true
     tags:
       - opencodeintegration
     bootstrap: opencode
