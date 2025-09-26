@@ -76,7 +76,7 @@ integrations:
     repo: https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
     ref: main
     path: clients/integrations/rest_api_tool_integration
-    private: true
+    private: false
     frontend:
       name: rest_api_tool
       pages:
