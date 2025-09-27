@@ -11,7 +11,7 @@ Intellectual property
   All original source code in this repository is the intellectual property
   of Tim Schupp / Tim Benjamin Software, unless otherwise stated.
 
-Copyright owner exemption (proprietary submodules)
+Copyright owner exemption (proprietary components)
   Tim Schupp / Tim Benjamin Software is the sole copyright owner and
   intellectual property holder of the OpenChat project and of this
   repository. As the copyright owner, Tim Schupp / Tim Benjamin Software is
@@ -27,29 +27,25 @@ Copyright owner exemption (proprietary submodules)
   parties may not reproduce, distribute, or operate builds that combine this
   software with the proprietary submodules listed below.
 
-Private submodules excluded from the public grant
-  The submodules listed below are proprietary and are being kept private for
+Private components excluded from the public grant
+  The components listed below are proprietary and are being kept private for
   now. They are NOT licensed under AGPL-3.0-or-later and are explicitly
-  excluded from the public grant in this repository. Paths are relative to
-  the root of this repository; the repository reference is given in
-  parentheses:
+  excluded from the public grant in this repository.
 
-    frontend/                                          (https://github.com/msgmate-io/open-chat-go-frontend)
-    development/helm/                                  (https://github.com/msgmate-io/open-chat-go-helm-chart)
-    development/ci/                                    (https://github.com/msgmate-io/open-chat-go-ci)
-    clients/gomobile/                                  (https://github.com/msgmate-io/open-chat-go-mobile)
-    clients/llm_coding_agents/                         (https://github.com/msgmate-io/open-chat-go-llm-coding-context)
-    clients/integrations/rest_api_tool_integration/    (https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration)
-    clients/integrations/admin_db_managemnt_integration/ (https://github.com/msgmate-io/open-chat-go-admin-db-management-integration)
-    clients/integrations/ssh_integration/              (https://github.com/msgmate-io/open-chat-go-ssh-integration)
-    clients/integrations/account_management/           (https://github.com/msgmate-io/open-chat-go-account-management-integration)
-    clients/integrations/email_integration/            (https://github.com/msgmate-io/open-chat-go-email-integration)
-    clients/integrations/voice_integration/            (https://github.com/msgmate-io/open-chat-go-voice-integration)
-    clients/integrations/opencode_integration/         (https://github.com/msgmate-io/open-chat-go-opencode-integration)
-    clients/integrations/matrix_integration/           (https://github.com/msgmate-io/open-chat-go-matrix-integration)
-    clients/integrations/docker_sandbox_integration/   (https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration)
-    clients/integrations/git_integration/              (https://github.com/msgmate-io/open-chat-go-git-integration)
-    clients/integrations/kubernetes_integration/       (https://github.com/msgmate-io/open-chat-go-kubernetes-integration)
+  Private git submodules (paths relative to the root of this repository):
+
+    frontend/                    (https://github.com/msgmate-io/open-chat-go-frontend)
+    development/helm/            (https://github.com/msgmate-io/open-chat-go-helm-chart)
+    development/ci/              (https://github.com/msgmate-io/open-chat-go-ci)
+    clients/gomobile/            (https://github.com/msgmate-io/open-chat-go-mobile)
+    clients/llm_coding_agents/   (https://github.com/msgmate-io/open-chat-go-llm-coding-context)
+
+  Private integrations, fetched on demand by the integration manager
+  (integrations.yaml) into clients/integrations/:
+
+    matrix, docker_sandbox, git, kubernetes, opencode, ssh, voice, emails,
+    admin, account_management
+    (each at https://github.com/msgmate-io/open-chat-go-<name>-integration)
 
   Compiled or embedded frontend build output (backend/server/frontend),
   which is generated from the private `frontend` submodule, is likewise
