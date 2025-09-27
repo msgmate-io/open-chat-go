@@ -4,9 +4,11 @@ services:
       dockerfile: dev.dockerfile
       context: .
       args:
-        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
+        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
     image: dev-backend
     depends_on:
+      integration-sync:
+        condition: service_completed_successfully
       frontend:
         condition: service_started
       redis:
@@ -15,6 +17,9 @@ services:
       - "1984:1984"
     volumes:
       - ./backend:/backend
+      - ./integrations.yaml:/integrations.yaml:ro
+      - ./integrations.lock.json:/integrations.lock.json:ro
+      - ./development/build-tools:/development/build-tools:ro
       - ./development/ci/open-chat-ci.json:/open-chat-ci-config.json:ro
       - ./development/ci/open-chat-ci.local.json:/open-chat-ci-config.local.json:ro
       - ./clients/go_tool_interface:/clients/go_tool_interface
@@ -34,7 +39,7 @@ services:
       LITELLM_API_HOST: ${LITELLM_API_HOST}
       MSGMATE_CLUSTER_API_KEY: ${MSGMATE_CLUSTER_API_KEY}
       MSGMATE_CLUSTER_HOST: ${MSGMATE_CLUSTER_HOST}
-      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
+      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
       FRONTEND_PROXY: ${FRONTEND_PROXY:-http://frontend:3000}
       ROOT_CREDENTIALS: ${ROOT_CREDENTIALS:-admin:password}
       DB_PATH: ${DB_PATH:-/tmp/data.db}
@@ -55,11 +60,25 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - app-network
+  integration-sync:
+    build:
+      dockerfile: development/build-tools/sync.dockerfile
+      context: .
+    image: dev-integration-sync
+    environment:
+      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
+    volumes:
+      - ./:/workspace
+    networks:
+      - app-network
   frontend:
     build:
       dockerfile: dev.dockerfile
       context: ./frontend/
     image: dev-frontend
+    depends_on:
+      integration-sync:
+        condition: service_completed_successfully
     command: sh -c "if [ ! -x node_modules/.bin/vike ]; then npm ci | cat; fi && npm run dev | cat"
     environment:
       VITE_ENABLE_ADMIN_MODEL_DEFAULT_SYNC: ${VITE_ENABLE_ADMIN_MODEL_DEFAULT_SYNC:-1}
