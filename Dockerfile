@@ -24,9 +24,9 @@ RUN npm run build
 RUN ./generate_golang_routes.sh
 
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS frontend_empty
-WORKDIR /frontend
-RUN mkdir -p /frontend/dist/client \
-    && printf '{}\n' > /frontend/routes.json
+WORKDIR /workspace/frontend
+RUN mkdir -p /workspace/frontend/dist/client \
+    && printf '{}\n' > /workspace/frontend/routes.json
 
 FROM ${FRONTEND_STAGE} AS frontend_selected
 
@@ -51,8 +51,8 @@ FROM basebuilder AS builder
 
 ARG INTEGRATION_PROFILE=core-only
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
-COPY --from=frontend_selected /frontend/routes.json server/routes.json
-COPY --from=frontend_selected /frontend/dist/client server/frontend/
+COPY --from=frontend_selected /workspace/frontend/routes.json server/routes.json
+COPY --from=frontend_selected /workspace/frontend/dist/client server/frontend/
 
 # Generate the Go workspace + side-effect imports for the selected profile, then
 # refresh the integration-owned frontend pages from the freshly built frontend.
