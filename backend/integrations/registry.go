@@ -225,6 +225,32 @@ type BotBootstrapDeclaration struct {
 	Config          extiface.BotBootstrapConfig
 }
 
+// BootstrapDeclaration exposes an integration's optional startup bootstrap hook.
+type BootstrapDeclaration struct {
+	IntegrationName string
+	Bootstrap       extiface.BootstrapFunc
+}
+
+// BootstrapDeclarations returns the startup bootstrap hooks declared by loaded
+// integrations, sorted by integration name.
+func BootstrapDeclarations() []BootstrapDeclaration {
+	EnsureLoaded()
+	out := []BootstrapDeclaration{}
+	for _, def := range List() {
+		if def.Bootstrap == nil {
+			continue
+		}
+		out = append(out, BootstrapDeclaration{
+			IntegrationName: def.Name,
+			Bootstrap:       def.Bootstrap,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].IntegrationName < out[j].IntegrationName
+	})
+	return out
+}
+
 func RuntimeEnvDeclarations() []RuntimeEnvVarDeclaration {
 	EnsureLoaded()
 	out := []RuntimeEnvVarDeclaration{}
