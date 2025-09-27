@@ -19,11 +19,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     GOBIN="/dev_bin" go install -mod=mod github.com/githubnemo/CompileDaemon
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-yaml git \
+    && apt-get install -y --no-install-recommends python3 python3-venv git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY clients/ /clients/
-COPY development/integrations /development/integrations
+COPY development/build-tools /development/build-tools
+RUN python3 -m venv /opt/build-tools \
+    && /opt/build-tools/bin/pip install --no-cache-dir --quiet /development/build-tools \
+    && ln -s /opt/build-tools/bin/openchat-integrations /usr/local/bin/openchat-integrations
 ADD ./backend /backend
 
 # The backend is compiled on container start (see dev_watch.sh) once the

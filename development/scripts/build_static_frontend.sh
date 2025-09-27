@@ -4,6 +4,22 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
+if command -v openchat-integrations >/dev/null 2>&1; then
+  BUILD_TOOLS="openchat-integrations"
+else
+  BUILD_TOOLS="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
+fi
+
+INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-}"
+
+# Materialize the integration checkouts and link their frontend pages into the
+# aggregator before building. Integration pages live in the (possibly private)
+# integration repositories and are symlinked in only when the integration is
+# present, so per-integration React code stays private.
+echo "Linking integration frontend pages..."
+"$BUILD_TOOLS" sync ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
+"$BUILD_TOOLS" frontend ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
+
 echo "Building frontend statically..."
 
 # Clean up previous build
@@ -32,8 +48,7 @@ cd "$REPO_ROOT"
 # is driven by integrations.yaml (see `frontend.pages`) instead of a hardcoded
 # shell script.
 echo "Exporting integration frontend pages..."
-PYTHONPATH="$REPO_ROOT/development/integrations" \
-  python3 -m openchat_integrations export --dist-dir "$REPO_ROOT/frontend/dist/client"
+"$BUILD_TOOLS" export ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"} --dist-dir "$REPO_ROOT/frontend/dist/client"
 
 # Copy the built frontend to backend directory
 echo "Copying built frontend to backend..."

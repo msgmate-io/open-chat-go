@@ -11,8 +11,8 @@
 !integrations.yaml
 !integrations.lock.json
 !development
-!development/integrations
-!development/integrations/**
+!development/build-tools
+!development/build-tools/**
 
 # Dev-only/generated backend artifacts are bind-mounted at runtime and do not
 # need to inflate backend image layers.

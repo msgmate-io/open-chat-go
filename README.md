@@ -15,7 +15,9 @@
 - Integrations are declared in [`integrations.yaml`](./integrations.yaml) (source
   repo, ref, profile membership, build tags, frontend pages).
 - Source is fetched on demand by the integration manager
-  (`python3 -m openchat_integrations`), so integrations are no longer git
+  (`openchat-integrations` from
+  [`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools),
+  vendored at `development/build-tools`), so integrations are no longer git
   submodules. Selected per `INTEGRATION_PROFILE` (`core-only`, `default`,
   `full`).
 - Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and register via `integrationinterface.MustRegister`.
@@ -43,9 +45,9 @@ cd backend && INTEGRATION_PROFILE=full ./full_build.sh
 INTEGRATION_PROFILE=full docker compose -f docker-compose.pro.yaml build backend
 ```
 
-See [`development/integrations/README.md`](./development/integrations/README.md)
-for the manager CLI, local integration development, and reproducible
-`--frozen` builds.
+See [`development/build-tools/README.md`](./development/build-tools/README.md)
+for the manager CLI, install instructions, local integration development, and
+reproducible `--frozen` builds.
 
 ### Releases
 
