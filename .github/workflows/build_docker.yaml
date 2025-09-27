@@ -31,8 +31,8 @@ jobs:
         run: |
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_PAT }}@github.com/".insteadOf "https://github.com/"
-          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
-            python3 -m openchat_integrations sync --frozen --profile core-only
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile core-only
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
