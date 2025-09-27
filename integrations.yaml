@@ -5,7 +5,7 @@
 # contribute to the Go build and the frontend build.
 #
 # Integration source is fetched on demand by
-# `python3 -m openchat_integrations sync` into `path` (gitignored). No git
+# `openchat-integrations sync` into `path` (gitignored). No git
 # submodules are required for integrations anymore.
 #
 # Sources:

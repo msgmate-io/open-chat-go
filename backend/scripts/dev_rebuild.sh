@@ -24,8 +24,13 @@ run_step() {
 # Regenerate the Go workspace + side-effect imports + build tags for the
 # selected integration profile from integrations.yaml.
 resolve_integrations() {
-  PYTHONPATH="$REPO_ROOT/development/integrations" \
-    python3 -m openchat_integrations resolve ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
+  local cli
+  if command -v openchat-integrations >/dev/null 2>&1; then
+    cli="openchat-integrations"
+  else
+    cli="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
+  fi
+  "$cli" resolve ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
 }
 
 generate_swagger() {

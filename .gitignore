@@ -61,6 +61,9 @@ backend/go.work
 backend/go.work.sum
 backend/integrations/externalintegrations/imports_gen.go
 
+# Build-tools virtualenv (development/scripts/build_tools.sh)
+.venv/
+
 # Integrations are fetched on demand by the integration manager.
 clients/integrations/*
 !clients/integrations/.gitkeep
