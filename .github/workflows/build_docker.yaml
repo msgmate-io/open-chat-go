@@ -27,6 +27,13 @@ jobs:
           token: ${{ secrets.BOT_PAT }}
           submodules: recursive
 
+      - name: Materialize core-only integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_PAT }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile core-only
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
