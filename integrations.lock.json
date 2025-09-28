@@ -10,7 +10,7 @@
     "admin": {
       "repo": "https://github.com/msgmate-io/open-chat-go-admin-db-management-integration",
       "ref": "main",
-      "commit": "c68d91e35e817c00440e03052b955bad0c64a795",
+      "commit": "ccb8d3ebfd27f25aedb63fe5442bf5f2361a2e08",
       "source": "git"
     },
     "docker_sandbox": {
@@ -22,13 +22,13 @@
     "emails": {
       "repo": "https://github.com/msgmate-io/open-chat-go-email-integration",
       "ref": "main",
-      "commit": "76025a3c676e8153a555994b53146f3483b3bd7c",
+      "commit": "ee1cc7410835b8f3117b37ca9bdf596766f55cc4",
       "source": "git"
     },
     "git": {
       "repo": "https://github.com/msgmate-io/open-chat-go-git-integration",
       "ref": "main",
-      "commit": "d236c6fb8e432979d714ef79e9eb67f9073d34be",
+      "commit": "99644136ff539473e92d5094fc9d58cee9d0d013",
       "source": "git"
     },
     "go_client": {
@@ -40,7 +40,7 @@
     "kubernetes": {
       "repo": "https://github.com/msgmate-io/open-chat-go-kubernetes-integration",
       "ref": "main",
-      "commit": "d3534a930c3804d0ab5b2e6fdc64e0995afcee0c",
+      "commit": "e691710a608220e8b2aea79cd90b1d8cfdf45d56",
       "source": "git"
     },
     "matrix": {
@@ -58,7 +58,7 @@
     "opencode": {
       "repo": "https://github.com/msgmate-io/open-chat-go-opencode-integration",
       "ref": "main",
-      "commit": "059e721a3c634ea91a781b7974241babf89064ab",
+      "commit": "ab6caca7f559fdf55fb4274fab90e4b07192ab91",
       "source": "git"
     },
     "rest_api_tool": {
@@ -70,7 +70,7 @@
     "ssh": {
       "repo": "https://github.com/msgmate-io/open-chat-go-ssh-integration.git",
       "ref": "main",
-      "commit": "3ddcd407be2c40c657cea82c35ad9eac1527fb57",
+      "commit": "6ddaa56b734c0765892d6b85c9b703ee4cc2a80f",
       "source": "git"
     },
     "voice": {
