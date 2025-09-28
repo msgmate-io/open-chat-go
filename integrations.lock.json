@@ -16,7 +16,7 @@
     "docker_sandbox": {
       "repo": "https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration",
       "ref": "main",
-      "commit": "7ad6b3e7bbbd8212eb2d32833e9384ae1afb79d1",
+      "commit": "1cd3126ee8aeb9dbd31112c30e63f6c2778742b0",
       "source": "git"
     },
     "emails": {
@@ -58,7 +58,7 @@
     "opencode": {
       "repo": "https://github.com/msgmate-io/open-chat-go-opencode-integration",
       "ref": "main",
-      "commit": "54b1f232640bc40fc736efe1fe0f86ee6cace4a8",
+      "commit": "27f6bd97810cf2b5e2f028cea046f8db102596a1",
       "source": "git"
     },
     "rest_api_tool": {
