@@ -18,6 +18,7 @@ development/*
 !development/build-tools
 !development/build-tools/**
 !development/ci
+development/ci/*
 !development/ci/openchat
 !development/ci/openchat/**
 # Local Python build artifacts from installing the CLI must not leak into images.
