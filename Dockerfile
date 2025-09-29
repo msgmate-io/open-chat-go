@@ -10,7 +10,7 @@ ARG INTEGRATION_PROFILE=core-only
 RUN apk add --no-cache python3 py3-pip git
 WORKDIR /workspace
 COPY integrations.yaml integrations.lock.json /workspace/
-COPY development/build-tools /workspace/development/build-tools
+COPY development/ /workspace/development/
 COPY clients/integrations /workspace/clients/integrations
 RUN pip install --no-cache-dir --break-system-packages /workspace/development/build-tools
 COPY frontend/ /workspace/frontend/
@@ -44,7 +44,7 @@ COPY backend/ ./
 # /clients/integrations/<name> and /backend/go.work.
 COPY integrations.yaml /integrations.yaml
 COPY integrations.lock.json /integrations.lock.json
-COPY development/build-tools /development/build-tools
+COPY development/ /development/
 RUN pip install --no-cache-dir --break-system-packages /development/build-tools
 
 FROM basebuilder AS builder
