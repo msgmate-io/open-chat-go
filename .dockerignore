@@ -10,9 +10,16 @@
 !clients/integrations/**
 !integrations.yaml
 !integrations.lock.json
+!profile_setup.yaml
 !development
+# Only the public build tooling and the private manifest fragment (if present)
+# are needed inside the image; the rest of `development/` stays out.
+development/*
 !development/build-tools
 !development/build-tools/**
+!development/ci
+!development/ci/openchat
+!development/ci/openchat/**
 # Local Python build artifacts from installing the CLI must not leak into images.
 development/build-tools/build
 development/build-tools/*.egg-info
@@ -31,4 +38,3 @@ backend/go.work.sum
 backend/integrations/externalintegrations/imports_gen.go
 .integrations
 integrations.local.yaml
-

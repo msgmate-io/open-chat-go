@@ -1,12 +1,6 @@
 [submodule "frontend"]
 	path = frontend
 	url = https://github.com/msgmate-io/open-chat-go-frontend
-[submodule "development/helm"]
-	path = development/helm
-	url = https://github.com/msgmate-io/open-chat-go-helm-chart
-[submodule "development/ci"]
-	path = development/ci
-	url = https://github.com/msgmate-io/open-chat-go-ci
 [submodule "clients/oc_python_client"]
 	path = clients/oc_python_client
 	url = https://github.com/msgmate-io/open-chat-go-python-client
@@ -16,12 +10,6 @@
 [submodule "clients/go_integration_interface"]
 	path = clients/go_integration_interface
 	url = https://github.com/msgmate-io/open-chat-go-integration-interface.git
-[submodule "clients/gomobile"]
-	path = clients/gomobile
-	url = https://github.com/msgmate-io/open-chat-go-mobile
-[submodule "clients/llm_coding_agents"]
-	path = clients/llm_coding_agents
-	url = https://github.com/msgmate-io/open-chat-go-llm-coding-context
 [submodule "clients/js_client"]
 	path = clients/js_client
 	url = https://github.com/msgmate-io/open-chat-go-js-client
