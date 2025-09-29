@@ -1,0 +1,78 @@
+# Profile setup spec (public).
+#
+# Declares, per integration profile, the extra repositories and symlinks that
+# `openchat-integrations setup --profile <profile>` materializes. Every other
+# command runs this automatically before a build when the profile's setup
+# marker is missing, so the workspace is never half-configured.
+#
+# This file is public and only ever names repository locations. All private
+# source (the private integrations manifest and its lockfile) lives inside the
+# `ci` checkout and is never referenced here.
+#
+# Repositories are cloned into `path` if absent; an existing checkout (a
+# de-submoduled directory or a git clone) is reused. `sparse` clones only the
+# listed top-level directories (used to fetch just the manifest fragment).
+version: 1
+
+repos:
+  # Sparse checkout of the private manifest fragment (openchat/).
+  ci_fragment:
+    repo: https://github.com/msgmate-io/open-chat-go-ci
+    path: .integrations/ci-fragment
+    ref: main
+    fragment: true
+    sparse:
+      - openchat
+
+  # Full private CI tooling (bot templates, e2e, sandbox and AI process tests).
+  ci:
+    repo: https://github.com/msgmate-io/open-chat-go-ci
+    path: development/ci
+    ref: main
+    fragment: true
+
+  # Deployment Helm chart.
+  helm:
+    repo: https://github.com/msgmate-io/open-chat-go-helm-chart
+    path: development/helm
+    ref: main
+
+  # Android client (gomobile bindings + host app).
+  gomobile:
+    repo: https://github.com/msgmate-io/open-chat-go-mobile
+    path: clients/gomobile
+    ref: main
+
+  # Optional LLM coding context (developer documentation).
+  llm_coding_agents:
+    repo: https://github.com/msgmate-io/open-chat-go-llm-coding-context
+    path: clients/llm_coding_agents
+    ref: main
+
+profiles:
+  # The public profile needs nothing extra.
+  core-only:
+    repos: []
+
+  # Private integrations come from the sparse manifest fragment.
+  default:
+    repos:
+      - ci_fragment
+
+  # Full backend/frontend build; deliberately excludes the Android client.
+  full:
+    repos:
+      - ci_fragment
+
+  # Full build plus the mobile client.
+  full-android:
+    repos:
+      - ci_fragment
+      - gomobile
+
+  # CI/deployment tooling: full integrations plus the private CI and Helm
+  # checkouts. Includes the sparse fragment indirectly through `ci`.
+  full-ci:
+    repos:
+      - ci
+      - helm
