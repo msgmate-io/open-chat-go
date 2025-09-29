@@ -103,6 +103,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update PR progress comment with release details
         run: |
           set -euo pipefail
@@ -186,6 +191,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Delete previous workflow comments
         env:
           COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -513,6 +523,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
         env:
@@ -1020,6 +1035,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Python for AI process tests
         uses: actions/setup-python@v5
         with:
@@ -1137,6 +1157,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Node.js for E2E tests
         uses: actions/setup-node@v4
         with:
@@ -1503,6 +1528,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render test-complete progress comment
         run: |
           set -euo pipefail
@@ -1951,6 +1981,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment when approval gate opens
         env:
           BOT_USER: ${{ env.BOT_USER }}
@@ -2346,6 +2381,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Python for AI real tests
         uses: actions/setup-python@v5
         with:
@@ -2509,6 +2549,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment after approved dispatch
         run: |
           set -euo pipefail
@@ -2561,6 +2606,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render final progress comment with AI real result
         run: |
           set -euo pipefail
@@ -2758,6 +2808,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Comment deployment approval link on merged PR
         env:
           BOT_USER: ${{ env.BOT_USER }}

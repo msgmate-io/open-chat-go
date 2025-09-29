@@ -1,1 +1,1 @@
-./clients/llm_coding_agents/DEVELOPMENT.md
+DEVELOPMENT.md
