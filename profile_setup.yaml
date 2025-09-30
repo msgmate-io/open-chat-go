@@ -66,10 +66,11 @@ profiles:
     repos:
       - ci_fragment
 
-  # Full build plus the mobile client.
+  # Full build plus the mobile client (and the CI tooling the Android build
+  # scripts live in).
   full-android:
     repos:
-      - ci_fragment
+      - ci
       - gomobile
 
   # CI/deployment tooling: full integrations plus the private CI and Helm
