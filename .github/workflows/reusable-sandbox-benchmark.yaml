@@ -147,7 +147,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Enumerate sandbox test directories
         id: discover
@@ -221,7 +221,7 @@ jobs:
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full
+          "$BUILD_TOOLS" sync --frozen --profile full-ci
 
       - name: Login to GHCR
         if: inputs.backend_image == ''
@@ -278,7 +278,7 @@ jobs:
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full
+          "$BUILD_TOOLS" sync --frozen --profile full-ci
 
       - name: Resolve sandbox image tag from content hash
         id: image
@@ -407,7 +407,7 @@ jobs:
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full
+          "$BUILD_TOOLS" sync --frozen --profile full-ci
 
       - name: Login to GHCR for backend image pull
         run: |
