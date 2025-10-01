@@ -9,11 +9,13 @@ import (
 
 type User struct {
 	Model
-	Name         string `json:"name"`
-	Email        string `json:"-" gorm:"unique"`
-	PasswordHash string `json:"-"`
-	ContactToken string `json:"contact_token"`
-	IsAdmin      bool   `json:"is_admin"`
+	Name             string `json:"name"`
+	Email            string `json:"-" gorm:"unique"`
+	PasswordHash     string `json:"-"`
+	ContactToken     string `json:"contact_token"`
+	IsAdmin          bool   `json:"is_admin"`
+	TwoFactorEnabled bool   `json:"two_factor_enabled" gorm:"default:false"`
+	TwoFactorSecret  string `json:"-"`
 }
 
 type PublicProfile struct {
@@ -68,9 +70,11 @@ func RegisterUser(
 	}
 
 	var user User = User{
-		Name:         name,
-		Email:        email,
-		PasswordHash: string(hashedPassword),
+		Name:             name,
+		Email:            email,
+		PasswordHash:     string(hashedPassword),
+		TwoFactorEnabled: false,
+		TwoFactorSecret:  "",
 	}
 
 	r := DB.Create(&user)
