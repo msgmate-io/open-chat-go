@@ -7,6 +7,9 @@ ARG FRONTEND_STAGE=frontend
 
 FROM node:${NODE_VERSION}-alpine AS frontend
 ARG INTEGRATION_PROFILE=core-only
+# The build context already contains the prepared integration checkouts and the
+# private manifest fragment; never fetch profile repos inside the image.
+ENV OPENCHAT_NO_SETUP=1
 RUN apk add --no-cache python3 py3-pip git
 WORKDIR /workspace
 COPY integrations.yaml integrations.lock.json /workspace/
@@ -33,6 +36,9 @@ FROM ${FRONTEND_STAGE} AS frontend_selected
 FROM docker.io/library/golang:${GOLANG_VERSION}-alpine AS basebuilder
 
 ENV GOTOOLCHAIN=auto
+# Integration sources and the manifest fragment are copied from the already
+# prepared build context; do not re-fetch profile repos here.
+ENV OPENCHAT_NO_SETUP=1
 
 WORKDIR /backend
 
