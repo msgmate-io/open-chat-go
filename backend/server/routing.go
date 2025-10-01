@@ -32,7 +32,7 @@ import (
 	"time"
 )
 
-//go:embed all:frontend routes.json
+//go:embed all:frontend routes.json swagger.json
 var frontendFS embed.FS
 
 func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
@@ -421,6 +421,10 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /contacts/{contact_token}", contactsHandler.GetContactByToken)
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
+	v1PrivateApis.HandleFunc("POST /user/2fa/setup", userHandler.SetupTwoFactor)
+	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
+	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
+	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
 	v1PrivateApis.HandleFunc("GET /federation/identity", federationHandler.Identity)
 	v1PrivateApis.HandleFunc("GET /federation/bootstrap", federationHandler.Bootstrap)
 	v1PrivateApis.HandleFunc("POST /federation/networks/{network_name}/request-relay-reservation", federationHandler.NetworkRequestRelayReservation)
@@ -514,8 +518,21 @@ func BackendRouting(
 	mux.HandleFunc("/.well-known/acme-challenge/", tls.ACMEChallengeHandler)
 
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", providerMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
-	mux.HandleFunc("/reference", reference.ScalarReference)
-	mux.HandleFunc("/api/reference", reference.ScalarReference)
+
+	// Create swagger reference handler with embedded content
+	swaggerContent, err := frontendFS.ReadFile("swagger.json")
+	if err != nil {
+		log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
+		// Fallback to file-based handler
+		mux.HandleFunc("/reference", reference.ScalarReference)
+		mux.HandleFunc("/api/reference", reference.ScalarReference)
+	} else {
+		// Use embedded content
+		swaggerHandler := reference.ScalarReferenceWithContent(string(swaggerContent))
+		mux.HandleFunc("/reference", swaggerHandler)
+		mux.HandleFunc("/api/reference", swaggerHandler)
+	}
+
 	mux.HandleFunc("/api/version", reference.VersionHandler)
 
 	if frontendProxy == "" {
