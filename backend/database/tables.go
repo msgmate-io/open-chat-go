@@ -120,6 +120,7 @@ func (FileUploadMigration) Migrate(db *gorm.DB) error {
 
 var Tabels []interface{} = []interface{}{
 	&User{},
+	&TwoFactorRecoveryCode{},
 	&Proxy{},
 	&Key{},
 	&Session{},
@@ -141,6 +142,7 @@ var Tabels []interface{} = []interface{}{
 
 var Migrations []Migration = []Migration{
 	TableMigration{&User{}},
+	TableMigration{&TwoFactorRecoveryCode{}},
 	TableMigration{&Proxy{}},
 	TableMigration{&Key{}},
 	TableMigration{&Session{}},

@@ -12,8 +12,10 @@ import (
 )
 
 type UserLogin struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email         string `json:"email"`
+	Password      string `json:"password"`
+	TwoFactorCode string `json:"two_factor_code"`
+	RecoveryCode  string `json:"recovery_code"`
 }
 
 // curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:8080" -d '{"email":"tim+test@timschupp.de","password":"password"}' http://localhost:8080/api/v1/user/login -v
@@ -60,8 +62,14 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiry := time.Now().Add(24 * time.Hour)
-	err, token := LoginUser(DB, data.Email, data.Password, expiry)
+	err, token, twofaRequired := LoginUser(DB, data.Email, data.Password, data.TwoFactorCode, data.RecoveryCode, expiry)
 	if err != nil {
+		if twofaRequired {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]any{"requires_two_factor": true, "error": err.Error()})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
@@ -114,8 +122,14 @@ func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiry := time.Now().Add(24 * time.Hour)
-	err, token := LoginUser(DB, data.Email, data.Password, expiry)
+	err, token, twofaRequired := LoginUser(DB, data.Email, data.Password, data.TwoFactorCode, data.RecoveryCode, expiry)
 	if err != nil {
+		if twofaRequired {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]any{"requires_two_factor": true, "error": err.Error()})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
@@ -135,18 +149,47 @@ func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Login successful"))
 }
 
-func LoginUser(DB *gorm.DB, email string, password string, expiry time.Time) (error, string) {
+func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string, recoveryCode string, expiry time.Time) (error, string, bool) {
 	var user database.User // TODO: sql injection?
 	q := DB.First(&user, "email = ?", email)
 
 	if q.Error != nil {
 		fmt.Println(q.Error)
-		return q.Error, ""
+		return q.Error, "", false
 	}
 
 	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 	if err != nil {
-		return err, ""
+		return err, "", false
+	}
+
+	// Enforce two-factor if enabled for this user
+	if user.TwoFactorEnabled {
+		// Try recovery code first if provided
+		if recoveryCode != "" {
+			var recCodes []database.TwoFactorRecoveryCode
+			DB.Where("user_id = ? AND used_at IS NULL", user.ID).Find(&recCodes)
+			matched := false
+			for _, rc := range recCodes {
+				if bcrypt.CompareHashAndPassword([]byte(rc.CodeHash), []byte(recoveryCode)) == nil {
+					now := time.Now()
+					DB.Model(&rc).Update("used_at", &now)
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("invalid recovery code"), "", true
+			}
+		} else {
+			if twoFactorCode == "" {
+				return fmt.Errorf("two-factor code required"), "", true
+			}
+			// Validate TOTP code
+			if !VerifyTOTP(user.TwoFactorSecret, twoFactorCode, time.Now()) {
+				return fmt.Errorf("invalid two-factor code"), "", true
+			}
+		}
 	}
 
 	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!
@@ -161,7 +204,7 @@ func LoginUser(DB *gorm.DB, email string, password string, expiry time.Time) (er
 	q = DB.Create(&session)
 
 	if q.Error != nil {
-		return q.Error, ""
+		return q.Error, "", false
 	}
-	return nil, token
+	return nil, token, false
 }
