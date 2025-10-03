@@ -44,9 +44,8 @@ echo "Generating Go routes..."
 
 cd "$REPO_ROOT"
 
-# Export integration-owned frontend pages into integration assets. The mapping
-# is driven by integrations.yaml (see `frontend.pages`) instead of a hardcoded
-# shell script.
+# Export integration-owned frontend pages into the integration assets. The
+# mapping is owned by each integration (integration.frontend.json).
 echo "Exporting integration frontend pages..."
 "$BUILD_TOOLS" export ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"} --dist-dir "$REPO_ROOT/frontend/dist/client"
 
