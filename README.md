@@ -12,42 +12,10 @@
 
 ### Infuse Open-Chat Tools & Integrations
 
-- Integrations are declared in [`integrations.yaml`](./integrations.yaml) (source
-  repo, ref, profile membership, build tags, frontend pages).
-- Source is fetched on demand by the integration manager
-  (`openchat-integrations` from
-  [`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools),
-  vendored at `development/build-tools`), so integrations are no longer git
-  submodules. Selected per `INTEGRATION_PROFILE` (`core-only`, `default`,
-  `full`).
+- Integrations live in their own repos and are fetched on demand from [`integrations.yaml`](./integrations.yaml) by the `openchat-integrations` manager ([open-chat-go-build-tools](https://github.com/msgmate-io/open-chat-go-build-tools), vendored at `development/build-tools`); selected per `INTEGRATION_PROFILE` (`core-only`, `default`, `full`, `full-ci`, `full-android`).
+- Private integrations and the private profiles live in a private manifest fragment materialized by `openchat-integrations setup` ([`profile_setup.yaml`](./profile_setup.yaml)); the public repository never contains private source.
 - Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and register via `integrationinterface.MustRegister`.
 - Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
-
-### Building with integration profiles
-
-Profiles select which integrations are compiled:
-
-| Profile | Includes |
-| --- | --- |
-| `core-only` (default) | `mcp`, `rest_api_tool`, `go_client` |
-| `default` | core + `matrix`, `docker_sandbox`, `git`, `kubernetes` |
-| `full` | every integration (some private; needs repo access) |
-
-```bash
-# Local development (compose runs the integration-sync service for you)
-INTEGRATION_PROFILE=core-only docker compose up
-INTEGRATION_PROFILE=full      docker compose up
-
-# Host build
-cd backend && INTEGRATION_PROFILE=full ./full_build.sh
-
-# Production image
-INTEGRATION_PROFILE=full docker compose -f docker-compose.pro.yaml build backend
-```
-
-See [`development/build-tools/README.md`](./development/build-tools/README.md)
-for the manager CLI, install instructions, local integration development, and
-reproducible `--frozen` builds.
 
 ### Releases
 
@@ -67,4 +35,3 @@ property owner, the current licensing draft status, special-licensing
 requests, and the copyright-owner exemption covering the proprietary
 (private) submodules. Alternative or commercial licensing can be
 investigated on request.
-
