@@ -18,8 +18,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VENV="${OPENCHAT_BUILD_TOOLS_VENV:-$REPO_ROOT/.venv}"
 CLI="$VENV/bin/openchat-integrations"
 
-if [ ! -x "$CLI" ]; then
+# A `.venv` created on the host is bind-mounted into build/sandbox containers,
+# where its absolute interpreter path no longer exists. Detect a runnable CLI
+# and reinstall when the interpreter is missing or the entry point is stale.
+runnable() {
+  [ -x "$1" ] || return 1
+  "$1" --help >/dev/null 2>&1
+}
+
+if ! runnable "$CLI"; then
   echo "[build-tools] installing openchat-integrations into $VENV" >&2
+  rm -rf "$VENV"
   python3 -m venv "$VENV"
   "$VENV/bin/pip" install --quiet --upgrade pip
   if [ -d "$REPO_ROOT/development/build-tools/openchat_integrations" ]; then
