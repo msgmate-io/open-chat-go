@@ -163,4 +163,17 @@ Chat extension registrations (message inputs, details views, pre-start selectors
 
 ### Documentation lookup index
 
-- [Build tools README](../development/build-tools/README.md)
+The user- and developer-facing documentation lives in the **frontend** docs
+pages at `frontend/pages/docs/content/*.mdx` and is published at
+[`msgmate.io/docs`](https://msgmate.io/docs) (each file is a page selected by
+its `path:` frontmatter). Read them for further instructions before changing an
+area they cover:
+
+- [`development.mdx`](../frontend/pages/docs/content/development.mdx) — local development setup.
+- [`integration-development.mdx`](../frontend/pages/docs/content/integration-development.mdx) — integration/tool interfaces, profiles, frontend page linking and **adding a custom integration**.
+- [`integrations.mdx`](../frontend/pages/docs/content/integrations.mdx) — integration registry, tools and access model.
+- [`self-hosting.mdx`](../frontend/pages/docs/content/self-hosting.mdx) — deployment and operations.
+
+Also useful:
+
+- [Build tools README](../development/build-tools/README.md) — the `openchat-integrations` CLI.
