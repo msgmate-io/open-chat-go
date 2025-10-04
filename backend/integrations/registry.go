@@ -88,8 +88,8 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 			return def, fmt.Errorf("integration %q frontend route %q cannot use /api prefix", name, routePath)
 		}
 		expectedPrefix := expectedIntegrationFrontendPrefix(name)
-		if routePath != expectedPrefix && !strings.HasPrefix(routePath, expectedPrefix+"/") {
-			return def, fmt.Errorf("integration %q frontend route %q must be under %q", name, routePath, expectedPrefix)
+		if !route.Root && routePath != expectedPrefix && !strings.HasPrefix(routePath, expectedPrefix+"/") {
+			return def, fmt.Errorf("integration %q frontend route %q must be under %q (or set Root)", name, routePath, expectedPrefix)
 		}
 		if route.Handler == nil {
 			return def, fmt.Errorf("integration %q frontend route %q is missing handler", name, routePath)
@@ -115,8 +115,8 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 			return def, fmt.Errorf("integration %q frontend page route %q cannot use /api prefix", name, routePath)
 		}
 		expectedPrefix := expectedIntegrationFrontendPrefix(name)
-		if routePath != expectedPrefix && !strings.HasPrefix(routePath, expectedPrefix+"/") {
-			return def, fmt.Errorf("integration %q frontend page route %q must be under %q", name, routePath, expectedPrefix)
+		if !page.Root && routePath != expectedPrefix && !strings.HasPrefix(routePath, expectedPrefix+"/") {
+			return def, fmt.Errorf("integration %q frontend page route %q must be under %q (or set Root)", name, routePath, expectedPrefix)
 		}
 		assetPath := normalizeFrontendAssetPath(page.AssetPath)
 		if assetPath == "" {
