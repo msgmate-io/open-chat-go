@@ -104,6 +104,10 @@ func (s *StubFederationHandler) ListNodes(w http.ResponseWriter, r *http.Request
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
 
+func (s *StubFederationHandler) GetNode(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Federation not available", http.StatusNotImplemented)
+}
+
 func (s *StubFederationHandler) WhitelistedPeers(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
