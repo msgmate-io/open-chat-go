@@ -131,6 +131,10 @@ func (w *FederationHandlerWrapper) ListNodes(resp http.ResponseWriter, req *http
 	w.handler.ListNodes(resp, req)
 }
 
+func (w *FederationHandlerWrapper) GetNode(resp http.ResponseWriter, req *http.Request) {
+	w.handler.GetNode(resp, req)
+}
+
 func (w *FederationHandlerWrapper) WhitelistedPeers(resp http.ResponseWriter, req *http.Request) {
 	w.handler.WhitelistedPeers(resp, req)
 }
