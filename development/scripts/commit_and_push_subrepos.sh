@@ -94,7 +94,7 @@ commit_and_push_root_if_changed() {
   (
     cd "${REPO_ROOT}"
 
-    git add backend development
+    git add backend development integrations.lock.json integrations.yaml profile_setup.yaml
 
     if (( ${#SUBREPO_PATHS[@]} > 0 )); then
       git add "${SUBREPO_PATHS[@]}"
@@ -113,6 +113,39 @@ commit_and_push_root_if_changed() {
 for subrepo_path in "${SUBREPO_PATHS[@]}"; do
   commit_and_push_subrepo_if_changed "${subrepo_path}"
 done
+
+# Integrations are no longer git submodules: each lives in its own repo under
+# clients/integrations/<name> (fetched by the integration manager). Commit and
+# push changed integration checkouts too, then refresh their lockfile pins.
+INTEGRATION_PATHS=()
+if [[ -d "${REPO_ROOT}/clients/integrations" ]]; then
+  for integ_path in "${REPO_ROOT}"/clients/integrations/*/; do
+    [[ -d "${integ_path}" ]] || continue
+    [[ -d "${integ_path}/.git" ]] || continue
+    INTEGRATION_PATHS+=("clients/integrations/$(basename "${integ_path}")")
+  done
+fi
+
+# Profile-scoped private repos materialized by `openchat-integrations setup`.
+for setup_path in development/ci development/helm clients/gomobile clients/llm_coding_agents; do
+  if [[ -d "${REPO_ROOT}/${setup_path}/.git" ]]; then
+    INTEGRATION_PATHS+=("${setup_path}")
+  fi
+done
+
+for integ_path in "${INTEGRATION_PATHS[@]}"; do
+  commit_and_push_subrepo_if_changed "${integ_path}"
+done
+
+if (( ${#INTEGRATION_PATHS[@]} > 0 )); then
+  echo "Refreshing integration lockfile"
+  (
+    cd "${REPO_ROOT}"
+    CLI="$(bash development/scripts/build_tools.sh)"
+    "$CLI" sync --profile "${INTEGRATION_PROFILE:-full}" || \
+      echo "Warning: lockfile refresh failed; commit may pin unreachable integration commits." >&2
+  )
+fi
 
 commit_and_push_root_if_changed
 
