@@ -12,8 +12,7 @@
 
 ### Infuse Open-Chat Tools & Integrations
 
-- Integrations live in their own repos and are fetched on demand from [`integrations.yaml`](./integrations.yaml) by the `openchat-integrations` manager ([open-chat-go-build-tools](https://github.com/msgmate-io/open-chat-go-build-tools), vendored at `development/build-tools`); selected per `INTEGRATION_PROFILE` (`core-only`, `default`, `full`, `full-ci`, `full-android`).
-- Private integrations and the private profiles live in a private manifest fragment materialized by `openchat-integrations setup` ([`profile_setup.yaml`](./profile_setup.yaml)); the public repository never contains private source.
+- Integrations live in their own repos and are fetched on demand from [`integrations.yaml`](./integrations.yaml) by the `openchat-integrations` manager ([open-chat-go-build-tools](https://github.com/msgmate-io/open-chat-go-build-tools), vendored at `development/build-tools`); selected per `INTEGRATION_PROFILE` ( for now only 'core-only' is OS ).
 - Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and register via `integrationinterface.MustRegister`.
 - Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
