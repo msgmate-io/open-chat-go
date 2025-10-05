@@ -28,3 +28,26 @@ func TestMessageHasPendingConfirmationRecognizesOpencodeNeedsAction(t *testing.T
 		t.Fatalf("expected a message without markers to be ignored")
 	}
 }
+
+func TestMessageHasPendingConfirmationRecognizesInteractionConfirmation(t *testing.T) {
+	pending := database.Message{
+		MetaData: database.JSONRaw(`{"finished":true,"interaction_confirmation":{"status":"pending","source_message_uuid":"msg-1"}}`),
+	}
+	if !messageHasPendingConfirmation(pending) {
+		t.Fatalf("expected a pending interaction_confirmation to count as a pending confirmation")
+	}
+
+	approved := database.Message{
+		MetaData: database.JSONRaw(`{"finished":true,"interaction_confirmation":{"status":"approved"}}`),
+	}
+	if messageHasPendingConfirmation(approved) {
+		t.Fatalf("expected an approved interaction_confirmation to be ignored")
+	}
+
+	rejected := database.Message{
+		MetaData: database.JSONRaw(`{"finished":true,"interaction_confirmation":{"status":"rejected"}}`),
+	}
+	if messageHasPendingConfirmation(rejected) {
+		t.Fatalf("expected a rejected interaction_confirmation to be ignored")
+	}
+}
