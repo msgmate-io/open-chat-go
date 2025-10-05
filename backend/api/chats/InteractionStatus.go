@@ -286,6 +286,13 @@ func messageHasPendingConfirmation(message database.Message) bool {
 					return true
 				}
 			}
+			// Interaction confirmation gate: the bot created the chat but waits
+			// for the user to approve the deferred interaction.
+			if confirmation, ok := meta[interactionConfirmationMetaKey].(map[string]interface{}); ok {
+				if status, _ := confirmation["status"].(string); status == InteractionConfirmationPending {
+					return true
+				}
+			}
 		}
 	}
 	if message.ToolCalls != nil {
