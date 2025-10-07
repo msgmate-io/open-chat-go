@@ -61,6 +61,13 @@ python3 -m venv .venv
   integrations.
 - `docker compose up` runs an `integration-sync` init service that performs
   `prepare` before the backend starts (and therefore also `setup`).
+- Private profiles (`default`, `full`, …) clone private repositories from the
+  `integration-sync` container. The manager discovers the host credentials and
+  configures git for those clones: `GITHUB_TOKEN`/`GH_TOKEN`, the host `gh`
+  config, `~/.git-credentials` or a forwarded SSH agent. The dev compose mounts
+  the host home read-only and forwards `SSH_AUTH_SOCK` for this. If your `gh`
+  token lives in the OS keyring (not `hosts.yml`), add it to `.env` once:
+  `echo "GITHUB_TOKEN=$(gh auth token)" >> .env`.
 - Full reference: [`development/build-tools/README.md`](../development/build-tools/README.md).
 
 ### Building a specific integration profile
