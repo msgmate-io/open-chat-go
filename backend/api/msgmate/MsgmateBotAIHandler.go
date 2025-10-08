@@ -57,6 +57,13 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
+	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+
+	// Check for skip-core tag
+	if aih.hasSkipCoreTag(tags) {
+		log.Printf("Chat %s has skip-core tag, executing tools only", message.Content.ChatUUID)
+		return aih.executeToolsOnly(ctx, message, tools, toolInit)
+	}
 
 	// Load the past messages
 	err, paginatedMessages := aih.botContext.Client.GetMessages(message.Content.ChatUUID, 1, context)
@@ -547,6 +554,138 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	}
 
 	sendFinalMessage(false)
+	return nil
+}
+
+// hasSkipCoreTag checks if the tags contain "skip-core"
+func (aih *AIHandlerImpl) hasSkipCoreTag(tags []string) bool {
+	for _, tag := range tags {
+		if tag == "skip-core" {
+			return true
+		}
+	}
+	return false
+}
+
+// executeToolsOnly executes only the before and after tools without AI completion
+func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.NewMessage, tools []string, toolInit map[string]interface{}) error {
+	startTime := time.Now()
+
+	// Setup tools
+	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit)
+
+	// Add run_callback_function to tools
+	tools = append(tools, "run_callback_function")
+
+	// Log the extracted interaction tools for debugging
+	if len(interactionStartTools) > 0 {
+		log.Printf("Found interaction_start tools: %v", interactionStartTools)
+	}
+	if len(interactionCompleteTools) > 0 {
+		log.Printf("Found interaction_complete tools: %v", interactionCompleteTools)
+	}
+
+	// Send start message
+	aih.botContext.WSHandler.MessageHandler.SendMessage(
+		aih.botContext.WSHandler,
+		message.Content.SenderUUID,
+		aih.botContext.WSHandler.MessageHandler.StartPartialMessage(
+			message.Content.ChatUUID,
+			message.Content.SenderUUID,
+		),
+	)
+
+	// Execute interaction_start tools
+	for _, toolName := range interactionStartTools {
+		if err := aih.executeTool(ctx, toolName, toolMap, message); err != nil {
+			log.Printf("Error executing interaction_start tool %s: %v", toolName, err)
+		}
+	}
+
+	// Execute interaction_complete tools
+	for _, toolName := range interactionCompleteTools {
+		if err := aih.executeTool(ctx, toolName, toolMap, message); err != nil {
+			log.Printf("Error executing interaction_complete tool %s: %v", toolName, err)
+		}
+	}
+
+	// Send end message
+	aih.botContext.WSHandler.MessageHandler.SendMessage(
+		aih.botContext.WSHandler,
+		message.Content.SenderUUID,
+		aih.botContext.WSHandler.MessageHandler.EndPartialMessage(
+			message.Content.ChatUUID,
+			message.Content.SenderUUID,
+		),
+	)
+
+	// Send a simple acknowledgment message
+	totalTime := time.Since(startTime)
+	metadata := map[string]interface{}{
+		"total_time": totalTime.Round(time.Millisecond).String(),
+		"cancelled":  false,
+		"finished":   true,
+		"skip_core":  true,
+	}
+
+	aih.botContext.Client.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
+		Text:     "Tools executed (AI completion skipped due to skip-core tag)",
+		MetaData: &metadata,
+	})
+
+	return nil
+}
+
+// executeTool executes a single tool
+func (aih *AIHandlerImpl) executeTool(ctx context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage) error {
+	// Find the tool in the tool map
+	tool, exists := toolMap[toolName]
+	if !exists {
+		return fmt.Errorf("tool %s not found", toolName)
+	}
+
+	// Create a simple tool call structure
+	toolCall := ToolCall{
+		Id:        fmt.Sprintf("skip-core-%d", time.Now().UnixNano()),
+		ToolName:  toolName,
+		ToolInput: map[string]interface{}{},
+		Result:    "",
+	}
+
+	// Execute the tool
+	result, err := tool.RunTool(toolCall.ToolInput)
+	if err != nil {
+		return fmt.Errorf("error executing tool %s: %w", toolName, err)
+	}
+
+	// Update the tool call with the result
+	toolCall.Result = result
+
+	// Send tool execution message
+	totalTime := time.Since(time.Now())
+	aih.botContext.WSHandler.MessageHandler.SendMessage(
+		aih.botContext.WSHandler,
+		message.Content.SenderUUID,
+		aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
+			message.Content.ChatUUID,
+			message.Content.SenderUUID,
+			"",
+			[]string{""},
+			&map[string]interface{}{
+				"total_time": totalTime.Round(time.Millisecond).String(),
+				"tool_call":  toolName,
+				"skip_core":  true,
+			},
+			&[]interface{}{map[string]interface{}{
+				"id":        toolCall.Id,
+				"name":      toolCall.ToolName,
+				"arguments": toolCall.ToolInput,
+				"result":    toolCall.Result,
+			}},
+			nil,
+		),
+	)
+
 	return nil
 }
 
