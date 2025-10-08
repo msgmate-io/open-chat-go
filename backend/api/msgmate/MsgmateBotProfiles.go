@@ -17,6 +17,7 @@ type BotProfileConfig struct {
 	Context      int      `json:"context"`
 	SystemPrompt string   `json:"system_prompt"`
 	Reasoning    *bool    `json:"reasoning,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
 }
 
 // BotModel represents a bot model configuration
@@ -147,6 +148,21 @@ func GetDefaultBotModels() []BotModel {
 // boolPtr returns a pointer to a boolean value
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// HasTag checks if a configuration has a specific tag
+func (config *BotProfileConfig) HasTag(tag string) bool {
+	for _, t := range config.Tags {
+		if t == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// HasSkipCoreTag checks if the configuration has the "skip-core" tag
+func (config *BotProfileConfig) HasSkipCoreTag() bool {
+	return config.HasTag("skip-core")
 }
 
 // CreateOrUpdateBotProfile creates or updates the bot profile in the database
