@@ -3,8 +3,6 @@
   "/chat/new/{contact_token}",
   "/chat",
   "/chat/{chat_uuid}",
-  "/tls/settings",
-  "/tls",
   "/login",
   "/nodes/settings",
   "/nodes",
@@ -19,6 +17,8 @@
   "/admin/{table_name}",
   "/admin/{table_name}/{id}",
   "/test",
+  "/keys-certs/settings",
+  "/keys-certs",
   "/integrations/settings",
   "/integrations"
 ]
