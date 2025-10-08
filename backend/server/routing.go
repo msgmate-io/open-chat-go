@@ -403,8 +403,7 @@ func BackendRouting(
 	metricsHandler := &metrics.MetricsHandler{}
 	websocketHandler := websocket.NewWebSocketHandler()
 	integrationsHandler := &integrations.IntegrationsHandler{
-		SchedulerService: schedulerService,
-		SignalService:    signalService,
+		SignalService: signalService,
 	}
 	filesHandler := &files.FilesHandler{}
 
