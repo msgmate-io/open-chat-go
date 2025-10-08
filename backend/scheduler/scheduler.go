@@ -1075,6 +1075,7 @@ func (s *SchedulerService) processAICommand(message string, sourceNumber string,
 		"endpoint":    "https://api.openai.com/v1/",
 		"backend":     "openai",
 		"context":     10,
+		"tags":        []string{"skip-core"},
 		"system_prompt": "You are a helpful assistant in a chat conversation.\n\n" +
 			"GUIDELINES:\n" +
 			"- Always respond in the same language the user wrote their message in.\n" +
