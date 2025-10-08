@@ -2,7 +2,6 @@ package integrations
 
 import (
 	"backend/database"
-	"backend/scheduler"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,12 +24,12 @@ import (
 // SignalIntegrationService manages WebSocket connections to Signal REST API instances
 type SignalIntegrationService struct {
 	DB                *gorm.DB
-	SchedulerService  *scheduler.SchedulerService
 	activeConnections map[string]*SignalConnection
 	mu                sync.Mutex
 	serverURL         string
 	stopChannels      map[string]chan struct{} // Channels to stop restart loops
 	stopMu            sync.Mutex
+	botService        *SignalBotService
 }
 
 // SignalConnection represents a connection to a Signal REST API instance
@@ -56,13 +55,14 @@ type SignalAttachment struct {
 }
 
 // NewSignalIntegrationService creates a new SignalIntegrationService
-func NewSignalIntegrationService(DB *gorm.DB, schedulerService *scheduler.SchedulerService, serverURL string) *SignalIntegrationService {
+func NewSignalIntegrationService(DB *gorm.DB, serverURL string) *SignalIntegrationService {
+	botService := NewSignalBotService(DB, serverURL)
 	service := &SignalIntegrationService{
 		DB:                DB,
-		SchedulerService:  schedulerService,
 		activeConnections: make(map[string]*SignalConnection),
 		serverURL:         serverURL,
 		stopChannels:      make(map[string]chan struct{}),
+		botService:        botService,
 	}
 
 	return service
@@ -1139,12 +1139,12 @@ func (s *SignalIntegrationService) processMessage(connection *SignalConnection, 
 	} else {
 		// For individual messages: process if TO owner AND (has AI prefix OR is whitelisted)
 		shouldProcessMessage = isToOwner && (hasAIPrefix ||
-			(scheduler.DONT_REQUIRE_AI_COMMAND_PREFIX && isWhitelisted))
+			(false && isWhitelisted)) // DONT_REQUIRE_AI_COMMAND_PREFIX disabled for now
 	}
 
 	// Debug logging with proper Signal prefix
 	log.Printf("[Signal:%s] Debug - isGroupMsg: %v, isToOwner: %v, isFromOwner: %v, hasAIPrefix: %v, isWhitelisted: %v, DONT_REQUIRE_AI_COMMAND_PREFIX: %v",
-		connection.Alias, isGroupMsg, isToOwner, isFromOwner, hasAIPrefix, isWhitelisted, scheduler.DONT_REQUIRE_AI_COMMAND_PREFIX)
+		connection.Alias, isGroupMsg, isToOwner, isFromOwner, hasAIPrefix, isWhitelisted, false)
 
 	// Find the integration owner
 	var integrationOwner database.User
@@ -1280,7 +1280,7 @@ func (s *SignalIntegrationService) processMessage(connection *SignalConnection, 
 
 			chatFound = true
 		} else {
-			if scheduler.LOG_SIGNAL_EVENTS {
+			if false { // LOG_SIGNAL_EVENTS disabled for now
 				log.Printf("[Signal:%s] Found existing chat for conversation partner %s", connection.Alias, conversationPartner)
 				log.Printf("[Signal:%s] Chat type: %s", connection.Alias, chat.ChatType)
 				log.Printf("[Signal:%s] Chat UUID: %s", connection.Alias, chat.UUID)
@@ -1404,6 +1404,7 @@ func (s *SignalIntegrationService) ProcessAIMessage(messageText, sourceNumber, a
 		log.Printf("[Signal:%s] Attachment details: %+v", alias, attachments)
 	}
 
-	// Call the scheduler's ProcessSignalMessage method
-	return s.SchedulerService.ProcessSignalMessage(messageText, sourceNumber, alias, integration, attachments)
+	// Call the SignalBotService to process the message
+	config := DefaultSignalBotConfig()
+	return s.botService.processAICommand(messageText, sourceNumber, alias, integration, attachments, config)
 }
