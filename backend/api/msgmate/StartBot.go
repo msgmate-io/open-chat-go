@@ -193,7 +193,12 @@ func StartBot(host string, ch *wsapi.WebSocketHandler, username string, password
 		sessionMu.Lock()
 		wsSessionId := ocClient.GetSessionId()
 		sessionMu.Unlock()
-		c, _, err := websocket.Dial(ctx, fmt.Sprintf("ws://%s/ws/connect", hostNoProto), &websocket.DialOptions{
+		// Use wss:// for secure connections, ws:// for insecure
+		protocol := "ws://"
+		if strings.Contains(hostNoProto, "https://") {
+			protocol = "wss://"
+		}
+		c, _, err := websocket.Dial(ctx, fmt.Sprintf("%s%s/ws/connect", protocol, hostNoProto), &websocket.DialOptions{
 			HTTPHeader: http.Header{
 				"Cookie": []string{fmt.Sprintf("session_id=%s", wsSessionId)},
 			},
@@ -340,13 +345,13 @@ func readWebSocketMessages(
 				continue // Continue reading messages even if processing one fails
 			}
 
+			// This is the new n8n bot execution path.
+
+			// This is the DEFAULT msgmate AI-Chat Path
 			// We may only process this message if there is not yet a context for that chat
 			// that way we also avoid responding twich in one chat
-
 			chatCtx, cancel := context.WithCancel(context.Background())
-
 			chatCanceler.Store(chatUUID, cancel)
-
 			go func() {
 				defer chatCanceler.Delete(chatUUID)
 				if err := respondMsgmate(ocClient, chatCtx, ch, *message); err != nil {
