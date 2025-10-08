@@ -157,7 +157,7 @@ func BackendServer(
 
 		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 
-		signalService = integrations.NewSignalIntegrationService(DB, schedulerService, fmt.Sprintf("%s://%s:%d", protocol, host, port))
+		signalService = integrations.NewSignalIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
 		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:      fmt.Sprintf("%s:%d", host, port),
@@ -168,7 +168,7 @@ func BackendServer(
 		protocol = "http"
 		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 
-		signalService = integrations.NewSignalIntegrationService(DB, schedulerService, fmt.Sprintf("%s://%s:%d", protocol, host, port))
+		signalService = integrations.NewSignalIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
 		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", host, port),
@@ -193,7 +193,7 @@ func CreateHTTPFallbackServer(
 ) (*http.Server, error) {
 	// Create a separate HTTP server for local access
 	// This allows local clients to connect even when TLS certificates are expired
-	signalService := integrations.NewSignalIntegrationService(DB, schedulerService, mainServerURL)
+	signalService := integrations.NewSignalIntegrationService(DB, mainServerURL)
 	// Use the same routing as the main server to ensure all middleware and authentication works
 	router, _ := BackendRouting(DB, federationHandler, schedulerService, signalService, debug, frontendProxy, cookieDomain)
 
