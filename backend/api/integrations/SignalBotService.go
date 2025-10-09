@@ -682,6 +682,19 @@ func (sbs *SignalBotService) logFunctionInfo(alias string, initData map[string]i
 	log.Printf("[SignalBot:%s] ============================= TBS =============== TBS ================= Signal interaction start", alias)
 }
 
+func (sbs *SignalBotService) getFullToolsDescription(toolsList []string) map[string]map[string]interface{} {
+	constructedTools := map[string]map[string]interface{}{}
+	for _, tool := range toolsList {
+		toolInstance := msgmate.GetNewToolInstanceByName(tool, map[string]interface{}{})
+		if toolInstance != nil {
+			constructedTools[tool] = toolInstance.ConstructTool().(map[string]interface{})
+		} else {
+			log.Printf("[SignalBot] Warning: Tool '%s' not found, skipping", tool)
+		}
+	}
+	return constructedTools
+}
+
 // processAICommand processes an AI command with the Signal integration
 func (sbs *SignalBotService) processAICommand(message string, sourceNumber string, alias string, integration database.Integration, attachments []map[string]interface{}, config *SignalBotConfig) error {
 	log.Printf("[SignalBot:%s] Processing AI command with message: %s from number: %s", alias, message, sourceNumber)
@@ -883,7 +896,7 @@ func (sbs *SignalBotService) processAICommand(message string, sourceNumber strin
 				n8nTriggerWorkflowWebhookTool := msgmate.GetNewToolInstanceByName("n8n_trigger_workflow_webhook", n8nToolConfig)
 				n8nTriggerWorkflowWebhookTool.RunTool(msgmate.N8NTriggerWorkflowWebhookToolInput{
 					InputParameters: map[string]interface{}{
-						"available_tools": toolsList,
+						"available_tools": sbs.getFullToolsDescription(toolsList),
 					},
 				})
 				sendSignalMessageTool.RunTool(msgmate.SignalSendMessageToolInput{
