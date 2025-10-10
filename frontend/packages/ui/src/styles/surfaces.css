@@ -1,0 +1,25 @@
+@layer components {
+  .surface-panel {
+    @apply rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04];
+  }
+
+  .surface-interactive {
+    @apply rounded-xl border border-border/80 bg-card text-card-foreground shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04];
+    transition:
+      box-shadow 200ms ease,
+      transform 200ms ease,
+      border-color 200ms ease;
+  }
+
+  .surface-interactive:hover {
+    @apply border-border shadow-md -translate-y-0.5;
+  }
+
+  .surface-sunken {
+    @apply rounded-lg border border-border/60 bg-surface-sunken;
+  }
+
+  .surface-elevated {
+    @apply bg-surface-elevated;
+  }
+}

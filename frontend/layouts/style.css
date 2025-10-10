@@ -1,0 +1,38 @@
+@media (max-width: 640px) {
+  .mobile-page-transition {
+    will-change: transform, opacity;
+    animation-duration: 220ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    animation-fill-mode: both;
+  }
+
+  .mobile-page-transition--list {
+    animation-name: mobile-slide-in-right;
+  }
+
+  .mobile-page-transition--content {
+    animation-name: mobile-slide-in-left;
+  }
+}
+
+@keyframes mobile-slide-in-left {
+  from {
+    transform: translateX(16px);
+    opacity: 0.94;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes mobile-slide-in-right {
+  from {
+    transform: translateX(-16px);
+    opacity: 0.94;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
