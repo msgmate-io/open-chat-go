@@ -1,0 +1,237 @@
+---
+title: Python Client
+path: python-client
+description: Quickstart example for using the typed Python client against Open Chat APIs.
+order: 50
+adminOnly: false
+section: Clients
+---
+
+Use the Python client package to log in and create an interaction chat.
+
+### Local client usage
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -e ./clients/oc_python_client
+```
+
+### General client usage
+
+```python
+from client.client import OpenChatPythonClient
+
+client = OpenChatPythonClient(
+    host="http://localhost:1984",
+    username="admin",
+    password="password",
+)
+
+user = client.login()
+print("Logged in:", user.name)
+
+chat = client.create_interaction(message="Hello from Python")
+print("Chat UUID:", chat.uuid)
+
+# API token auth (no login call needed)
+token_client = OpenChatPythonClient(
+    host="http://localhost:1984",
+    api_token="ocat_xxx",
+)
+print("Token user:", token_client.get_user_self().name)
+```
+
+CLI variant:
+
+```bash
+oc_client --host http://localhost:1984 --username admin --password password --message "Hello from CLI"
+oc_client --host http://localhost:1984 --api-token ocat_xxx --message "Hello from CLI"
+```
+
+### Configuring the interaction
+
+
+```python
+client.setup_bot_config({
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "model": "deepseek-ai/DeepSeek-V4-Flash",
+    "endpoint": "https://api.deepinfra.com/v1/openai",
+    "backend": "deepinfra",
+    "context": 10,
+    "system_prompt": "You are a helpful assistant.",
+})
+```
+
+## Python Client API Reference
+
+The list below is auto-generated from `OpenChatPythonClient` docstrings in `clients/oc_python_client/client/client.py`.
+
+{/* PYTHON_CLIENT_FUNCTIONS:START */}
+
+### `__init__(base_url: str = "http://localhost:1984", host: str | None = None, auth: PasswordAuth | TokenAuth | None = None, username: str = "admin", password: str = "password", api_token: str | None = None)`
+
+No docstring provided.
+
+### `login() -> DatabaseUser`
+
+No docstring provided.
+
+### `ensure_authenticated() -> None`
+
+No docstring provided.
+
+### `me() -> DatabaseUser`
+
+No docstring provided.
+
+### `get_user_self() -> DatabaseUser`
+
+No docstring provided.
+
+### `list_bots(page_size: int = 100, include_public: bool = False) -> list[Bot]`
+
+No docstring provided.
+
+### `get_bots(page_size: int = 100, include_public: bool = False) -> list[Bot]`
+
+No docstring provided.
+
+### `list_owned_bots(page_size: int = 100) -> list[Bot]`
+
+No docstring provided.
+
+### `get_default_bot(preferred_name: str = "bot") -> Bot`
+
+No docstring provided.
+
+### `setup_bot_config(bot_config: dict[str, Any]) -> None`
+
+No docstring provided.
+
+### `get_bot(identifier: str) -> Bot`
+
+No docstring provided.
+
+### `bot(identifier: str) -> Bot`
+
+No docstring provided.
+
+### `list_tool_names() -> list[str]`
+
+No docstring provided.
+
+### `get_tool_name_enum(enum_name: str = "ToolNameDynamic") -> type[StrEnum]`
+
+No docstring provided.
+
+### `create_bot(name: str, default_shared_config: dict[str, Any], description: str = "", password: str | None = None, is_public: bool = False) -> Bot`
+
+No docstring provided.
+
+### `update_bot(identifier: str, *, name: str | None = None, description: str | None = None, default_shared_config: dict[str, Any] | None = None, is_public: bool | None = None, is_active: bool | None = None) -> Bot`
+
+No docstring provided.
+
+### `delete_bot(identifier: str) -> Bot`
+
+No docstring provided.
+
+### `create_interaction_for_bot(bot: Bot, message: str, tool_init: Optional[dict[str, Any]] = None, overrides: Optional[dict[str, Any]] = None, share: bool = False) -> InteractionSession`
+
+No docstring provided.
+
+### `interact(message: str, bot: str = "bot", tool_init: Optional[dict[str, Any]] = None, overrides: Optional[dict[str, Any]] = None, share: bool = False) -> InteractionSession`
+
+No docstring provided.
+
+### `create_interaction(tool_init: Optional[dict[str, Any]] = None, message: str = "", share: bool = False) -> Interaction`
+
+No docstring provided.
+
+### `list_interactions(page: int = 1, limit: int = 40, all_pages: bool = True) -> InteractionsPage`
+
+No docstring provided.
+
+### `get_interactions(page: int = 1, limit: int = 40, all_pages: bool = True) -> InteractionsPage`
+
+No docstring provided.
+
+### `get_interaction(uuid: str | None = None, *, message: str | None = None, bot: str = "bot", tool_init: Optional[dict[str, Any]] = None, overrides: Optional[dict[str, Any]] = None, share: bool = False) -> Interaction | InteractionSession`
+
+No docstring provided.
+
+### `interaction(chat_uuid: str) -> InteractionSession`
+
+No docstring provided.
+
+### `list_interaction_messages(chat_uuid: str, page: int = 1, limit: int = 40) -> MessagesPage`
+
+No docstring provided.
+
+### `wait_for_interaction(chat_uuid: str, timeout_seconds: int = 20, poll_interval: float = 0.5, quiet_seconds: float = 3.0) -> Message | InteractionStopSignal`
+
+No docstring provided.
+
+### `interaction_wait_for_stop_signal(chat_uuid: Optional[str] = None, wait_seconds: int = 20, poll_interval: float = 0.5, quiet_seconds: float = 3.0) -> Message | InteractionStopSignal`
+
+No docstring provided.
+
+### `get_interaction_confirmations(chat_uuid: str, wait_seconds: int = 10, poll_interval: float = 0.5) -> list[InteractionConfirmation]`
+
+No docstring provided.
+
+### `get_interaction_confirmation_list(chat_uuid: str, wait_seconds: int = 10, poll_interval: float = 0.5) -> list[InteractionConfirmation]`
+
+No docstring provided.
+
+### `execute_confirm_action(chat_uuid: str, message_uuid: str, action_id: str, continue_after_execute: bool = True) -> dict[str, Any]`
+
+No docstring provided.
+
+### `list_dynamic_rest_tools() -> list[dict[str, Any]]`
+
+No docstring provided.
+
+### `create_dynamic_rest_tool(definition: dict[str, Any]) -> dict[str, Any]`
+
+No docstring provided.
+
+### `save_dynamic_rest_tool(definition: dict[str, Any] | RESTToolBuilder) -> dict[str, Any]`
+
+No docstring provided.
+
+### `update_dynamic_rest_tool(tool_name: str, definition: dict[str, Any]) -> dict[str, Any]`
+
+No docstring provided.
+
+### `delete_dynamic_rest_tool(tool_name: str) -> dict[str, Any]`
+
+No docstring provided.
+
+### `rerun_interaction(chat_uuid: str, message_uuid: str | None = None) -> dict[str, Any]`
+
+No docstring provided.
+
+### `get_interaction_status(chat_uuid: str) -> InteractionStatus`
+
+No docstring provided.
+
+### `get_shared_interaction_status(chat_share_uuid: str) -> InteractionStatus`
+
+No docstring provided.
+
+### `continue_interaction(chat_uuid: str, message: str, tool_init: Optional[dict[str, Any]] = None, meta_data: Optional[dict[str, Any]] = None) -> Message`
+
+No docstring provided.
+
+### `publish_chat(chat_uuid: str) -> ChatsSharedChatPublishResponse`
+
+No docstring provided.
+
+### `get_shared_interaction_url(chat_uuid: str) -> str`
+
+No docstring provided.
+
+{/* PYTHON_CLIENT_FUNCTIONS:END */}

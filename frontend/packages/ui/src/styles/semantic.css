@@ -1,0 +1,83 @@
+/**
+ * Semantic color scheme — edit values here only.
+ * Mapped to Tailwind in globals.css via @theme inline.
+ *
+ * background / foreground token values are swapped vs the design labels:
+ * - bg-background uses the design "Foreground" surface (#fff / #191e24)
+ * - text-foreground is primary copy (#18181b light, #a6adbb dark)
+ */
+
+:root {
+  --background: #f8f9fb;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #18181b;
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f4;
+  --secondary-foreground: #18181b;
+  --muted: #f1f3f6;
+  --muted-foreground: #64748b;
+  --accent: #e8eaef;
+  --accent-foreground: #171717;
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+  --brand: #4ade80;
+  --brand-foreground: #171717;
+  --success: #16a34a;
+  --success-foreground: #fafafa;
+  --border: #dfe3ea;
+  --input: #d5dbe4;
+  --ring: #18181b;
+  --radius: 0.6rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #18181b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f1f3f6;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #dfe3ea;
+  --sidebar-ring: #3b82f6;
+  --surface-elevated: #ffffff;
+  --surface-sunken: #eef0f4;
+  --shadow-color: 220 20% 12%;
+}
+
+.dark {
+  --background: #191e24;
+  --foreground: #a6adbb;
+  --card: #1f252d;
+  --card-foreground: #a6adbb;
+  --popover: #1f252d;
+  --popover-foreground: #a6adbb;
+  --primary: #a6adbb;
+  --primary-foreground: #18181b;
+  --secondary: #232b35;
+  --secondary-foreground: #a6adbb;
+  --muted: #1c222a;
+  --muted-foreground: #8b95a8;
+  --accent: #2d3540;
+  --accent-foreground: #a6adbb;
+  --destructive: #7f1d1d;
+  --destructive-foreground: #fafafa;
+  --brand: #4ade80;
+  --brand-foreground: #18181b;
+  --success: #22c55e;
+  --success-foreground: #fafafa;
+  --border: #2f3844;
+  --input: #2f3844;
+  --ring: #a6adbb;
+  --sidebar: #191e24;
+  --sidebar-foreground: #a6adbb;
+  --sidebar-primary: #a6adbb;
+  --sidebar-primary-foreground: #18181b;
+  --sidebar-accent: #232b35;
+  --sidebar-accent-foreground: #a6adbb;
+  --sidebar-border: #2f3844;
+  --sidebar-ring: #3b82f6;
+  --surface-elevated: #252c36;
+  --surface-sunken: #14181d;
+  --shadow-color: 220 30% 4%;
+}

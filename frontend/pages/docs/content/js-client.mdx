@@ -1,0 +1,91 @@
+---
+title: JavaScript / React Client
+path: js-client
+description: Embeddable TypeScript and React client using scoped browser-token auth.
+order: 51
+adminOnly: false
+section: Clients
+---
+
+The `@open-chat-go/client` package is an embeddable TypeScript/React client that
+lets another web application talk to an Open Chat backend directly from the
+browser and ship a styled bot manager/editor that matches the Open Chat design
+system.
+
+- **Framework-agnostic core** (`@open-chat-go/client`) — auth and typed API client.
+- **React layer** (`@open-chat-go/client/react`) — `OpenChatProvider`, hooks and
+  ready-made `BotManager` / `BotEditor` components.
+- **Bundled design system** (`@open-chat-go/client/styles.css`).
+
+## Installation
+
+The package is distributed from the public
+[`open-chat-go-js-client`](https://github.com/msgmate-io/open-chat-go-js-client)
+repository with built output committed to release tags:
+
+```bash
+npm i github:msgmate-io/open-chat-go-js-client#v0.1.1
+```
+
+React is an optional peer dependency, only needed for the `./react` entry.
+
+## Authentication
+
+Cross-origin browser clients authenticate with short-lived, scope-restricted
+**browser tokens**. The client can obtain them in two ways:
+
+```ts
+import { createOpenChatClient, exchangeForBrowserToken } from "@open-chat-go/client";
+
+const client = createOpenChatClient({
+  baseUrl: "https://chat.example.com",
+  auth: {
+    tokenProvider: () =>
+      fetch("/my-backend/open-chat-token").then((r) => r.json()),
+  },
+});
+```
+
+`tokenProvider` is recommended: your backend holds the long-lived `ocat_` token
+and exchanges it server-side. Alternatively, pass a `parentToken` directly and
+the client exchanges and refreshes the browser token itself. Username/password
+login is **not** supported for cross-origin browser clients — the login session
+cookie requires a same-site `Origin`.
+
+## Core client
+
+```ts
+const me     = await client.getSelf();
+const bots   = await client.listBots({ include_public: false });
+const models = await client.listModels();
+const tools  = await client.listTools();
+const chats  = await client.listChats();
+```
+
+Errors surface as `APIRequestError` with `.status`, `.code` and `.payload`.
+
+## React layer
+
+```tsx
+import "@open-chat-go/client/styles.css";
+import { OpenChatProvider, BotManager, createOpenChatClient } from "@open-chat-go/client/react";
+
+const client = createOpenChatClient({ baseUrl, auth });
+
+export function Settings() {
+  return (
+    <OpenChatProvider client={client}>
+      <BotManager onSaved={(bot) => console.log("saved", bot.uuid)} />
+    </OpenChatProvider>
+  );
+}
+```
+
+Hooks: `useBots`, `useBot`, `useModels`, `useTools`, `useSaveBot`,
+`useOpenChatClient`.
+
+## CORS
+
+Because the browser calls Open Chat cross-origin with a bearer token, your app's
+origin must be listed in the backend `CORS_ALLOWED_ORIGINS`. No cookies or
+credentials are used. See [Browser tokens](/docs#browser-tokens).
