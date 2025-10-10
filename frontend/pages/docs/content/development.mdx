@@ -1,0 +1,168 @@
+---
+title: Development
+path: development
+description: Clone the repository, run the dev stack and ship frontend integration pages.
+order: 70
+section: Development
+---
+
+This page covers the local development workflow for Open Chat Go. It is mirrored
+by the repository's [`clients/llm_coding_agents/DEVELOPMENT.md`](https://github.com/msgmate-io/open-chat-go/blob/main/clients/llm_coding_agents/DEVELOPMENT.md)
+so automated coding agents and humans follow the same steps.
+
+## Clone the repository
+
+The repository pulls in a small set of git submodules (the frontend, clients,
+interfaces and deployment/CI assets). Integrations are **not** submodules; they
+are fetched on demand from `integrations.yaml` by the integration manager.
+
+```bash
+git clone --recurse-submodules https://github.com/msgmate-io/open-chat-go.git
+```
+
+For an existing clone, initialise or update the remaining submodules with:
+
+```bash
+git submodule update --init --recursive
+```
+
+`docker compose up` runs an `integration-sync` service that fetches the
+selected integrations and generates the Go workspace before the backend starts.
+
+Private profiles (`default`, `full`, …) clone private repositories inside that
+container. The manager discovers the host credentials and configures git for
+those clones (a `GITHUB_TOKEN`/`GH_TOKEN`, the host `gh` config,
+`~/.git-credentials`, or a forwarded SSH agent); the dev compose mounts the host
+home read-only and forwards `SSH_AUTH_SOCK` for this. If your `gh` token is
+stored in the OS keyring, add it to `.env` once with
+`echo "GITHUB_TOKEN=$(gh auth token)" >> .env`.
+
+## Integration profiles
+
+Integrations are selected per profile (`INTEGRATION_PROFILE` or `--profile`):
+
+| Profile | Includes |
+| --- | --- |
+| `core-only` (default) | `mcp`, `rest_api_tool`, `go_client` |
+| `default` | core + `matrix`, `docker_sandbox`, `git`, `kubernetes` |
+| `full` | every integration (some private; needs repo access) |
+
+```bash
+INTEGRATION_PROFILE=core-only docker compose up
+INTEGRATION_PROFILE=full      docker compose up
+
+# manager CLI (fetch checkouts, generate the Go workspace, export pages)
+python3 -m venv .venv
+.venv/bin/pip install ./development/build-tools
+.venv/bin/openchat-integrations list    --profile core-only
+.venv/bin/openchat-integrations prepare --profile core-only
+```
+
+See [`development/build-tools/README.md`](https://github.com/msgmate-io/open-chat-go/blob/main/development/build-tools/README.md)
+for the full manager reference, including host builds, the production image and
+local integration development.
+
+## Run the dev stack
+
+Development should always use the development compose stack. It normally stays
+running between sessions: rebuild after dependency or Dockerfile changes, then
+start it.
+
+```bash
+docker compose build
+# frontend + backend ( sqlite + hot-reload )
+docker compose up
+# or design system
+docker compose --profile storybook up
+```
+
+The combined server is available at `http://localhost:1984`. Frontend and
+backend code reload automatically inside the backend container, so test
+endpoints directly against `http://localhost:1984` while you work. Only add real
+integration tests when asked, or when you judge it clearly appropriate.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `frontend/` | React + Vike frontend and the `/docs` pages (git submodule). |
+| `clients/` | Official clients and interfaces (submodules); `clients/integrations/` is fetched on demand. |
+| `integrations.yaml` | Integration manifest: sources, profiles, build tags, frontend pages. |
+| `clients/llm_coding_agents/` | Agent playbook (`DEVELOPMENT.md`, consumed via `AGENTS.md`). |
+| `development/ci/` | Reusable CI workflows (submodule). |
+| `development/helm/` | Helm chart for deployment (submodule). |
+| `development/scripts/` | Build, release and codegen helper scripts. |
+
+## Integration frontend pages
+
+Frontend pages for integrations live in **their own integration repositories**
+under `frontend/pages/<route>/` and are built with React, Vike and
+`@open-chat-go/ui` using `IntegrationPageShell`. The public frontend
+repository does not contain integration-specific page code; it only provides
+the shared component contract via `@open-chat-go/ui` and the generic
+integrations overview page.
+
+Each integration also owns its prerendered-page map in
+`integration.frontend.json` at its repository root:
+
+```json
+{
+  "pages": [
+    { "source": "integrations/mcp/servers", "asset": "servers/index.html" }
+  ]
+}
+```
+
+`source` is the prerendered route directory relative to the frontend client
+dist root; `asset` is the destination inside the integration's embedded
+`frontend_assets`. The public `integrations.yaml` only lists the publish name
+(`frontend: {name: ...}`), so closed-source integrations do not leak their
+page routes.
+
+Build and export workflow:
+
+1. **Source pages** — write pages in the integration repository under
+   `frontend/pages/` (for example `sandboxes/+Page.tsx`,
+   `sandboxes/add/+Page.tsx`).
+2. **Link** — `openchat-integrations frontend` symlinks the integration page
+   sets into `frontend/pages/integrations/<name>` so Vike's filesystem routing
+   picks them up for the current profile.
+3. **Prerender** — Vike prerenders the routes during `vike build` into
+   `frontend/dist/client/integrations/<integration_name>/...`.
+4. **Export** — `openchat-integrations export` copies the generated HTML into
+   the integration's own asset folder,
+   `clients/integrations/<integration_name>/frontend_assets/...`, driven by the
+   integration's `integration.frontend.json`.
+5. **Register** — the integration's Go code embeds `frontend_assets` via
+   `//go:embed frontend_assets` and registers the pages in
+   `integrationinterface.Definition.FrontendPages`, so the backend serves them.
+6. **Full static build** — `development/scripts/build_static_frontend.sh`
+   orchestrates `npm run build` → `generate_golang_routes.sh` →
+   `openchat-integrations export`.
+
+Components come from the `@open-chat-go/ui` package (see its
+`packages/ui/src/integration` barrel); shared app-level code such as
+`@/lib/utils` is still provided by the frontend app when the page set
+compiles inside the aggregator.
+
+Documentation pages are plain MDX files in `frontend/pages/docs/content/`; they
+are globbed automatically by `frontend/pages/docs/docs.ts`, so no route
+registration is needed.
+
+## Useful scripts
+
+| Script | Purpose |
+| --- | --- |
+| `development/scripts/build_static_frontend.sh` | Full frontend build + route generation + integration page export. |
+| `development/scripts/bump_backend_version.sh` | Bump the backend version used for release tags. |
+| `development/scripts/commit_and_push_subrepos.sh` | Commit and push changes across submodules. |
+| `development/scripts/refresh_docs_snapshots.py` | Regenerate documentation snapshots. |
+| `development/scripts/update_oc_go_client_base.py` | Regenerate the Go client REST base from the swagger spec. |
+| `development/scripts/update_oc_python_client_base.py` | Regenerate the Python client REST base from the swagger spec. |
+
+## Testing expectations
+
+- Backend: `go build ./...` then `go test ./...`.
+- Frontend: `npm install && npm run build` inside `frontend/`.
+- Manual checks: call the affected endpoints against `http://localhost:1984`
+  and confirm the responses while implementing.

@@ -1,0 +1,47 @@
+---
+title: Public Modules
+path: public-modules
+description: The public integration modules that ship with open-chat-go.
+order: 33
+adminOnly: false
+section: Platform
+---
+
+Open Chat Go is assembled from a small core plus a set of pluggable
+**integration modules**. Each module can contribute tools, routes and
+configuration. This page lists the modules that are part of the public
+distribution (`"private": false` in [`integrations.yaml`](https://github.com/msgmate-io/open-chat-go/blob/main/integrations.yaml))
+and are therefore documented here.
+
+Modules marked private in the manifest (for example account/email/SSH
+administration helpers) are internal tooling and are intentionally excluded
+from the public documentation surface.
+
+## Public modules
+
+| Module | Source directory | Purpose |
+| --- | --- | --- |
+| MCP | `clients/integrations/mcp_integration` | Connect Model Context Protocol servers and expose their tools to bots. |
+| OpenCode | `clients/integrations/opencode_integration` | Drive the OpenCode coding agent as a tool-backed interaction. |
+| Go client | `clients/integrations/go_client_integration` | Typed Go client and higher-level helpers for the Open Chat API. |
+| REST API tools | `clients/integrations/rest_api_tool_integration` | Define tools from arbitrary REST APIs with JSON schemas. |
+| Matrix | `clients/integrations/matrix_integration` | Bridge chats to Matrix rooms. |
+| Docker sandbox | `clients/integrations/docker_sandbox_integration` | Run untrusted code in disposable Docker sandboxes. |
+| Git | `clients/integrations/git_integration` | Clone, inspect and modify Git repositories. |
+| Kubernetes | `clients/integrations/kubernetes_integration` | Manage Kubernetes workloads and resources. |
+
+## Inspecting modules at runtime
+
+Authenticated clients can enumerate the integrations available to them and
+inspect a module's overview (README, routes, models, functions and environment
+variables):
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/v1/integrations/list` |
+| `GET` | `/api/v1/integrations/{integration_name}/overview` |
+
+Tools contributed by these modules are exposed through
+`GET /api/v1/tools` and the per-chat `GET /api/v1/interactions/{chat_uuid}/tools`
+endpoint. See [Integrations & Tools](/docs#integrations) for the access model
+and [Tools Catalogue](/docs#tools-catalog) for the live tool list.

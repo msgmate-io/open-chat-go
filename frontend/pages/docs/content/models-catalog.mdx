@@ -1,0 +1,16 @@
+---
+title: Model Catalogue
+path: models-catalog
+description: Browse the public model catalog with filters and search.
+order: 40
+adminOnly: false
+section: Models & Tools
+---
+
+import { ModelsCatalogView } from "@open-chat-go/ui";
+
+The catalog reads from `GET /api/v1/models`, which returns public models plus any
+models owned by the caller. It powers both the dedicated `/models` page and this
+read-only documentation view.
+
+<ModelsCatalogView mode="public" />
