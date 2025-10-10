@@ -1,0 +1,28 @@
+---
+title: Tools Catalogue
+path: tools-catalog
+description: Browse available platform tools with basic metadata.
+order: 41
+adminOnly: false
+section: Models & Tools
+---
+
+import { ToolsCatalogView } from "@/components/tools/ToolsCatalogView";
+
+Browse currently registered platform tools and inspect the exact schemas sent to
+model APIs. The catalog uses `GET /api/v1/tools` for listing and
+`GET /api/v1/tools/{tool_name}` for per-tool retrieval.
+
+Tool definitions can declare an explicit input JSON Schema (in addition to the
+legacy `parameters` + `required` fields). When present, the schema is surfaced
+directly as the call schema used for model tool-calling.
+
+Each tool details card exposes:
+
+- `requires_init`
+- `requires_confirmation`
+- `stop_on_first_confirmable_tool_call`
+- `confirmation_block_message`
+- call/init parameter schemas and required params
+
+<ToolsCatalogView mode="public" />

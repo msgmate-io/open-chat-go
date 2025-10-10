@@ -1,0 +1,90 @@
+---
+title: Getting Started
+path: getting-started
+description: Reach a server, pick a client and send your first interaction.
+order: 3
+section: Getting Started
+---
+
+This page walks you from a running Open Chat Go server to your first bot
+interaction. If you only want to read about the internals, start with the
+[Architecture](/docs#architecture) overview instead.
+
+## 1. Run or reach a server
+
+You can use a hosted deployment or run your own server:
+
+- **Production:** [`msgmate.io`](https://msgmate.io)
+- **Staging:** [`stage.msgmate.io`](https://stage.msgmate.io)
+
+To install the server locally, see [Installation](/docs#install) for apt,
+AppImage, Homebrew, Nix, Windows, Docker and prebuilt binaries. Or run the full
+local stack from a checkout:
+
+```bash
+docker compose up
+# API + embedded frontend on http://localhost:1984
+```
+
+Self-hosting flags, environment variables and deployment notes live in
+[Self-hosting](/docs#self-hosting); the complete `open-chat` command reference
+is in [Server CLI](/docs#server-cli).
+
+## 2. Pick a client
+
+| Client | Repository | Setup guide |
+| --- | --- | --- |
+| Python | [`open-chat-go-python-client`](https://github.com/msgmate-io/open-chat-go-python-client) | [Python client](/docs#python-client) |
+| JavaScript / React | [`open-chat-go-js-client`](https://github.com/msgmate-io/open-chat-go-js-client) | [JS client](/docs#js-client) |
+| Go | [`open-chat-go-golang-client`](https://github.com/msgmate-io/open-chat-go-golang-client) | [Go client](/docs#go-client) |
+| Mobile / Android | [`open-chat-go-mobile`](https://github.com/msgmate-io/open-chat-go-mobile) | [Mobile client](/docs#mobile-client) |
+| REST / WebSocket | any HTTP client | [REST API](/docs#rest-api) · [WebSockets](/docs#websockets) |
+
+## 3. Authenticate
+
+Server-to-server integrations use long-lived `ocat_` API tokens:
+
+```
+Authorization: Bearer ocat_xxxxxxxx
+```
+
+Browser clients either reuse the frontend session or exchange a short-lived,
+scope-restricted browser token. See [Authentication](/docs#authentication) and
+[Browser tokens](/docs#browser-tokens) for the full flows.
+
+## 4. Send your first interaction
+
+Python client:
+
+```python
+from client.client import OpenChatPythonClient
+
+client = OpenChatPythonClient(
+    host="http://localhost:1984",   # or https://msgmate.io
+    api_token="ocat_xxx",
+)
+
+chat = client.create_interaction(message="Hello from Python")
+print("Chat UUID:", chat.uuid)
+
+reply = client.wait_for_interaction(chat.uuid)
+print(reply)
+```
+
+The same call over HTTP:
+
+```bash
+curl -X POST "http://localhost:1984/api/v1/bots/bot/interactions" \
+  -H "Authorization: Bearer ocat_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello from curl"}'
+```
+
+The response contains the `chat_uuid`; poll `GET /api/v1/chats/{chat_uuid}/status`
+or open a [WebSocket](/docs#websockets) to stream the reply.
+
+## Next steps
+
+- [Bots & Agents](/docs#bots-agents) — configure models, prompts and tools.
+- [Integrations & Tools](/docs#integrations) — extend bots with new capabilities.
+- [`/reference`](/reference) — interactive OpenAPI reference.
