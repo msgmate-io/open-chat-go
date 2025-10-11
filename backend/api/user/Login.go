@@ -222,7 +222,7 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 		return err, "", false, database.User{}
 	}
 
-	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!
+	token := api.GenerateToken()
 	// TODO: make sure sessions expire!
 	session := database.Session{
 		Token:  token,

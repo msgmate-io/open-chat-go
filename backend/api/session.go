@@ -1,10 +1,9 @@
 package api
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strings"
 	"time"
@@ -19,15 +18,17 @@ func RequestIsSecure(r *http.Request) bool {
 		strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on"))
 }
 
-func GenerateToken(tokenBase string) string {
-	hash, err := bcrypt.GenerateFromPassword([]byte(tokenBase), bcrypt.DefaultCost)
-
-	if err != nil {
+// GenerateToken returns a fresh 256-bit, URL-safe opaque session token. It is
+// sourced directly from a cryptographically secure RNG and deliberately does
+// not derive from (or hash) any user-supplied credential: session tokens are
+// secrets in their own right and must not be produced by a general-purpose
+// hash function.
+func GenerateToken() string {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
 		panic(fmt.Errorf("failed to generate token: %w", err))
 	}
-
-	sum := sha256.Sum256(hash)
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+	return base64.RawURLEncoding.EncodeToString(buf)
 }
 
 func CreateSessionToken(w http.ResponseWriter, r *http.Request, domain string, token string, expiry time.Time) *http.Cookie {
