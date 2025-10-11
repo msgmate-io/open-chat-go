@@ -1,0 +1,55 @@
+---
+title: Go Client
+path: go-client
+description: Go client integration with a generated REST base and a handwritten wrapper.
+order: 52
+adminOnly: false
+section: Clients
+---
+
+The Go client lives in the
+[`open-chat-go-golang-client`](https://github.com/msgmate-io/open-chat-go-golang-client)
+repository. It combines:
+
+- a generated base REST client produced from `backend/server/swagger.json`, and
+- a handwritten `goclient.Client` wrapper for higher-level auth and chat flows.
+
+Regenerate the base client from the repository root:
+
+```bash
+python3 development/scripts/update_oc_go_client_base.py
+```
+
+## Usage
+
+```go
+package main
+
+import "github.com/msgmate-io/go-client-integration/goclient"
+
+func main() {
+    c := goclient.NewClient("http://localhost:1984")
+
+    if err, sessionID := c.LoginUser("admin", "password"); err != nil {
+        panic(err)
+    } else {
+        c.SetSessionId(sessionID)
+    }
+
+    // Or authenticate with an API token instead of a login:
+    // c.SetAccessToken("ocat_xxx")
+
+    if err, user := c.GetUserInfo(); err == nil {
+        _ = user
+    }
+
+    if err, chats := c.GetChats(1, 40); err == nil {
+        _ = chats
+    }
+}
+```
+
+The wrapper exposes helpers for chats, messages, contacts and attachments,
+including `GetChats`, `GetChat`, `GetMessages`, `SendChatMessage`,
+`ListContacts`, `CreateChat` and `CreateChatWithAttachments`. See the repository
+README for the full list and for the generated API types.
