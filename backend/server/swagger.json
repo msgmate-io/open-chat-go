@@ -365,6 +365,93 @@
                 }
             }
         },
+        "/api/v1/admin/integration-settings/raw": {
+            "get": {
+                "description": "Returns the active config document rendered as YAML with sensitive values masked.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.rawConfigResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Validates and persists a raw config document, restoring redacted values from disk.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Save raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.rawConfigSaveResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/raw/download": {
+            "post": {
+                "description": "Streams the raw config file after password confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Download raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/raw/validate": {
+            "post": {
+                "description": "Validates a raw config document and returns the list of problems without persisting.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Validate raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.rawConfigValidateResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/integration-settings/restart": {
             "post": {
                 "description": "Asks the OS service manager to restart the server when service-managed; otherwise returns 409.",
@@ -1177,6 +1264,142 @@
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/approve": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Approve a pending interaction confirmation and start the bot reply.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "messages"
+                ],
+                "summary": "Approve interaction confirmation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Confirmation message UUID",
+                        "name": "message_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chats.InteractionConfirmationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/reject": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Reject a pending interaction confirmation; the interaction fails immediately.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "messages"
+                ],
+                "summary": "Reject interaction confirmation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Confirmation message UUID",
+                        "name": "message_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chats.InteractionConfirmationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "string"
                         }
@@ -3118,6 +3341,57 @@
         }
     },
     "definitions": {
+        "admin.rawConfigResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "format": {
+                    "type": "string"
+                },
+                "in_memory": {
+                    "type": "boolean"
+                },
+                "redacted": {
+                    "type": "boolean"
+                },
+                "yaml": {
+                    "type": "string"
+                }
+            }
+        },
+        "admin.rawConfigSaveResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "persist_error": {
+                    "type": "string"
+                },
+                "persisted": {
+                    "type": "boolean"
+                },
+                "restart_required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "admin.rawConfigValidateResponse": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
         "admin.restartServerResponse": {
             "type": "object",
             "properties": {
@@ -3222,6 +3496,9 @@
                 "chat_uuid": {
                     "type": "string"
                 },
+                "requires_confirmation": {
+                    "type": "boolean"
+                },
                 "shared_interaction_url": {
                     "type": "string"
                 }
@@ -3245,6 +3522,10 @@
                 },
                 "message": {
                     "type": "string"
+                },
+                "require_confirmation": {
+                    "description": "RequireConfirmation gates the interaction behind an explicit user\nconfirmation widget before the bot reply is enqueued.",
+                    "type": "boolean"
                 },
                 "tool_init": {
                     "type": "object",
@@ -3397,6 +3678,23 @@
                 },
                 "mime_type": {
                     "type": "string"
+                }
+            }
+        },
+        "chats.InteractionConfirmationResponse": {
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "type": "boolean"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
                 }
             }
         },
