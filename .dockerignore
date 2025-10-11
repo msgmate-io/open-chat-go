@@ -3,6 +3,10 @@
 !Dockerfile
 !dev.dockerfile
 !frontend
+# In-tree frontend: keep host-side deps/build output out of the build context.
+frontend/node_modules
+frontend/dist
+frontend/.vite
 !clients
 !clients/go_tool_interface
 !clients/go_integration_interface
