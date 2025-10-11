@@ -1,5 +1,5 @@
 /**
- * Typography scale — inspired by little-world-design-system.
+ * Typography scale.
  * CSS classes live in `src/styles/typography.css`.
  */
 
