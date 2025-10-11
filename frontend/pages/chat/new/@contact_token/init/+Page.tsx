@@ -112,6 +112,30 @@ export default function Page() {
     navigate(`/chat/new/${contactToken}?init_filled=1`);
   };
 
+  const formScrollInset =
+    "max(var(--openchat-keyboard-bottom, 0px), var(--openchat-keyboard-bottom-visual, 0px), var(--openchat-safe-bottom, 0px))";
+
+  const handleFormFocusCapture = (event: React.FocusEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const isMobileRuntime =
+      typeof document !== "undefined" &&
+      document.documentElement.getAttribute("data-openchat-runtime") === "mobile";
+    if (!isMobileRuntime) {
+      return;
+    }
+    const tag = target.tagName.toLowerCase();
+    const isInputLike = tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+    if (!isInputLike) {
+      return;
+    }
+    window.setTimeout(() => {
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+    }, 120);
+  };
+
   if (isLoading) {
     return (
       <ChatBase chatUUID={null} navigateTo={(to: string) => navigate(to)}>
@@ -126,7 +150,14 @@ export default function Page() {
 
   return (
     <ChatBase chatUUID={null} navigateTo={(to: string) => navigate(to)}>
-      <div className="mx-auto flex h-full w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-6">
+      <div
+        className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-4 overflow-y-auto px-4 pt-6 md:px-6"
+        style={{
+          paddingBottom: `calc(${formScrollInset} + 1.5rem)`,
+          scrollPaddingBottom: `calc(${formScrollInset} + 1rem)`,
+        }}
+        onFocusCapture={handleFormFocusCapture}
+      >
         <div className="rounded-lg border border-border/70 bg-card p-4">
           <Text type={TextTypes.Heading5} tag="h1" bold>
             Initialize tool parameters
