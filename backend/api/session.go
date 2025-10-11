@@ -1,14 +1,23 @@
 package api
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// RequestIsSecure reports whether the request reached the server over HTTPS,
+// either directly (TLS) or via a trusted reverse proxy that signals it through
+// X-Forwarded-Proto / X-Forwarded-Ssl.
+func RequestIsSecure(r *http.Request) bool {
+	return r != nil && (r.TLS != nil ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on"))
+}
 
 func GenerateToken(tokenBase string) string {
 	hash, err := bcrypt.GenerateFromPassword([]byte(tokenBase), bcrypt.DefaultCost)
@@ -17,26 +26,14 @@ func GenerateToken(tokenBase string) string {
 		panic(fmt.Errorf("failed to generate token: %w", err))
 	}
 
-	hasher := md5.New()
-	hasher.Write(hash)
-	return hex.EncodeToString(hasher.Sum(nil))
+	sum := sha256.Sum256(hash)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func CreateSessionToken(w http.ResponseWriter, r *http.Request, domain string, token string, expiry time.Time) *http.Cookie {
 	persist := true
 
-	secure := false
-	if r != nil {
-		if r.TLS != nil {
-			secure = true
-		}
-		if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-			secure = true
-		}
-		if strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on") {
-			secure = true
-		}
-	}
+	secure := RequestIsSecure(r)
 
 	cookie := &http.Cookie{
 		Name:     "session_id",

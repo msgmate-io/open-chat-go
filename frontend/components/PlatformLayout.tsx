@@ -37,7 +37,7 @@ export default function PlatformLayout({
 
   useEffect(() => {
     if (allowPublicAccess) {
-      setIsAuthorized(Cookies.get("is_authorized") === "true");
+      setIsAuthorized(Cookies.get("oc_client_state") === "true");
     }
   }, [allowPublicAccess]);
 
