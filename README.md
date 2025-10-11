@@ -38,5 +38,5 @@ vulnerabilities.
 See [`NOTICE`](./NOTICE) and [`COPYRIGHT`](./COPYRIGHT) for the intellectual
 property owner, the current licensing draft status, special-licensing
 requests, and the copyright-owner exemption covering the proprietary
-(private) submodules. Alternative or commercial licensing can be
+(private) components. Alternative or commercial licensing can be
 investigated on request.

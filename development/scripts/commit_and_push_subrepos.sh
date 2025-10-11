@@ -94,7 +94,7 @@ commit_and_push_root_if_changed() {
   (
     cd "${REPO_ROOT}"
 
-    git add backend development integrations.lock.json integrations.yaml profile_setup.yaml
+    git add backend development frontend integrations.lock.json integrations.yaml profile_setup.yaml
 
     if (( ${#SUBREPO_PATHS[@]} > 0 )); then
       git add "${SUBREPO_PATHS[@]}"

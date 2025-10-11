@@ -12,9 +12,10 @@ so automated coding agents and humans follow the same steps.
 
 ## Clone the repository
 
-The repository pulls in a small set of git submodules (the frontend, clients,
-interfaces and deployment/CI assets). Integrations are **not** submodules; they
-are fetched on demand from `integrations.yaml` by the integration manager.
+The core frontend is tracked in-tree under `frontend/` (it is no longer a git
+submodule). The repository pulls in a small set of public git submodules (the
+clients and interfaces). Integrations are **not** submodules; they are fetched
+on demand from `integrations.yaml` by the integration manager.
 
 ```bash
 git clone --recurse-submodules https://github.com/msgmate-io/open-chat-go.git
@@ -85,20 +86,20 @@ integration tests when asked, or when you judge it clearly appropriate.
 
 | Path | Contents |
 | --- | --- |
-| `frontend/` | React + Vike frontend and the `/docs` pages (git submodule). |
-| `clients/` | Official clients and interfaces (submodules); `clients/integrations/` is fetched on demand. |
+| `frontend/` | React + Vike frontend and the `/docs` pages (tracked in-tree). |
+| `clients/` | Official clients and interfaces (public submodules); `clients/integrations/` is fetched on demand. |
 | `integrations.yaml` | Integration manifest: sources, profiles, build tags, frontend pages. |
-| `clients/llm_coding_agents/` | Agent playbook (`DEVELOPMENT.md`, consumed via `AGENTS.md`). |
-| `development/ci/` | Reusable CI workflows (submodule). |
-| `development/helm/` | Helm chart for deployment (submodule). |
+| `clients/llm_coding_agents/` | Agent playbook (`DEVELOPMENT.md`, consumed via `AGENTS.md`, materialized by the profile setup). |
+| `development/ci/` | Reusable CI workflows (materialized by the profile setup). |
+| `development/helm/` | Helm chart for deployment (materialized by the profile setup). |
 | `development/scripts/` | Build, release and codegen helper scripts. |
 
 ## Integration frontend pages
 
 Frontend pages for integrations live in **their own integration repositories**
 under `frontend/pages/<route>/` and are built with React, Vike and
-`@open-chat-go/ui` using `IntegrationPageShell`. The public frontend
-repository does not contain integration-specific page code; it only provides
+`@open-chat-go/ui` using `IntegrationPageShell`. The in-repo `frontend/`
+directory does not contain integration-specific page code; it only provides
 the shared component contract via `@open-chat-go/ui` and the generic
 integrations overview page.
 
