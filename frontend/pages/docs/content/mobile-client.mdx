@@ -1,0 +1,68 @@
+---
+title: Mobile Client
+path: mobile-client
+description: Build and install the Android app that embeds the Open Chat backend.
+order: 53
+adminOnly: false
+section: Clients
+---
+
+The mobile client lives in the
+[`open-chat-go-mobile`](https://github.com/msgmate-io/open-chat-go-mobile)
+repository. It ships the full Go backend inside an Android app via a gomobile
+bridge, so the device runs the same server and embedded frontend as a desktop
+deployment.
+
+## Prerequisites
+
+- Go and `gomobile`
+- Android SDK + NDK (`ANDROID_HOME` / `ANDROID_SDK_ROOT`)
+- Gradle (the build script downloads it if needed)
+
+## Build the AAR
+
+From the repository root:
+
+```bash
+bash clients/gomobile/build_android.sh
+```
+
+This produces `clients/gomobile/dist/openchatmobile.aar`, which starts the Go
+backend and serves the embedded frontend (no `frontend-proxy`).
+
+## Build and install the APK
+
+The bundled Android host app (a WebView shell) embeds the AAR and produces an
+installable APK:
+
+```bash
+# debug APK
+bash clients/gomobile/build_apk.sh
+
+# release APK (unsigned unless signing vars are set)
+bash clients/gomobile/build_apk.sh --release
+
+# install on a connected device
+bash clients/gomobile/install_apk.sh
+```
+
+Debug output lands at
+`clients/gomobile/android-host/app/build/outputs/apk/debug/app-debug.apk`.
+
+For an auto rebuild + install loop while iterating use
+`bash clients/gomobile/dev_android.sh`.
+
+## Downloading releases
+
+Signed release APKs are published for
+[Obtainium](https://github.com/ImranR98/Obtainium):
+
+- Full build — `msgmate-io/open-chat-go-mobile` releases
+  (`open-chat-full-v<version>.apk`).
+- Core-only build — `msgmate-io/open-chat-go` releases
+  (`open-chat-core-v<version>.apk`).
+
+Add `https://github.com/msgmate-io/open-chat-go-mobile` in Obtainium, optionally
+with the APK regex `open-chat-full-.*\.apk`, to receive updates. See the
+[repository README](https://github.com/msgmate-io/open-chat-go-mobile) for the
+full environment variable and release-signing reference.
