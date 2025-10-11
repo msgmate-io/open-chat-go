@@ -46,6 +46,9 @@ export function getPageMetadata(pathname: string): PageMetadata {
   if (path === "/profile" || path.startsWith("/profile/")) {
     return { pageName: "Profile", sidebarTitle: "Profile" };
   }
+  if (path === "/chats/actions" || path === "/chats/actions/") {
+    return { pageName: "Actions required", sidebarTitle: "Actions required" };
+  }
   if (path === "/chat/new" || path.startsWith("/chat/new/")) {
     return { pageName: "Browse Agents", sidebarTitle: "Browse Agents" };
   }
