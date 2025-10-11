@@ -1,14 +1,14 @@
 # Open-Chat frontend
 
 The React/Vike frontend for [Open-Chat](https://github.com/msgmate-io/open-chat-go).
-This repository is the **public aggregator**: it owns the shared component
-contract ([`@open-chat-go/ui`](./packages/ui)), the generic app pages and the
-build that prerenders and serves them.
+This directory is the **in-tree core frontend** of the open-chat-go monorepo:
+it owns the shared component contract ([`@open-chat-go/ui`](./packages/ui)), the
+generic app pages and the build that prerenders and serves them.
 
 Per-integration React code does **not** live here. Each integration repository
 owns its own pages under `frontend/pages/` and only gets linked into this
-aggregator (via symlinks) for the selected integration profile. This keeps
-private integration code out of the public repository.
+aggregator (via symlinks) for the selected integration profile, so private
+integration code never lands in the public monorepo.
 
 ## Integration page linking
 
@@ -83,15 +83,18 @@ published at [`msgmate.io/docs`](https://msgmate.io/docs).
 
 ## License
 
-Except for the brand assets below, this repository is licensed
-**AGPL-3.0-or-later** — see [`LICENSE`](./LICENSE).
+Except for the brand assets below, the frontend is licensed
+**AGPL-3.0-or-later** — see the repository-root
+[`LICENSE`](../LICENSE).
 
 **Excluded from the open-source license:** the brand assets under
-[`assets/`](./assets) (including `logo.png` and `msgmate_logo.png`) are
-proprietary and confidential, all rights reserved — see [`NOTICE`](./NOTICE).
-They may not be used, copied, modified or redistributed without prior written
-permission.
+[`assets/`](./assets) and
+[`packages/ui/src/integration/assets/`](./packages/ui/src/integration/assets)
+(including `logo.png` and `msgmate_logo.png`) are proprietary and
+confidential, all rights reserved — see the repository-root
+[`NOTICE`](../NOTICE). They may not be used, copied, modified or redistributed
+without prior written permission.
 
 Integration code lives in the integration repositories and carries its own
 license; private integrations are proprietary and are never part of this
-public repository.
+public monorepo.
