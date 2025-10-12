@@ -293,11 +293,11 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 					toolMap[toolName] = tool
 					if tool.GetRequiresInit() {
 						if _, ok := toolInit[toolName]; ok {
-							log.Printf("Setting init data for tool %s", tool.GetToolName())
+							log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
 							tool.SetInitData(toolInit[toolName])
 							log.Printf("Init data set for tool %s", tool.GetToolName())
 						} else {
-							log.Printf("Tool init data not found for tool %s", tool.GetToolName())
+							log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
 							tool.SetInitData(map[string]interface{}{})
 						}
 					}
@@ -637,7 +637,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 }
 
 // executeTool executes a single tool
-func (aih *AIHandlerImpl) executeTool(ctx context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage) error {
+func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage) error {
 	// Find the tool in the tool map
 	tool, exists := toolMap[toolName]
 	if !exists {
