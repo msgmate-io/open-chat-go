@@ -461,7 +461,15 @@ func WriteDocsSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
-	absPath := filepath.Join(repoRoot, filepath.FromSlash(relPath))
+	absPath := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(relPath)))
+
+	docsRoot := filepath.Join(repoRoot, "frontend", "components", "docs")
+	uiDocsRoot := filepath.Join(repoRoot, "frontend", "packages", "ui", "src", "components", "docs")
+	if !strings.HasPrefix(absPath, docsRoot+string(os.PathSeparator)) &&
+		!strings.HasPrefix(absPath, uiDocsRoot+string(os.PathSeparator)) {
+		http.Error(w, "output_path not allowed", http.StatusBadRequest)
+		return
+	}
 
 	if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o755); mkErr != nil {
 		http.Error(w, fmt.Sprintf("failed to create snapshot directory: %v", mkErr), http.StatusInternalServerError)
