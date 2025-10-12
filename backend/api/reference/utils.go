@@ -4,8 +4,10 @@ package reference
 // forked for customization
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
@@ -69,8 +71,29 @@ func readFileFromURL(fileURL string) ([]byte, error) {
 
 func safeJSONConfiguration(options *Options) string {
 	jsonData, _ := json.Marshal(options)
-	escapedJSON := strings.ReplaceAll(string(jsonData), `"`, `&quot;`)
-	return escapedJSON
+	return string(jsonData)
+}
+
+var apiReferenceTemplate = template.Must(template.New("api-reference").Parse(`<!DOCTYPE html>
+    <html>
+      <head>
+        <title>{{.PageTitle}}</title>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>{{.ThemeCSS}}</style>
+      </head>
+      <body>
+        <script id="api-reference" type="application/json" data-configuration="{{.DataConfiguration}}">{{.SpecContent}}</script>
+        <script src="{{.CDN}}"></script>
+      </body>
+    </html>`))
+
+type apiReferencePage struct {
+	PageTitle         string
+	ThemeCSS          template.CSS
+	DataConfiguration string
+	SpecContent       template.JS
+	CDN               string
 }
 
 func specContentHandler(specContent interface{}) string {
@@ -120,7 +143,7 @@ func ApiReferenceHTML(optionsInput *Options) (string, error) {
 	}
 
 	dataConfig := safeJSONConfiguration(options)
-	specContentHTML := specContentHandler(options.SpecContent)
+	specContentHTML := strings.ReplaceAll(specContentHandler(options.SpecContent), "<", `\u003c`)
 
 	var pageTitle string
 
@@ -136,19 +159,17 @@ func ApiReferenceHTML(optionsInput *Options) (string, error) {
 		customThemeCss = ""
 	}
 
-	return fmt.Sprintf(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>%s</title>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>%s</style>
-      </head>
-      <body>
-        <script id="api-reference" type="application/json" data-configuration="%s">%s</script>
-        <script src="%s"></script>
-      </body>
-    </html>
-  `, pageTitle, customThemeCss, dataConfig, specContentHTML, options.CDN), nil
+	page := apiReferencePage{
+		PageTitle:         pageTitle,
+		ThemeCSS:          template.CSS(customThemeCss),
+		DataConfiguration: dataConfig,
+		SpecContent:       template.JS(specContentHTML),
+		CDN:               options.CDN,
+	}
+
+	var buf bytes.Buffer
+	if err := apiReferenceTemplate.Execute(&buf, page); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

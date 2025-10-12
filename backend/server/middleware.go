@@ -256,19 +256,9 @@ func enforceEmailVerificationForAPI(DB *gorm.DB, r *http.Request, userID uint) e
 }
 
 func cookieSecureFromRequest(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	if r.TLS != nil {
-		return true
-	}
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		return true
-	}
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on") {
-		return true
-	}
-	return false
+	return r != nil && (r.TLS != nil ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on"))
 }
 
 func cookieDomainFromRequest(r *http.Request) string {
@@ -458,12 +448,12 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 		session, authorized, _ := resolveValidSessionFromRequest(DB, r)
 		if !authorized {
 			http.SetCookie(w, &http.Cookie{
-				Name:     "is_authorized",
+				Name:     "oc_client_state",
 				Value:    "false",
 				Path:     "/",
 				MaxAge:   0,
 				HttpOnly: false,
-				Secure:   false,
+				Secure:   cookieSecureFromRequest(r),
 				SameSite: http.SameSiteStrictMode,
 			})
 			if isPublicFrontendRoute(r.URL.Path) {
@@ -484,12 +474,12 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		http.SetCookie(w, &http.Cookie{
-			Name:     "is_authorized",
+			Name:     "oc_client_state",
 			Value:    "true",
 			Path:     "/",
 			MaxAge:   0,
 			HttpOnly: false,
-			Secure:   false,
+			Secure:   cookieSecureFromRequest(r),
 			SameSite: http.SameSiteStrictMode,
 		})
 
