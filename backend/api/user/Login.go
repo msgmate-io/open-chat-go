@@ -158,12 +158,12 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "is_authorized",
+		Name:     "oc_client_state",
 		Value:    "true",
 		Path:     "/",
 		MaxAge:   0,
 		HttpOnly: false,
-		Secure:   false,
+		Secure:   api.RequestIsSecure(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 
@@ -222,7 +222,7 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 		return err, "", false, database.User{}
 	}
 
-	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!
+	token := api.GenerateToken()
 	// TODO: make sure sessions expire!
 	session := database.Session{
 		Token:  token,
