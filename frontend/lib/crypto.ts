@@ -8,28 +8,18 @@ export async function decryptData(encryptedData: string, password: string): Prom
     
     // For demonstration purposes, we're assuming the data is base64 encoded
     // and the actual decryption would be handled by a proper crypto library
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    
-    // Convert base64 to array buffer
-    const binaryString = atob(encryptedData);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
+
     // In a real implementation, you would use something like:
     // const key = await crypto.subtle.importKey(
-    //   "raw", encoder.encode(password), { name: "AES-GCM" }, false, ["decrypt"]
+    //   "raw", new TextEncoder().encode(password), { name: "AES-GCM" }, false, ["decrypt"]
     // );
     // const decrypted = await crypto.subtle.decrypt(
     //   { name: "AES-GCM", iv: ... },
     //   key,
     //   bytes
     // );
-    
+
     // For now, we'll just return a placeholder
-    console.log("Would decrypt data with password:", password);
     return "Decrypted content would appear here";
   } catch (error) {
     console.error("Decryption error:", error);
