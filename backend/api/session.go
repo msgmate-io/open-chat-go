@@ -1,42 +1,40 @@
 package api
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"strings"
 	"time"
 )
 
-func GenerateToken(tokenBase string) string {
-	hash, err := bcrypt.GenerateFromPassword([]byte(tokenBase), bcrypt.DefaultCost)
+// RequestIsSecure reports whether the request reached the server over HTTPS,
+// either directly (TLS) or via a trusted reverse proxy that signals it through
+// X-Forwarded-Proto / X-Forwarded-Ssl.
+func RequestIsSecure(r *http.Request) bool {
+	return r != nil && (r.TLS != nil ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on"))
+}
 
-	if err != nil {
+// GenerateToken returns a fresh 256-bit, URL-safe opaque session token. It is
+// sourced directly from a cryptographically secure RNG and deliberately does
+// not derive from (or hash) any user-supplied credential: session tokens are
+// secrets in their own right and must not be produced by a general-purpose
+// hash function.
+func GenerateToken() string {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
 		panic(fmt.Errorf("failed to generate token: %w", err))
 	}
-
-	hasher := md5.New()
-	hasher.Write(hash)
-	return hex.EncodeToString(hasher.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(buf)
 }
 
 func CreateSessionToken(w http.ResponseWriter, r *http.Request, domain string, token string, expiry time.Time) *http.Cookie {
 	persist := true
 
-	secure := false
-	if r != nil {
-		if r.TLS != nil {
-			secure = true
-		}
-		if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-			secure = true
-		}
-		if strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on") {
-			secure = true
-		}
-	}
+	secure := RequestIsSecure(r)
 
 	cookie := &http.Cookie{
 		Name:     "session_id",
