@@ -888,6 +888,55 @@
                 }
             }
         },
+        "/api/v1/chats/action-tasks": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "List owned chats/interactions that currently require a user action.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Get pending action tasks",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Only return the count (1/0)",
+                        "name": "count_only",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Pending action tasks",
+                        "schema": {
+                            "$ref": "#/definitions/chats.ActionTasksResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Unable to get database or user",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to resolve action tasks",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chats/create": {
             "post": {
                 "security": [
@@ -1081,6 +1130,71 @@
                     },
                     "400": {
                         "description": "Invalid chat UUID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chats/{chat_uuid}/action-tasks/dismiss": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Ignore / mark a pending action task as completed so it no longer surfaces.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Dismiss an action task",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dismissal payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dismissed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Chat or message not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to dismiss task",
                         "schema": {
                             "type": "string"
                         }
@@ -3603,6 +3717,109 @@
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "chats.ActionTaskAction": {
+            "type": "object",
+            "properties": {
+                "action_id": {
+                    "type": "string"
+                },
+                "danger_level": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "target_tool_name": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.ActionTaskPartner": {
+            "type": "object",
+            "properties": {
+                "contact_token": {
+                    "type": "string"
+                },
+                "is_automated": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.ActionTaskRow": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chats.ActionTaskAction"
+                    }
+                },
+                "chat_type": {
+                    "type": "string"
+                },
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "message_meta": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "message_send_at": {
+                    "type": "string"
+                },
+                "message_text": {
+                    "type": "string"
+                },
+                "message_uuid": {
+                    "type": "string"
+                },
+                "partner": {
+                    "$ref": "#/definitions/chats.ActionTaskPartner"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "task_key": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {}
+                }
+            }
+        },
+        "chats.ActionTasksResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chats.ActionTaskRow"
+                    }
                 }
             }
         },
