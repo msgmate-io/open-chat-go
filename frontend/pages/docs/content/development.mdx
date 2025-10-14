@@ -45,7 +45,7 @@ Integrations are selected per profile (`INTEGRATION_PROFILE` or `--profile`):
 | Profile | Includes |
 | --- | --- |
 | `core-only` (default) | `mcp`, `rest_api_tool`, `go_client` |
-| `default` | core + `matrix`, `docker_sandbox`, `git`, `kubernetes` |
+| `default` | core + optional private modules (materialized from the private manifest fragment) |
 | `full` | every integration (some private; needs repo access) |
 
 ```bash
