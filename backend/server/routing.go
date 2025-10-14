@@ -422,6 +422,8 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}", chatsHandler.GetChat)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/status", chatsHandler.GetInteractionStatus)
 	v1PrivateApis.HandleFunc("GET /chats/states", chatsHandler.GetChatStates)
+	v1PrivateApis.HandleFunc("GET /chats/action-tasks", chatsHandler.GetActionTasks)
+	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/action-tasks/dismiss", chatsHandler.DismissActionTask)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/contact", contactsHandler.GetContactByChatUUID)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/send", chatsHandler.MessageSend)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/rerun", chatsHandler.RerunMessage)
@@ -483,6 +485,10 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/{integration_name}", admin.SaveIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/{integration_name}/reveal", admin.RevealIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/restart", admin.RestartServer)
+	v1PrivateApis.HandleFunc("GET /admin/integration-settings/raw", admin.GetRawIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/validate", admin.ValidateRawIntegrationSettings)
+	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/raw", admin.SaveRawIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/download", admin.DownloadRawIntegrationSettings)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
 
