@@ -16,6 +16,7 @@ type ListedChat struct {
 	LatestMessage *database.Message `json:"latest_message"`
 	ChatType      string            `json:"chat_type"`
 	Config        interface{}       `json:"config"`
+	Settings      *ChatSettingsView `json:"settings,omitempty"`
 	ChatShareUUID string            `json:"chat_share_uuid,omitempty"`
 	SharedChatURL string            `json:"shared_interaction_url,omitempty"`
 }
@@ -167,6 +168,17 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	listedChats := make([]ListedChat, len(chats))
 	for i, chat := range chats {
 		listedChats[i] = convertChatToListedChat(user, chat)
+	}
+
+	chatIDs := make([]uint, 0, len(chats))
+	for _, chat := range chats {
+		chatIDs = append(chatIDs, chat.ID)
+	}
+	settingsByChat := loadChatSettingsViews(DB, chatIDs)
+	for i := range listedChats {
+		if view := settingsByChat[chats[i].ID]; view != nil {
+			listedChats[i].Settings = view
+		}
 	}
 
 	response := ListedChatsPage{
