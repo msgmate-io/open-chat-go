@@ -1589,6 +1589,59 @@
                 }
             }
         },
+        "/api/v1/chats/{chat_uuid}/settings": {
+            "put": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Set or clear server-side chat settings (currently the chat title)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Update chat settings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Chat settings update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/chats.updateChatSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated chat settings",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid chat UUID or JSON",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chats/{chat_uuid}/status": {
             "get": {
                 "security": [
@@ -3823,6 +3876,14 @@
                 }
             }
         },
+        "chats.ChatSettingsView": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "chats.ChatStateRow": {
             "type": "object",
             "properties": {
@@ -3953,6 +4014,9 @@
                 },
                 "partner": {
                     "$ref": "#/definitions/database.User"
+                },
+                "settings": {
+                    "$ref": "#/definitions/chats.ChatSettingsView"
                 },
                 "shared_interaction_url": {
                     "type": "string"
@@ -4181,6 +4245,14 @@
                     "type": "string"
                 },
                 "uuid": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.updateChatSettingsRequest": {
+            "type": "object",
+            "properties": {
+                "title": {
                     "type": "string"
                 }
             }
