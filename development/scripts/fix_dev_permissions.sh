@@ -29,8 +29,10 @@ PATHS=(
   "clients/llm_coding_agents"
   "frontend/pages/integrations"
   "frontend/integrations"
+  "frontend/package.json"
   "backend/go.work"
   "backend/go.work.sum"
+  "backend/.generated"
   "backend/integrations/externalintegrations/imports_gen.go"
   "integrations.local.yaml"
 )
