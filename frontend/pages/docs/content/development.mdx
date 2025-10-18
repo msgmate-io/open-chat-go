@@ -82,6 +82,13 @@ backend code reload automatically inside the backend container, so test
 endpoints directly against `http://localhost:1984` while you work. Only add real
 integration tests when asked, or when you judge it clearly appropriate.
 
+The `integration-sync` service runs as the owner of your checkout: it repairs
+artifacts an older run may have left root-owned and then drops privileges before
+fetching integrations, so the generated clones, `.integrations` cache and
+frontend symlinks stay editable and git does not reject them as "dubious
+ownership". If you need to heal a checkout without starting the stack, run
+`sudo development/scripts/fix_dev_permissions.sh`.
+
 ## Repository layout
 
 | Path | Contents |
@@ -155,6 +162,7 @@ registration is needed.
 | Script | Purpose |
 | --- | --- |
 | `development/scripts/build_static_frontend.sh` | Full frontend build + route generation + integration page export. |
+| `development/scripts/fix_dev_permissions.sh` | Repair root-owned generated dev artifacts left by older container runs. |
 | `development/scripts/bump_backend_version.sh` | Bump the backend version used for release tags. |
 | `development/scripts/commit_and_push_subrepos.sh` | Commit and push changes across submodules. |
 | `development/scripts/refresh_docs_snapshots.py` | Regenerate documentation snapshots. |

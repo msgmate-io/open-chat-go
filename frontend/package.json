@@ -5,6 +5,9 @@
     "packages/*"
   ],
   "scripts": {
+    "prepare": "node scripts/ensure-extensions-gen.mjs",
+    "predev": "node scripts/ensure-extensions-gen.mjs",
+    "prebuild": "node scripts/ensure-extensions-gen.mjs",
     "dev": "VIKE_CRAWL='{\"git\":false}' vike dev",
     "build": "VIKE_CRAWL='{\"git\":false}' vike build",
     "preview": "vike preview",
