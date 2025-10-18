@@ -301,6 +301,9 @@ type rawConfigSaveResponse struct {
 	Persisted       bool                               `json:"persisted"`
 	PersistError    string                             `json:"persist_error,omitempty"`
 	RestartRequired bool                               `json:"restart_required"`
+	RemotePersisted bool                               `json:"remote_persisted"`
+	RemoteTarget    string                             `json:"remote_target,omitempty"`
+	RemoteError     string                             `json:"remote_error,omitempty"`
 }
 
 type rawConfigDownloadRequest struct {
@@ -431,14 +434,36 @@ func SaveRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 	source := runtimecfg.GetConfigSource()
 	persisted := false
 	persistError := ""
+	remotePersisted := false
+	remoteTarget := ""
+	remoteError := ""
 
-	if original, _, err := integrationsettings.LoadConfigDocument(source); err != nil {
+	if original, sourceFormat, err := integrationsettings.LoadConfigDocument(source); err != nil {
 		persistError = err.Error()
 	} else {
 		restored := integrationsettings.RestoreRedactedConfig(original, root, runtimecfg.GetAll(), defs)
 		if _, err := integrationsettings.SaveConfigDocument(source, restored); err != nil {
 			persistError = err.Error()
 		} else {
+			persisted = true
+		}
+
+		// Mirror the config into the deployment-host kubernetes Secret when one
+		// is configured (decoupling the config from the Helm release). A
+		// read-only config mount makes the local write above fail, so a
+		// successful remote persist still counts as persisted.
+		format := sourceFormat
+		if encoded, encErr := integrationsettings.EncodeConfigDocument(restored, format); encErr != nil {
+			remoteError = encErr.Error()
+		} else if target, configured, remoteErr := integrationsettings.PersistRemoteConfig(encoded); remoteErr != nil {
+			if errors.Is(remoteErr, integrationsettings.ErrNoRemoteConfigTarget) {
+				// No deployment host configured; nothing to do.
+			} else {
+				remoteError = remoteErr.Error()
+			}
+		} else if configured {
+			remotePersisted = true
+			remoteTarget = target
 			persisted = true
 		}
 	}
@@ -448,6 +473,9 @@ func SaveRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 		Persisted:       persisted,
 		PersistError:    persistError,
 		RestartRequired: true,
+		RemotePersisted: remotePersisted,
+		RemoteTarget:    remoteTarget,
+		RemoteError:     remoteError,
 	})
 }
 

@@ -3540,6 +3540,15 @@
                 "persisted": {
                     "type": "boolean"
                 },
+                "remote_error": {
+                    "type": "string"
+                },
+                "remote_persisted": {
+                    "type": "boolean"
+                },
+                "remote_target": {
+                    "type": "string"
+                },
                 "restart_required": {
                     "type": "boolean"
                 }
@@ -4646,6 +4655,10 @@
                 "can_restart": {
                     "type": "boolean"
                 },
+                "config_backend": {
+                    "description": "ConfigBackend names the effective persistence backend: \"file\",\n\"kubernetes-secret\" or empty when the config is not persistable.",
+                    "type": "string"
+                },
                 "config_format": {
                     "type": "string"
                 },
@@ -4657,6 +4670,10 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "remote_configured": {
+                    "description": "RemoteConfigured is true when a remote (kubernetes Secret) config target\nis available in addition to the local file.",
+                    "type": "boolean"
                 },
                 "type": {
                     "type": "string"
