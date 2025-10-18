@@ -18,7 +18,13 @@ type DeploymentInfo struct {
 	ConfigFormat string   `json:"config_format"`
 	CanPersist   bool     `json:"can_persist"`
 	CanRestart   bool     `json:"can_restart"`
-	Reasons      []string `json:"reasons,omitempty"`
+	// ConfigBackend names the effective persistence backend: "file",
+	// "kubernetes-secret" or empty when the config is not persistable.
+	ConfigBackend string `json:"config_backend,omitempty"`
+	// RemoteConfigured is true when a remote (kubernetes Secret) config target
+	// is available in addition to the local file.
+	RemoteConfigured bool     `json:"remote_configured,omitempty"`
+	Reasons          []string `json:"reasons,omitempty"`
 }
 
 func envDeploymentType() string {
@@ -96,6 +102,18 @@ func BuildDeploymentInfo() DeploymentInfo {
 	info.CanRestart = servicecontrol.RestartSupported()
 	if !info.CanRestart {
 		info.Reasons = append(info.Reasons, "server is not managed by an OS service manager; restart manually")
+	}
+
+	// A registered remote persister (kubernetes deployment-host config secret)
+	// makes the config persistable even when the local file is read-only (for
+	// example a read-only Secret volume mount), and is the preferred backend.
+	if HasRemoteConfigPersister() {
+		info.RemoteConfigured = true
+		info.CanPersist = true
+		info.ConfigBackend = "kubernetes-secret"
+		info.Reasons = append(info.Reasons, "config is persisted to the deployment-host kubernetes Secret")
+	} else if info.CanPersist {
+		info.ConfigBackend = "file"
 	}
 
 	return info
