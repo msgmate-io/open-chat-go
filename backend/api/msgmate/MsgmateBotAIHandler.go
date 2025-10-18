@@ -69,6 +69,23 @@ func resolveProviderEndpoint(backend, endpoint string) (string, error) {
 	return endpoint, nil
 }
 
+// resolveChatProviderEndpoint resolves the effective provider endpoint for a
+// legacy (non-opencode) chat config. It first applies the provider-specific
+// rules (env hosts and the public defaults for openrouter/ionos/anthropic) and
+// only then falls back to the in-cluster localai endpoint, so a public provider
+// such as openrouter is never silently routed to localai just because the chat
+// config omitted an explicit endpoint.
+func resolveChatProviderEndpoint(backend, endpoint string) (string, error) {
+	resolved, err := resolveProviderEndpoint(backend, endpoint)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(resolved) == "" {
+		resolved = "http://localai:8080"
+	}
+	return resolved, nil
+}
+
 func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[string]interface{} {
 	confirmation, ok := toolCall["confirmation"].(map[string]interface{})
 	if !ok {
@@ -216,7 +233,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		}
 	}
 
-	endpoint := mapGetOrDefault[string](configMap, "endpoint", "http://localai:8080")
+	endpoint := mapGetOrDefault[string](configMap, "endpoint", "")
 	backend := mapGetOrDefault[string](configMap, "backend", "deepinfra")
 	model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 	reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
@@ -243,7 +260,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		toolCallMaxFailed = int64(DefaultToolCallMaxFailed)
 	}
 
-	endpoint, err = resolveProviderEndpoint(backend, endpoint)
+	endpoint, err = resolveChatProviderEndpoint(backend, endpoint)
 	if err != nil {
 		return err
 	}
