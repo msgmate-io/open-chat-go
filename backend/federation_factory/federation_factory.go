@@ -155,6 +155,10 @@ func (w *FederationHandlerWrapper) ListProxies(resp http.ResponseWriter, req *ht
 	w.handler.ListProxies(resp, req)
 }
 
+func (w *FederationHandlerWrapper) SearchProxies(resp http.ResponseWriter, req *http.Request) {
+	w.handler.SearchProxies(resp, req)
+}
+
 func (w *FederationHandlerWrapper) DeleteProxy(resp http.ResponseWriter, req *http.Request) {
 	w.handler.DeleteProxy(resp, req)
 }

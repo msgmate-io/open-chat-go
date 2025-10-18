@@ -39,6 +39,7 @@ type FederationHandlerInterface interface {
 	// Proxy management
 	CreateAndStartProxy(w http.ResponseWriter, r *http.Request)
 	ListProxies(w http.ResponseWriter, r *http.Request)
+	SearchProxies(w http.ResponseWriter, r *http.Request)
 	DeleteProxy(w http.ResponseWriter, r *http.Request)
 	ReloadDomainProxies(w http.ResponseWriter, r *http.Request)
 
@@ -244,6 +245,10 @@ func (s *StubFederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *ht
 }
 
 func (s *StubFederationHandler) ListProxies(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Federation not available", http.StatusNotImplemented)
+}
+
+func (s *StubFederationHandler) SearchProxies(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
 
