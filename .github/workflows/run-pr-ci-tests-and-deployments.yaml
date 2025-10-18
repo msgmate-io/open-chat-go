@@ -1522,6 +1522,7 @@ jobs:
 
   dispatch-private-sandbox-tests:
     name: Dispatch Private Sandbox Tests
+    runs-on: ubuntu-latest
     # Second sandbox layer: the private CI repository runs the extended suite
     # (LITTLE WORLD + rest_api_tool, etc.) in parallel with the public sandbox
     # benchmark above. Results are kept privately in the CI repo; the private
