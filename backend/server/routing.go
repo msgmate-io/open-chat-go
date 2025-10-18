@@ -5,6 +5,7 @@ import (
 	"backend/api/admin"
 	"backend/api/chats"
 	"backend/api/contacts"
+	"backend/api/federation"
 	"backend/api/files"
 	"backend/api/integrations"
 	"backend/api/metrics"
@@ -13,7 +14,6 @@ import (
 	"backend/api/tools"
 	"backend/api/user"
 	"backend/api/websocket"
-	"backend/database"
 	"backend/scheduler"
 	"bytes"
 	"context"
@@ -24,7 +24,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -76,235 +75,6 @@ func frontendRedirectMiddleware(next http.Handler) http.Handler {
 		// TODO: for some paths do stuff
 		next.ServeHTTP(w, r)
 	})
-}
-
-// isLikelyMainServerDomain checks if a domain is likely the main server domain
-// vs a subdomain or different domain that should be a proxy
-func isLikelyMainServerDomain(host string) bool {
-	// Common patterns that suggest this is the main server domain:
-	// 1. No subdomain (e.g., "example.com" vs "sub.example.com")
-	// 2. Common TLDs
-	// 3. Not obviously a subdomain pattern
-
-	// Split by dots to analyze the domain structure
-	parts := strings.Split(host, ".")
-	if len(parts) < 2 {
-		return false // Invalid domain
-	}
-
-	// If it has more than 2 parts, it's likely a subdomain (e.g., "sub.example.com")
-	if len(parts) > 2 {
-		return false
-	}
-
-	// Check if the TLD is a common one (this is a heuristic)
-	commonTLDs := map[string]bool{
-		"com": true, "org": true, "net": true, "io": true, "co": true,
-		"uk": true, "de": true, "fr": true, "it": true, "es": true,
-		"ca": true, "au": true, "jp": true, "cn": true, "in": true,
-		"ru": true, "br": true, "mx": true, "nl": true, "se": true,
-		"no": true, "dk": true, "fi": true, "pl": true, "cz": true,
-	}
-
-	tld := parts[len(parts)-1]
-	if commonTLDs[tld] {
-		return true
-	}
-
-	// If it's a 2-part domain with a common TLD, it's likely the main domain
-	return true
-}
-
-// domainRoutingMiddleware handles domain-based routing for domain proxies
-func domainRoutingMiddleware(DB *gorm.DB) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract domain from Host header
-			host := r.Host
-			if i := strings.Index(host, ":"); i != -1 {
-				host = host[:i] // Remove port if present
-			}
-
-			// Skip domain routing for localhost and IP addresses
-			if host == "localhost" || host == "127.0.0.1" || net.ParseIP(host) != nil {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Check if this is a domain proxy
-			var proxy database.Proxy
-			err := DB.Where("kind = ? AND active = ? AND traffic_origin = ?", "domain", true, host).First(&proxy).Error
-			if err == nil {
-				// This is a domain proxy request
-				// TrafficTarget contains "cert_prefix:backend_port" format
-				targetParts := strings.Split(proxy.TrafficTarget, ":")
-				if len(targetParts) >= 2 {
-					backendPort := targetParts[1]
-
-					// Create a reverse proxy to the backend port
-					backendURL := fmt.Sprintf("http://localhost:%s", backendPort)
-					targetURL, err := url.Parse(backendURL)
-					if err == nil {
-						proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-						// Set headers for proper proxying
-						r.Header.Set("X-Forwarded-Host", r.Host)
-						r.Header.Set("X-Forwarded-Proto", "https")
-
-						log.Printf("Domain proxy: routing %s to %s", host, backendURL)
-						proxy.ServeHTTP(w, r)
-						return
-					} else {
-						log.Printf("Error: Failed to parse backend URL %s for domain %s: %v", backendURL, host, err)
-					}
-				} else {
-					log.Printf("Error: Invalid TrafficTarget format for domain %s: %s", host, proxy.TrafficTarget)
-				}
-			} else if err != gorm.ErrRecordNotFound {
-				// Log database errors but don't fail the request
-				log.Printf("Error: Database error while checking domain proxy for %s: %v", host, err)
-			} else {
-				// No domain proxy found for this domain
-				// Check if this looks like a domain that should be a proxy vs the main server domain
-				// We'll be more conservative and only show the error for domains that clearly look like proxies
-
-				// If this is likely the main server domain (no subdomain, common TLD), fall through to normal routing
-				// This prevents the main domain from showing "domain proxy not configured" errors
-				if isLikelyMainServerDomain(host) {
-					log.Printf("Domain %s appears to be the main server domain, falling through to normal routing", host)
-					next.ServeHTTP(w, r)
-					return
-				}
-
-				// This looks like a domain that should be a proxy but isn't configured
-				// Return a proper error message instead of falling through to normal routing
-				// This prevents permanent redirects that get cached by browsers
-				log.Printf("No domain proxy configured for domain: %s", host)
-
-				// Check if this is an HTML request (browser) or text request (curl)
-				accept := r.Header.Get("Accept")
-				if strings.Contains(accept, "text/html") {
-					// Return HTML for browsers
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					w.WriteHeader(http.StatusNotFound)
-
-					html := fmt.Sprintf(`
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Domain Proxy Not Configured</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%);
-            margin: 0;
-            padding: 0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .container {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            text-align: center;
-            max-width: 500px;
-            margin: 1rem;
-        }
-        .icon {
-            font-size: 4rem;
-            margin-bottom: 1rem;
-        }
-        h1 {
-            color: #333;
-            margin-bottom: 1rem;
-            font-size: 1.5rem;
-        }
-        p {
-            color: #666;
-            line-height: 1.6;
-            margin-bottom: 1.5rem;
-        }
-        .domain {
-            font-family: monospace;
-            background: #f5f5f5;
-            padding: 0.5rem;
-            border-radius: 4px;
-            color: #333;
-            font-weight: bold;
-        }
-        .info {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            padding: 1rem;
-            margin: 1rem 0;
-            text-align: left;
-        }
-        .info h3 {
-            margin: 0 0 0.5rem 0;
-            color: #1976d2;
-        }
-        .info ul {
-            margin: 0;
-            padding-left: 1.5rem;
-        }
-        .info li {
-            margin: 0.25rem 0;
-            color: #555;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="icon">🔧</div>
-        <h1>Domain Proxy Not Configured</h1>
-        <p>No proxy has been set up for the domain:</p>
-        <div class="domain">%s</div>
-        
-        <div class="info">
-            <h3>What does this mean?</h3>
-            <ul>
-                <li>This domain is not configured as a proxy target</li>
-                <li>No backend service is mapped to this domain</li>
-                <li>The domain proxy needs to be created in the admin panel</li>
-            </ul>
-        </div>
-        
-        <p><strong>Status:</strong> 404 Not Found</p>
-        <p><em>This is a temporary response and will not be cached by browsers.</em></p>
-    </div>
-</body>
-</html>`, host)
-
-					w.Write([]byte(html))
-					return
-				} else {
-					// Return plain text for curl and other non-HTML clients
-					w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-					w.WriteHeader(http.StatusNotFound)
-
-					text := fmt.Sprintf(`No domain proxy configured for domain: %s
-
-This domain is not configured as a proxy target. No backend service is mapped to this domain.
-
-Status: 404 Not Found
-This is a temporary response and will not be cached by browsers.
-
-To set up a domain proxy, create one in the admin panel.`, host)
-
-					w.Write([]byte(text))
-					return
-				}
-			}
-
-			// Not a domain proxy or error occurred, continue with normal routing
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 func getFrontendRoutes() ([]string, error) {
@@ -408,6 +178,7 @@ func BackendRouting(
 	}
 	filesHandler := &files.FilesHandler{}
 	toolsHandler := &tools.ToolsHandler{}
+	mcpHandler := &tools.MCPHandler{}
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
@@ -421,6 +192,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}", toolsHandler.ExecuteTool)
 	v1PrivateApis.HandleFunc("GET /interactions/{chat_uuid}/tools", toolsHandler.GetAvailableTools)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/init", toolsHandler.StoreToolInitData)
+
+	// MCP (Model Context Protocol) endpoints (bot users only)
+	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/mcp", mcpHandler.HandleMCP)
 
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
@@ -504,7 +278,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
 	providerMiddlewares := CreateStack(
-		domainRoutingMiddleware(DB),
+		federation.DomainRoutingMiddleware(DB),
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 	)
