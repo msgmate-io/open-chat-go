@@ -69,8 +69,17 @@ services:
       dockerfile: development/build-tools/sync.dockerfile
       context: .
     image: dev-integration-sync
+    # Runs as root only to repair artifacts left root-owned by older runs and
+    # then drops privileges to the owner of the bind-mounted checkout, so the
+    # generated integrations, .integrations cache and symlinks stay editable by
+    # the developer and are not rejected by git as "dubious ownership".
+    entrypoint: ["python3", "/workspace/development/scripts/integration_sync_entrypoint.py"]
+    command: ["prepare"]
     environment:
       INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
+      # Writable HOME for git/ssh after the privilege drop (credentials are
+      # injected via GIT_CONFIG_* by the manager).
+      HOME: /tmp
       # Let the manager discover the developer's already-authenticated git
       # credentials for private profile repos (see openchat_integrations.credentials):
       # the host home is mounted read-only below and a forwarded SSH agent is
