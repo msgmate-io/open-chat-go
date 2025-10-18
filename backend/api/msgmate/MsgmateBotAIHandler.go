@@ -74,13 +74,17 @@ func resolveProviderEndpoint(backend, endpoint string) (string, error) {
 // rules (env hosts and the public defaults for openrouter/ionos/anthropic) and
 // only then falls back to the in-cluster localai endpoint, so a public provider
 // such as openrouter is never silently routed to localai just because the chat
-// config omitted an explicit endpoint.
+// config omitted an explicit endpoint. The result is normalized without a
+// trailing slash because callers append "/chat/completions"; the public
+// openrouter/ionos defaults are defined with a trailing slash and would
+// otherwise produce a double slash (OpenRouter answers those with HTTP 404).
 func resolveChatProviderEndpoint(backend, endpoint string) (string, error) {
 	resolved, err := resolveProviderEndpoint(backend, endpoint)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(resolved) == "" {
+	resolved = strings.TrimRight(strings.TrimSpace(resolved), "/")
+	if resolved == "" {
 		resolved = "http://localai:8080"
 	}
 	return resolved, nil
