@@ -229,6 +229,58 @@ func resolveValidSessionFromRequest(DB *gorm.DB, r *http.Request) (*database.Ses
 	return nil, false, nil
 }
 
+// ImpersonatorContextKey holds the admin user behind an active impersonation.
+// It is only set when the request carries a valid admin
+// "oc_impersonator_session" cookie alongside an impersonated session.
+const ImpersonatorContextKey = "impersonator"
+
+// ImpersonatorFromContext returns the admin user when the request is an
+// impersonation session.
+func ImpersonatorFromContext(ctx context.Context) (*database.User, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	user, ok := ctx.Value(ImpersonatorContextKey).(*database.User)
+	return user, ok && user != nil
+}
+
+// resolveImpersonatorFromRequest loads the admin behind an active impersonation
+// from the "oc_impersonator_session" cookie. The cookie must reference a valid,
+// unexpired session owned by an admin.
+func resolveImpersonatorFromRequest(DB *gorm.DB, r *http.Request) (*database.User, bool) {
+	if DB == nil || r == nil {
+		return nil, false
+	}
+	token := ""
+	for _, cookie := range r.Cookies() {
+		if cookie.Name != "oc_impersonator_session" {
+			continue
+		}
+		if value := strings.TrimSpace(cookie.Value); value != "" {
+			token = value
+			break
+		}
+	}
+	if token == "" {
+		return nil, false
+	}
+	var session database.Session
+	if err := DB.First(&session, "token = ?", token).Error; err != nil {
+		return nil, false
+	}
+	if session.Expiry.Before(time.Now()) {
+		return nil, false
+	}
+	var admin database.User
+	if err := DB.First(&admin, "id = ?", session.UserId).Error; err != nil {
+		return nil, false
+	}
+	if !admin.IsAdmin {
+		return nil, false
+	}
+	return &admin, true
+}
+
 func isEmailVerificationExemptAPIPath(path string) bool {
 	switch path {
 	case "/api/v1/user/self", "/api/v1/user/logout", "/api/v1/integrations/account_management/email-verification/status", "/api/v1/integrations/account_management/email-verification/request", "/api/v1/integrations/account_management/email-verification/verify":
@@ -370,6 +422,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		ctx := context.WithValue(r.Context(), UserContextKey, &user)
+		if impersonator, ok := resolveImpersonatorFromRequest(DB, r); ok {
+			ctx = context.WithValue(ctx, ImpersonatorContextKey, impersonator)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
