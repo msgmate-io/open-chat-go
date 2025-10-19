@@ -171,6 +171,13 @@ jobs:
             else
               tags="untagged"
             fi
+            # Tests tagged `private` need the private Little World harness and
+            # are run by the private CI repository (private-sandbox-tests.yaml);
+            # the public suite must never pick them up, even in the no-filter
+            # "all tests" case.
+            case " $tags " in
+              *" private "*) continue;;
+            esac
             if [ -z "$requested" ]; then
               selected+=("$d")
               continue
