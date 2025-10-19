@@ -42,3 +42,22 @@ func adminIsExternalViewer(user *database.User, chat database.Chat) bool {
 	}
 	return chat.User1Id != user.ID && chat.User2Id != user.ID
 }
+
+// resolveChatBotCounterparty returns the bot participant of a chat for the
+// acting user. Regular users get the other participant; an admin inspecting a
+// chat they do not participate in gets the automated participant, so admins can
+// approve/cancel other users' coding interactions.
+func resolveChatBotCounterparty(chat database.Chat, user database.User) (database.User, bool) {
+	if bot, ok := getChatCounterparty(chat, user); ok {
+		return bot, true
+	}
+	if user.IsAdmin {
+		if chat.User1.IsAutomated {
+			return chat.User1, true
+		}
+		if chat.User2.IsAutomated {
+			return chat.User2, true
+		}
+	}
+	return database.User{}, false
+}
