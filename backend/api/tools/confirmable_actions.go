@@ -206,10 +206,14 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	}
 
 	var chat database.Chat
-	if err := DB.Preload("User1").
+	chatQuery := DB
+	if !user.IsAdmin {
+		chatQuery = chatQuery.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	}
+	if err := chatQuery.Preload("User1").
 		Preload("User2").
 		Preload("SharedConfig").
-		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, user.ID, user.ID).
+		Where("uuid = ?", chatUUID).
 		First(&chat).Error; err != nil {
 		http.Error(w, "Chat not found or access denied", http.StatusNotFound)
 		return

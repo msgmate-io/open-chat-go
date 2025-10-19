@@ -3885,6 +3885,17 @@
                 }
             }
         },
+        "chats.AdminChatView": {
+            "type": "object",
+            "properties": {
+                "user1": {
+                    "$ref": "#/definitions/database.User"
+                },
+                "user2": {
+                    "$ref": "#/definitions/database.User"
+                }
+            }
+        },
         "chats.ChatSettingsView": {
             "type": "object",
             "properties": {
@@ -4011,6 +4022,14 @@
         "chats.ListedChat": {
             "type": "object",
             "properties": {
+                "admin_view": {
+                    "description": "AdminView is set when an admin is listing/viewing a chat they do not\nparticipate in, so the UI can clearly mark that another user's chat is\nbeing rendered.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/chats.AdminChatView"
+                        }
+                    ]
+                },
                 "chat_share_uuid": {
                     "type": "string"
                 },
