@@ -19,6 +19,7 @@ import {
 import { Button } from "../button"
 import { Text, TextTypes } from "../text"
 import { SlidersHorizontal } from "lucide-react"
+import { useCurrentUser } from "../../integration/hooks/use-current-user"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
@@ -181,14 +182,18 @@ export function ChatsList({
     }, [chatTypeFilter, navigateTo])
 
     const activeFilterLabel = useMemo(() => CHAT_TYPE_LABELS[chatTypeFilter], [chatTypeFilter])
+    const { data: currentUser } = useCurrentUser()
+    const isAdmin = currentUser?.is_admin === true
+    const [seeAll, setSeeAll] = useState(false)
     
     const chatsListUrl = useCallback(() => {
         if (!showChats) {
             return null
         }
         const url = '/api/v1/chats/list'
-        return `${url}?chat_types=${chatTypeFilter}`
-    }, [chatTypeFilter, showChats]);
+        const base = `${url}?chat_types=${chatTypeFilter}`
+        return seeAll && isAdmin ? `${base}&scope=all` : base
+    }, [chatTypeFilter, showChats, seeAll, isAdmin]);
 
     const { data: chats, isLoading, mutate: mutateChats } = useSWR(chatsListUrl, fetcher, {
         // Keep the list fresh so newly created chats show up without a manual
@@ -391,7 +396,20 @@ export function ChatsList({
                             <Text type={TextTypes.Body7} color="muted" tag="span" bold>
                                 Filters
                             </Text>
-                            <FilterMenu />
+                            <div className="flex items-center gap-1">
+                                {isAdmin ? (
+                                    <Button
+                                        variant={seeAll ? "default" : "ghost"}
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={() => setSeeAll((value) => !value)}
+                                        title="Show chats owned by all users (admin)"
+                                    >
+                                        See all
+                                    </Button>
+                                ) : null}
+                                <FilterMenu />
+                            </div>
                         </div>
                         {chatTypeFilter !== DEFAULT_CHAT_TYPE ? (
                             <div className="px-4 pb-1">
