@@ -13,9 +13,11 @@ import (
 
 type UserDetails struct {
 	ID           uint      `json:"id"`
+	UUID         string    `json:"uuid"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	Name         string    `json:"name"`
+	Username     string    `json:"username"`
 	Email        string    `json:"email"`
 	ContactToken string    `json:"contact_token"`
 	IsAdmin      bool      `json:"is_admin"`
@@ -85,9 +87,11 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		details := UserDetails{
 			ID:           u.ID,
+			UUID:         u.UUID,
 			CreatedAt:    u.CreatedAt,
 			UpdatedAt:    u.UpdatedAt,
 			Name:         u.Name,
+			Username:     u.Username,
 			Email:        u.Email,
 			ContactToken: u.ContactToken,
 			IsAdmin:      u.IsAdmin,
