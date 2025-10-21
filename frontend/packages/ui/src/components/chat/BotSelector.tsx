@@ -118,9 +118,9 @@ export function BotSelector({
                         return nextCollapsed
                     })
                 }}
-                className="flex w-full items-start justify-between rounded-md border border-border bg-card px-2.5 py-2 text-left text-xs font-medium leading-tight hover:bg-muted/40 md:px-3 md:text-sm"
+                className="flex w-full items-center justify-between rounded-md border border-border bg-card px-2.5 py-1.5 text-left text-xs font-medium leading-tight hover:bg-muted/40 md:px-3 md:py-2 md:text-sm"
             >
-                <span className="min-w-0 pr-2 whitespace-normal break-words leading-5">{selectedModel || "Select model"}</span>
+                <span className="min-w-0 flex-1 truncate pr-2">{selectedModel || "Select model"}</span>
                 <ChevronDown className={cn("mt-0.5 size-4 shrink-0 transition-transform", { "rotate-180": !collapsed })} />
             </button>
 
