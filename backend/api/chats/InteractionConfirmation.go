@@ -126,12 +126,12 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 		return
 	}
 
-	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user.ID)
+	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user)
 	if !ok {
 		return
 	}
 
-	botUser, counterpartyOK := getChatCounterparty(chat, *user)
+	botUser, counterpartyOK := resolveChatBotCounterparty(chat, *user)
 	if !counterpartyOK || !botUser.IsAutomated {
 		http.Error(w, "Confirmation is only available in chats with bots", http.StatusConflict)
 		return
@@ -192,7 +192,7 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 		return
 	}
 
-	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user.ID)
+	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user)
 	if !ok {
 		return
 	}
@@ -242,7 +242,7 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 	})
 }
 
-func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, userID uint) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
+func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, user *database.User) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
 	chatUUID := r.PathValue("chat_uuid")
 	messageUUID := r.PathValue("message_uuid")
 	if chatUUID == "" || messageUUID == "" {
@@ -251,9 +251,10 @@ func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, 
 	}
 
 	var chat database.Chat
-	if err := DB.Preload("User1").
+	if err := scopedChatQuery(DB, user).
+		Preload("User1").
 		Preload("User2").
-		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, userID, userID).
+		Where("uuid = ?", chatUUID).
 		First(&chat).Error; err != nil {
 		http.Error(w, "Chat not found", http.StatusNotFound)
 		return database.Chat{}, database.Message{}, nil, false

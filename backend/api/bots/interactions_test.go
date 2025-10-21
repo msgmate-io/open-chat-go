@@ -446,3 +446,90 @@ func TestCreateInteractionWithRequireConfirmationDefersBotReply(t *testing.T) {
 		t.Fatalf("expected no bot reply task to be queued while confirmation is pending")
 	}
 }
+
+func TestConsumeRequireConfirmationDefault(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   interface{}
+		want    bool
+		removed bool
+	}{
+		{"bool true", true, true, true},
+		{"bool false", false, false, true},
+		{"string true", "true", true, true},
+		{"string quoted false", "False", false, true},
+		{"invalid", "nope", false, true},
+	}
+	for _, tc := range cases {
+		config := map[string]interface{}{requireConfirmationConfigKey: tc.value, "backend": "openrouter"}
+		got := consumeRequireConfirmationDefault(config)
+		if got != tc.want {
+			t.Fatalf("%s: consumeRequireConfirmationDefault = %v, want %v", tc.name, got, tc.want)
+		}
+		if _, exists := config[requireConfirmationConfigKey]; exists {
+			t.Fatalf("%s: expected key to be removed", tc.name)
+		}
+		if config["backend"] != "openrouter" {
+			t.Fatalf("%s: unexpected mutation of other keys", tc.name)
+		}
+	}
+	if consumeRequireConfirmationDefault(nil) {
+		t.Fatalf("expected nil config to return false")
+	}
+}
+
+func TestCreateInteractionHonorsBotDefaultRequireConfirmation(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.interaction.default-confirm@example.com", false)
+	bot := createBotForInteractionTest(t, DB, owner, "interaction-bot-default-confirm")
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("uuid = ?", bot.UUID).First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load bot runtime: %v", err)
+	}
+	config := decodeSharedConfig(runtime.DefaultSharedConfig)
+	config[requireConfirmationConfigKey] = true
+	rawConfig, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("failed to marshal default config: %v", err)
+	}
+	if err := DB.Model(&runtime).Update("default_shared_config", rawConfig).Error; err != nil {
+		t.Fatalf("failed to persist default config: %v", err)
+	}
+
+	queueClient, queueInspector, cleanupQueue := setupAsynqTest(t)
+	defer cleanupQueue()
+
+	// The request does not ask for confirmation; the bot default must apply.
+	rr := postInteractionForTest(t, DB, owner, bot, CreateBotInteractionRequest{
+		Message: "start coding",
+	}, queueClient, queueInspector)
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response BotInteractionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode interaction response: %v", err)
+	}
+	if !response.RequiresConfirmation {
+		t.Fatalf("expected bot default require_confirmation to be honored")
+	}
+
+	var chat database.Chat
+	if err := DB.Where("uuid = ?", response.ChatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected interaction chat to be created: %v", err)
+	}
+	if _, err := queueInspector.GetTaskInfo(workqueue.QueueDefault, workqueue.BotReplyTaskID(chat.UUID)); err == nil {
+		t.Fatalf("expected no bot reply task to be queued while confirmation is pending")
+	}
+
+	// The control key must not leak into the chat's shared config.
+	var sharedConfig database.SharedChatConfig
+	if err := DB.Where("chat_id = ?", chat.ID).First(&sharedConfig).Error; err != nil {
+		t.Fatalf("expected shared chat config: %v", err)
+	}
+	if _, exists := decodeSharedConfig(sharedConfig.ConfigData)[requireConfirmationConfigKey]; exists {
+		t.Fatalf("expected require_confirmation to be stripped from the chat shared config")
+	}
+}
