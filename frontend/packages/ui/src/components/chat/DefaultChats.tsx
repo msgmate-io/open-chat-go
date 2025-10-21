@@ -20,21 +20,28 @@ function ExploreChatsIcon() {
 export function DefaultChats({
   navigateTo,
   defaultBotContact,
+  isBotLoading = false,
   botAvatarSrc,
   actionCount = 0,
 }: {
   navigateTo: (to: string) => void;
   defaultBotContact: { contact_token?: string } | null | undefined;
+  isBotLoading?: boolean;
   botAvatarSrc?: string;
   actionCount?: number;
 }) {
   const hasActions = actionCount > 0;
+  const hasDefaultBot = Boolean(defaultBotContact?.contact_token);
+  const botUnavailable = !isBotLoading && !hasDefaultBot;
+  const botDisabled = isBotLoading || botUnavailable;
   return (
     <div className="mb-1 flex flex-col gap-1">
       <Card
-        className={cn("chat-list-row")}
+        className={cn("chat-list-row", botDisabled && "pointer-events-none opacity-60")}
+        aria-disabled={botDisabled}
+        title={botUnavailable ? "Default bot unavailable" : undefined}
         onClick={() => {
-          if (defaultBotContact?.contact_token) {
+          if (hasDefaultBot && defaultBotContact?.contact_token) {
             navigateTo(`/chat/new/${defaultBotContact.contact_token}`);
           }
         }}
