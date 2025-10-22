@@ -1778,6 +1778,52 @@
                 }
             }
         },
+        "/api/v1/contacts/default-bot": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Resolve the default platform bot (user named \"bot\") and return the current user's contact for it, creating the contact if it does not exist yet.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "contacts"
+                ],
+                "summary": "Get the default platform bot contact",
+                "responses": {
+                    "200": {
+                        "description": "Default bot contact",
+                        "schema": {
+                            "$ref": "#/definitions/contacts.ListedContact"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Default bot not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/contacts/list": {
             "get": {
                 "security": [
