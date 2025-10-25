@@ -56,7 +56,7 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	chat, err := findOwnedChat(DB, user.ID, chatUUID)
+	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
 		http.Error(w, "Chat not found", http.StatusNotFound)
 		return
