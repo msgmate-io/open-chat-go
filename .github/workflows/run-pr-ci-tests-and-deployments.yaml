@@ -486,8 +486,15 @@ jobs:
       # was fixed by open-chat-go-mobile#3 (merge 5e3e33d). The remaining `full`
       # profile failure was runner disk exhaustion during the gomobile bind
       # ("no space left on device"), fixed by the disk reclamation in
-      # open-chat-go-mobile#5/#6. Those fixes are on mobile `main`; the release
-      # now completes and publishes both APKs.
+      # open-chat-go-mobile#5/#6. Those fixes are on mobile `main`.
+      #
+      # The `full` profile now also declares `stats_and_usage` (merged in
+      # open-chat-go-ci#54), so the matching local `replace` in
+      # `clients/gomobile/go.mod` is required again: open-chat-go-mobile#4 added
+      # it, #7 reverted it while the integration was still manifest-only, and the
+      # re-land PR (open-chat-go-mobile#8, merged to main) restores it. Verified
+      # with the Android sandbox image (`android_build passed
+      # aar,apk,unit-tests`); the release now completes and publishes both APKs.
       - name: Dispatch Android release workflow in open-chat-go-mobile
         id: android_release_dispatch
         if: steps.context.outputs.should_release_android != '' && steps.context.outputs.is_same_repo_pr == 'true'
