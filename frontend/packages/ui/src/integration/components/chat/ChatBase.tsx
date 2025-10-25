@@ -23,6 +23,7 @@ export function ChatBase({
     chatUUID=null,
     navigateTo,
     mobileViewMode = "content",
+    hideMobileShortcut = false,
     sidebarTitle,
     sidebar,
     sidebarTopSection,
@@ -32,6 +33,7 @@ export function ChatBase({
     chatUUID: string | null,
     navigateTo: (to: string) => void,
     mobileViewMode?: "list" | "content",
+    hideMobileShortcut?: boolean,
     sidebarTitle?: string,
     sidebar?: ReactNode,
     sidebarTopSection?: ReactNode,
@@ -125,7 +127,7 @@ export function ChatBase({
 
     if (isMobile) {
         const isListView = mobileViewMode === "list"
-        const showMobileChatsShortcut = !isListView && chatUUID === null
+        const showMobileChatsShortcut = !isListView && chatUUID === null && !hideMobileShortcut
         const mobileBackTarget = isIntegrationMode ? "/integrations" : "/chat"
         const mobileBackLabel = isIntegrationMode ? "Integrations" : "Open chats"
         return (
