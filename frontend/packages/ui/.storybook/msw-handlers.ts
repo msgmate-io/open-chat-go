@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw";
 import {
   mockChatsListResponse,
   mockContactsResponse,
+  mockDefaultBotResponse,
 } from "../src/components/chat/story-data";
 
 /** Handlers for endpoints stories may call; extend when adding data-driven stories. */
@@ -27,5 +28,6 @@ export const mswHandlers = {
     ),
     http.get("/api/v1/chats/list", () => HttpResponse.json(mockChatsListResponse)),
     http.get("/api/v1/contacts/list", () => HttpResponse.json(mockContactsResponse)),
+    http.get("/api/v1/contacts/default-bot", () => HttpResponse.json(mockDefaultBotResponse)),
   ],
 };

@@ -17,6 +17,7 @@ import {
   type ConfirmableAction,
 } from "@open-chat-go/ui";
 import { cn, fetcher } from "@/lib/utils";
+import { AdminActionTasksWidget } from "@/components/chat/AdminActionTasksWidget";
 
 type ActionTaskAction = {
   kind: string;
@@ -69,6 +70,7 @@ type PreviewResponse = {
 
 type SelfUser = {
   uuid?: string;
+  is_admin?: boolean;
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -402,6 +404,8 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
           </Button>
         </div>
       </div>
+
+      {selfUser?.is_admin ? <AdminActionTasksWidget navigateTo={navigateTo} /> : null}
 
       {actionError ? (
         <Card className="border-destructive/30 bg-destructive/5">
