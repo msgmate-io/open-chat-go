@@ -47,6 +47,60 @@ func TestValidateValuesRejectsInvalidBool(t *testing.T) {
 	}
 }
 
+func TestValidateValuesEnforcesNumberRange(t *testing.T) {
+	min := 1.0
+	max := 10.0
+	def := integrationinterface.Definition{
+		Name: "demo",
+		RuntimeEnvVars: []integrationinterface.RuntimeEnvVar{
+			{Key: "OCI_DEMO_RATE", Type: "number", Min: &min, Max: &max},
+		},
+	}
+	if _, err := ValidateValues(def, map[string]*string{"OCI_DEMO_RATE": strPtr("20")}); err == nil {
+		t.Fatal("expected range rejection above max")
+	}
+	if _, err := ValidateValues(def, map[string]*string{"OCI_DEMO_RATE": strPtr("0")}); err == nil {
+		t.Fatal("expected range rejection below min")
+	}
+	out, err := ValidateValues(def, map[string]*string{"OCI_DEMO_RATE": strPtr("5")})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := *out["OCI_DEMO_RATE"]; got != "5" {
+		t.Fatalf("expected value preserved, got %q", got)
+	}
+}
+
+func TestValidateValuesEnforcesSelectOptions(t *testing.T) {
+	def := integrationinterface.Definition{
+		Name: "demo",
+		RuntimeEnvVars: []integrationinterface.RuntimeEnvVar{
+			{Key: "OCI_DEMO_MODE", Type: "select", Options: []string{"a", "b"}},
+		},
+	}
+	if _, err := ValidateValues(def, map[string]*string{"OCI_DEMO_MODE": strPtr("c")}); err == nil {
+		t.Fatal("expected option rejection")
+	}
+	if _, err := ValidateValues(def, map[string]*string{"OCI_DEMO_MODE": strPtr("b")}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateValuesEnforcesRequired(t *testing.T) {
+	def := integrationinterface.Definition{
+		Name: "demo",
+		RuntimeEnvVars: []integrationinterface.RuntimeEnvVar{
+			{Key: "OCI_DEMO_HOST", Required: true},
+		},
+	}
+	if _, err := ValidateValues(def, map[string]*string{"OCI_DEMO_HOST": nil}); err == nil {
+		t.Fatal("expected required rejection for unset")
+	}
+	if _, err := ValidateValues(def, map[string]*string{"OCI_DEMO_HOST": strPtr("  ")}); err == nil {
+		t.Fatal("expected required rejection for empty")
+	}
+}
+
 func TestValidateValuesAllowsUnset(t *testing.T) {
 	out, err := ValidateValues(testDefinition(), map[string]*string{"OCI_DEMO_HOST": nil})
 	if err != nil {
