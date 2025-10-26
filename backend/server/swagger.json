@@ -4856,6 +4856,12 @@
                 "label": {
                     "type": "string"
                 },
+                "max": {
+                    "type": "number"
+                },
+                "min": {
+                    "type": "number"
+                },
                 "options": {
                     "type": "array",
                     "items": {
@@ -4874,8 +4880,14 @@
                 "sensitive": {
                     "type": "boolean"
                 },
+                "step": {
+                    "type": "number"
+                },
                 "type": {
                     "type": "string"
+                },
+                "user_visible": {
+                    "type": "boolean"
                 },
                 "value": {
                     "type": "string"
