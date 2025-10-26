@@ -9,10 +9,9 @@ import type React from "react"
 import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import {
     DropdownMenu,
+    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuLabel,
-    DropdownMenuRadioGroup,
-    DropdownMenuRadioItem,
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "../dropdown-menu"
@@ -41,7 +40,8 @@ export const SettingsIcon = () => (
 type ChatType = "conversation" | "integration" | "interaction"
 
 const CHAT_TYPE_QUERY_PARAM = "chat_type"
-const DEFAULT_CHAT_TYPE: ChatType = "conversation"
+const CHAT_TYPE_ORDER: ChatType[] = ["conversation", "integration", "interaction"]
+const DEFAULT_CHAT_TYPES: ChatType[] = ["conversation", "interaction"]
 const CHAT_TYPE_LABELS: Record<ChatType, string> = {
     conversation: "Conversations",
     integration: "Integrations",
@@ -52,21 +52,46 @@ const isChatType = (value: string | null): value is ChatType => {
     return value === "conversation" || value === "integration" || value === "interaction"
 }
 
-const getChatTypeFromUrl = (): ChatType => {
-    if (typeof window === "undefined") {
-        return DEFAULT_CHAT_TYPE
+const parseChatTypes = (value: string | null): ChatType[] => {
+    if (!value) {
+        return []
     }
-    const chatType = new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM)
-    return isChatType(chatType) ? chatType : DEFAULT_CHAT_TYPE
+    const parsed = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(isChatType)
+    return CHAT_TYPE_ORDER.filter((type) => parsed.includes(type))
 }
 
-const getExplicitChatTypeFromUrl = (): ChatType | null => {
+const getChatTypesFromUrl = (): ChatType[] => {
+    if (typeof window === "undefined") {
+        return DEFAULT_CHAT_TYPES
+    }
+    const parsed = parseChatTypes(new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM))
+    return parsed.length > 0 ? parsed : DEFAULT_CHAT_TYPES
+}
+
+const getExplicitChatTypesFromUrl = (): ChatType[] | null => {
     if (typeof window === "undefined") {
         return null
     }
-    const chatType = new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM)
-    return isChatType(chatType) ? chatType : null
+    const raw = new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM)
+    if (!raw) {
+        return null
+    }
+    const parsed = parseChatTypes(raw)
+    return parsed.length > 0 ? parsed : null
 }
+
+const isDefaultChatTypes = (types: ChatType[]): boolean => {
+    if (types.length !== DEFAULT_CHAT_TYPES.length) {
+        return false
+    }
+    return DEFAULT_CHAT_TYPES.every((type) => types.includes(type))
+}
+
+const serializeChatTypes = (types: ChatType[]): string =>
+    CHAT_TYPE_ORDER.filter((type) => types.includes(type)).join(",")
 
 // Chat types can be namespaced (e.g. "interaction:foo"); map any such value
 // onto the filter buckets the UI supports (matches backend prefix matching).
@@ -109,38 +134,51 @@ export function ChatsList({
     showChats?: boolean
 }) {
     const [filterMenuOpen, setFilterMenuOpen] = useState(false)
-    const [chatTypeFilter, setChatTypeFilter] = useState<ChatType>(() => getChatTypeFromUrl())
+    const [chatTypeFilters, setChatTypeFilters] = useState<ChatType[]>(() => getChatTypesFromUrl())
     // Captured once so a direct link that explicitly carries chat_type is never overridden.
-    const [initialExplicitChatType] = useState<ChatType | null>(() => getExplicitChatTypeFromUrl())
+    const [initialExplicitChatTypes] = useState<ChatType[] | null>(() => getExplicitChatTypesFromUrl())
     // Distinguishes a user's manual filter choice from an auto-derived one.
     const userSelectedChatTypeRef = useRef(false)
 
-    const syncChatTypeToUrl = useCallback((nextChatType: ChatType) => {
+    const syncChatTypesToUrl = useCallback((nextChatTypes: ChatType[]) => {
         if (typeof window === "undefined") {
             return
         }
 
         const nextUrl = new URL(window.location.href)
-        if (nextChatType === DEFAULT_CHAT_TYPE) {
+        if (isDefaultChatTypes(nextChatTypes)) {
             nextUrl.searchParams.delete(CHAT_TYPE_QUERY_PARAM)
         } else {
-            nextUrl.searchParams.set(CHAT_TYPE_QUERY_PARAM, nextChatType)
+            nextUrl.searchParams.set(CHAT_TYPE_QUERY_PARAM, serializeChatTypes(nextChatTypes))
         }
 
         window.history.replaceState(window.history.state, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
     }, [])
 
-    const handleChatTypeChange = useCallback((value: string) => {
+    const handleChatTypeToggle = useCallback((value: string, checked: boolean) => {
         if (!isChatType(value)) {
             return
         }
         userSelectedChatTypeRef.current = true
-        setChatTypeFilter(value)
+        setChatTypeFilters((current) => {
+            if (checked) {
+                return current.includes(value) ? current : [...current, value]
+            }
+            if (!current.includes(value) || current.length === 1) {
+                return current
+            }
+            return current.filter((type) => type !== value)
+        })
+    }, [])
+
+    const handleResetFilters = useCallback(() => {
+        userSelectedChatTypeRef.current = true
+        setChatTypeFilters(DEFAULT_CHAT_TYPES)
     }, [])
 
     useEffect(() => {
         const onPopState = () => {
-            setChatTypeFilter(getChatTypeFromUrl())
+            setChatTypeFilters(getChatTypesFromUrl())
         }
 
         window.addEventListener("popstate", onPopState)
@@ -148,8 +186,8 @@ export function ChatsList({
     }, [])
 
     useEffect(() => {
-        syncChatTypeToUrl(chatTypeFilter)
-    }, [chatTypeFilter, syncChatTypeToUrl])
+        syncChatTypesToUrl(chatTypeFilters)
+    }, [chatTypeFilters, syncChatTypesToUrl])
 
     const { data: currentChat } = useSWR(
         chatUUID ? `/api/v1/chats/${chatUUID}` : null,
@@ -161,27 +199,33 @@ export function ChatsList({
     // that matches the chat's own type; the sync effect above then appends it to
     // the URL (replaceState, no reload).
     useEffect(() => {
-        if (!chatUUID || initialExplicitChatType || userSelectedChatTypeRef.current) {
+        if (!chatUUID || initialExplicitChatTypes || userSelectedChatTypeRef.current) {
             return
         }
         const derivedChatType = normalizeChatType(currentChat?.chat_type)
         if (!derivedChatType) {
             return
         }
-        setChatTypeFilter((current) => (current === derivedChatType ? current : derivedChatType))
-    }, [chatUUID, currentChat?.chat_type, initialExplicitChatType])
+        setChatTypeFilters((current) => (current.includes(derivedChatType) ? current : [...current, derivedChatType]))
+    }, [chatUUID, currentChat?.chat_type, initialExplicitChatTypes])
 
     const navigateWithFilter = useCallback((to: string) => {
-        if (!to.startsWith("/chat") || chatTypeFilter === DEFAULT_CHAT_TYPE) {
+        if (!to.startsWith("/chat") || isDefaultChatTypes(chatTypeFilters)) {
             navigateTo(to)
             return
         }
 
         const separator = to.includes("?") ? "&" : "?"
-        navigateTo(`${to}${separator}${CHAT_TYPE_QUERY_PARAM}=${chatTypeFilter}`)
-    }, [chatTypeFilter, navigateTo])
+        navigateTo(`${to}${separator}${CHAT_TYPE_QUERY_PARAM}=${encodeURIComponent(serializeChatTypes(chatTypeFilters))}`)
+    }, [chatTypeFilters, navigateTo])
 
-    const activeFilterLabel = useMemo(() => CHAT_TYPE_LABELS[chatTypeFilter], [chatTypeFilter])
+    const activeFilterLabel = useMemo(
+        () =>
+            CHAT_TYPE_ORDER.filter((type) => chatTypeFilters.includes(type))
+                .map((type) => CHAT_TYPE_LABELS[type])
+                .join(", "),
+        [chatTypeFilters]
+    )
     const { data: currentUser } = useCurrentUser()
     const isAdmin = currentUser?.is_admin === true
     const [seeAll, setSeeAll] = useState(false)
@@ -191,9 +235,9 @@ export function ChatsList({
             return null
         }
         const url = '/api/v1/chats/list'
-        const base = `${url}?chat_types=${chatTypeFilter}`
+        const base = `${url}?chat_types=${serializeChatTypes(chatTypeFilters)}`
         return seeAll && isAdmin ? `${base}&scope=all` : base
-    }, [chatTypeFilter, showChats, seeAll, isAdmin]);
+    }, [chatTypeFilters, showChats, seeAll, isAdmin]);
 
     const { data: chats, isLoading, mutate: mutateChats } = useSWR(chatsListUrl, fetcher, {
         // Keep the list fresh so newly created chats show up without a manual
@@ -270,7 +314,7 @@ export function ChatsList({
             <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative size-7" aria-label="Filter chats">
                     <SettingsIcon />
-                    {chatTypeFilter !== DEFAULT_CHAT_TYPE ? (
+                    {!isDefaultChatTypes(chatTypeFilters) ? (
                         <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
                     ) : null}
                 </Button>
@@ -278,11 +322,16 @@ export function ChatsList({
             <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={(e) => e.preventDefault()}>
                 <DropdownMenuLabel>Filter chats</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup value={chatTypeFilter} onValueChange={handleChatTypeChange}>
-                    <DropdownMenuRadioItem value="conversation">Conversations</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="integration">Integrations</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="interaction">Interactions</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                {CHAT_TYPE_ORDER.map((chatType) => (
+                    <DropdownMenuCheckboxItem
+                        key={chatType}
+                        checked={chatTypeFilters.includes(chatType)}
+                        onCheckedChange={(checked) => handleChatTypeToggle(chatType, checked === true)}
+                        onSelect={(event) => event.preventDefault()}
+                    >
+                        {CHAT_TYPE_LABELS[chatType]}
+                    </DropdownMenuCheckboxItem>
+                ))}
             </DropdownMenuContent>
         </DropdownMenu>
     );
@@ -305,7 +354,7 @@ export function ChatsList({
         }
 
         if (chats.rows.length === 0) {
-            const isDefaultFilter = chatTypeFilter === DEFAULT_CHAT_TYPE
+            const isDefaultFilter = isDefaultChatTypes(chatTypeFilters)
 
             return (
                 <div className="flex flex-col items-center px-4 py-8 text-center">
@@ -325,7 +374,7 @@ export function ChatsList({
                             variant="ghost"
                             size="sm"
                             className="mb-2"
-                            onClick={() => handleChatTypeChange(DEFAULT_CHAT_TYPE)}
+                            onClick={handleResetFilters}
                         >
                             Back to conversations
                         </Button>
@@ -414,7 +463,7 @@ export function ChatsList({
                                 <FilterMenu />
                             </div>
                         </div>
-                        {chatTypeFilter !== DEFAULT_CHAT_TYPE ? (
+                        {!isDefaultChatTypes(chatTypeFilters) ? (
                             <div className="px-4 pb-1">
                                 <Text type={TextTypes.Body7} color="muted" className="text-[10px] uppercase tracking-wide">
                                     Showing: {activeFilterLabel}
