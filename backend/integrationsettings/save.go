@@ -33,6 +33,19 @@ func parseNumber(raw string) (float64, error) {
 	return strconv.ParseFloat(strings.TrimSpace(raw), 64)
 }
 
+func formatBound(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func containsString(options []string, value string) bool {
+	for _, option := range options {
+		if strings.TrimSpace(option) == strings.TrimSpace(value) {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateValues checks that every key is declared by the integration and that
 // values conform to the declared/inferred field type. It returns a normalized
 // copy keyed by uppercase env key. A nil value means "unset".
@@ -56,11 +69,17 @@ func ValidateValues(def integrationinterface.Definition, input map[string]*strin
 			return nil, &ValidationError{Key: key, Message: "unknown field for integration"}
 		}
 		if rawValue == nil {
+			if decl.Required {
+				return nil, &ValidationError{Key: key, Message: "is required"}
+			}
 			out[key] = nil
 			continue
 		}
 
 		value := *rawValue
+		if decl.Required && strings.TrimSpace(value) == "" {
+			return nil, &ValidationError{Key: key, Message: "is required"}
+		}
 		if def.Name == CoreSettingsName && isCoreBootstrapKey(key) {
 			if !json.Valid([]byte(strings.TrimSpace(value))) {
 				return nil, &ValidationError{Key: key, Message: "expected valid JSON"}
@@ -78,8 +97,20 @@ func ValidateValues(def integrationinterface.Definition, input map[string]*strin
 			normalized := strconv.FormatBool(parsed)
 			out[key] = &normalized
 		case FieldTypeNumber:
-			if _, err := parseNumber(value); err != nil {
+			parsed, err := parseNumber(value)
+			if err != nil {
 				return nil, &ValidationError{Key: key, Message: "expected a numeric value"}
+			}
+			if decl.Min != nil && parsed < *decl.Min {
+				return nil, &ValidationError{Key: key, Message: fmt.Sprintf("must be at least %s", formatBound(*decl.Min))}
+			}
+			if decl.Max != nil && parsed > *decl.Max {
+				return nil, &ValidationError{Key: key, Message: fmt.Sprintf("must be at most %s", formatBound(*decl.Max))}
+			}
+			out[key] = &value
+		case FieldTypeSelect:
+			if len(decl.Options) > 0 && !containsString(decl.Options, value) {
+				return nil, &ValidationError{Key: key, Message: fmt.Sprintf("must be one of: %s", strings.Join(decl.Options, ", "))}
 			}
 			out[key] = &value
 		default:
