@@ -12,6 +12,7 @@
 export { DataTable } from "./components/DataTable";
 export { DropdownSelect, type DropdownSelectItem } from "./components/DropdownSelect";
 export { IntegrationPageShell } from "./components/IntegrationPageShell";
+export { MsgmateTokenIcon } from "./components/MsgmateTokenIcon";
 export { SshShellTerminal } from "./components/SshShellTerminal";
 export { ToolInitFields } from "./components/ToolInitFields";
 
