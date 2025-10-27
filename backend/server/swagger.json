@@ -967,6 +967,53 @@
                 }
             }
         },
+        "/api/v1/chats/action-tasks/dismiss-all": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Admin-only: ignore every pending action task surfaced across all users so the admin-wide view stops showing them. Records per-admin dismissals only; interaction state and the owning users' own action stacks are left untouched.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Dismiss all pending action tasks",
+                "responses": {
+                    "200": {
+                        "description": "Dismissed count",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Unable to get database or user",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Admin privileges required",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to dismiss tasks",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chats/create": {
             "post": {
                 "security": [
@@ -4809,6 +4856,12 @@
                 "label": {
                     "type": "string"
                 },
+                "max": {
+                    "type": "number"
+                },
+                "min": {
+                    "type": "number"
+                },
                 "options": {
                     "type": "array",
                     "items": {
@@ -4827,8 +4880,14 @@
                 "sensitive": {
                     "type": "boolean"
                 },
+                "step": {
+                    "type": "number"
+                },
                 "type": {
                     "type": "string"
+                },
+                "user_visible": {
+                    "type": "boolean"
                 },
                 "value": {
                     "type": "string"
