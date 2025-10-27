@@ -1,4 +1,5 @@
-import useSWR from "swr";
+import { useState } from "react";
+import useSWR, { mutate as globalMutate } from "swr";
 import {
   Badge,
   Button,
@@ -67,7 +68,7 @@ export function AdminActionTasksWidget({
 }: {
   navigateTo: (to: string) => void;
 }) {
-  const { data, error, isLoading } = useSWR<AdminActionTasksResponse>(
+  const { data, error, isLoading, mutate } = useSWR<AdminActionTasksResponse>(
     "/api/v1/chats/action-tasks?scope=all",
     fetcher,
     {
@@ -75,6 +76,8 @@ export function AdminActionTasksWidget({
       revalidateOnFocus: true,
     },
   );
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (error) {
     return null;
@@ -82,6 +85,38 @@ export function AdminActionTasksWidget({
 
   const rows = data?.rows ?? [];
   const count = data?.count ?? rows.length;
+
+  const ignoreAll = async () => {
+    if (busy || count === 0) {
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Ignore all pending actions? They will stop appearing in this admin view for you. Owners' own action stacks are unchanged.",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      const response = await fetch("/api/v1/chats/action-tasks/dismiss-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        setActionError((await response.text()) || "Failed to ignore pending actions.");
+        return;
+      }
+      await mutate();
+      void globalMutate("/api/v1/chats/action-tasks?count_only=1");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to ignore pending actions.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Card className="w-full border-amber-300/50 bg-amber-50/40 shadow-sm dark:border-amber-400/30 dark:bg-amber-950/10">
@@ -93,11 +128,28 @@ export function AdminActionTasksWidget({
             </span>
             Pending actions across all users
           </CardTitle>
-          {count > 0 ? <Badge variant="secondary">{count}</Badge> : null}
+          <div className="flex items-center gap-2">
+            {count > 0 ? <Badge variant="secondary">{count}</Badge> : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              className="shrink-0"
+              disabled={count === 0 || busy}
+              onClick={() => void ignoreAll()}
+            >
+              {busy ? "Ignoring..." : "Ignore all"}
+            </Button>
+          </div>
         </div>
         <CardDescription>
           Interactions waiting on their owner&apos;s action. Open a chat to inspect or resolve it.
         </CardDescription>
+        {actionError ? (
+          <Text type={TextTypes.Body7} color="destructive">
+            {actionError}
+          </Text>
+        ) : null}
       </CardHeader>
       <CardContent className="pt-0">
         {isLoading && !data ? (

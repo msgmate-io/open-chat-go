@@ -64,6 +64,15 @@ func normalizeRuntimeEnvKey(key string) string {
 	return strings.ToUpper(strings.TrimSpace(key))
 }
 
+func validRuntimeEnvFieldType(fieldType string) bool {
+	switch fieldType {
+	case "string", "bool", "number", "select", "json", "secret":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeRuntimeConfigAliasKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
 }
@@ -142,6 +151,26 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 			return def, fmt.Errorf("integration %q has duplicate runtime env key %q", name, key)
 		}
 		envVar.Key = key
+		envVar.Label = strings.TrimSpace(envVar.Label)
+		envVar.Group = strings.TrimSpace(envVar.Group)
+		envVar.Default = strings.TrimSpace(envVar.Default)
+		envVar.Placeholder = strings.TrimSpace(envVar.Placeholder)
+		envVar.Description = strings.TrimSpace(envVar.Description)
+		envVar.Type = strings.ToLower(strings.TrimSpace(envVar.Type))
+		if envVar.Type != "" && !validRuntimeEnvFieldType(envVar.Type) {
+			return def, fmt.Errorf("integration %q runtime env key %q has invalid type %q", name, key, envVar.Type)
+		}
+		options := make([]string, 0, len(envVar.Options))
+		for _, option := range envVar.Options {
+			trimmed := strings.TrimSpace(option)
+			if trimmed != "" {
+				options = append(options, trimmed)
+			}
+		}
+		envVar.Options = options
+		if envVar.Min != nil && envVar.Max != nil && *envVar.Min > *envVar.Max {
+			return def, fmt.Errorf("integration %q runtime env key %q has min greater than max", name, key)
+		}
 		runtimeEnvVars = append(runtimeEnvVars, envVar)
 		runtimeEnvByKey[key] = struct{}{}
 	}
