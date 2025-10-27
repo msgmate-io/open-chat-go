@@ -97,13 +97,89 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 	// users always stay scoped to their own chats.
 	adminScope := user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
 
+	tasks, err := collectPendingActionTasks(DB, user, adminScope, database.IsBrowserToken(r.Context()))
+	if err != nil {
+		http.Error(w, "Unable to resolve action tasks", http.StatusInternalServerError)
+		return
+	}
+
+	response := ActionTasksResponse{Count: len(tasks), Rows: []ActionTaskRow{}}
+	if !countOnly {
+		for _, task := range tasks {
+			response.Rows = append(response.Rows, buildActionTaskRow(user, task.Chat, task.Message, task.Actions, adminScope))
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+// DismissAllActionTasks acknowledges every pending action task currently
+// surfaced in the admin-wide scope for the acting admin.
+//
+//	@Summary      Dismiss all pending action tasks
+//	@Description  Admin-only: ignore every pending action task surfaced across all users so the admin-wide view stops showing them. Records per-admin dismissals only; interaction state and the owning users' own action stacks are left untouched.
+//	@Tags         chats
+//	@Accept       json
+//	@Produce      json
+//	@Security     SessionAuth
+//	@Success      200 {object} map[string]interface{} "Dismissed count"
+//	@Failure      400 {string} string "Unable to get database or user"
+//	@Failure      403 {string} string "Admin privileges required"
+//	@Failure      500 {string} string "Unable to dismiss tasks"
+//	@Router       /api/v1/chats/action-tasks/dismiss-all [post]
+func (h *ChatsHandler) DismissAllActionTasks(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+	if !user.IsAdmin {
+		http.Error(w, "Admin privileges required", http.StatusForbidden)
+		return
+	}
+
+	tasks, err := collectPendingActionTasks(DB, user, true, database.IsBrowserToken(r.Context()))
+	if err != nil {
+		http.Error(w, "Unable to resolve action tasks", http.StatusInternalServerError)
+		return
+	}
+
+	dismissed := 0
+	for _, task := range tasks {
+		taskKey := actionTaskKey(task.Chat.UUID, task.Message.UUID)
+		dismissal := database.ActionTaskDismissal{UserId: user.ID, ChatId: task.Chat.ID, TaskKey: taskKey}
+		if err := DB.Where("user_id = ? AND task_key = ?", user.ID, taskKey).FirstOrCreate(&dismissal).Error; err != nil {
+			http.Error(w, "Unable to dismiss tasks", http.StatusInternalServerError)
+			return
+		}
+		dismissed++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "dismissed": dismissed})
+}
+
+// pendingActionTask couples the chat and message that carry a pending action so
+// callers can both build rows and record dismissals without rescanning.
+type pendingActionTask struct {
+	Chat    database.Chat
+	Message database.Message
+	Actions []ActionTaskAction
+}
+
+// collectPendingActionTasks returns the chats currently waiting on an action,
+// honoring the acting user's dismissals. When adminScope is set every chat is
+// scanned; otherwise only chats the user participates in. Browser tokens are
+// restricted to interaction chats regardless of scope.
+func collectPendingActionTasks(DB *gorm.DB, user *database.User, adminScope bool, browserToken bool) ([]pendingActionTask, error) {
 	var query *gorm.DB
 	if adminScope {
 		query = DB.Model(&database.Chat{})
 	} else {
 		query = DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
 	}
-	if database.IsBrowserToken(r.Context()) {
+	if browserToken {
 		query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
 	}
 
@@ -112,22 +188,18 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		Order("updated_at DESC").
 		Limit(actionTasksMaxChats).
 		Find(&chats).Error; err != nil {
-		http.Error(w, "Unable to load chats", http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
-	// Dismissals are per-user; the admin-wide scope shows the real pending state
-	// and is not affected by the admin's own dismissals.
-	dismissed := map[string]struct{}{}
-	if !adminScope {
-		dismissed, err = loadDismissedActionTaskKeys(DB, user.ID)
-		if err != nil {
-			http.Error(w, "Unable to load dismissals", http.StatusInternalServerError)
-			return
-		}
+	// Dismissals are per-user. Loading the acting admin's own dismissals means
+	// the admin-wide scope stops surfacing tasks the admin has acknowledged,
+	// while other users keep seeing their own pending state.
+	dismissed, err := loadDismissedActionTaskKeys(DB, user.ID)
+	if err != nil {
+		return nil, err
 	}
 
-	response := ActionTasksResponse{Count: 0, Rows: []ActionTaskRow{}}
+	tasks := make([]pendingActionTask, 0, len(chats))
 	for _, chat := range chats {
 		message, actions, ok := latestPendingActionMessage(DB, chat.ID)
 		if !ok {
@@ -137,14 +209,9 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		if _, skip := dismissed[taskKey]; skip {
 			continue
 		}
-		response.Count++
-		if !countOnly {
-			response.Rows = append(response.Rows, buildActionTaskRow(user, chat, message, actions, adminScope))
-		}
+		tasks = append(tasks, pendingActionTask{Chat: chat, Message: message, Actions: actions})
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(response)
+	return tasks, nil
 }
 
 // DismissActionTask hides a pending action task for the current user.
