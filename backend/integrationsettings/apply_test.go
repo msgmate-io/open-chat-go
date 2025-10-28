@@ -107,6 +107,53 @@ func TestApplyRawConfigDocumentMirrorsRemoteConfig(t *testing.T) {
 	}
 }
 
+// TestApplyRawConfigDocumentMirrorsRemoteWithoutLocalFile covers the inline /
+// read-only config case: even though the local document cannot be written, the
+// remote deployment-host Secret mirror must still receive the restored
+// document.
+func TestApplyRawConfigDocumentMirrorsRemoteWithoutLocalFile(t *testing.T) {
+	ensureApplyTestIntegration(t)
+	prevSource := runtimecfg.GetConfigSource()
+	prevValues := runtimecfg.GetAll()
+	t.Cleanup(func() {
+		runtimecfg.SetConfigSource(prevSource)
+		runtimecfg.SetAll(prevValues)
+		RegisterRemoteConfigPersister(nil)
+	})
+	runtimecfg.SetConfigSource("inline --config YAML")
+	runtimecfg.SetAll(map[string]runtimecfg.Value{
+		"OCI_TEST_APPLY_HOST":  {Value: "orig-host"},
+		"OCI_TEST_APPLY_TOKEN": {Value: "orig-secret", Sensitive: true},
+	})
+
+	var mirrored []byte
+	RegisterRemoteConfigPersister(func(data []byte) (string, error) {
+		mirrored = append([]byte(nil), data...)
+		return "k8s-secret/open-chat-config", nil
+	})
+
+	result, err := ApplyRawConfigDocument("inline --config YAML",
+		"env:\n  OCI_TEST_APPLY_HOST: new-host\n  OCI_TEST_APPLY_TOKEN: <redacted>\n")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !result.RemotePersisted || result.RemoteTarget != "k8s-secret/open-chat-config" {
+		t.Fatalf("expected remote persist without a local file, got %#v", result)
+	}
+	if !result.Persisted {
+		t.Fatal("expected persisted when the remote mirror succeeds")
+	}
+	if result.PersistError != "" {
+		t.Fatalf("expected no persist error when remote persist succeeds, got %q", result.PersistError)
+	}
+	if len(mirrored) == 0 || !strings.Contains(string(mirrored), "orig-secret") {
+		t.Fatalf("expected mirrored document to restore the redacted secret, got %s", mirrored)
+	}
+	if !strings.Contains(string(mirrored), "new-host") {
+		t.Fatalf("expected mirrored document to carry the new host, got %s", mirrored)
+	}
+}
+
 func TestApplyRawConfigDocumentRejectsInvalidDocument(t *testing.T) {
 	ensureApplyTestIntegration(t)
 	path := applyTestState(t, `{"env":{"OCI_TEST_APPLY_HOST":"orig-host"}}`)
