@@ -56,6 +56,21 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		return err
 	}
 
+	root = mergeValuesIntoDocument(root, def, values)
+
+	encoded, err := encodeConfigDocument(root, format)
+	if err != nil {
+		return err
+	}
+
+	return writeConfigFileAtomic(trimmedPath, encoded)
+}
+
+// mergeValuesIntoDocument applies the given values to a decoded config document
+// (a nil value removes the key) and returns the mutated root. It is pure with
+// respect to disk so callers can merge into a synthesized in-memory document
+// when no writable config file exists (see PersistValuesWithRemote).
+func mergeValuesIntoDocument(root map[string]interface{}, def integrationinterface.Definition, values map[string]*string) map[string]interface{} {
 	envSection, _ := root["env"].(map[string]interface{})
 	if envSection == nil {
 		envSection = map[string]interface{}{}
@@ -141,12 +156,7 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		delete(root, "integrations")
 	}
 
-	encoded, err := encodeConfigDocument(root, format)
-	if err != nil {
-		return err
-	}
-
-	return writeConfigFileAtomic(trimmedPath, encoded)
+	return root
 }
 
 // writeConfigFileAtomic replaces path with data using a temp file + rename and
