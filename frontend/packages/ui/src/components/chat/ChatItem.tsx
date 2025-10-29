@@ -140,6 +140,7 @@ export function ChatItemCompact({
 }: {
   chat: {
     uuid?: string;
+    settings?: { title?: string };
     latest_message?: { text?: string };
   } | null;
   isSelected?: boolean;
@@ -147,6 +148,7 @@ export function ChatItemCompact({
   state?: string;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const title = chat?.settings?.title?.trim();
   const content = chat?.latest_message?.text || "No messages yet";
 
   return (
@@ -165,9 +167,22 @@ export function ChatItemCompact({
       >
         <div className="relative flex items-center gap-2 px-2 py-2">
           <ChatStateDot state={state} />
-          <Text type={TextTypes.Body6} tag="span" className="block min-w-0 truncate pr-8">
-            {content}
-          </Text>
+          <div className="min-w-0 flex-1 pr-8">
+            {title ? (
+              <>
+                <Text type={TextTypes.Body6} tag="span" bold className="block truncate">
+                  {title}
+                </Text>
+                <Text type={TextTypes.Body7} color="muted" className="block truncate">
+                  {content}
+                </Text>
+              </>
+            ) : (
+              <Text type={TextTypes.Body6} tag="span" className="block min-w-0 truncate">
+                {content}
+              </Text>
+            )}
+          </div>
           <div className="absolute right-1 top-1/2 -translate-y-1/2">
             <DropdownMenuTrigger asChild>
               <Button
