@@ -118,10 +118,16 @@ export function IntegrationsNav({
 
   const pages = useMemo(() => {
     const routes = overviewData?.frontend_routes ?? [];
+    const base = integrationName ? `/integrations/${integrationName}` : "";
     return routes
       .filter((route) => route.kind === "page" && typeof route.route === "string" && !route.route.includes("{"))
+      .filter((route) => {
+        if (route.public) return false;
+        if (!base) return true;
+        return route.route === base || route.route.startsWith(`${base}/`);
+      })
       .sort((a, b) => a.route.localeCompare(b.route));
-  }, [overviewData]);
+  }, [overviewData, integrationName]);
 
   const currentPath = normalizePath(activePath);
 
