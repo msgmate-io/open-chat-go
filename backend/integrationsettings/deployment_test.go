@@ -93,3 +93,47 @@ func TestBuildDeploymentInfoInlineNotPersistable(t *testing.T) {
 		t.Fatal("expected a reason explaining why persistence is unavailable")
 	}
 }
+
+// TestBuildDeploymentInfoRemoteStatus verifies that a registered remote status
+// resolver drives CanPersist/RemoteConfigured/ConfigBackend/CanReload even when
+// the local config is inline.
+func TestBuildDeploymentInfoRemoteStatus(t *testing.T) {
+	prev := runtimecfg.GetConfigSource()
+	t.Cleanup(func() {
+		runtimecfg.SetConfigSource(prev)
+		RegisterRemoteConfigStatus(nil)
+		RegisterRemoteConfigPersister(nil)
+	})
+	runtimecfg.SetConfigSource("inline --config YAML")
+	RegisterRemoteConfigStatus(func() RemoteConfigStatus {
+		return RemoteConfigStatus{Configured: true, Target: "ns/secret[OPEN_CHAT_CONFIG]", Reload: true}
+	})
+
+	info := BuildDeploymentInfo()
+	if !info.RemoteConfigured || !info.CanPersist || !info.CanReload || !info.CanRestart {
+		t.Fatalf("expected remote configured + reload, got %#v", info)
+	}
+	if info.ConfigBackend != "kubernetes-secret" {
+		t.Fatalf("expected kubernetes-secret backend, got %q", info.ConfigBackend)
+	}
+	if info.RemoteTarget != "ns/secret[OPEN_CHAT_CONFIG]" {
+		t.Fatalf("expected resolved remote target, got %q", info.RemoteTarget)
+	}
+}
+
+// TestBuildDeploymentInfoRemoteStatusUnconfigured verifies that a registered
+// resolver reporting no target does not advertise persistence.
+func TestBuildDeploymentInfoRemoteStatusUnconfigured(t *testing.T) {
+	prev := runtimecfg.GetConfigSource()
+	t.Cleanup(func() {
+		runtimecfg.SetConfigSource(prev)
+		RegisterRemoteConfigStatus(nil)
+	})
+	runtimecfg.SetConfigSource("inline --config YAML")
+	RegisterRemoteConfigStatus(func() RemoteConfigStatus { return RemoteConfigStatus{} })
+
+	info := BuildDeploymentInfo()
+	if info.RemoteConfigured || info.CanPersist {
+		t.Fatalf("expected no remote target, got %#v", info)
+	}
+}
