@@ -3720,6 +3720,15 @@
                 "persisted": {
                     "type": "boolean"
                 },
+                "remote_error": {
+                    "type": "string"
+                },
+                "remote_persisted": {
+                    "type": "boolean"
+                },
+                "remote_target": {
+                    "type": "string"
+                },
                 "restart_required": {
                     "type": "boolean"
                 }
@@ -4801,6 +4810,10 @@
                 "can_persist": {
                     "type": "boolean"
                 },
+                "can_reload": {
+                    "description": "CanReload is true when persisting the config triggers a workload reload\n(e.g. a kubernetes deployment rollout) even though the server cannot\nrestart itself via an OS service manager.",
+                    "type": "boolean"
+                },
                 "can_restart": {
                     "type": "boolean"
                 },
@@ -4823,6 +4836,10 @@
                 "remote_configured": {
                     "description": "RemoteConfigured is true when a remote (kubernetes Secret) config target\nis available in addition to the local file.",
                     "type": "boolean"
+                },
+                "remote_target": {
+                    "description": "RemoteTarget is the resolved remote backing store description when one is\nconfigured.",
+                    "type": "string"
                 },
                 "type": {
                     "type": "string"
