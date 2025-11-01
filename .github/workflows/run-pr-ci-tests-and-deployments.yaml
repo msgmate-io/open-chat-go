@@ -968,6 +968,20 @@ jobs:
         if: steps.context.outputs.should_test != ''
         run: |
           set -euo pipefail
+          # docker.io occasionally answers manifest pulls with a transient 502;
+          # retry the pull a few times so a registry hiccup does not fail the
+          # whole Go test shard.
+          for attempt in 1 2 3 4 5; do
+            if docker compose -f docker-compose.ci.yaml pull redis; then
+              break
+            fi
+            if [ "$attempt" = "5" ]; then
+              echo "::error::Failed to pull the Redis image after ${attempt} attempts."
+              exit 1
+            fi
+            echo "Redis image pull failed (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
           docker compose -f docker-compose.ci.yaml up -d redis
           for i in $(seq 1 45); do
             if docker compose -f docker-compose.ci.yaml exec -T redis redis-cli ping >/dev/null 2>&1; then
