@@ -320,13 +320,13 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	}
 
 	// Load the past messages
-	err, paginatedMessages := aih.botContext.Client.GetMessages(message.Content.ChatUUID, 1, context)
+	paginatedMessages, err := aih.loadContextMessages(message.Content.ChatUUID, context)
 	if err != nil {
 		return err
 	}
 
 	// Build OpenAI messages
-	openAiMessages := aih.buildOpenAIMessages(&paginatedMessages, message, systemPrompt, backend)
+	openAiMessages := aih.buildOpenAIMessages(paginatedMessages, message, systemPrompt, backend)
 
 	// Setup tools
 	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
@@ -387,6 +387,95 @@ func (aih *AIHandlerImpl) ProcessCommand(ctx context.Context, command string, me
 		return nil
 	}
 	return fmt.Errorf("unknown command '%s'", command)
+}
+
+// isNonConversationalMessage reports whether a chat row is bookkeeping that
+// buildOpenAIMessages drops before sending history to the model (eg the event
+// rows a confirmable-action approval creates). Such rows must not count against
+// the context window.
+func isNonConversationalMessage(msg client.ListedMessage) bool {
+	if msg.DataType == "event" {
+		return true
+	}
+	if msg.MetaData != nil {
+		if eventType, ok := (*msg.MetaData)["event_type"].(string); ok && eventType == "confirmable_action_execute" {
+			return true
+		}
+	}
+	return false
+}
+
+// countConversationalMessages returns how many rows are real conversation turns.
+func countConversationalMessages(rows []client.ListedMessage) int {
+	count := 0
+	for _, row := range rows {
+		if !isNonConversationalMessage(row) {
+			count++
+		}
+	}
+	return count
+}
+
+// trimMessagesToContextWindow keeps the newest rows up to and including the
+// `limit`-th conversational (non-event) message so event rows never consume the
+// context budget. `rows` must be newest-first, matching the paginated message
+// API ordering.
+func trimMessagesToContextWindow(rows []client.ListedMessage, limit int) []client.ListedMessage {
+	if limit < 1 {
+		limit = 1
+	}
+	seen := 0
+	for i, row := range rows {
+		if isNonConversationalMessage(row) {
+			continue
+		}
+		seen++
+		if seen >= limit {
+			return rows[:i+1]
+		}
+	}
+	return rows
+}
+
+// loadContextMessages fetches the recent history fed to the model. The message
+// API paginates raw rows, so a chat with many event messages (eg a multi-step
+// confirmable-action flow) can exhaust a plain `limit` window with
+// non-conversational rows and push the user's original task out of context,
+// leaving the model to answer without it. We page backwards until we have
+// `context` conversational messages (or the chat is exhausted), then trim to the
+// same budget.
+func (aih *AIHandlerImpl) loadContextMessages(chatUUID string, context int64) (*client.PaginatedMessages, error) {
+	if context < 1 {
+		context = 1
+	}
+	const maxContextPages = 8
+
+	var (
+		rows    []client.ListedMessage
+		last    client.PaginatedMessages
+		fetched bool
+	)
+	for page := int64(1); page <= maxContextPages; page++ {
+		err, pageData := aih.botContext.Client.GetMessages(chatUUID, page, context)
+		if err != nil {
+			if !fetched {
+				return nil, err
+			}
+			break
+		}
+		fetched = true
+		last = pageData
+		rows = append(rows, pageData.Rows...)
+
+		if len(pageData.Rows) == 0 ||
+			int(page) >= pageData.TotalPages ||
+			countConversationalMessages(rows) >= int(context) {
+			break
+		}
+	}
+
+	last.Rows = trimMessagesToContextWindow(rows, int(context))
+	return &last, nil
 }
 
 // buildOpenAIMessages builds the OpenAI messages array from chat history
