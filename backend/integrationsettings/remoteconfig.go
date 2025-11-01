@@ -57,3 +57,46 @@ func PersistRemoteConfig(data []byte) (string, bool, error) {
 	}
 	return target, true, nil
 }
+
+// RemoteConfigStatus describes the currently resolved remote config backing
+// store target.
+type RemoteConfigStatus struct {
+	// Configured is true when a concrete remote target exists (a deployment-host
+	// cluster is registered with resolvable coordinates).
+	Configured bool
+	// Target is a human-readable description of the resolved target.
+	Target string
+	// Reload is true when persisting the config triggers a workload reload
+	// (deployment rollout restart).
+	Reload bool
+}
+
+// RemoteConfigStatusFunc resolves the current remote config status on demand.
+type RemoteConfigStatusFunc func() RemoteConfigStatus
+
+var (
+	remoteConfigStatusMu sync.RWMutex
+	remoteConfigStatusFn RemoteConfigStatusFunc
+)
+
+// RegisterRemoteConfigStatus installs an optional status resolver describing the
+// actually resolved remote config target. Passing nil clears it. It lets the
+// deployment info advertise a real target (and reload capability) instead of
+// just "a persister is registered".
+func RegisterRemoteConfigStatus(fn RemoteConfigStatusFunc) {
+	remoteConfigStatusMu.Lock()
+	remoteConfigStatusFn = fn
+	remoteConfigStatusMu.Unlock()
+}
+
+// RemoteConfigStatusSnapshot returns the resolved remote config status when a
+// status resolver is registered.
+func RemoteConfigStatusSnapshot() (RemoteConfigStatus, bool) {
+	remoteConfigStatusMu.RLock()
+	fn := remoteConfigStatusFn
+	remoteConfigStatusMu.RUnlock()
+	if fn == nil {
+		return RemoteConfigStatus{}, false
+	}
+	return fn(), true
+}
