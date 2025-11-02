@@ -78,6 +78,7 @@
   "/mobile/runtime-error",
   "/mobile/config",
   "/mobile/config-import",
+  "/mobile/share",
   "/chat",
   "/chat/api",
   "/chat/{chat_uuid}",
