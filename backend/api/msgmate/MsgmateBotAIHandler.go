@@ -203,9 +203,19 @@ func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
 		if !ok {
 			continue
 		}
-		if selector, ok := toolCall["runtime_selector"].(map[string]interface{}); ok {
-			selectors = append(selectors, selector)
+		selector, ok := toolCall["runtime_selector"].(map[string]interface{})
+		if !ok {
+			continue
 		}
+		// A message can carry more than one selector; give each a stable id so
+		// the frontend can target a specific one. The LLM tool-call id is unique
+		// within the message and stable across partial/final deliveries.
+		if id, _ := selector["id"].(string); strings.TrimSpace(id) == "" {
+			if toolCallID, _ := toolCall["id"].(string); strings.TrimSpace(toolCallID) != "" {
+				selector["id"] = toolCallID
+			}
+		}
+		selectors = append(selectors, selector)
 	}
 	return selectors
 }
