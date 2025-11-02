@@ -6,8 +6,13 @@ import { useSidePanelCollapse } from "@open-chat-go/ui";
 import { useBreakpoint } from "@/components/utils";
 import useSWR from "swr";
 import { fetcher } from "@/lib/utils";
-import { Mic } from "lucide-react";
+import { Mic, Paperclip, X } from "lucide-react";
 import { clearPendingToolInit, getPendingToolInit } from "@/lib/chat-tool-init-store";
+import {
+  clearPendingMobileShare,
+  getPendingMobileShare,
+  type MobileShareAttachment,
+} from "@/lib/mobile-share-store";
 import {
     asToolInitMap,
     getMissingRequiredToolInitFields,
@@ -75,6 +80,7 @@ export function StartChat({
     const [selectedModel, setSelectedModel] = useState("")
     const [isStarting, setIsStarting] = useState(false)
     const [startError, setStartError] = useState<string | null>(null)
+    const [pendingAttachments, setPendingAttachments] = useState<MobileShareAttachment[]>([])
     const textareaRef = useRef<HTMLTextAreaElement>(null)
     const leftPannelCollapsed = useSidePanelCollapse(state => state.isCollapsed);
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
@@ -111,6 +117,19 @@ export function StartChat({
             setSelectedModel(botModels[0]?.title ?? "")
         }
     }, [botModels, selectedModel])
+
+    useEffect(() => {
+        const pending = getPendingMobileShare()
+        if (!pending) {
+            return
+        }
+        if (pending.attachments.length > 0) {
+            setPendingAttachments(pending.attachments)
+        }
+        if (pending.note) {
+            setText((prev) => prev || pending.note)
+        }
+    }, [])
 
     useEffect(() => {
         if (!isBotContact || !selectedModel) {
@@ -185,6 +204,14 @@ export function StartChat({
                     first_message: text.trim(),
                     chat_type: "conversation",
                     shared_config: sharedConfig,
+                    ...(pendingAttachments.length > 0
+                        ? {
+                              attachments: pendingAttachments.map((attachment) => ({
+                                  file_id: attachment.fileId,
+                                  display_name: attachment.displayName || attachment.fileName,
+                              })),
+                          }
+                        : {}),
                 }),
             })
 
@@ -199,6 +226,8 @@ export function StartChat({
             }
 
             setText("")
+            setPendingAttachments([])
+            clearPendingMobileShare()
             if (isBotContact && selectedModel) {
                 clearPendingToolInit(contactToken, selectedModel)
             }
@@ -335,6 +364,32 @@ export function StartChat({
                 </div>
 
                 <div className={hasPreStart ? "mt-2 shrink-0 space-y-2" : "mt-auto space-y-2"}>
+                    {pendingAttachments.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                            {pendingAttachments.map((attachment) => (
+                                <div
+                                    key={attachment.fileId}
+                                    className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-2 py-1"
+                                >
+                                    <Paperclip className="size-3.5 shrink-0" />
+                                    <Text type={TextTypes.Body7} className="max-w-[12rem] truncate">
+                                        {attachment.displayName || attachment.fileName}
+                                    </Text>
+                                    <button
+                                        type="button"
+                                        aria-label="Remove attachment"
+                                        onClick={() =>
+                                            setPendingAttachments((prev) =>
+                                                prev.filter((entry) => entry.fileId !== attachment.fileId),
+                                            )
+                                        }
+                                    >
+                                        <X className="size-3.5" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
                     {uiExtension?.MessageInput?.PreStart ? (
                         <uiExtension.MessageInput.PreStart
                             ctx={chatUIContext}
