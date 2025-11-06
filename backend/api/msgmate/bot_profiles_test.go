@@ -212,6 +212,40 @@ func TestCreateOrUpdateBotProfileMergesRuntimeToolsIntoAssignedModels(t *testing
 	}
 }
 
+func TestCreateOrUpdateBotProfileMergesRuntimeOpencodeProjectIntoAssignedModels(t *testing.T) {
+	DB := setupBotProfilesTestDB(t)
+	botUser := createBotProfilesTestBot(t, DB, "runtime-opencode-bot", map[string]interface{}{
+		"backend":          "openrouter",
+		"chat_backend":     "opencode",
+		"model":            "deepseek/deepseek-v4.1-flash",
+		"opencode_project": "open-chat-go-dev",
+		"tool_init": map[string]interface{}{
+			"opencode_select_project": map[string]interface{}{"project": "open-chat-go-dev"},
+		},
+	})
+	createBotProfilesTestModelConfig(t, DB, botUser.Name, `{"backend":"openrouter","model":"assigned-model-id"}`)
+
+	if err := CreateOrUpdateBotProfile(DB, botUser); err != nil {
+		t.Fatalf("CreateOrUpdateBotProfile failed: %v", err)
+	}
+
+	models := readBotProfilesTestModels(t, DB, botUser)
+	if len(models) != 1 {
+		t.Fatalf("expected 1 profile model, got %d", len(models))
+	}
+	if got := models[0].Configuration.OpencodeProject; got != "open-chat-go-dev" {
+		t.Fatalf("profile model opencode_project = %q, want %q", got, "open-chat-go-dev")
+	}
+	toolInit := models[0].Configuration.ToolInit
+	if toolInit == nil {
+		t.Fatalf("expected profile model tool_init to carry the runtime default")
+	}
+	entry, ok := toolInit["opencode_select_project"].(map[string]interface{})
+	if !ok || entry["project"] != "open-chat-go-dev" {
+		t.Fatalf("profile model tool_init = %#v, want opencode_select_project.project", toolInit)
+	}
+}
+
 func TestMergeRuntimeConfigIntoProfileModelsDeepCopiesJSONMaps(t *testing.T) {
 	raw, err := json.Marshal(map[string]interface{}{
 		"mcp_tools": map[string]interface{}{
