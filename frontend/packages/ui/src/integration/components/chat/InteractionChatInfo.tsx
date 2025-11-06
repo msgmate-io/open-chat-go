@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import useSWR from "swr";
-import { fetcher } from "../../lib/utils";
+import { cn, fetcher } from "../../lib/utils";
 import { FileCode2, Info, EllipsisVertical } from "lucide-react";
 import {
   Badge,
@@ -69,6 +69,46 @@ interface InteractionChatInfoProps {
   onToggleSidebar?: () => void;
 }
 
+type ChatStatusLike = { is_active?: boolean; state?: string } | null | undefined;
+
+// The header badge used to be a static "Active". Derive it from the live chat
+// status so the widget reflects what the interaction is actually doing.
+function resolveStatusBadge(
+  status: ChatStatusLike,
+  isSharedView: boolean,
+): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className?: string } | null {
+  if (!status) {
+    return isSharedView ? { label: "Shared", variant: "outline" } : null;
+  }
+  if (status.is_active || status.state === "active") {
+    return {
+      label: "Active",
+      variant: "secondary",
+      className: "border-amber-300/70 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
+    };
+  }
+  switch (status.state) {
+    case "needs_confirmation":
+      return {
+        label: "Needs action",
+        variant: "secondary",
+        className: "border-blue-300/70 bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300",
+      };
+    case "failed":
+      return { label: "Failed", variant: "destructive" };
+    case "finished":
+      return {
+        label: "Finished",
+        variant: "secondary",
+        className: "border-emerald-300/70 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+      };
+    case "idle":
+      return { label: "Idle", variant: "outline" };
+    default:
+      return { label: status.state || "Idle", variant: "outline" };
+  }
+}
+
 export function InteractionChatInfo({
   chat,
   user,
@@ -118,6 +158,7 @@ export function InteractionChatInfo({
 
   const isInteractionChat = chat?.chat_type === "interaction";
   const canViewOnConversation = user?.is_admin === true;
+  const statusBadge = resolveStatusBadge(chat?.status, isSharedView);
 
   if (!chat || (!isInteractionChat && !canViewOnConversation)) {
     return null;
@@ -146,9 +187,14 @@ export function InteractionChatInfo({
               className="max-w-[14rem] rounded-lg border-border/60 bg-card/80 px-2 py-0.5 text-xs shadow-none md:max-w-[18rem] md:px-2.5 md:py-1 md:text-[13px]"
             />
           </div>
-          <Badge variant="secondary" className="hidden shrink-0 md:inline-flex">
-            Active
-          </Badge>
+          {statusBadge ? (
+            <Badge
+              variant={statusBadge.variant}
+              className={cn("hidden shrink-0 md:inline-flex", statusBadge.className)}
+            >
+              {statusBadge.label}
+            </Badge>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
