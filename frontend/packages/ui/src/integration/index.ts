@@ -45,6 +45,18 @@ export {
 } from "./components/chat/PartialMessages";
 export { WebsocketHandler, WebsocketHandlerBase } from "./components/WebsocketHandler";
 
+// --- chat cache invalidation ---------------------------------------------
+export {
+  isChatListKey,
+  isChatStatesKey,
+  isActionTasksKey,
+  revalidateChatsList,
+  revalidateChatStates,
+  revalidateActionTasks,
+  revalidateChat,
+  revalidateChatData,
+} from "./lib/chat-cache";
+
 // --- chat-UI extension seam ----------------------------------------------
 export {
   registerChatUIExtension,
