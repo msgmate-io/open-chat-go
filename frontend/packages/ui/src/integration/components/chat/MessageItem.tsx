@@ -37,7 +37,7 @@ import {
   ProviderRetryEventWidget,
   resolveProviderRetryEvent,
 } from "./ProviderRetryEventWidget";
-import { mutate } from "swr";
+import { revalidateChatData } from "../../lib/chat-cache";
 import { MoreHorizontal } from "lucide-react";
 
 export { PendingMessageItem, ShinyText };
@@ -753,11 +753,7 @@ export function BotMessageItem({
         throw new Error(errorText || "Failed to rerun response");
       }
 
-      await Promise.all([
-        mutate(`/api/v1/chats/${chatUUID}/messages/list`),
-        mutate(`/api/v1/chats/list`),
-        mutate(`/api/v1/chats/${chatUUID}`),
-      ]);
+      await revalidateChatData(chatUUID);
     } catch (error) {
       console.error("Failed to rerun message:", error);
     }
@@ -909,8 +905,7 @@ export function BotMessageItem({
               action={action}
               executionBlockedReason={executionBlockedReason}
               onExecuted={() => {
-                mutate(`/api/v1/chats/${chatUUID}/messages/list`);
-                mutate(`/api/v1/chats/list`);
+                void revalidateChatData(chatUUID);
               }}
             />
           ))
@@ -938,8 +933,7 @@ export function BotMessageItem({
         messageUUID={message.uuid}
         interactionState={interactionState}
         onMutate={() => {
-          mutate(`/api/v1/chats/${chatUUID}/messages/list`);
-          mutate(`/api/v1/chats/list`);
+          void revalidateChatData(chatUUID);
         }}
       />
     </BotMessageShell>
