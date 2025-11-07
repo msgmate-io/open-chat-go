@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import useWebSocketModule, { ReadyState } from "react-use-websocket";
-import { mutate } from "swr";
 import { usePartialMessageStore } from "./chat/PartialMessages";
+import { revalidateChatData, revalidateChatStates } from "../lib/chat-cache";
 
 const useWebSocket =
   typeof useWebSocketModule === "function"
@@ -89,49 +89,19 @@ export function WebsocketHandlerBase({
                     tool_calls: parsedMessage?.content?.tool_calls || [],
                     session_id: sessionId,
                 }, sessionId)
+                // A bot reply just started: flip the sidebar state dot to active
+                // immediately instead of waiting for the next poll.
+                void revalidateChatStates()
             }else if(parsedMessage.type === "end_partial_message"){
                 removePartialMessage(chatUUID, sessionId)
+                void revalidateChatStates()
             }else if(parsedMessage.type === "new_message"){
                 removePartialMessage(chatUUID, sessionId)
-                mutate(`/api/v1/chats/${chatUUID}/messages/list`, async (data: any) => {
-                    // Handle case when data is undefined
-                    if (!data) {
-                        return {
-                            rows: [{
-                                text: parsedMessage?.content?.text,
-                                sender_uuid: parsedMessage?.content?.sender_uuid,
-                                chat_uuid: chatUUID,
-                                uuid: parsedMessage?.content?.uuid,
-                                tool_calls: parsedMessage?.content?.tool_calls,
-                                reasoning: parsedMessage?.content?.reasoning,
-                                meta_data: parsedMessage?.content?.meta_data,
-                                data_type: parsedMessage?.content?.data_type,
-                            }]
-                        }
-                    }
-                    
-                    // Original logic when data exists
-                    const newRows = data.rows.filter((row: any) => row.uuid !== 'partial_message')
-                    return {
-                        ...data,
-                        rows: [{
-                            text: parsedMessage?.content?.text,
-                            sender_uuid: parsedMessage?.content?.sender_uuid,
-                            chat_uuid: chatUUID,
-                            uuid: parsedMessage?.content?.uuid,
-                            tool_calls: parsedMessage?.content?.tool_calls,
-                            reasoning: parsedMessage?.content?.reasoning,
-                            meta_data: parsedMessage?.content?.meta_data,
-                            data_type: parsedMessage?.content?.data_type,
-                        }, ...newRows]
-                    }
-                })
-                mutate(`/api/v1/chats/list`, async (data: any) => {
-                    return {
-                        ...data,
-                        rows: data.rows.map((row: any) => row.uuid === chatUUID ? { ...row, latest_message: parsedMessage?.content } : row)
-                    }
-                })
+                // The final message changes the chat preview, state dots, pending
+                // action tasks and (for the open chat) the message list. The list
+                // is keyed with query params, so revalidate every chat cache by
+                // prefix rather than mutating a single bare key.
+                void revalidateChatData(chatUUID)
             }
           }
         }, [lastMessage]);
