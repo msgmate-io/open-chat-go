@@ -10,6 +10,7 @@ import { resolveChatUIExtension, type ChatUIContext, type ChatUISendPayload } fr
 import { buildChatRunCommand } from "../../lib/open-chat-run";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher } from "../../lib/utils";
+import { revalidateChatData } from "../../lib/chat-cache";
 import { useBreakpoint } from "../utils";
 import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
@@ -206,6 +207,11 @@ export function MessagesScroll({
                 ...messages,
                 rows: [messageWithAttachments, ...(messages?.rows ?? [])]
             }, false);
+
+            // The new user message changes the sidebar preview and moves the
+            // chat into the active state; refresh the derived caches so the
+            // list and state dots update without waiting for the next poll.
+            void revalidateChatData(chatUUID);
             
             // Clear input after successful send
             setText('');
@@ -490,10 +496,13 @@ export function MessagesView({
     useEffect(() => {
         const isActive = Boolean((interactionStatus as any)?.is_active);
         if (wasInteractionActiveRef.current && !isActive) {
-            mutateMessages();
+            // Refresh the message list plus the sidebar preview, state dot and
+            // action-task feeds so a finished interaction is reflected without
+            // a manual reload (relevant for clients without a websocket).
+            void revalidateChatData(chatUUID);
         }
         wasInteractionActiveRef.current = isActive;
-    }, [interactionStatus, mutateMessages]);
+    }, [interactionStatus, chatUUID]);
 
     const hasLoadError = Boolean(chatError || messagesError || userError);
     const isOfflineCacheMiss = [chatError, messagesError, userError].some((error) => {
