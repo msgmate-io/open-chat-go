@@ -425,6 +425,10 @@ export function EntitiesOverview({
   const { data: actionTasksCount } = useSWR<{ count: number }>(
     "/api/v1/chats/action-tasks?count_only=1",
     fetcher,
+    {
+      refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 5000),
+      revalidateOnFocus: true,
+    },
   );
   const actionCount = typeof actionTasksCount?.count === "number" ? actionTasksCount.count : 0;
   const {
