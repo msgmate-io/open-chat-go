@@ -97,6 +97,11 @@ export function MessagesScroll({
 
     const scrollRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    // Only keep the viewport pinned to the newest message while the user is
+    // already at the bottom. Once they scroll up to read older messages we stop
+    // forcing them back down as new streamed content arrives.
+    const shouldAutoScrollRef = useRef(true);
+    const AUTO_SCROLL_THRESHOLD = 150;
     
     const shouldLoadIntegrations = Boolean(chatUUID && chat?.partner?.is_automated);
 
@@ -145,12 +150,29 @@ export function MessagesScroll({
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
     const onSidebarButtonClick = isSm ? onToggleCollapse : () => navigate("/chat");
 
+    // Track whether the user is parked at the bottom. This runs on every scroll
+    // (including programmatic ones) so the pin state always reflects where the
+    // viewport actually is.
+    const handleMessagesScroll = useCallback(() => {
+        const scrollElement = scrollRef.current;
+        if (!scrollElement) return;
+        const distance = Math.abs(
+            scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop,
+        );
+        shouldAutoScrollRef.current = distance < AUTO_SCROLL_THRESHOLD;
+    }, []);
+
+    // Re-pin to the bottom whenever a different chat is opened.
     useEffect(() => {
-        if (scrollRef.current) {
-            const scrollElement = scrollRef.current;
-            const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
-            scrollElement.scrollTop = maxScroll;
-        }
+        shouldAutoScrollRef.current = true;
+    }, [chatUUID]);
+
+    useEffect(() => {
+        if (!shouldAutoScrollRef.current) return;
+        const scrollElement = scrollRef.current;
+        if (!scrollElement) return;
+        const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
+        scrollElement.scrollTop = maxScroll;
     }, [messages, partialMessages]);
 
     const onSendMessage = async (
@@ -203,6 +225,8 @@ export function MessagesScroll({
                 meta_data: newMessage.meta_data || {}
             };
             
+            // Sending a message always snaps the viewport back to the bottom.
+            shouldAutoScrollRef.current = true;
             mutateMessages({
                 ...messages,
                 rows: [messageWithAttachments, ...(messages?.rows ?? [])]
@@ -338,6 +362,7 @@ export function MessagesScroll({
             )}
             <div
                 ref={scrollRef}
+                onScroll={handleMessagesScroll}
                 className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
                 style={{
                     paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
