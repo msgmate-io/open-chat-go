@@ -82,6 +82,9 @@ type CreateBotInteractionRequest struct {
 	ConfigOverrides map[string]interface{}     `json:"config_overrides,omitempty"`
 	AutoShare       bool                       `json:"auto_share,omitempty"`
 	Attachments     []BotInteractionAttachment `json:"attachments,omitempty"`
+	// Tags are category labels attached to the created interaction chat so
+	// users can filter chats by interaction type.
+	Tags []string `json:"tags,omitempty"`
 	// RequireConfirmation gates the interaction behind an explicit user
 	// confirmation widget before the bot reply is enqueued.
 	RequireConfirmation bool `json:"require_confirmation,omitempty"`
@@ -1357,14 +1360,15 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	tags := database.NormalizeChatTags(req.Tags)
 	var chat database.Chat
 	var message database.Message
 	var share database.SharedChatInstance
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if user.ID < runtime.BotUserId {
-			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction"}
+			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction", Tags: tags}
 		} else {
-			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: user.ID, ChatType: "interaction"}
+			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: user.ID, ChatType: "interaction", Tags: tags}
 		}
 		if err := tx.Create(&chat).Error; err != nil {
 			return err
