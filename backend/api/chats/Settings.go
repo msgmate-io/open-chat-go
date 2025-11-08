@@ -20,6 +20,9 @@ type ChatSettingsView struct {
 
 type updateChatSettingsRequest struct {
 	Title *string `json:"title"`
+	// Tags replaces the chat's tag set when provided. Send an empty array to
+	// clear all tags. Nil leaves the existing tags untouched.
+	Tags *[]string `json:"tags"`
 }
 
 func chatSettingsViewFromRaw(raw json.RawMessage) *ChatSettingsView {
@@ -115,6 +118,13 @@ func (h *ChatsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			config["title"] = title
 		}
 	}
+	if payload.Tags != nil {
+		if err := DB.Model(&chat).Update("tags", database.NormalizeChatTags(*payload.Tags)).Error; err != nil {
+			http.Error(w, "Unable to save chat tags", http.StatusInternalServerError)
+			return
+		}
+		chat.Tags = database.NormalizeChatTags(*payload.Tags)
+	}
 	encoded, err := json.Marshal(config)
 	if err != nil {
 		http.Error(w, "Unable to encode chat settings", http.StatusInternalServerError)
@@ -132,8 +142,13 @@ func (h *ChatsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	tags := []string(chat.Tags)
+	if tags == nil {
+		tags = []string{}
+	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"chat_uuid": chat.UUID,
 		"settings":  chatSettingsViewFromRaw(encoded),
+		"tags":      tags,
 	})
 }
