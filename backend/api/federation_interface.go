@@ -31,6 +31,7 @@ type FederationHandlerInterface interface {
 	// Node management
 	RegisterNode(w http.ResponseWriter, r *http.Request)
 	ListNodes(w http.ResponseWriter, r *http.Request)
+	GetNode(w http.ResponseWriter, r *http.Request)
 	WhitelistedPeers(w http.ResponseWriter, r *http.Request)
 	RequestNode(w http.ResponseWriter, r *http.Request)
 	RequestNodeByPeerId(w http.ResponseWriter, r *http.Request)
@@ -38,6 +39,7 @@ type FederationHandlerInterface interface {
 	// Proxy management
 	CreateAndStartProxy(w http.ResponseWriter, r *http.Request)
 	ListProxies(w http.ResponseWriter, r *http.Request)
+	SearchProxies(w http.ResponseWriter, r *http.Request)
 	DeleteProxy(w http.ResponseWriter, r *http.Request)
 	ReloadDomainProxies(w http.ResponseWriter, r *http.Request)
 
@@ -222,6 +224,10 @@ func (s *StubFederationHandler) ListNodes(w http.ResponseWriter, r *http.Request
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
 
+func (s *StubFederationHandler) GetNode(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Federation not available", http.StatusNotImplemented)
+}
+
 func (s *StubFederationHandler) WhitelistedPeers(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
@@ -239,6 +245,10 @@ func (s *StubFederationHandler) CreateAndStartProxy(w http.ResponseWriter, r *ht
 }
 
 func (s *StubFederationHandler) ListProxies(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Federation not available", http.StatusNotImplemented)
+}
+
+func (s *StubFederationHandler) SearchProxies(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Federation not available", http.StatusNotImplemented)
 }
 
