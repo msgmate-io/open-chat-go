@@ -181,7 +181,7 @@ function IndexTab({
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
                             <div className="w-full max-w-[260px]">
-                                <MobileServerSelector showOnlyWhenAuthenticated className="w-full" />
+                                <MobileServerSelector className="w-full" />
                             </div>
                         ) : null}
                     </div>
@@ -192,7 +192,7 @@ function IndexTab({
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
                             <div className="w-full max-w-[260px]">
-                                <MobileServerSelector showOnlyWhenAuthenticated className="w-full" />
+                                <MobileServerSelector className="w-full" />
                             </div>
                         ) : null}
                     </div>
