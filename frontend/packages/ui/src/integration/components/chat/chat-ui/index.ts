@@ -1,4 +1,6 @@
 export type {
+  ChatSearchAction,
+  ChatSearchActionProps,
   ChatUIAttachment,
   ChatUIContact,
   ChatUIContext,
@@ -13,6 +15,8 @@ export type {
 export {
   registerChatUIExtension,
   registerChatUIMessageRenderer,
+  registerChatSearchAction,
+  listChatSearchActions,
   registerChatUIHelper,
   resolveChatUIExtension,
   listChatUIMessageRenderers,
