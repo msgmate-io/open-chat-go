@@ -76,8 +76,50 @@ export function AdminActionTasksWidget({
       revalidateOnFocus: true,
     },
   );
+  const { data: integrations } = useSWR<{ rows?: Array<{ name?: string }> }>(
+    "/api/v1/integrations/list",
+    fetcher,
+    { revalidateOnFocus: false },
+  );
   const [busy, setBusy] = useState(false);
+  const [impersonating, setImpersonating] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const accountManagementAvailable = Boolean(
+    integrations?.rows?.some((integration) => integration.name === "account_management"),
+  );
+
+  // impersonateUser assumes the identity of the user who owns the pending
+  // action so the admin can open their action stack and resolve the
+  // confirmation as that user.
+  const impersonateUser = async (row: AdminActionTaskRow) => {
+    const owner = row.chat_owner;
+    if (!owner?.uuid || impersonating) {
+      return;
+    }
+    setImpersonating(row.task_key);
+    setActionError(null);
+    try {
+      const response = await fetch(
+        "/api/v1/integrations/account_management/impersonation/start",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_uuid: owner.uuid }),
+        },
+      );
+      if (!response.ok) {
+        setActionError((await response.text()).trim() || "Failed to impersonate user.");
+        return;
+      }
+      window.location.href = `/chat/${row.chat_uuid}`;
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to impersonate user.");
+    } finally {
+      setImpersonating(null);
+    }
+  };
 
   if (error) {
     return null;
@@ -182,15 +224,29 @@ export function AdminActionTasksWidget({
                       ))}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="shrink-0"
-                    onClick={() => navigateTo(`/chat/${row.chat_uuid}`)}
-                  >
-                    Open
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {owner?.uuid && accountManagementAvailable ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="shrink-0 text-xs"
+                        disabled={impersonating !== null}
+                        onClick={() => void impersonateUser(row)}
+                      >
+                        {impersonating === row.task_key ? "Impersonating…" : "Impersonate"}
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => navigateTo(`/chat/${row.chat_uuid}`)}
+                    >
+                      Open
+                    </Button>
+                  </div>
                 </div>
               );
             })}
