@@ -398,6 +398,14 @@ export function ChatsList({
         navigateTo(`${to}${separator}${query}`)
     }, [chatTypeFilters, searchQuery, tagFilters, timeFrom, timeTo, navigateTo])
 
+    // If the chat that is currently open gets deleted from the list, leave the
+    // now-missing chat page.
+    const handleChatDeleted = useCallback((deletedChatUUID: string) => {
+        if (chatUUID && deletedChatUUID === chatUUID) {
+            navigateTo("/chat/new")
+        }
+    }, [chatUUID, navigateTo])
+
     const activeFilterLabel = useMemo(
         () =>
             CHAT_TYPE_ORDER.filter((type) => chatTypeFilters.includes(type))
@@ -683,6 +691,7 @@ export function ChatsList({
                         navigateTo={navigateWithFilter}
                         state={chatStateByUuid[chat.uuid]}
                         tags={chat.tags}
+                        onDeleted={handleChatDeleted}
                     />,
                 ].filter(Boolean)
             }
