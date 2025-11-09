@@ -319,7 +319,11 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
             </div>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="center" className="w-[min(92vw,560px)] rounded-xl p-2">
+        <DropdownMenuContent
+          align="center"
+          sideOffset={6}
+          className="max-h-[min(75vh,560px)] w-[min(92vw,560px)] overflow-y-auto overscroll-contain rounded-xl p-2"
+        >
           <div className="space-y-2">
             {servers.map((server) => {
               const isActive = server.id === activeServerId;
