@@ -69,7 +69,17 @@ func (f *FederationFactory) InitializeNetworks(DB *gorm.DB, handler api.Federati
 // RegisterNodeRaw registers a node in the federation
 func (f *FederationFactory) RegisterNodeRaw(DB *gorm.DB, handler api.FederationHandlerInterface, registerNode interface{}, timestamp *time.Time) (interface{}, error) {
 	if wrapper, ok := handler.(*FederationHandlerWrapper); ok {
-		if regNode, ok := registerNode.(federation.RegisterNode); ok {
+		// Handle both api.RegisterNode and federation.RegisterNode types
+		if apiNode, ok := registerNode.(api.RegisterNode); ok {
+			// Convert api.RegisterNode to federation.RegisterNode
+			fedNode := federation.RegisterNode{
+				Name:         apiNode.Name,
+				Addresses:    apiNode.Addresses,
+				AddToNetwork: apiNode.AddToNetwork,
+				LastChanged:  apiNode.LastChanged,
+			}
+			return federation.RegisterNodeRaw(DB, wrapper.handler, fedNode, timestamp)
+		} else if regNode, ok := registerNode.(federation.RegisterNode); ok {
 			return federation.RegisterNodeRaw(DB, wrapper.handler, regNode, timestamp)
 		}
 	}
