@@ -7,6 +7,7 @@ require github.com/urfave/cli/v3 v3.0.0-alpha9.3
 require golang.org/x/crypto v0.31.0
 
 require (
+    
 	github.com/blackjack/webcam v0.6.1
 	github.com/coder/websocket v1.8.12
 	github.com/creack/pty v1.1.24
