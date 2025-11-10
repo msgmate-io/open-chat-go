@@ -1,8 +1,9 @@
-import type { ChatUIExtension, ChatUIMessageRenderer } from "./types";
+import type { ChatSearchAction, ChatUIExtension, ChatUIMessageRenderer } from "./types";
 
 const extensions = new Map<string, ChatUIExtension>();
 const messageRenderers: ChatUIMessageRenderer[] = [];
 const helpers = new Map<string, unknown>();
+const searchActions = new Map<string, ChatSearchAction>();
 
 export function registerChatUIExtension(extension: ChatUIExtension): void {
   const key = (extension.chatBackend || "").trim().toLowerCase();
@@ -26,6 +27,18 @@ export function registerChatUIMessageRenderer(renderer: ChatUIMessageRenderer): 
 
 export function listChatUIMessageRenderers(): ChatUIMessageRenderer[] {
   return [...messageRenderers];
+}
+
+export function registerChatSearchAction(action: ChatSearchAction): void {
+  const key = (action.id || "").trim();
+  if (!key || !action.Component) {
+    return;
+  }
+  searchActions.set(key, { ...action, id: key });
+}
+
+export function listChatSearchActions(): ChatSearchAction[] {
+  return [...searchActions.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
 export function registerChatUIHelper(name: string, helper: unknown): void {
