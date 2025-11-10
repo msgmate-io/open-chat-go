@@ -30,6 +30,7 @@ function DotsHorizontal({ className }: { className?: string }) {
 export function ChatItem({
   chat,
   isSelected = false,
+  onDeleted,
 }: {
   chat: {
     uuid: string;
@@ -38,6 +39,7 @@ export function ChatItem({
     newest_message?: { text?: string };
   };
   isSelected?: boolean;
+  onDeleted?: (chatUUID: string) => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const title = chat?.settings?.title
@@ -45,7 +47,7 @@ export function ChatItem({
     : `${chat.partner?.first_name ?? ""} ${chat.partner?.second_name ?? ""}`.trim();
 
   return (
-    <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
+    <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen} onDeleted={onDeleted}>
       <Card
         className={cn(
           "chat-list-row",
@@ -138,6 +140,7 @@ export function ChatItemCompact({
   navigateTo = () => {},
   state,
   tags,
+  onDeleted,
 }: {
   chat: {
     uuid?: string;
@@ -148,6 +151,7 @@ export function ChatItemCompact({
   navigateTo: (to: string) => void;
   state?: string;
   tags?: string[];
+  onDeleted?: (chatUUID: string) => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const title = chat?.settings?.title?.trim();
@@ -157,7 +161,7 @@ export function ChatItemCompact({
   const hiddenTagCount = visibleTags.length - shownTags.length;
 
   return (
-    <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
+    <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen} onDeleted={onDeleted}>
       <Card
         className={cn(
           "chat-list-row",
@@ -187,22 +191,22 @@ export function ChatItemCompact({
                 {content}
               </Text>
             )}
-            {shownTags.length > 0 ? (
-              <div className="mt-1 flex flex-wrap items-center gap-1">
-                {shownTags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="inline-flex max-w-[7rem] items-center truncate rounded-full border border-border/70 bg-secondary px-1.5 py-[1px] text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
-                  >
-                    {tag}
-                  </span>
-                ))}
-                {hiddenTagCount > 0 ? (
-                  <span className="text-[9px] text-muted-foreground">+{hiddenTagCount}</span>
-                ) : null}
-              </div>
-            ) : null}
           </div>
+          {shownTags.length > 0 ? (
+            <div className="pointer-events-none absolute right-8 top-1 flex max-w-[60%] flex-nowrap items-center justify-end gap-1 overflow-hidden">
+              {shownTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-block min-w-0 shrink truncate rounded-full border border-border/70 bg-secondary px-1.5 py-0 text-[8px] font-medium uppercase leading-4 tracking-wide text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+              {hiddenTagCount > 0 ? (
+                <span className="shrink-0 text-[8px] leading-4 text-muted-foreground">+{hiddenTagCount}</span>
+              ) : null}
+            </div>
+          ) : null}
           <div className="absolute right-1 top-1/2 -translate-y-1/2">
             <DropdownMenuTrigger asChild>
               <Button
