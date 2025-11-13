@@ -56,6 +56,7 @@ export default function HeadDefault() {
   return (
     <>
       <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       <link rel="icon" type="image/png" href={logoUrl} />
       <link rel="apple-touch-icon" href={logoUrl} />
     </>
