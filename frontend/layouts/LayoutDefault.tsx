@@ -240,9 +240,9 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
   return (
     <SWRConfig value={SWR_GLOBAL_CONFIG}>
       <div className={rootClassName}>
+        <MobileNativeSafeAreaSpacer />
         <ImpersonationBanner />
         <OfflineIndicator />
-        <MobileNativeSafeAreaSpacer />
         <div className={contentClassName}>{children}</div>
       </div>
     </SWRConfig>

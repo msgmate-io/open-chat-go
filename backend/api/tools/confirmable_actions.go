@@ -588,10 +588,15 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			return err
 		}
 		toolCallStatus := "failed"
+		toolCallResult := toolResult
 		if execErr == nil {
 			toolCallStatus = "succeeded"
+		} else {
+			// Surface the execution error as the tool result so the model can
+			// observe the failure and recover on the continuation turn.
+			toolCallResult = execErr.Error()
 		}
-		if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolResult, toolCallStatus); err != nil {
+		if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolCallResult, toolCallStatus); err != nil {
 			return err
 		}
 
@@ -621,7 +626,11 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		if err := tx.Create(&eventRequestedMessage).Error; err != nil {
 			return err
 		}
-		if continueAfterExecute && execErr == nil {
+		// Continue the interaction after the action was handled, including when
+		// it failed: otherwise the bot is left hanging with no final reply (the
+		// failure event becomes the latest message and the model never sees the
+		// error). Unlock-required actions still wait for the user.
+		if continueAfterExecute && !unlockRequired {
 			continuationMessageUUID = eventRequestedMessage.UUID
 		}
 
@@ -705,7 +714,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if continueAfterExecute && execErr == nil && continuationMessageUUID != "" {
+	if continueAfterExecute && continuationMessageUUID != "" {
 		queueClient, clientErr := util.GetAsynqClient(r)
 		queueInspector, inspectorErr := util.GetAsynqInspector(r)
 		if clientErr == nil && inspectorErr == nil {
