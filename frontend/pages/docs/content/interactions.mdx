@@ -33,6 +33,26 @@ prompt. The client approves or rejects it and, on approval, executes it with:
 POST /api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute
 ```
 
+## Interaction tags
+
+Chats and interactions carry free-form **tags** used for filtering in the chat
+list (`GET /api/v1/chats/list?tags=...&exclude_tags=...`). Automation- and
+git-triggered chats are hidden by default via the `automation` and `trigger`
+tags.
+
+OpenCode coding interactions add a compact, self-describing tag pair so the
+workspace and the trigger can be filtered independently:
+
+| Tag | Meaning |
+| --- | --- |
+| `opencode` | the interaction runs through the OpenCode backend |
+| `repo:<slug>` | the workspace repository, e.g. `repo:open-chat-go` |
+| `via:<trigger>` | how it was triggered: `via:assign`, `via:mention`, `via:review`, `via:comment`, `via:plan`, `via:chat` |
+
+The `repo:` and `via:` prefixes keep the two dimensions in distinct namespaces,
+so `tags=repo:open-chat-go` lists every interaction working on that repository
+and `tags=via:assign` every assignment-driven one.
+
 ## Shared interactions
 
 Any interaction can be published as a **shared interaction**:
