@@ -1113,6 +1113,12 @@
                     },
                     {
                         "type": "string",
+                        "description": "Comma-separated tags to exclude (a chat carrying any is hidden)",
+                        "name": "exclude_tags",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Only chats with activity at/after this RFC3339 timestamp",
                         "name": "time_from",
                         "in": "query"
