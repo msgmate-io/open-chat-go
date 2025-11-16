@@ -116,6 +116,7 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 //	@Param        chat_types query string false "Chat types to filter by"
 //	@Param        q query string false "Free-text search over chat titles"
 //	@Param        tags query string false "Comma-separated tags (AND semantics)"
+//	@Param        exclude_tags query string false "Comma-separated tags to exclude (a chat carrying any is hidden)"
 //	@Param        time_from query string false "Only chats with activity at/after this RFC3339 timestamp"
 //	@Param        time_to query string false "Only chats with activity at/before this RFC3339 timestamp"
 //	@Success      200 {object} chats.ListedChatsPage "Paginated list of chats"
@@ -210,6 +211,19 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			query = query.Where("CAST(tags AS TEXT) LIKE ?", "%\""+tag+"\"%")
+		}
+	}
+
+	// Exclude by tag/category. A chat carrying any excluded tag is hidden, so
+	// `exclude_tags=automation,trigger` drops automation- and trigger-generated
+	// chats. COALESCE keeps chats with no tags (NULL) in the result.
+	if excludeParam := strings.TrimSpace(r.URL.Query().Get("exclude_tags")); excludeParam != "" {
+		for _, tag := range strings.Split(excludeParam, ",") {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			query = query.Where("COALESCE(CAST(tags AS TEXT), '') NOT LIKE ?", "%\""+tag+"\"%")
 		}
 	}
 
