@@ -1190,6 +1190,21 @@ jobs:
     outputs:
       e2e_status: ${{ steps.finalize.outputs.e2e_status }}
     steps:
+      # The full-ci profile setup plus the Playwright browser/deps install is
+      # disk heavy; reclaim the runner's preinstalled toolchains up front (the
+      # same pattern used by the heavy Android/backend-image jobs) so the
+      # hosted runner is not preempted mid-install.
+      - name: Free runner disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -1213,7 +1228,19 @@ jobs:
         working-directory: development/ci/e2e
         run: |
           set -euo pipefail
-          npm ci || npm install
+          # A transient npm registry hiccup should not fail the whole E2E job;
+          # mirror the bounded retry used for the Redis image pull.
+          for attempt in 1 2 3; do
+            if npm ci || npm install; then
+              exit 0
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "::error::Failed to install E2E npm dependencies after ${attempt} attempts."
+              exit 1
+            fi
+            echo "npm dependency install failed (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
 
       - name: Get Playwright version
         id: playwright-version
