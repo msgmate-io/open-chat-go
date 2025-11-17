@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
@@ -41,6 +42,9 @@ type BotDTO struct {
 	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
 	IsPublic            bool                   `json:"is_public"`
 	IsActive            bool                   `json:"is_active"`
+	// IntegrationName is the compiled integration whose bot bootstrap config
+	// declared this bot (empty for user-created bots).
+	IntegrationName string `json:"integration_name,omitempty"`
 }
 
 type ListedBotsPage struct {
@@ -223,6 +227,54 @@ func applyInteractionConfigOverrides(
 	return effectiveConfig
 }
 
+var (
+	botIntegrationNamesOnce sync.Once
+	botIntegrationNames     map[string]string
+)
+
+// botIntegrationNameMap maps a bot's runtime name (and, as a fallback, its bot
+// user's username) to the compiled integration that declared it. Integration
+// bot bootstrap configs are static for the lifetime of the process, so the map
+// is built once.
+func botIntegrationNameMap() map[string]string {
+	botIntegrationNamesOnce.Do(func() {
+		botIntegrationNames = map[string]string{}
+		for _, decl := range integrations.BotBootstrapDeclarations() {
+			integrationName := strings.TrimSpace(decl.IntegrationName)
+			if integrationName == "" {
+				continue
+			}
+			if name := strings.ToLower(strings.TrimSpace(decl.Config.Bot.Name)); name != "" {
+				if _, exists := botIntegrationNames[name]; !exists {
+					botIntegrationNames[name] = integrationName
+				}
+			}
+			if username := strings.ToLower(strings.TrimSpace(decl.Config.Bot.Username)); username != "" {
+				key := "username:" + username
+				if _, exists := botIntegrationNames[key]; !exists {
+					botIntegrationNames[key] = integrationName
+				}
+			}
+		}
+	})
+	return botIntegrationNames
+}
+
+func integrationNameForBot(runtime database.BotRuntimeConfig) string {
+	names := botIntegrationNameMap()
+	if name := strings.ToLower(strings.TrimSpace(runtime.Name)); name != "" {
+		if integrationName, ok := names[name]; ok {
+			return integrationName
+		}
+	}
+	if username := strings.ToLower(strings.TrimSpace(runtime.BotUser.Username)); username != "" {
+		if integrationName, ok := names["username:"+username]; ok {
+			return integrationName
+		}
+	}
+	return ""
+}
+
 func toDTO(runtime database.BotRuntimeConfig) BotDTO {
 	return BotDTO{
 		UUID:                runtime.UUID,
@@ -235,6 +287,7 @@ func toDTO(runtime database.BotRuntimeConfig) BotDTO {
 		DefaultSharedConfig: decodeSharedConfig(runtime.DefaultSharedConfig),
 		IsPublic:            runtime.IsPublic,
 		IsActive:            runtime.IsActive,
+		IntegrationName:     integrationNameForBot(runtime),
 	}
 }
 
