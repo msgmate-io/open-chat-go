@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
-import { Grid2x2, LayoutGrid, List } from "lucide-react";
+import { Boxes, Grid2x2, LayoutGrid, List, Search, SlidersHorizontal, X } from "lucide-react";
 import {
   Badge,
   Button,
@@ -9,6 +9,15 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   Input,
   LoadingSpinner,
   Text,
@@ -37,6 +46,7 @@ type BotRow = {
   name: string;
   description?: string;
   is_public: boolean;
+  integration_name?: string;
   default_shared_config?: {
     model?: string;
     backend?: string;
@@ -76,12 +86,13 @@ type OverviewEntry = {
   isAutomated: boolean;
   model?: string;
   backend?: string;
+  integrationName?: string;
   sourceOwned: boolean;
   sourcePublic: boolean;
   sourceContact: boolean;
 };
 
-type ViewFilter = "all" | "bots" | "people" | "owned" | "public";
+type EntityKindFilter = "all" | "bots" | "people";
 
 type EntityViewMode = "card" | "compact" | "list";
 
@@ -90,6 +101,26 @@ const VIEW_MODE_OPTIONS = [
   { value: "compact", label: "Compact view", Icon: Grid2x2 },
   { value: "list", label: "List view", Icon: List },
 ] as const;
+
+const KIND_QUERY_PARAM = "kind";
+const SEARCH_QUERY_PARAM = "q";
+const OWNED_QUERY_PARAM = "owned";
+const PUBLIC_QUERY_PARAM = "public";
+const INTEGRATIONS_QUERY_PARAM = "integrations";
+
+function parseBoolParam(value: string | null): boolean {
+  return value === "1" || value === "true";
+}
+
+function parseListParam(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
 
 function normalizeDescription(raw: unknown): string {
   if (typeof raw !== "string") {
@@ -157,6 +188,22 @@ function ViewModeToggle({
         );
       })}
     </div>
+  );
+}
+
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/70 bg-secondary px-2 py-[2px] text-[10px] text-foreground">
+      <span className="max-w-[10rem] truncate">{label}</span>
+      <button
+        type="button"
+        aria-label={`Remove ${label} filter`}
+        className="text-muted-foreground transition-colors hover:text-foreground"
+        onClick={onRemove}
+      >
+        <X className="size-3" />
+      </button>
+    </span>
   );
 }
 
@@ -229,6 +276,9 @@ function EntityCard({
             {entity.sourceOwned ? <Badge variant="secondary">Owned</Badge> : null}
             {entity.sourceContact ? <Badge variant="outline">In contacts</Badge> : null}
             {entity.sourcePublic ? <Badge variant="outline">Public</Badge> : null}
+            {entity.integrationName ? (
+              <Badge variant="outline">{toTitleCase(entity.integrationName)}</Badge>
+            ) : null}
           </div>
         ) : null}
       </CardHeader>
@@ -293,6 +343,11 @@ function EntityListRow({
           </Text>
         </div>
         <div className="hidden shrink-0 items-center gap-2 sm:flex">
+          {entity.integrationName ? (
+            <Badge variant="outline" className="shrink-0">
+              {toTitleCase(entity.integrationName)}
+            </Badge>
+          ) : null}
           {entity.model ? (
             <Text type={TextTypes.Body7} color="muted" className="truncate">
               {entity.model}
@@ -372,8 +427,43 @@ export function EntitiesOverview({
   const leftPannelCollapsed = useSidePanelCollapse((state) => state.isCollapsed);
   const onToggleCollapse = useSidePanelCollapse((state) => state.toggle);
   const onSidebarButtonClick = isSm ? onToggleCollapse : () => navigateTo("/chat");
-  const [filter, setFilter] = useState<ViewFilter>(routeMode === "bots" ? "bots" : "all");
-  const [query, setQuery] = useState("");
+
+  const defaultKind: EntityKindFilter = routeMode === "bots" ? "bots" : "all";
+
+  const [kindFilter, setKindFilter] = useState<EntityKindFilter>(() => {
+    if (typeof window === "undefined") {
+      return defaultKind;
+    }
+    const value = new URLSearchParams(window.location.search).get(KIND_QUERY_PARAM);
+    return value === "all" || value === "bots" || value === "people" ? value : defaultKind;
+  });
+  const [query, setQuery] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return new URLSearchParams(window.location.search).get(SEARCH_QUERY_PARAM) ?? "";
+  });
+  const [searchOpen, setSearchOpen] = useState(() => query.trim().length > 0);
+  const [ownedOnly, setOwnedOnly] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return parseBoolParam(new URLSearchParams(window.location.search).get(OWNED_QUERY_PARAM));
+  });
+  const [publicOnly, setPublicOnly] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return parseBoolParam(new URLSearchParams(window.location.search).get(PUBLIC_QUERY_PARAM));
+  });
+  const [integrationFilters, setIntegrationFilters] = useState<string[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+    return parseListParam(new URLSearchParams(window.location.search).get(INTEGRATIONS_QUERY_PARAM));
+  });
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [integrationsMenuOpen, setIntegrationsMenuOpen] = useState(false);
   const [showIntegrations, setShowIntegrations] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -383,10 +473,10 @@ export function EntitiesOverview({
   });
   const [viewMode, setViewMode] = useState<EntityViewMode>(() => {
     if (typeof window === "undefined") {
-      return "card";
+      return "list";
     }
     const value = new URLSearchParams(window.location.search).get("view");
-    return value === "compact" || value === "list" ? value : "card";
+    return value === "compact" || value === "card" || value === "list" ? value : "list";
   });
 
   useEffect(() => {
@@ -399,14 +489,39 @@ export function EntitiesOverview({
     } else {
       url.searchParams.delete("show_integrations");
     }
-    if (viewMode === "card") {
+    if (viewMode === "list") {
       url.searchParams.delete("view");
     } else {
       url.searchParams.set("view", viewMode);
     }
+    if (kindFilter === defaultKind) {
+      url.searchParams.delete(KIND_QUERY_PARAM);
+    } else {
+      url.searchParams.set(KIND_QUERY_PARAM, kindFilter);
+    }
+    if (query.trim()) {
+      url.searchParams.set(SEARCH_QUERY_PARAM, query.trim());
+    } else {
+      url.searchParams.delete(SEARCH_QUERY_PARAM);
+    }
+    if (ownedOnly) {
+      url.searchParams.set(OWNED_QUERY_PARAM, "1");
+    } else {
+      url.searchParams.delete(OWNED_QUERY_PARAM);
+    }
+    if (publicOnly) {
+      url.searchParams.set(PUBLIC_QUERY_PARAM, "1");
+    } else {
+      url.searchParams.delete(PUBLIC_QUERY_PARAM);
+    }
+    if (integrationFilters.length > 0) {
+      url.searchParams.set(INTEGRATIONS_QUERY_PARAM, integrationFilters.join(","));
+    } else {
+      url.searchParams.delete(INTEGRATIONS_QUERY_PARAM);
+    }
     const next = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState({}, "", next);
-  }, [showIntegrations, viewMode]);
+  }, [showIntegrations, viewMode, kindFilter, defaultKind, query, ownedOnly, publicOnly, integrationFilters]);
 
   const {
     data: contacts,
@@ -491,6 +606,7 @@ export function EntitiesOverview({
         isAutomated: true,
         model: undefined,
         backend: undefined,
+        integrationName: undefined,
         sourceOwned: false,
         sourcePublic: false,
         sourceContact: false,
@@ -500,6 +616,7 @@ export function EntitiesOverview({
       entry.botUUID = bot.uuid || entry.botUUID;
       entry.description = normalizeDescription(bot.description) || entry.description;
       entry.isAutomated = true;
+      entry.integrationName = bot.integration_name || entry.integrationName;
       entry.model =
         typeof bot.default_shared_config?.model === "string"
           ? bot.default_shared_config.model
@@ -526,20 +643,34 @@ export function EntitiesOverview({
     });
   }, [bots?.rows, contacts?.rows, selfUser?.uuid]);
 
+  const integrationOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const entry of entities) {
+      if (entry.integrationName) {
+        names.add(entry.integrationName);
+      }
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [entities]);
+
   const filteredEntities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
+    const integrationSet = new Set(integrationFilters);
 
     return entities.filter((entry) => {
-      if (filter === "bots" && !entry.isAutomated) {
+      if (kindFilter === "bots" && !entry.isAutomated) {
         return false;
       }
-      if (filter === "people" && entry.isAutomated) {
+      if (kindFilter === "people" && entry.isAutomated) {
         return false;
       }
-      if (filter === "owned" && !entry.sourceOwned) {
+      if (ownedOnly && !entry.sourceOwned) {
         return false;
       }
-      if (filter === "public" && !entry.sourcePublic) {
+      if (publicOnly && !entry.sourcePublic) {
+        return false;
+      }
+      if (integrationSet.size > 0 && !(entry.integrationName && integrationSet.has(entry.integrationName))) {
         return false;
       }
 
@@ -547,14 +678,20 @@ export function EntitiesOverview({
         return true;
       }
 
-      const haystack = [entry.name, entry.description, entry.model, entry.backend]
+      const haystack = [
+        entry.name,
+        entry.description,
+        entry.model,
+        entry.backend,
+        entry.integrationName,
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
       return haystack.includes(normalizedQuery);
     });
-  }, [entities, filter, query]);
+  }, [entities, kindFilter, ownedOnly, publicOnly, integrationFilters, query]);
 
   const grouped = useMemo(() => {
     const botsList = filteredEntities.filter((entry) => entry.isAutomated);
@@ -565,17 +702,131 @@ export function EntitiesOverview({
   const isLoading = contactsLoading || botsLoading;
   const hasError = Boolean(contactsError || botsError);
 
-  const onFilterClick = (value: ViewFilter) => {
-    if (value === "bots" && routeMode !== "bots") {
-      navigateTo("/chats/bots");
-      return;
-    }
-    if (value === "all" && routeMode === "bots") {
-      navigateTo("/chat/new");
-      return;
-    }
-    setFilter(value);
+  const hasSearchFilter = query.trim().length > 0;
+  const hasAttributeFilter = ownedOnly || publicOnly;
+  const hasIntegrationFilter = integrationFilters.length > 0;
+  const hasExtraFilters = hasSearchFilter || hasAttributeFilter || hasIntegrationFilter;
+  const isDefaultKind = kindFilter === defaultKind;
+  const hasAnyFilter = hasExtraFilters || !isDefaultKind;
+
+  const handleKindChange = (value: EntityKindFilter) => {
+    setKindFilter(value);
   };
+
+  const handleIntegrationToggle = (name: string, checked: boolean) => {
+    setIntegrationFilters((current) => {
+      if (checked) {
+        return current.includes(name) ? current : [...current, name];
+      }
+      return current.filter((entry) => entry !== name);
+    });
+  };
+
+  const handleResetFilters = () => {
+    setKindFilter(defaultKind);
+    setQuery("");
+    setOwnedOnly(false);
+    setPublicOnly(false);
+    setIntegrationFilters([]);
+  };
+
+  const scopeMenu = (
+    <DropdownMenu open={scopeMenuOpen} onOpenChange={setScopeMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant={!isDefaultKind || hasAttributeFilter ? "default" : "ghost"}
+          size="icon"
+          className="relative size-7"
+          aria-label="Filter entities"
+        >
+          <SlidersHorizontal className="size-4" />
+          {!isDefaultKind || hasAttributeFilter ? (
+            <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
+          ) : null}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={(event) => event.preventDefault()}>
+        <DropdownMenuLabel>Filter entities</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup
+          value={kindFilter}
+          onValueChange={(value) => handleKindChange(value as EntityKindFilter)}
+        >
+          <DropdownMenuRadioItem value="all">All</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="bots">Bots</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="people">People</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={ownedOnly}
+          onCheckedChange={(checked) => setOwnedOnly(checked === true)}
+          onSelect={(event) => event.preventDefault()}
+        >
+          Owned
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={publicOnly}
+          onCheckedChange={(checked) => setPublicOnly(checked === true)}
+          onSelect={(event) => event.preventDefault()}
+        >
+          Public
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const integrationsMenu = (
+    <DropdownMenu open={integrationsMenuOpen} onOpenChange={setIntegrationsMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant={hasIntegrationFilter ? "default" : "ghost"}
+          size="icon"
+          className="relative size-7"
+          aria-label="Filter by integration"
+        >
+          <Boxes className="size-4" />
+          {hasIntegrationFilter ? (
+            <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
+          ) : null}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={(event) => event.preventDefault()}>
+        <DropdownMenuLabel>Filter by integration</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {integrationOptions.length === 0 ? (
+          <div className="px-3 py-2">
+            <Text type={TextTypes.Body7} color="muted">
+              No integration bots
+            </Text>
+          </div>
+        ) : (
+          integrationOptions.map((name) => (
+            <DropdownMenuCheckboxItem
+              key={name}
+              checked={integrationFilters.includes(name)}
+              onCheckedChange={(checked) => handleIntegrationToggle(name, checked === true)}
+              onSelect={(event) => event.preventDefault()}
+            >
+              {toTitleCase(name)}
+            </DropdownMenuCheckboxItem>
+          ))
+        )}
+        {hasIntegrationFilter ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                setIntegrationFilters([]);
+              }}
+            >
+              Clear integration filter
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const integrationsToggleCard = (
     <Card
@@ -649,32 +900,63 @@ export function EntitiesOverview({
 
       {isSm ? integrationsToggleCard : null}
 
-      <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card/70 p-3 shadow-sm md:flex-row md:items-center md:justify-between">
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search bots, models, backends, or people"
-          className="md:max-w-md"
-        />
-        <div className="flex flex-wrap gap-2">
-          {([
-            ["all", "All"],
-            ["bots", "Bots"],
-            ["people", "People"],
-            ["owned", "Owned"],
-            ["public", "Public"],
-          ] as Array<[ViewFilter, string]>).map(([value, label]) => (
+      <div className="space-y-2 border-b border-border/60 pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Text type={TextTypes.Body7} color="muted" tag="span" bold className="uppercase tracking-wide text-[10px]">
+              Filters
+            </Text>
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {hasSearchFilter ? (
+                <FilterChip label={`Search: ${query.trim()}`} onRemove={() => setQuery("")} />
+              ) : null}
+              {ownedOnly ? <FilterChip label="Owned" onRemove={() => setOwnedOnly(false)} /> : null}
+              {publicOnly ? <FilterChip label="Public" onRemove={() => setPublicOnly(false)} /> : null}
+              {integrationFilters.map((name) => (
+                <FilterChip
+                  key={name}
+                  label={toTitleCase(name)}
+                  onRemove={() => handleIntegrationToggle(name, false)}
+                />
+              ))}
+              {hasAnyFilter ? (
+                <button
+                  type="button"
+                  className="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={handleResetFilters}
+                >
+                  Clear all
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
             <Button
-              key={value}
-              type="button"
-              size="sm"
-              variant={filter === value ? "default" : "outline"}
-              onClick={() => onFilterClick(value)}
+              variant={searchOpen ? "default" : "ghost"}
+              size="icon"
+              className="relative size-7"
+              aria-label="Search bots and people"
+              onClick={() => setSearchOpen((value) => !value)}
             >
-              {label}
+              <Search className="size-4" />
+              {hasSearchFilter ? (
+                <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
+              ) : null}
             </Button>
-          ))}
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
+            {scopeMenu}
+            {integrationsMenu}
+          </div>
         </div>
+        {searchOpen ? (
+          <Input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search bots, people, models, integrations"
+            className="h-8 text-sm md:max-w-md"
+          />
+        ) : null}
       </div>
 
       {isLoading ? (
@@ -700,7 +982,6 @@ export function EntitiesOverview({
                 <Text type={TextTypes.Heading6} tag="h2" bold>
                   Bots
                 </Text>
-                <ViewModeToggle value={viewMode} onChange={setViewMode} />
               </div>
               <EntityEntries
                 entries={grouped.botsList}
@@ -716,9 +997,6 @@ export function EntitiesOverview({
                 <Text type={TextTypes.Heading6} tag="h2" bold>
                   People
                 </Text>
-                {grouped.botsList.length === 0 ? (
-                  <ViewModeToggle value={viewMode} onChange={setViewMode} />
-                ) : null}
               </div>
               <EntityEntries
                 entries={grouped.peopleList}
@@ -791,14 +1069,7 @@ export function EntitiesOverview({
                 <CardDescription>Try clearing the search or switching filters.</CardDescription>
               </CardHeader>
               <CardContent>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setFilter(routeMode === "bots" ? "bots" : "all");
-                    setQuery("");
-                  }}
-                >
+                <Button type="button" variant="outline" onClick={handleResetFilters}>
                   Reset filters
                 </Button>
               </CardContent>
