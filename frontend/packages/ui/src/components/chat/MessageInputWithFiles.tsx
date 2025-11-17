@@ -1,6 +1,6 @@
-import { forwardRef, useState, type ReactNode } from "react";
+import { forwardRef, useState, type ClipboardEvent, type ReactNode } from "react";
 import { Search } from "lucide-react";
-import { AttachFileMenuItem, UploadedFilesPreview } from "./FileUpload";
+import { AttachFileMenuItem, UploadedFilesPreview, useFileUpload } from "./FileUpload";
 import { ComposerOptionsMenu } from "./ComposerOptionsMenu";
 import { MessageComposer, type MessageComposerProps } from "./message-composer";
 
@@ -20,6 +20,7 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
       botConfig = null,
       setText,
       footerMenuItems,
+      onPaste,
       ...props
     },
     ref
@@ -30,6 +31,32 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
 
     const handleFileUploaded = (fileId: string, fileName: string) => {
       setUploadedFiles((prev) => [...prev, { fileId, fileName }]);
+    };
+
+    const { uploadFile } = useFileUpload({
+      onFileUploaded: handleFileUploaded,
+      reuploadToOpenAI: botConfig?.backend === "openai",
+    });
+
+    const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      onPaste?.(event);
+
+      const items = event.clipboardData?.items;
+      if (!items || items.length === 0) return;
+
+      const files: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.kind !== "file") continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+
+      if (files.length === 0) return;
+
+      event.preventDefault();
+      for (const file of files) {
+        await uploadFile(file);
+      }
     };
 
     const handleFileRemoved = (fileId: string) => {
@@ -56,6 +83,7 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
         setText={setText}
         botConfig={botConfig}
         onSendMessage={handleSendMessage}
+        onPaste={handlePaste}
         hasAttachments={uploadedFiles.length > 0}
         placeholder={props.placeholder ?? "Send message to Msgmate.io"}
         attachmentsPreview={
