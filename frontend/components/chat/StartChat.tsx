@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BotSelector, Button, ComposerOptionsMenu, DropdownMenuItem, MessageInput, LoadingSpinner, Text, TextTypes } from "@open-chat-go/ui";
-import { NewBotChatCard } from './NewBotChat';
+import { BotStartDetails, type StartBotRecord } from './BotStartDetails';
 import { CollapseIndicator } from "@open-chat-go/ui";
 import { useSidePanelCollapse } from "@open-chat-go/ui";
 import { useBreakpoint } from "@/components/utils";
@@ -35,8 +35,28 @@ type ContactResponse = {
     user_uuid?: string;
     is_automated?: boolean;
     profile_data?: {
+        description?: string;
         models?: BotModel[];
     };
+}
+
+type BotListRow = {
+    uuid: string;
+    owner_user_uuid?: string;
+    bot_contact_token: string;
+    name?: string;
+    description?: string;
+    is_public?: boolean;
+    integration_name?: string;
+    default_shared_config?: Record<string, unknown>;
+}
+
+type BotsResponse = {
+    rows: BotListRow[];
+}
+
+type SelfUser = {
+    uuid?: string;
 }
 
 type ToolsResponse = {
@@ -90,11 +110,29 @@ export function StartChat({
 
     const botModels = contact?.profile_data?.models ?? []
     const isBotContact = contact?.is_automated === true
-    const selectedModelConfig = useMemo(
-        () => (botModels.find((model) => model.title === selectedModel)?.configuration ?? {}) as Record<string, unknown>,
+    const selectedBotModel = useMemo(
+        () => botModels.find((model) => model.title === selectedModel),
         [botModels, selectedModel],
     )
+    const selectedModelConfig = useMemo(
+        () => (selectedBotModel?.configuration ?? {}) as Record<string, unknown>,
+        [selectedBotModel],
+    )
     const selectedTools = useMemo(() => asStringArray(selectedModelConfig.tools), [selectedModelConfig])
+    // The bots list is the only source for the bot's own record (uuid,
+    // integration and ownership); the plain contact payload lacks it.
+    const { data: botsList } = useSWR<BotsResponse>(
+        isBotContact ? "/api/v1/bots/list?include_public=true&limit=200&page=1" : null,
+        fetcher,
+    )
+    const { data: selfUser } = useSWR<SelfUser>("/api/v1/user/self", fetcher)
+    const botRecord = useMemo<StartBotRecord | undefined>(
+        () => botsList?.rows?.find((bot) => bot.bot_contact_token === contactToken),
+        [botsList?.rows, contactToken],
+    )
+    const isOwnedBot = Boolean(
+        botRecord?.owner_user_uuid && selfUser?.uuid && botRecord.owner_user_uuid === selfUser.uuid,
+    )
     const requiredToolInitDescriptors = useMemo(
         () => resolveRequiredToolInitDescriptors(selectedTools, toolsData?.rows ?? []),
         [selectedTools, toolsData?.rows],
@@ -357,11 +395,17 @@ export function StartChat({
                     </Text>
 
                     {isBotContact ? (
-                        <div className="w-full rounded-lg border border-border bg-card p-3">
-                            <NewBotChatCard startChat={(message) => {
-                                setText(message)
-                                requestAnimationFrame(() => textareaRef.current?.focus())
-                            }} />
+                        <div className="w-full max-w-2xl">
+                            <BotStartDetails
+                                name={contact?.name}
+                                contactDescription={contact?.profile_data?.description}
+                                modelDescription={selectedBotModel?.description}
+                                botRecord={botRecord}
+                                selectedModel={selectedModel}
+                                selectedModelConfig={selectedModelConfig}
+                                isOwned={isOwnedBot}
+                                navigateTo={navigateTo}
+                            />
                         </div>
                     ) : null}
                 </div>
