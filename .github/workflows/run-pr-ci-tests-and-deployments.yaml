@@ -1770,8 +1770,9 @@ jobs:
     needs: [run-pr-ci-tests-and-deployments, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, build-backend-image-once]
     # Security trigger scope: PR events only; the review ping comment is authored
     # by github-actions (never the rely-on bot user) and notes the failure so the
-    # author can see it; the fix-plan issue creation itself is handled by the
-    # dispatched planning agent below.
+    # author can see it. The planning interaction - and, via the server-side
+    # plan_auto_implement post-action, the coding agent - are dispatched directly
+    # through the Open-Chat client; no reusable trigger workflow is involved.
     if: >-
       always() &&
       github.event_name == 'pull_request' &&
@@ -1857,8 +1858,14 @@ jobs:
           BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
           ATTEMPT: ${{ steps.attempts.outputs.attempt }}
           MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
+          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
         run: |
           set -euo pipefail
+          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
+            PLAN_NOTE="@${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments."
+          else
+            PLAN_NOTE="@${BOT_USER} a fix-plan session has been created and is **awaiting approval before it starts**; open the fix-plan interaction from the badge below and approve the pending confirmation to start the read-only planner."
+          fi
           COMMENT_BODY="$(cat <<EOF
           <!-- open-chat-ci-failure-plan -->
           :x: **PR CI run failed** (fix attempt ${ATTEMPT}/${MAX_ATTEMPTS})
@@ -1868,7 +1875,7 @@ jobs:
 
           Run: ${RUN_URL}
 
-          @${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments.
+          ${PLAN_NOTE}
           EOF
           )"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
@@ -1886,6 +1893,7 @@ jobs:
           OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
           OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || 'issue-plan-bot' }}
+          OPEN_CHAT_IMPLEMENT_BOT: ${{ vars.OPEN_CHAT_IMPLEMENT_BOT || vars.OPEN_CHAT_CODING_BOT || 'open-chat-go-repl-bot' }}
           BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
           FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
           RUN_URL: ${{ steps.failure.outputs.run_url }}
@@ -1897,31 +1905,38 @@ jobs:
           REPO: ${{ github.repository }}
           ATTEMPT: ${{ steps.attempts.outputs.attempt }}
           MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
+          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import os, json
           from client.client import OpenChatClient, TokenAuth
 
+          require_confirmation = os.environ.get("REQUIRE_CONFIRMATION", "true").strip().lower() in ("true", "1", "yes")
           post_action = {
-              "kind": "github_issue_comment",
+              "kind": "plan_auto_implement",
               "repo": os.environ["REPO"],
               "number": int(os.environ["PR_NUMBER"]),
-              # The posted comment re-enters the repo workloop: it is picked up
-              # by open-chat-pr-issue-comment-repl because it mentions the bot
-              # user (footer), which creates the fix-plan issue and implements.
+              # The server-side plan_auto_implement action posts the plan as a PR
+              # comment and dispatches the coding agent as a separate,
+              # confirmation-gated interaction. No comment-REPL / reusable
+              # workflow is involved; the dispatch is self-contained.
+              "bot": os.environ["OPEN_CHAT_IMPLEMENT_BOT"],
+              "require_confirmation": require_confirmation,
+              "post_badge": True,
               "header": (
                   "<!-- open-chat-post-interaction -->\n"
-                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")\n"
-                  "<!-- open-chat-ci-fix-plan-post -->"
+                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")"
               ),
               "footer": (
                   "Attempt " + os.environ["ATTEMPT"] + "/" + os.environ["MAX_ATTEMPTS"]
                   + " | run: " + os.environ["RUN_URL"] + " | PR: " + os.environ["PR_URL"] + "\n\n"
-                  "@cur1ousdude continue: create a fix-plan issue titled '[CI fix plan] PR #"
-                  + os.environ["PR_NUMBER"] + " attempt " + os.environ["ATTEMPT"] + "' containing the plan above "
-                  "(prefixed with the failing jobs and the run url), link the issue in a short PR comment, then "
-                  "implement it on the PR branch (" + os.environ["PR_BRANCH"] + ", head "
+                  "When the plan is ready, the coding agent runs as a separate"
+                  + (" confirmation-gated" if require_confirmation else "")
+                  + " interaction; approve the implementation badge to start it. The agent should "
+                  "create or update a '[CI fix plan] PR #"
+                  + os.environ["PR_NUMBER"] + "' issue, implement the plan on the PR branch ("
+                  + os.environ["PR_BRANCH"] + ", head "
                   + os.environ["PR_SHA"] + ") and push the fix commits so CI re-runs. Never poll CI."
               ),
           }
@@ -1964,6 +1979,8 @@ jobs:
                                + os.environ["FAILED_JOBS"] + "\n")
           message = message + ("CI run url: " + os.environ["RUN_URL"] + "\n")
           message = message + ("PR url: " + os.environ["PR_URL"] + "\n")
+          if require_confirmation:
+              message = message + ("\nNOTE: this planning interaction is confirmation-gated; it will not start until the owner approves the pending confirmation.\n")
 
           client = OpenChatClient(
               base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
@@ -1972,7 +1989,8 @@ jobs:
           me = client.me()
           print("Authenticated as:", me.name)
           bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          interaction = bot.create_interaction(message=message, overrides={"post_action": post_action}, share=True)
+          overrides = {"post_action": post_action, "require_confirmation": require_confirmation}
+          interaction = bot.create_interaction(message=message, overrides=overrides, share=True)
           print("Created interaction chat:", interaction.uuid)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"chat_uuid={interaction.uuid}\n")
@@ -1989,14 +2007,20 @@ jobs:
           CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
           SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
         run: |
           set -euo pipefail
           INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
           SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
           BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
+          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
+            NOTE="*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate interaction.*"
+          else
+            NOTE="*A fix-plan session was created for this CI failure and is **awaiting approval**: click the badge above, review it and approve the pending confirmation to start the read-only planner. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate, confirmation-gated interaction.*"
+          fi
           COMMENT_BODY="$(printf '%s\n' \
             "[![open-chat fix plan session](%s)](%s)" \
-            "*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment (marker open-chat-ci-fix-plan-post) which automatically dispatches the implementation agent.")"
+            "${NOTE}")"
           COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
           curl -fsSL -X POST \
