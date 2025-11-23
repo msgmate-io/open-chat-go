@@ -1232,20 +1232,11 @@ jobs:
       matrix:
         shard: ${{ fromJson(needs.run-pr-ci-e2e-plan.outputs.matrix) }}
     steps:
-      # E2E only needs disk for the Playwright browser + one pulled backend
-      # image. The action's `large-packages` (apt remove), `docker-images`
-      # (prune) and `swap-storage` phases dominate its runtime (~4 min) without
-      # being needed here, so keep only the fast directory removals.
-      - name: Free runner disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: false
+      # No disk-reclamation step here: the E2E shard only installs Playwright
+      # and pulls one prebuilt backend image (<5 GB), which comfortably fits the
+      # runner's default free space. The `jlumbroso/free-disk-space` action
+      # spent ~2.5-4 min removing Android/.NET/Haskell for no benefit (its slow
+      # phases are the rm -rf of Android/.NET, not just the apt/prune phases).
 
       - name: Checkout source repository
         uses: actions/checkout@v4
