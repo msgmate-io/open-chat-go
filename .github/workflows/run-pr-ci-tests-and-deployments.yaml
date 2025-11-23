@@ -777,8 +777,6 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
-          cache-from: type=gha,scope=backend-full
-          cache-to: type=gha,mode=max,scope=backend-full
 
       - name: Print built image provenance
         run: |
@@ -844,8 +842,6 @@ jobs:
             # core-only smoke build: no integration frontend pages are linked,
             # so an empty frontend stage is enough.
             FRONTEND_STAGE=frontend_empty
-          cache-from: type=gha,scope=backend-core-only
-          cache-to: type=gha,mode=max,scope=backend-core-only
 
       - name: Start backend from core-only image for smoke test
         env:
