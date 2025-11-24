@@ -298,6 +298,20 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 					})
 				}
 			}
+			// An ask-only relay question leaves a pending opencode_question
+			// marker until the user answers it; it requires user action, so the
+			// interaction renders as the blue "needs confirmation" state and the
+			// question joins the action-task stack.
+			if question, ok := meta["opencode_question"].(map[string]interface{}); ok {
+				if status, _ := question["status"].(string); status == "pending" {
+					actions = append(actions, ActionTaskAction{
+						Kind:        ActionTaskKindOpencodeQuestion,
+						Title:       actionTaskFirstNonEmpty(actionTaskStringField(question, "title"), "OpenCode question"),
+						Description: actionTaskStringField(question, "description"),
+						Reason:      actionTaskFirstNonEmpty(actionTaskStringField(question, "reason"), actionTaskStringField(question, "id")),
+					})
+				}
+			}
 			// A terminal OpenCode error (build/plan failure) leaves a pending
 			// opencode_needs_action marker; it requires user action, so the
 			// interaction renders as the blue "needs confirmation" state.
