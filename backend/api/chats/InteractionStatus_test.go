@@ -29,6 +29,29 @@ func TestMessageHasPendingConfirmationRecognizesOpencodeNeedsAction(t *testing.T
 	}
 }
 
+func TestMessageHasPendingConfirmationRecognizesOpencodeQuestion(t *testing.T) {
+	pending := database.Message{
+		MetaData: database.JSONRaw(`{"finished":true,"opencode_question":{"status":"pending","id":"que_1","title":"OpenCode needs your input","description":"Which scope?"}}`),
+	}
+	if !messageHasPendingConfirmation(pending) {
+		t.Fatalf("expected a pending opencode_question marker to count as a pending confirmation")
+	}
+
+	answered := database.Message{
+		MetaData: database.JSONRaw(`{"finished":true,"opencode_question":{"status":"answered","id":"que_1"}}`),
+	}
+	if messageHasPendingConfirmation(answered) {
+		t.Fatalf("expected an answered opencode_question marker to be ignored")
+	}
+
+	cancelled := database.Message{
+		MetaData: database.JSONRaw(`{"finished":true,"opencode_question":{"status":"cancelled","id":"que_1"}}`),
+	}
+	if messageHasPendingConfirmation(cancelled) {
+		t.Fatalf("expected a cancelled opencode_question marker to be ignored")
+	}
+}
+
 func TestMessageHasPendingConfirmationRecognizesInteractionConfirmation(t *testing.T) {
 	pending := database.Message{
 		MetaData: database.JSONRaw(`{"finished":true,"interaction_confirmation":{"status":"pending","source_message_uuid":"msg-1"}}`),
