@@ -31,6 +31,14 @@ Administrators can grant or revoke per-user integration access through the
 admin integration access routes. Those management routes are intentionally not
 documented here.
 
+The private `account_management` integration owns the administrative console for
+this: an account directory (humans and bots), profile/email/password/2FA and
+session controls, login history, per-user and per-bot integration access
+matrices, bot owner management and an audit trail. Its pages live under
+`/integrations/account_management` (`dashboard`, `users`, `users/{user_uuid}`,
+`bots`, `bots/{bot_uuid}`, `integrations`) and its API under
+`/api/v1/integrations/account_management/admin`.
+
 ## Tool interface
 
 Tools implement a common Go interface (`clients/go_tool_interface`). A tool
