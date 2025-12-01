@@ -10,6 +10,7 @@
   "scripts": {
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
+    "test": "vitest --project unit run",
     "test-storybook": "vitest --project storybook run",
     "typecheck": "tsc --noEmit"
   },
