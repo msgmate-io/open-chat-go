@@ -10,6 +10,17 @@ export default defineConfig({
   test: {
     projects: [
       {
+        // Pure Node unit tests (breakpoint / layout-coercion helpers). These
+        // need no browser so they run everywhere, including the Alpine dev
+        // containers where the Playwright browser cannot launch.
+        extends: true,
+        test: {
+          name: "unit",
+          environment: "node",
+          include: ["src/**/*.test.ts"],
+        },
+      },
+      {
         extends: true,
         plugins: [
           storybookTest({
