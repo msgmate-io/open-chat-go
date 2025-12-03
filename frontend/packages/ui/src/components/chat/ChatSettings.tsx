@@ -1,16 +1,21 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState, type ComponentProps, type ComponentType, type ReactNode } from "react"
 import { mutate } from "swr"
 import { Plus, Trash2, X } from "lucide-react"
 import { Button } from "../button"
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "../dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogTrigger,
+} from "../dialog"
 import { Input } from "../input"
 import { Icon } from "../icon"
+import { useIsSmallScreen } from "../../hooks/use-mobile"
 
 const normalizeTag = (tag: string) => tag.trim().toLowerCase()
 
@@ -25,19 +30,40 @@ const invalidateChatCaches = (chatUUID?: string) =>
     { revalidate: true }
   )
 
+type SettingsTrigger = ComponentType<ComponentProps<typeof DropdownMenuTrigger>>
+
+function SettingsSeparator() {
+  return <div className="my-1 h-px shrink-0 bg-border" role="separator" aria-hidden="true" />
+}
+
 export function ChatSettings({
   chat,
   open,
   setOpen,
   onDeleted,
+  compact: compactProp,
   children,
 }: {
   chat: any
   open: boolean
   setOpen: (open: boolean) => void
   onDeleted?: (chatUUID: string) => void
-  children: ReactNode
+  /**
+   * Force the compact (icon + modal) presentation. When omitted the surface
+   * collapses automatically on very small / short viewports.
+   */
+  compact?: boolean
+  /**
+   * Render-prop receiving the trigger component for the active presentation
+   * (`DropdownMenuTrigger` on desktop, `DialogTrigger` on small screens) so the
+   * caller can wrap its own button without knowing the mode.
+   */
+  children: (props: { Trigger: SettingsTrigger }) => ReactNode
 }) {
+  const isSmallScreen = useIsSmallScreen()
+  const compact = compactProp ?? isSmallScreen
+  const Trigger: SettingsTrigger = compact ? DialogTrigger : DropdownMenuTrigger
+
   const [extraName, setExtraName] = useState(chat?.settings?.title || "")
   const [tags, setTags] = useState<string[]>(Array.isArray(chat?.tags) ? chat.tags : [])
   const [newTag, setNewTag] = useState("")
@@ -142,192 +168,213 @@ export function ChatSettings({
     }
   }
 
-  return (
-    <DropdownMenu
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen)
-        if (!nextOpen) {
-          setConfirmDelete(false)
-        }
-      }}
-    >
-      {children}
-      <DropdownMenuContent className="w-56" align="end">
-        <DropdownMenuLabel>Chat Settings</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <div className="flex flex-row items-center gap-1 px-2 py-1">
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) {
+      setConfirmDelete(false)
+    }
+  }
+
+  // Generic body shared by the dropdown (desktop) and the modal (small screens).
+  // It deliberately avoids DropdownMenu-specific primitives so it can render in
+  // either container.
+  const content = (
+    <div className="flex flex-col text-sm">
+      <p className="px-2 pb-1 pt-0.5 text-sm font-semibold text-foreground">Chat Settings</p>
+      <SettingsSeparator />
+      <div className="flex flex-row items-center gap-1 px-2 py-1">
+        <Input
+          type="text"
+          value={extraName}
+          onChange={(e) => setExtraName(e.target.value)}
+          placeholder="Extra name"
+          className="h-8 bg-background"
+        />
+        {(!extraName || !extraNameChanged) && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="Edit chat title"
+          >
+            <Icon name="pencil" size="sm" />
+          </Button>
+        )}
+        {extraName && extraNameChanged && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="Save chat title"
+            disabled={savingTitle}
+            onClick={onSaveExtraTitle}
+          >
+            <Icon name="check" size="sm" />
+          </Button>
+        )}
+        {chat?.settings?.title && !extraNameChanged && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="Clear saved title"
+            disabled={savingTitle}
+            onClick={onClearExtraTitle}
+          >
+            <Icon name="trash" size="sm" />
+          </Button>
+        )}
+        {!chat?.settings?.title && !extraNameChanged && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="No custom title set"
+          >
+            <Icon name="eraser" size="sm" className="text-muted-foreground" />
+          </Button>
+        )}
+        {extraNameChanged && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="Reset title changes"
+            onClick={onResetExtraText}
+          >
+            <Icon name="undo" size="sm" />
+          </Button>
+        )}
+      </div>
+      <SettingsSeparator />
+      <div className="px-2 py-1">
+        <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Tags</p>
+        <div className="mb-1 flex flex-wrap gap-1">
+          {tags.length === 0 ? (
+            <span className="text-[10px] text-muted-foreground">No tags</span>
+          ) : (
+            tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-secondary px-1.5 py-[1px] text-[10px]"
+              >
+                {tag}
+                <button
+                  type="button"
+                  aria-label={`Remove ${tag} tag`}
+                  className="text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  disabled={savingTags}
+                  onClick={() => removeTag(tag)}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+        <div className="flex items-center gap-1">
           <Input
             type="text"
-            value={extraName}
-            onChange={(e) => setExtraName(e.target.value)}
-            placeholder="Extra name"
-            className="h-8 bg-background"
-          />
-          {(!extraName || !extraNameChanged) && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              aria-label="Edit chat title"
-            >
-              <Icon name="pencil" size="sm" />
-            </Button>
-          )}
-          {extraName && extraNameChanged && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              aria-label="Save chat title"
-              disabled={savingTitle}
-              onClick={onSaveExtraTitle}
-            >
-              <Icon name="check" size="sm" />
-            </Button>
-          )}
-          {chat?.settings?.title && !extraNameChanged && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              aria-label="Clear saved title"
-              disabled={savingTitle}
-              onClick={onClearExtraTitle}
-            >
-              <Icon name="trash" size="sm" />
-            </Button>
-          )}
-          {!chat?.settings?.title && !extraNameChanged && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              aria-label="No custom title set"
-            >
-              <Icon name="eraser" size="sm" className="text-muted-foreground" />
-            </Button>
-          )}
-          {extraNameChanged && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              aria-label="Reset title changes"
-              onClick={onResetExtraText}
-            >
-              <Icon name="undo" size="sm" />
-            </Button>
-          )}
-        </div>
-        <DropdownMenuSeparator />
-        <div className="px-2 py-1">
-          <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Tags</p>
-          <div className="mb-1 flex flex-wrap gap-1">
-            {tags.length === 0 ? (
-              <span className="text-[10px] text-muted-foreground">No tags</span>
-            ) : (
-              tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-secondary px-1.5 py-[1px] text-[10px]"
-                >
-                  {tag}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${tag} tag`}
-                    className="text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                    disabled={savingTags}
-                    onClick={() => removeTag(tag)}
-                  >
-                    <X className="size-3" />
-                  </button>
-                </span>
-              ))
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <Input
-              type="text"
-              value={newTag}
-              onChange={(event) => setNewTag(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault()
-                  addTag()
-                }
-              }}
-              placeholder="Add tag"
-              className="h-7 text-xs"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0"
-              aria-label="Add tag"
-              disabled={savingTags || normalizeTag(newTag) === ""}
-              onClick={addTag}
-            >
-              <Plus className="size-3.5" />
-            </Button>
-          </div>
-        </div>
-        <DropdownMenuSeparator />
-        {chat?.partner?.is_bot && (
-          <>
-            <DropdownMenuLabel className="font-normal text-muted-foreground">
-              Bot chat actions coming soon
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        {confirmDelete ? (
-          <div className="px-2 py-1">
-            <p className="mb-2 text-xs text-muted-foreground">
-              Delete this chat? This cannot be undone.
-            </p>
-            <div className="flex justify-end gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                disabled={deleting}
-                onClick={() => setConfirmDelete(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                disabled={deleting}
-                onClick={() => void deleteChat()}
-              >
-                {deleting ? "Deleting…" : "Delete"}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <DropdownMenuItem
-            variant="destructive"
-            disabled={deleting}
-            onSelect={(event) => {
-              event.preventDefault()
-              setConfirmDelete(true)
+            value={newTag}
+            onChange={(event) => setNewTag(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                addTag()
+              }
             }}
+            placeholder="Add tag"
+            className="h-7 text-xs"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            aria-label="Add tag"
+            disabled={savingTags || normalizeTag(newTag) === ""}
+            onClick={addTag}
           >
-            <Trash2 className="size-4" />
-            Delete chat
-          </DropdownMenuItem>
-        )}
+            <Plus className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+      <SettingsSeparator />
+      {chat?.partner?.is_bot && (
+        <>
+          <p className="px-2 py-1.5 text-xs font-normal text-muted-foreground">
+            Bot chat actions coming soon
+          </p>
+          <SettingsSeparator />
+        </>
+      )}
+      {confirmDelete ? (
+        <div className="px-2 py-1">
+          <p className="mb-2 text-xs text-muted-foreground">
+            Delete this chat? This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={deleting}
+              onClick={() => setConfirmDelete(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={deleting}
+              onClick={() => void deleteChat()}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={deleting}
+          onClick={() => setConfirmDelete(true)}
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 disabled:pointer-events-none disabled:opacity-50"
+        >
+          <Trash2 className="size-4" />
+          Delete chat
+        </button>
+      )}
+    </div>
+  )
+
+  if (compact) {
+    return (
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        {children({ Trigger })}
+        <DialogContent
+          data-testid="chat-settings-modal"
+          className="max-h-[85vh] w-[calc(100%-2rem)] max-w-sm gap-0 overflow-y-auto p-4"
+        >
+          <DialogTitle className="sr-only">Chat settings</DialogTitle>
+          {content}
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  return (
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+      {children({ Trigger })}
+      <DropdownMenuContent data-testid="chat-settings-dropdown" className="w-56" align="end">
+        {content}
       </DropdownMenuContent>
     </DropdownMenu>
   )

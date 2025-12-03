@@ -37,6 +37,11 @@ type LoginSuccessResponse = {
     user?: Record<string, unknown>
 }
 
+// Keep the large pill inputs from eating the whole viewport on very short
+// screens (native app landscape / near-square devices).
+const loginInputClassName =
+    "rounded-full py-6 text-lg text-center border-2 [@media(max-height:700px)]:py-4 [@media(max-height:700px)]:text-base"
+
 type EmailVerificationStatusResponse = {
     require_email_verification?: boolean
     is_email_verified?: boolean
@@ -219,7 +224,7 @@ export default function LoginHero({
                                     autoComplete="username"
                                     placeholder="Username or Email"
                                     {...field}
-                                    className="rounded-full py-6 text-lg text-center border-2"
+                                     className={loginInputClassName}
                                 />
                             </FormControl>
                             <FormMessage className="text-center" />
@@ -235,7 +240,7 @@ export default function LoginHero({
                         >
                             <FormControl>
                                 <div className="relative">
-                                    <Input type={showPassword ? 'text' : 'password'} placeholder="Password" {...field} className="rounded-full py-6 text-lg text-center border-2" />
+                                    <Input type={showPassword ? 'text' : 'password'} placeholder="Password" {...field} className={loginInputClassName} />
                                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center text-muted-foreground cursor-pointer">
                                         {showPassword ? (
                                             <EyeOff className="h-6 w-6" onClick={togglePasswordVisibility} />
@@ -260,7 +265,7 @@ export default function LoginHero({
                                     className="w-full space-y-0"
                                 >
                                     <FormControl>
-                                        <Input type="text" placeholder="2FA Code" {...field} className="rounded-full py-6 text-lg text-center border-2" />
+                                        <Input type="text" placeholder="2FA Code" {...field} className={loginInputClassName} />
                                     </FormControl>
                                     <FormMessage className="text-center" />
                                     {!errors?.two_factor_code && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
@@ -278,7 +283,7 @@ export default function LoginHero({
                                     className="w-full space-y-0"
                                 >
                                     <FormControl>
-                                        <Input type="text" placeholder="Recovery Code" {...field} className="rounded-full py-6 text-lg text-center border-2" />
+                                        <Input type="text" placeholder="Recovery Code" {...field} className={loginInputClassName} />
                                     </FormControl>
                                     <FormMessage className="text-center" />
                                     {!errors?.recovery_code && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
@@ -392,7 +397,7 @@ export function LoginSection({
         }
     }, [googleLoginEnabled, googleClientID, googleLoginRedirectURL, googleOpen])
 
-    return <div className="container w-full max-w-xl py-2 sm:py-10 flex flex-col items-center content-center text-foreground" id={sectionId}>
+    return <div className="container w-full max-w-xl py-2 sm:py-10 [@media(max-height:700px)]:py-0 flex flex-col items-center content-center text-foreground" id={sectionId}>
         <div className="flex flex-col items-center content-center justify-center pb-2">
             <Text type={TextTypes.Heading5} tag="h1" bold center>
                 Welcome back!
