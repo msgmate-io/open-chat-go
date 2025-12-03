@@ -118,17 +118,24 @@ done
 # clients/integrations/<name> (fetched by the integration manager). Commit and
 # push changed integration checkouts too, then refresh their lockfile pins.
 INTEGRATION_PATHS=()
+# Detect a repo with `git rev-parse` rather than asserting `.git` is a
+# directory: integration checkouts materialized by the manager use a `.git`
+# *file* (`gitdir: ...`), so a directory check silently skips them.
+is_git_work_tree() {
+  git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 if [[ -d "${REPO_ROOT}/clients/integrations" ]]; then
   for integ_path in "${REPO_ROOT}"/clients/integrations/*/; do
     [[ -d "${integ_path}" ]] || continue
-    [[ -d "${integ_path}/.git" ]] || continue
+    is_git_work_tree "${integ_path}" || continue
     INTEGRATION_PATHS+=("clients/integrations/$(basename "${integ_path}")")
   done
 fi
 
 # Profile-scoped private repos materialized by `openchat-integrations setup`.
 for setup_path in development/ci development/helm clients/gomobile clients/llm_coding_agents; do
-  if [[ -d "${REPO_ROOT}/${setup_path}/.git" ]]; then
+  if is_git_work_tree "${REPO_ROOT}/${setup_path}"; then
     INTEGRATION_PATHS+=("${setup_path}")
   fi
 done
