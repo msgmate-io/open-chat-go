@@ -2,11 +2,35 @@ package websocket
 
 import (
 	"backend/database"
+	"context"
 	"errors"
+	"net"
 	"net/http"
 
+	"github.com/coder/websocket"
 	"gorm.io/gorm"
 )
+
+// isExpectedSocketClose reports whether an error returned while serving a
+// WebSocket is a normal disconnect (the client went away or cancelled the
+// request) rather than a real failure. Logging those disconnects as errors
+// produced a steady stream of "context canceled" noise.
+func isExpectedSocketClose(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	switch websocket.CloseStatus(err) {
+	case websocket.StatusNormalClosure,
+		websocket.StatusGoingAway,
+		websocket.StatusNoStatusRcvd,
+		websocket.StatusAbnormalClosure:
+		return true
+	}
+	return false
+}
 
 func (ws *WebSocketHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value("user").(*database.User)
@@ -17,8 +41,11 @@ func (ws *WebSocketHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 	// Handle WebSocket subscription first, before any potential writes to the response
 	if err := ws.SubscribeChannel(w, r, user.UUID); err != nil {
-		// Log the error but use http.Error before any WebSocket upgrade happens
-		ws.logf("error soket connection error: %v", err)
+		// Log real failures only; a client disconnect (context canceled / closed
+		// connection) is expected and must not be reported as an error.
+		if !isExpectedSocketClose(err) {
+			ws.logf("error soket connection error: %v", err)
+		}
 		// http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -81,7 +108,9 @@ func (ws *WebSocketHandler) ConnectSharedInteraction(w http.ResponseWriter, r *h
 	}
 
 	if err := ws.SubscribeChatChannel(w, r, chat.UUID); err != nil {
-		ws.logf("error shared interaction socket connection error: %v", err)
+		if !isExpectedSocketClose(err) {
+			ws.logf("error shared interaction socket connection error: %v", err)
+		}
 		return
 	}
 }
