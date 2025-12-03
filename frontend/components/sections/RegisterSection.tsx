@@ -5,6 +5,9 @@ import { Button, Collapsible, CollapsibleContent, CollapsibleTrigger, Text, Text
 import { Input } from "@/components/Input"
 import { ChevronDown } from "lucide-react"
 
+const registerInputClassName =
+  "rounded-full py-6 text-lg text-center border-2 [@media(max-height:700px)]:py-4 [@media(max-height:700px)]:text-base"
+
 type RegisterResponse = {
   message?: string
   request_uuid?: string
@@ -180,7 +183,7 @@ export default function RegisterSection({
   }
 
   return (
-    <div className="container pt-6 pb-20 sm:py-32 flex flex-col flex-grow items-center content-center justify-start sm:justify-center text-foreground max-w-xl">
+    <div className="container pt-6 pb-20 sm:py-16 [@media(max-height:700px)]:pt-2 [@media(max-height:700px)]:pb-16 flex flex-col flex-grow items-center content-center justify-start sm:justify-center text-foreground max-w-xl">
       <div className="flex flex-col items-center content-center justify-center pb-2">
         <Text type={TextTypes.Heading5} tag="h1" bold center>
           {requestMode ? "Send signup request" : "Create your account"}
@@ -197,21 +200,21 @@ export default function RegisterSection({
         <Input
           type="text"
           placeholder="Name"
-          className="rounded-full py-6 text-lg text-center border-2"
+          className={registerInputClassName}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
         <Input
           type="email"
           placeholder="Email"
-          className="rounded-full py-6 text-lg text-center border-2"
+          className={registerInputClassName}
           value={email}
           onChange={(event) => setEmail(event.target.value)}
         />
         <Input
           type="password"
           placeholder="Password"
-          className="rounded-full py-6 text-lg text-center border-2"
+          className={registerInputClassName}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
