@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG GOLANG_VERSION=1.25.10
+ARG GOLANG_VERSION=1.26
 ARG ALPINE_VERSION=3.20
 ARG NODE_VERSION=22
 ARG FRONTEND_STAGE=frontend
@@ -15,14 +15,15 @@ WORKDIR /workspace
 COPY integrations.yaml integrations.lock.json /workspace/
 COPY development/ /workspace/development/
 COPY clients/integrations /workspace/clients/integrations
-RUN pip install --no-cache-dir --break-system-packages /workspace/development/build-tools
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --break-system-packages /workspace/development/build-tools
 COPY frontend/ /workspace/frontend/
 WORKDIR /workspace/frontend
 # Link integration-owned pages (kept in the integration repositories) before
 # building so Vike prerenders them. Only integrations that are present get
 # linked, keeping per-integration React code private.
 RUN openchat-integrations frontend --profile "${INTEGRATION_PROFILE}"
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 RUN npm run build
 RUN ./generate_golang_routes.sh
 
@@ -51,7 +52,8 @@ RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-pip py3-yaml g
 COPY integrations.yaml /integrations.yaml
 COPY integrations.lock.json /integrations.lock.json
 COPY development/ /development/
-RUN pip install --no-cache-dir --break-system-packages /development/build-tools
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --break-system-packages /development/build-tools
 COPY clients/ /clients/
 COPY backend/ ./
 
@@ -79,7 +81,13 @@ RUN openchat-integrations resolve --profile "${INTEGRATION_PROFILE}" \
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
-RUN bash full_build.sh --no-frontend
+# Cache the Go module download, the compiler's content-addressed build cache and
+# the repo-local tool bin (swag) so incremental builds only recompile the
+# packages that actually changed instead of the whole dependency tree.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/backend/.tools \
+    bash full_build.sh --no-frontend
 RUN mkdir -p /backend/little_world_default_bots \
   && if [ -d /clients/integrations/admin_db_managemnt_integration/little_world_default_bots ]; then \
        cp -a /clients/integrations/admin_db_managemnt_integration/little_world_default_bots/. /backend/little_world_default_bots/; \

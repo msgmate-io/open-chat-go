@@ -756,7 +756,9 @@ jobs:
             echo "::error::image_url output is empty."
             exit 1
           fi
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+          echo "cache_ref=ghcr.io/${IMAGE_REPO}:buildcache-full" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         run: |
@@ -777,6 +779,8 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
+          cache-from: type=registry,ref=${{ steps.image.outputs.cache_ref }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.cache_ref }},mode=max
 
       - name: Print built image provenance
         run: |
@@ -819,6 +823,7 @@ jobs:
           IMAGE_TAG="pr-${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}-${SHORT_SHA}-core-only"
           IMAGE_URL="ghcr.io/${IMAGE_REPO}:${IMAGE_TAG}"
           echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+          echo "cache_ref=ghcr.io/${IMAGE_REPO}:buildcache-core-only" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         run: |
@@ -842,6 +847,8 @@ jobs:
             # core-only smoke build: no integration frontend pages are linked,
             # so an empty frontend stage is enough.
             FRONTEND_STAGE=frontend_empty
+          cache-from: type=registry,ref=${{ steps.image.outputs.cache_ref }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.cache_ref }},mode=max
 
       - name: Start backend from core-only image for smoke test
         env:
