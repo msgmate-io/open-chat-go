@@ -766,7 +766,32 @@ jobs:
           echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Cache Go build/module/tool caches
+        id: gocache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .buildkit-cache/go-build
+            .buildkit-cache/go-mod
+            .buildkit-cache/tools
+          key: open-chat-gocache-full-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}
+          restore-keys: |
+            open-chat-gocache-full-
+
+      - name: Inject Go caches into the builder
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              ".buildkit-cache/go-build": "/root/.cache/go-build",
+              ".buildkit-cache/go-mod": "/go/pkg/mod",
+              ".buildkit-cache/tools": "/backend/.tools"
+            }
+          skip-extraction: ${{ steps.gocache.outputs.cache-hit }}
 
       - name: Build and push backend image
         id: build
@@ -831,7 +856,32 @@ jobs:
           echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Cache Go build/module/tool caches
+        id: gocache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .buildkit-cache/go-build
+            .buildkit-cache/go-mod
+            .buildkit-cache/tools
+          key: open-chat-gocache-core-only-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}
+          restore-keys: |
+            open-chat-gocache-core-only-
+
+      - name: Inject Go caches into the builder
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              ".buildkit-cache/go-build": "/root/.cache/go-build",
+              ".buildkit-cache/go-mod": "/go/pkg/mod",
+              ".buildkit-cache/tools": "/backend/.tools"
+            }
+          skip-extraction: ${{ steps.gocache.outputs.cache-hit }}
 
       - name: Build and push core-only backend image
         id: build
