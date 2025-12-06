@@ -34,6 +34,7 @@ func seedServerAccountState(t *testing.T, db *gorm.DB, userID uint, suspended bo
 func serveSessionAuthRequest(db *gorm.DB, token string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil)
 	req.AddCookie(&http.Cookie{Name: "session_id", Value: token})
+	//nolint:staticcheck // mirrors the server's string "db" context key convention
 	req = req.WithContext(context.WithValue(req.Context(), "db", db))
 	rr := httptest.NewRecorder()
 	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +92,7 @@ func TestAuthMiddlewareBlocksSuspendedBearerToken(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil)
 	req.Header.Set("Authorization", "Bearer "+raw)
+	//nolint:staticcheck // mirrors the server's string "db" context key convention
 	req = req.WithContext(context.WithValue(req.Context(), "db", db))
 	rr := httptest.NewRecorder()
 	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
