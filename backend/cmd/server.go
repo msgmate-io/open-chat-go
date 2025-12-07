@@ -328,6 +328,16 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "maximum number of active browser tokens per user; oldest browser tokens are evicted when the limit is exceeded",
 			Value:   10,
 		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("OPEN_CHAT_SECRET_PASSWORD"),
+			Name:    "secret-password",
+			Usage:   "password used to unseal config `secrets:` blocks at startup",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("OPEN_CHAT_SECRET_PASSWORD_FILE"),
+			Name:    "secret-password-file",
+			Usage:   "path to a file containing the config secret password",
+		},
 	}
 
 	flags = append(flags, GetRedisFlags()...)
