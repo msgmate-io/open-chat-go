@@ -165,38 +165,9 @@ func secretRekeyCli() *cli.Command {
 			if len(blocks) == 0 {
 				return errors.New("config has no `secrets` section")
 			}
-			// Use distinct session keys: the provider caches the derived key per
-			// session key, so reusing secretstore.BootSessionKey for both
-			// passwords would overwrite the old-password authorization and make
-			// oldProvider.Unseal decrypt old blocks with the new key.
-			oldProvider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey+":rekey-old", oldPassword)
+			rekeyed, err := rekeySecretBlocks(ctx, blocks, oldPassword, newPassword)
 			if err != nil {
 				return err
-			}
-			newProvider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey+":rekey-new", newPassword)
-			if err != nil {
-				return err
-			}
-			rekeyed := map[string]secretstore.Block{}
-			for ref, block := range blocks {
-				if strings.TrimSpace(block.Ref) == "" {
-					block.Ref = ref
-				}
-				plaintext, err := oldProvider.Unseal(ctx, block)
-				if err != nil {
-					return fmt.Errorf("failed to unseal block %q: %w", ref, err)
-				}
-				resealed, err := newProvider.Seal(ctx, secretstore.SealParams{
-					OwnerUUID: block.OwnerUUID,
-					Scope:     block.Scope,
-					Label:     block.Label,
-					Algorithm: block.Algorithm,
-					Plaintext: plaintext,
-				})
-				if err != nil {
-					return fmt.Errorf("failed to reseal block %q: %w", ref, err)
-				}
-				rekeyed[ref] = resealed
 			}
 			doc["secrets"] = rekeyed
 			if err := writeConfigJSONAtomic(c.String("config"), doc); err != nil {
@@ -206,6 +177,64 @@ func secretRekeyCli() *cli.Command {
 			return nil
 		},
 	}
+}
+
+// rekeySecretBlocks re-encrypts every server-global config block from
+// oldPassword to newPassword.
+//
+// The active provider caches the derived key per session key. Config blocks are
+// owner-less, so the tvault provider always unseals/seals them under
+// secretstore.BootSessionKey. Authorizing the new password before the old one
+// is used would therefore overwrite the old authorization and make the reseal
+// step reuse the old key. To avoid that the blocks are first decrypted with the
+// old password and only then is the provider re-authorized with the new one, so
+// the subsequent seals use the new key.
+func rekeySecretBlocks(ctx context.Context, blocks map[string]secretstore.Block, oldPassword, newPassword string) (map[string]secretstore.Block, error) {
+	oldProvider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey, oldPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]string, 0, len(blocks))
+	plaintexts := make(map[string][]byte, len(blocks))
+	for ref, block := range blocks {
+		if strings.TrimSpace(block.Ref) == "" {
+			block.Ref = ref
+		}
+		plaintext, err := oldProvider.Unseal(ctx, block)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unseal block %q: %w", ref, err)
+		}
+		refs = append(refs, ref)
+		plaintexts[ref] = plaintext
+	}
+
+	// Overwrites the BootSessionKey authorization cached above: every config
+	// block is now sealed under the new password.
+	newProvider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey, newPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	rekeyed := make(map[string]secretstore.Block, len(blocks))
+	for _, ref := range refs {
+		block := blocks[ref]
+		if strings.TrimSpace(block.Ref) == "" {
+			block.Ref = ref
+		}
+		resealed, err := newProvider.Seal(ctx, secretstore.SealParams{
+			OwnerUUID: block.OwnerUUID,
+			Scope:     block.Scope,
+			Label:     block.Label,
+			Algorithm: block.Algorithm,
+			Plaintext: plaintexts[ref],
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to reseal block %q: %w", ref, err)
+		}
+		rekeyed[ref] = resealed
+	}
+	return rekeyed, nil
 }
 
 func secretMigrateConfigCli() *cli.Command {
