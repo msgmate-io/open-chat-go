@@ -4,6 +4,7 @@ import (
 	"backend/cmd"
 	"backend/integrations"
 	"backend/runtimecfg"
+	"backend/secretstore"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	ufcli "github.com/urfave/cli/v3"
 
 	goyaml "go.yaml.in/yaml/v3"
+	"golang.org/x/term"
 )
 
 type openChatConfigBootstrap struct {
@@ -30,6 +32,10 @@ type openChatConfig struct {
 	Env          map[string]interface{}            `json:"env"`
 	Integrations map[string]map[string]interface{} `json:"integrations"`
 	Bootstrap    *openChatBootstrapConfig          `json:"bootstrap,omitempty"`
+	// Secrets holds sealed values referenced from env/integrations via a
+	// `$tvault` marker (or a `tvault://<ref>` string). The block key is the
+	// block ref.
+	Secrets map[string]secretstore.Block `json:"secrets,omitempty"`
 	// Anchors is consumed by authoring tools (YAML aliases); it is never
 	// used by the runtime and is ignored here.
 	Anchors map[string]interface{} `json:"anchors,omitempty"`
@@ -490,7 +496,7 @@ func deriveIntegrationEnvKey(integrationName, key string) string {
 	return "OCI_" + integrationPart + "_" + keyPart
 }
 
-func flattenConfigEnv(cfg openChatConfig) (map[string]string, error) {
+func flattenConfigEnv(cfg openChatConfig, secretValues map[string]string) (map[string]string, error) {
 	integrations.EnsureLoaded()
 
 	updates := map[string]string{}
@@ -499,7 +505,11 @@ func flattenConfigEnv(cfg openChatConfig) (map[string]string, error) {
 		if normalized == "" {
 			continue
 		}
-		updates[normalized] = fmt.Sprintf("%v", value)
+		resolved, err := resolveEnvSecretValue(value, secretValues)
+		if err != nil {
+			return nil, fmt.Errorf("config env.%s: %w", key, err)
+		}
+		updates[normalized] = resolved
 	}
 
 	runtimeEnvByIntegration := map[string]map[string]struct{}{}
@@ -553,7 +563,11 @@ func flattenConfigEnv(cfg openChatConfig) (map[string]string, error) {
 			if envKey == "" {
 				return nil, fmt.Errorf("config integrations.%s.%s does not map to a declared runtime env var", integrationNameRaw, key)
 			}
-			updates[envKey] = stringifyConfigValue(value)
+			resolved, err := resolveIntegrationSecretValue(value, secretValues)
+			if err != nil {
+				return nil, fmt.Errorf("config integrations.%s.%s: %w", integrationNameRaw, key, err)
+			}
+			updates[envKey] = resolved
 		}
 	}
 
@@ -575,6 +589,155 @@ func stringifyConfigValue(value interface{}) string {
 		}
 		return string(encoded)
 	}
+}
+
+// tvaultRefKey is the single-key marker object that references a sealed block
+// from a config value, e.g. `OPENAI_API_KEY: { "$tvault": "<ref>" }`.
+const tvaultRefKey = "$tvault"
+
+// tvaultRefScheme is the string fallback form, e.g. `tvault://<ref>`.
+const tvaultRefScheme = "tvault://"
+
+// extractSecretRef reports whether a config value is a `$tvault` reference and
+// returns the referenced block ref.
+func extractSecretRef(value interface{}) (string, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		if len(typed) != 1 {
+			return "", false
+		}
+		ref, ok := typed[tvaultRefKey]
+		if !ok {
+			return "", false
+		}
+		text, ok := ref.(string)
+		if !ok {
+			return "", false
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return "", false
+		}
+		return text, true
+	case string:
+		if strings.HasPrefix(typed, tvaultRefScheme) {
+			ref := strings.TrimSpace(strings.TrimPrefix(typed, tvaultRefScheme))
+			if ref != "" {
+				return ref, true
+			}
+		}
+	}
+	return "", false
+}
+
+func lookupSecretValue(ref string, secretValues map[string]string) (string, error) {
+	plaintext, ok := secretValues[ref]
+	if !ok {
+		return "", fmt.Errorf("$tvault reference %q has no matching entry under `secrets`", ref)
+	}
+	return plaintext, nil
+}
+
+// resolveEnvSecretValue substitutes a `$tvault` reference for env values,
+// preserving the historical fmt rendering for non-reference values.
+func resolveEnvSecretValue(value interface{}, secretValues map[string]string) (string, error) {
+	if ref, ok := extractSecretRef(value); ok {
+		return lookupSecretValue(ref, secretValues)
+	}
+	return fmt.Sprintf("%v", value), nil
+}
+
+// resolveIntegrationSecretValue substitutes a `$tvault` reference for
+// integration values, preserving the historical JSON rendering otherwise.
+func resolveIntegrationSecretValue(value interface{}, secretValues map[string]string) (string, error) {
+	if ref, ok := extractSecretRef(value); ok {
+		return lookupSecretValue(ref, secretValues)
+	}
+	return stringifyConfigValue(value), nil
+}
+
+// resolveConfigSecretValues decrypts the config document's `secrets:` blocks
+// using the boot password. It returns nil when the document has no blocks.
+func resolveConfigSecretValues(cfg openChatConfig, args []string) (map[string]string, error) {
+	if len(cfg.Secrets) == 0 {
+		return nil, nil
+	}
+	password := ""
+	if secretstore.ProviderRequiresPassword(secretstore.Active()) {
+		resolved, err := resolveBootSecretPassword(args)
+		if err != nil {
+			return nil, err
+		}
+		password = resolved
+	}
+	return secretstore.ResolveBlocks(context.Background(), cfg.Secrets, password)
+}
+
+// resolveBootSecretPassword resolves the password used to unseal config blocks.
+// Source order: --secret-password flag, OPEN_CHAT_SECRET_PASSWORD,
+// --secret-password-file / OPEN_CHAT_SECRET_PASSWORD_FILE, then an interactive
+// no-echo TTY prompt. It fails closed when a password is required but stdin is
+// not a terminal.
+func resolveBootSecretPassword(args []string) (string, error) {
+	var flagPassword, flagPasswordFile string
+	for i := 1; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		switch {
+		case arg == "--secret-password":
+			if i+1 < len(args) {
+				flagPassword = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--secret-password="):
+			flagPassword = strings.TrimPrefix(arg, "--secret-password=")
+		case arg == "--secret-password-file":
+			if i+1 < len(args) {
+				flagPasswordFile = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--secret-password-file="):
+			flagPasswordFile = strings.TrimPrefix(arg, "--secret-password-file=")
+		}
+	}
+
+	if password := strings.TrimSpace(flagPassword); password != "" {
+		return password, nil
+	}
+	if password := strings.TrimSpace(os.Getenv("OPEN_CHAT_SECRET_PASSWORD")); password != "" {
+		return password, nil
+	}
+
+	passwordFile := strings.TrimSpace(flagPasswordFile)
+	if passwordFile == "" {
+		passwordFile = strings.TrimSpace(os.Getenv("OPEN_CHAT_SECRET_PASSWORD_FILE"))
+	}
+	if passwordFile != "" {
+		raw, err := os.ReadFile(passwordFile)
+		if err != nil {
+			return "", fmt.Errorf("failed reading secret password file %q: %w", passwordFile, err)
+		}
+		password := strings.TrimRight(string(raw), "\r\n")
+		if strings.TrimSpace(password) == "" {
+			return "", fmt.Errorf("secret password file %q is empty", passwordFile)
+		}
+		return password, nil
+	}
+
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprint(os.Stderr, "Secret password: ")
+		raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", fmt.Errorf("failed reading secret password: %w", err)
+		}
+		password := strings.TrimRight(string(raw), "\r\n")
+		if strings.TrimSpace(password) == "" {
+			return "", errors.New("no secret password was entered")
+		}
+		return password, nil
+	}
+
+	return "", errors.New("config defines secret blocks but no password was provided; set --secret-password, OPEN_CHAT_SECRET_PASSWORD or OPEN_CHAT_SECRET_PASSWORD_FILE")
 }
 
 func normalizeOwners(raw []string) []string {
@@ -717,7 +880,11 @@ func applyOpenChatConfigBootstrap(args []string) error {
 	if err != nil {
 		return err
 	}
-	updates, err := flattenConfigEnv(cfg)
+	secretValues, err := resolveConfigSecretValues(cfg, args)
+	if err != nil {
+		return err
+	}
+	updates, err := flattenConfigEnv(cfg, secretValues)
 	if err != nil {
 		return err
 	}
@@ -788,6 +955,7 @@ func main() {
 			cmd.InstallCli(),
 			cmd.UninstallCli(),
 			cmd.StatusCli(),
+			cmd.SecretCli(),
 			cmd.ServiceRunCli(),
 		},
 	}
