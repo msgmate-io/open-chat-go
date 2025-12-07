@@ -722,11 +722,14 @@ func resolveBootSecretPassword(args []string) (string, error) {
 	if passwordFile != "" {
 		raw, err := os.ReadFile(passwordFile)
 		if err != nil {
-			return "", fmt.Errorf("failed reading secret password file %q: %w", passwordFile, err)
+			// Do not include the file path in the error: it is derived from a
+			// secret-named input and the returned error is logged, which trips
+			// CodeQL's go/clear-text-logging. The wrapped error keeps the cause.
+			return "", fmt.Errorf("failed reading secret password file: %w", err)
 		}
 		password := strings.TrimRight(string(raw), "\r\n")
 		if strings.TrimSpace(password) == "" {
-			return "", fmt.Errorf("secret password file %q is empty", passwordFile)
+			return "", errors.New("secret password file is empty")
 		}
 		return password, nil
 	}
