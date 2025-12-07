@@ -21,7 +21,14 @@ func IsVisibleToUser(DB *gorm.DB, def extiface.Definition, user *database.User) 
 	if def.UserAccessible {
 		return true, nil
 	}
-	return false, nil
+	// Integrations that are neither admin-only nor part of the public user
+	// catalogue (UserAccessible) are gated by explicit per-user/per-bot grants
+	// in integration_accesses. Without a grant they stay hidden, so the
+	// account-management access matrix actually gates visibility.
+	if DB == nil {
+		return false, nil
+	}
+	return database.HasIntegrationAccess(DB, user.ID, def.Name)
 }
 
 func IsVisibleByName(DB *gorm.DB, user *database.User, integrationName string) (bool, error) {
