@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
 import {
+  AUTH_BODY_CLASSES,
+  AUTH_CONTENT_CLASSES,
+  AUTH_PANEL_CLASSES,
+  AUTH_SHELL_CLASSES,
   SMALL_SCREEN_MAX_HEIGHT,
   SMALL_SCREEN_MAX_WIDTH,
   clampCssSize,
@@ -43,5 +47,25 @@ describe("clampCssSize", () => {
   it("rounds the pixel size and clamps the ratio into [0, 1]", () => {
     expect(clampCssSize(240.4, 2)).toBe("min(240px, 100vmin)")
     expect(clampCssSize(240.6, -1)).toBe("min(241px, 0vmin)")
+  })
+})
+
+describe("auth shell layout classes", () => {
+  it("makes the shell exactly one viewport tall so it can scroll internally", () => {
+    // The native layout wrapper clips page overflow; a `min-height` shell would
+    // grow past the viewport and hide the form + native server selector.
+    expect(AUTH_SHELL_CLASSES.split(/\s+/)).toContain("h-full")
+    expect(AUTH_SHELL_CLASSES.split(/\s+/)).toContain("overflow-y-auto")
+    expect(AUTH_SHELL_CLASSES).not.toContain("min-h-full")
+    // Desktop keeps the fixed, non-scrolling side-by-side layout.
+    expect(AUTH_SHELL_CLASSES).toContain("md:overflow-hidden")
+  })
+
+  it("top-aligns the auth content on small viewports and centers it on desktop", () => {
+    for (const classes of [AUTH_BODY_CLASSES, AUTH_PANEL_CLASSES, AUTH_CONTENT_CLASSES]) {
+      const tokens = classes.split(/\s+/)
+      expect(tokens).toContain("justify-start")
+      expect(tokens).toContain("md:justify-center")
+    }
   })
 })
