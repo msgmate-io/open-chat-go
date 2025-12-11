@@ -15,6 +15,23 @@ export function isSmallScreenViewport(width: number, height: number): boolean {
   return width < SMALL_SCREEN_MAX_WIDTH || height < SMALL_SCREEN_MAX_HEIGHT
 }
 
+// isCompactRuntime reports whether the app is running in a compact (native /
+// small-screen) runtime. It is the runtime probe shared by the zoom models:
+// native WebViews set data-openchat-runtime=mobile, and the browser fallback
+// matches the same 768px breakpoint the responsive layouts use.
+export function isCompactRuntime(): boolean {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return false
+  }
+  if (document.documentElement.getAttribute("data-openchat-runtime") === "mobile") {
+    return true
+  }
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia("(max-width: 768px)").matches
+  }
+  return false
+}
+
 // clampCssSize returns a CSS `min()` expression that keeps an element at its
 // preferred pixel size but never larger than a share of the smaller viewport
 // axis (vmin). This keeps the landing/login hero art from overflowing very
