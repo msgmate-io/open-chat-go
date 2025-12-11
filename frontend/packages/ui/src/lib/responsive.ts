@@ -51,3 +51,10 @@ export const AUTH_PANEL_CLASSES =
 
 export const AUTH_CONTENT_CLASSES =
   "flex flex-col items-center justify-start md:justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4"
+
+// The theme toggle floats to the top-right corner on small viewports so it sits
+// level with the page header instead of occupying its own row below it (which
+// pushed the landing hero and the login form down the screen). Desktop keeps the
+// toggle in the panel flow, right-aligned above the auth content.
+export const AUTH_THEME_TOGGLE_CLASSES =
+  "absolute right-0 top-0 z-40 flex flex-row items-end justify-end content-center md:static md:w-full"
