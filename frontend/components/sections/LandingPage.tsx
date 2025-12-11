@@ -20,6 +20,7 @@ import {
   AUTH_BODY_CLASSES,
   AUTH_PANEL_CLASSES,
   AUTH_CONTENT_CLASSES,
+  AUTH_THEME_TOGGLE_CLASSES,
 } from "@open-chat-go/ui"
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
@@ -379,7 +380,7 @@ export function LandingHero({
                     />
                 </div>
                 <div className={AUTH_PANEL_CLASSES}>
-                    <div className="flex flex-row items-end justify-end content-center w-full">
+                    <div className={AUTH_THEME_TOGGLE_CLASSES} data-testid="landing-theme-toggle">
                         <div className="p-2 hover:bg-accent rounded-xl z-40">
                             <ConnectedThemeSelector variant="icon-dropdown" />
                         </div>
@@ -402,6 +403,7 @@ export function LandingHero({
             </div>
         </div>
         <div
+            data-testid="landing-action-bar"
             className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
             style={{ paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))" }}
         >
