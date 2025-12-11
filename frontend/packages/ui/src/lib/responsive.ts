@@ -27,6 +27,24 @@ export function clampCssSize(preferredPx: number, vminRatio: number): string {
   return `min(${safePx}px, ${vminPercent}vmin)`
 }
 
+// clampCssSizeVh is clampCssSize plus a viewport-height bound. On near-square /
+// short viewports (the native app is roughly 393x441 CSS px) the width (vmin) is
+// still large, so a vmin-only clamp leaves the hero art too tall and pushes the
+// primary call-to-action and the native server selector under the fixed action
+// bar. Bounding by `vh` as well keeps the whole hero - logo, button and server
+// selector - visible on those screens while leaving tall phones (where the vmin
+// bound is smaller) unchanged.
+export function clampCssSizeVh(
+  preferredPx: number,
+  vminRatio: number,
+  vhRatio: number,
+): string {
+  const safePx = Math.max(0, Math.round(preferredPx))
+  const vmin = Number((Math.min(1, Math.max(0, vminRatio)) * 100).toFixed(2))
+  const vh = Number((Math.min(1, Math.max(0, vhRatio)) * 100).toFixed(2))
+  return `min(${safePx}px, ${vmin}vmin, ${vh}vh)`
+}
+
 // Landing / login "auth shell" layout classes.
 //
 // The native app (and the native layout wrapper) set `overflow: hidden` on
