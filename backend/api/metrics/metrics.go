@@ -11,10 +11,12 @@ import (
 )
 
 type Metrics struct {
-	NodeVersion string       `json:"node_version"`
-	CPUInfo     CPUInfo      `json:"cpu_info"`
-	MemoryInfo  MemoryInfo   `json:"memory_info"`
-	VolumesInfo []VolumeInfo `json:"volumes_info"`
+	NodeVersion       string       `json:"node_version"`
+	CPUInfo           CPUInfo      `json:"cpu_info"`
+	MemoryInfo        MemoryInfo   `json:"memory_info"`
+	VolumesInfo       []VolumeInfo `json:"volumes_info"`
+	ConnectedNetworks []string     `json:"connected_networks"`
+	ScreenLocked      bool         `json:"screen_locked"`
 }
 
 type CPUInfo struct {
@@ -24,6 +26,7 @@ type CPUInfo struct {
 
 type MemoryInfo struct {
 	TotalGB     float64 `json:"total_gb"`
+	AvailableGB float64 `json:"available_gb"`
 	UsedPercent float64 `json:"used_percent"`
 }
 
@@ -94,7 +97,12 @@ func getMemoryInfo() (MemoryInfo, error) {
 				if err != nil {
 					return memInfo, err
 				}
+				availableMB, err := strconv.ParseFloat(fields[6], 64)
+				if err != nil {
+					return memInfo, err
+				}
 				memInfo.TotalGB = totalMB / 1024
+				memInfo.AvailableGB = availableMB / 1024
 				memInfo.UsedPercent = (usedMB / totalMB) * 100
 			}
 		}
@@ -122,6 +130,35 @@ func getVolumesInfo() ([]VolumeInfo, error) {
 	}
 
 	return volumesInfo, nil
+}
+
+func getConnectedNetworks() ([]string, error) {
+	var networks []string
+	out, err := exec.Command("nmcli", "connection", "show", "--active").Output()
+	if err != nil {
+		return networks, err
+	}
+
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines[1:] { // Skip header
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			networks = append(networks, fields[0])
+		}
+	}
+	return networks, nil
+}
+
+func getScreenLocked() (bool, error) {
+	out, err := exec.Command("dbus-send", "--session", "--dest=org.gnome.ScreenSaver", "--type=method_call", "--print-reply", "/org/gnome/ScreenSaver", "org.gnome.ScreenSaver.GetActive").Output()
+	if err != nil {
+		return false, err
+	}
+
+	if strings.Contains(string(out), "boolean true") {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (h *MetricsHandler) Metrics(w http.ResponseWriter, r *http.Request) {
@@ -152,11 +189,23 @@ func (h *MetricsHandler) Metrics(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error getting volumes info: %v", err)
 	}
 
+	connectedNetworks, err := getConnectedNetworks()
+	if err != nil {
+		log.Printf("Error getting connected networks: %v", err)
+	}
+
+	screenLocked, err := getScreenLocked()
+	if err != nil {
+		log.Printf("Error getting screen locked status: %v", err)
+	}
+
 	metrics := Metrics{
-		NodeVersion: VERSION,
-		CPUInfo:     cpuInfo,
-		MemoryInfo:  memInfo,
-		VolumesInfo: volumesInfo,
+		NodeVersion:       VERSION,
+		CPUInfo:           cpuInfo,
+		MemoryInfo:        memInfo,
+		VolumesInfo:       volumesInfo,
+		ConnectedNetworks: connectedNetworks,
+		ScreenLocked:      screenLocked,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
