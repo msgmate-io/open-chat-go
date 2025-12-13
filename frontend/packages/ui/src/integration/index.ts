@@ -101,10 +101,12 @@ export * from "./lib/utils";
 export * from "./lib/page-metadata";
 export * from "./hooks/use-current-user";
 export * from "./hooks/use-terminal-zoom";
+export * from "./hooks/use-panel-zoom";
 export * from "./lib/mobile-app";
 export * from "./lib/tool-init-registry";
 export * from "./lib/tool-init";
 
 export * from "./lib/open-chat-run";
 export * from "./lib/terminal-zoom";
+export * from "./lib/panel-zoom";
 export { default as logoUrl } from "./assets/logo.png?inline";
