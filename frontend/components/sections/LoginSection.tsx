@@ -40,7 +40,13 @@ type LoginSuccessResponse = {
 // Keep the large pill inputs from eating the whole viewport on very short
 // screens (native app landscape / near-square devices).
 const loginInputClassName =
-    "rounded-full py-6 text-lg text-center border-2 [@media(max-height:700px)]:py-4 [@media(max-height:700px)]:text-base"
+    "rounded-full py-6 text-lg text-center border-2 [@media(max-height:700px)]:py-4 [@media(max-height:700px)]:text-base [@media(max-height:560px)]:py-3"
+
+// On very short web viewports (small phones / small square screens) the
+// reserved-space error slots would push the Login button and the sign-up link
+// under the fixed bottom action bar. Hide them there; a validation error still
+// renders its FormMessage, so no information is lost.
+const loginReservedSlotClassName = "[@media(max-height:560px)]:hidden"
 
 type EmailVerificationStatusResponse = {
     require_email_verification?: boolean
@@ -206,6 +212,13 @@ export default function LoginHero({
 
     return (
         <div className="flex flex-col relative w-full gap-0">
+            {isMobileRuntime && (
+                <div className="pb-3">
+                    <MobileServerSelector
+                        onStatus={(message) => setError({ non_field_errors: message })}
+                    />
+                </div>
+            )}
             <FormProvider {...form}>
                 <form id="login-form" className="flex flex-col gap-0" onSubmit={form.handleSubmit(onSubmit)}>
                 <FormField
@@ -228,7 +241,7 @@ export default function LoginHero({
                                 />
                             </FormControl>
                             <FormMessage className="text-center" />
-                            {!errors?.email && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
+                            {!errors?.email && <Text type={TextTypes.Body6} color="destructive" center tag="div" className={loginReservedSlotClassName}>&#8203;</Text>}
                         </FormItem>
                     )} />
                 <FormField
@@ -251,7 +264,7 @@ export default function LoginHero({
                                 </div>
                             </FormControl>
                             <FormMessage className="text-center" />
-                            {!errors?.password && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
+                            {!errors?.password && <Text type={TextTypes.Body6} color="destructive" center tag="div" className={loginReservedSlotClassName}>&#8203;</Text>}
                         </FormItem>
                     )}
                 />
@@ -268,7 +281,7 @@ export default function LoginHero({
                                         <Input type="text" placeholder="2FA Code" {...field} className={loginInputClassName} />
                                     </FormControl>
                                     <FormMessage className="text-center" />
-                                    {!errors?.two_factor_code && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
+                                    {!errors?.two_factor_code && <Text type={TextTypes.Body6} color="destructive" center tag="div" className={loginReservedSlotClassName}>&#8203;</Text>}
                                 </FormItem>
                             )}
                         />
@@ -286,7 +299,7 @@ export default function LoginHero({
                                         <Input type="text" placeholder="Recovery Code" {...field} className={loginInputClassName} />
                                     </FormControl>
                                     <FormMessage className="text-center" />
-                                    {!errors?.recovery_code && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
+                                    {!errors?.recovery_code && <Text type={TextTypes.Body6} color="destructive" center tag="div" className={loginReservedSlotClassName}>&#8203;</Text>}
                                 </FormItem>
                             )}
                         />
@@ -296,19 +309,12 @@ export default function LoginHero({
                     {form.formState.isSubmitting && <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />}
                     Login
                 </Button>
-                {isMobileRuntime && (
-                    <div className="pt-2">
-                        <MobileServerSelector
-                            onStatus={(message) => setError({ non_field_errors: message })}
-                        />
-                    </div>
-                )}
                 {errors?.non_field_errors && (
                     <Text type={TextTypes.Body6} color="destructive" center tag="span">
                         {error?.non_field_errors}
                     </Text>
                 )}
-                {!errors?.non_field_errors && <Text type={TextTypes.Body6} color="destructive" center tag="div">&#8203;</Text>}
+                {!errors?.non_field_errors && <Text type={TextTypes.Body6} color="destructive" center tag="div" className={loginReservedSlotClassName}>&#8203;</Text>}
                 <Button
                     variant="ghost"
                     type="button"
@@ -397,8 +403,8 @@ export function LoginSection({
         }
     }, [googleLoginEnabled, googleClientID, googleLoginRedirectURL, googleOpen])
 
-    return <div className="container w-full max-w-xl py-2 sm:py-10 [@media(max-height:700px)]:py-0 flex flex-col items-center content-center text-foreground" id={sectionId}>
-        <div className="flex flex-col items-center content-center justify-center pb-2">
+    return <div className="container w-full max-w-xl py-2 sm:py-10 [@media(max-height:700px)]:py-0 [@media(max-height:560px)]:py-0 flex flex-col items-center content-center text-foreground" id={sectionId}>
+        <div className="flex flex-col items-center content-center justify-center pb-2 [@media(max-height:560px)]:pb-0">
             <Text type={TextTypes.Heading5} tag="h1" bold center>
                 Welcome back!
             </Text>
@@ -407,7 +413,7 @@ export function LoginSection({
             </Text>
         </div>
         {googleLoginEnabled && googleClientID && googleLoginRedirectURL && (
-            <Collapsible open={googleOpen} onOpenChange={setGoogleOpen} className="mb-2 flex flex-col items-center">
+            <Collapsible open={googleOpen} onOpenChange={setGoogleOpen} className="mb-2 [@media(max-height:560px)]:mb-0 flex flex-col items-center">
                 <CollapsibleTrigger asChild>
                     <Button type="button" variant="ghost" className="h-auto px-2 py-1 text-xs text-muted-foreground hover:text-foreground">
                         or login w Google

@@ -162,6 +162,36 @@ export function getActiveMobileServerConfig(): MobileServerConfig | null {
   return config.servers.find((server) => server.id === config.activeServerId) || config.servers[0] || null;
 }
 
+export function isMobileServerAuthenticated(server: MobileServerConfig | null | undefined): boolean {
+  return Boolean(server && server.isAuthenticated === true);
+}
+
+export type MobileServerAuthSelection = {
+  active: MobileServerConfig | null;
+  activeIsAuthenticated: boolean;
+  authenticated: MobileServerConfig[];
+  recommended: MobileServerConfig | null;
+};
+
+// resolveMobileServerAuthSelection inspects the native server config and picks
+// the server the share flow should use. "Already authenticated" servers are
+// identified from the persisted session cookie the native host reads out of the
+// WebView jar (not an ephemeral in-memory flag), so a server authenticated in a
+// previous session stays selected. When the active server is not authenticated
+// but another one is, `recommended` points at it so the caller can switch.
+export function resolveMobileServerAuthSelection(config: MobileAppConfig): MobileServerAuthSelection {
+  const active =
+    config.servers.find((server) => server.id === config.activeServerId) || config.servers[0] || null;
+  const authenticated = config.servers.filter((server) => isMobileServerAuthenticated(server));
+  const activeIsAuthenticated = isMobileServerAuthenticated(active);
+  return {
+    active,
+    activeIsAuthenticated,
+    authenticated,
+    recommended: activeIsAuthenticated ? active : authenticated[0] || null,
+  };
+}
+
 export function readMobileAppConfig(): MobileAppConfig {
   if (typeof window === "undefined") {
     return defaultConfig;

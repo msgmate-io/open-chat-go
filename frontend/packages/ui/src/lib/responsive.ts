@@ -15,6 +15,23 @@ export function isSmallScreenViewport(width: number, height: number): boolean {
   return width < SMALL_SCREEN_MAX_WIDTH || height < SMALL_SCREEN_MAX_HEIGHT
 }
 
+// isCompactRuntime reports whether the app is running in a compact (native /
+// small-screen) runtime. It is the runtime probe shared by the zoom models:
+// native WebViews set data-openchat-runtime=mobile, and the browser fallback
+// matches the same 768px breakpoint the responsive layouts use.
+export function isCompactRuntime(): boolean {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return false
+  }
+  if (document.documentElement.getAttribute("data-openchat-runtime") === "mobile") {
+    return true
+  }
+  if (typeof window.matchMedia === "function") {
+    return window.matchMedia("(max-width: 768px)").matches
+  }
+  return false
+}
+
 // clampCssSize returns a CSS `min()` expression that keeps an element at its
 // preferred pixel size but never larger than a share of the smaller viewport
 // axis (vmin). This keeps the landing/login hero art from overflowing very
@@ -26,3 +43,53 @@ export function clampCssSize(preferredPx: number, vminRatio: number): string {
   const vminPercent = Number((ratio * 100).toFixed(2))
   return `min(${safePx}px, ${vminPercent}vmin)`
 }
+
+// clampCssSizeVh is clampCssSize plus a viewport-height bound. On near-square /
+// short viewports (the native app is roughly 393x441 CSS px) the width (vmin) is
+// still large, so a vmin-only clamp leaves the hero art too tall and pushes the
+// primary call-to-action and the native server selector under the fixed action
+// bar. Bounding by `vh` as well keeps the whole hero - logo, button and server
+// selector - visible on those screens while leaving tall phones (where the vmin
+// bound is smaller) unchanged.
+export function clampCssSizeVh(
+  preferredPx: number,
+  vminRatio: number,
+  vhRatio: number,
+): string {
+  const safePx = Math.max(0, Math.round(preferredPx))
+  const vmin = Number((Math.min(1, Math.max(0, vminRatio)) * 100).toFixed(2))
+  const vh = Number((Math.min(1, Math.max(0, vhRatio)) * 100).toFixed(2))
+  return `min(${safePx}px, ${vmin}vmin, ${vh}vh)`
+}
+
+// Landing / login "auth shell" layout classes.
+//
+// The native app (and the native layout wrapper) set `overflow: hidden` on
+// <html>/<body> and clip the page container, so the auth shell itself must be
+// exactly one viewport tall for its own scroll container to work. A shell that
+// only sets `min-height` grows past the viewport instead and gets clipped,
+// leaving the lower form controls - and the native server selector - below the
+// fold and unreachable.
+//
+// On small/native viewports the content is top-aligned so the theme toggle sits
+// directly under the header and the form starts at the top of the panel;
+// desktop keeps the side-by-side, vertically centered layout next to the
+// typewriter pane.
+export const AUTH_SHELL_CLASSES =
+  "relative flex h-full flex-col overflow-y-auto bg-secondary md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent"
+
+export const AUTH_BODY_CLASSES =
+  "flex md:flex-row flex-col items-center justify-start md:justify-center content-center h-auto min-h-0 md:h-full flex-1"
+
+export const AUTH_PANEL_CLASSES =
+  "flex flex-col flex-grow items-center justify-start md:justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-auto md:h-full"
+
+export const AUTH_CONTENT_CLASSES =
+  "flex flex-col items-center justify-start md:justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4"
+
+// The theme toggle floats to the top-right corner on small viewports so it sits
+// level with the page header instead of occupying its own row below it (which
+// pushed the landing hero and the login form down the screen). Desktop keeps the
+// toggle in the panel flow, right-aligned above the auth content.
+export const AUTH_THEME_TOGGLE_CLASSES =
+  "absolute right-0 top-0 z-40 flex flex-row items-end justify-end content-center md:static md:w-full"

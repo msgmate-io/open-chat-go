@@ -15,7 +15,13 @@ import {
   TextTypes,
   Typewriter,
   clampCssSize,
+  clampCssSizeVh,
   openChatLandingTypewriterTexts,
+  AUTH_SHELL_CLASSES,
+  AUTH_BODY_CLASSES,
+  AUTH_PANEL_CLASSES,
+  AUTH_CONTENT_CLASSES,
+  AUTH_THEME_TOGGLE_CLASSES,
 } from "@open-chat-go/ui"
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
@@ -60,17 +66,24 @@ type AccountManagementPublicConfig = {
 
 // Wraps the cinematic logo in a viewport-clamped square so the landing/login
 // hero art never overflows a very short / near-square device (the native app
-// screenshots). The logo itself fills the wrapper (`fluid`).
+// screenshots). The logo itself fills the wrapper (`fluid`). On the mobile hero
+// the `vhRatio` bound additionally shrinks the logo on short viewports so the
+// Open-Chat button and the native server selector stay above the fixed action
+// bar.
 function ResponsiveLogo({
     preferredPx,
     vminRatio,
+    vhRatio,
     className,
 }: {
     preferredPx: number
     vminRatio: number
+    vhRatio?: number
     className?: string
 }) {
-    const size = clampCssSize(preferredPx, vminRatio)
+    const size = vhRatio === undefined
+        ? clampCssSize(preferredPx, vminRatio)
+        : clampCssSizeVh(preferredPx, vminRatio, vhRatio)
     return (
         <div className={className} style={{ width: size, height: size }}>
             <CinematicLogo fluid className="pointer-events-none" />
@@ -198,7 +211,7 @@ function IndexTab({
             <>
                 <div className="mb-4 md:hidden [@media(max-height:700px)]:mb-2">
                     <div className="flex flex-col items-center gap-3 rounded-3xl bg-secondary/70 p-5 [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
-                        <ResponsiveLogo preferredPx={330} vminRatio={0.5} className="pointer-events-none" />
+                        <ResponsiveLogo preferredPx={330} vminRatio={0.5} vhRatio={0.28} className="pointer-events-none" />
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
                             <div className="w-full max-w-[260px]">
@@ -224,7 +237,7 @@ function IndexTab({
                 <div className="mb-4 md:hidden [@media(max-height:700px)]:mb-2" style={{ perspective: "1400px" }}>
                     <div
                         className="group relative"
-                        style={{ width: clampCssSize(330, 0.5), height: clampCssSize(330, 0.5) }}
+                        style={{ width: clampCssSizeVh(330, 0.5, 0.28), height: clampCssSizeVh(330, 0.5, 0.28) }}
                         tabIndex={0}
                     >
                         <div className="relative h-full w-full transition-transform duration-700 [transform-style:preserve-3d] group-hover:[transform:rotateY(180deg)] group-focus:[transform:rotateY(180deg)] group-focus-within:[transform:rotateY(180deg)]">
@@ -354,7 +367,7 @@ export function LandingHero({
     }, [accountManagementConfig?.signup_requires_admin_approval, hasSignupEnabled, setTab, signupGateResolved, tab])
 
     return <>
-        <div className="relative flex min-h-full flex-col overflow-y-auto bg-secondary md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent">
+        <div className={AUTH_SHELL_CLASSES}>
             <div className="relative z-40 w-full md:absolute md:left-0 md:top-0 md:w-2/3">
                 <div className="flex w-full flex-col items-start p-4 text-foreground md:flex-row md:bg-background/80 md:backdrop-blur">
                     <Text type={TextTypes.Heading5} tag="div" bold>
@@ -365,7 +378,7 @@ export function LandingHero({
                     </Text>
                 </div>
             </div>
-            <div className="flex md:flex-row flex-col items-center justify-center content-center h-auto min-h-0 md:h-full flex-1">
+            <div className={AUTH_BODY_CLASSES}>
                 <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-background md:w-2/3 h-full shadow-xl z-10 relative text-foreground">
                     <Typewriter
                         fullHeight
@@ -374,13 +387,13 @@ export function LandingHero({
                         texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)}
                     />
                 </div>
-                <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-auto md:h-full">
-                    <div className="flex flex-row items-end justify-end content-center w-full">
+                <div className={AUTH_PANEL_CLASSES}>
+                    <div className={AUTH_THEME_TOGGLE_CLASSES} data-testid="landing-theme-toggle">
                         <div className="p-2 hover:bg-accent rounded-xl z-40">
                             <ConnectedThemeSelector variant="icon-dropdown" />
                         </div>
                     </div>
-                    <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4">
+                    <div className={AUTH_CONTENT_CLASSES}>
                         {tab === "index" && <IndexTab hasSignupEnabled={hasSignupEnabled} navigateTo={navigateTo}/>} 
                         {tab === "login" && <LoginSection
                             navigateTo={navigateTo}
@@ -398,6 +411,7 @@ export function LandingHero({
             </div>
         </div>
         <div
+            data-testid="landing-action-bar"
             className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
             style={{ paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))" }}
         >
