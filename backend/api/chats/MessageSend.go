@@ -6,6 +6,7 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"backend/workqueue"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -324,6 +325,11 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		// For human receivers, continue to publish websocket updates immediately.
 		SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
 	}
+
+	// Emit the interaction-completed notification once an automated agent's
+	// final reply is persisted. Best-effort and detached so notification
+	// delivery (network I/O) never delays message persistence.
+	go maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
 
 	w.Header().Set("Content-Type", "application/json")
 
