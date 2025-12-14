@@ -4,16 +4,65 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type SharedChatPublishResponse struct {
-	ChatUUID      string `json:"chat_uuid"`
-	ChatShareUUID string `json:"chat_share_uuid"`
+	ChatUUID       string `json:"chat_uuid"`
+	ChatShareUUID  string `json:"chat_share_uuid"`
+	AccessMode     string `json:"access_mode"`
+	TargetUsername string `json:"target_username,omitempty"`
+	TargetUserUUID string `json:"target_user_uuid,omitempty"`
+}
+
+// publishChatRequest optionally scopes a share. An omitted/empty body keeps
+// the default fully-public share behaviour.
+type publishChatRequest struct {
+	// AccessMode is "public" (default) or "user".
+	AccessMode string `json:"access_mode"`
+	// TargetUsername/TargetUserUUID identify the single user a "user" share is
+	// scoped to.
+	TargetUsername string `json:"target_username"`
+	TargetUserUUID string `json:"target_user_uuid"`
+}
+
+func normalizeShareAccessMode(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "user") {
+		return "user"
+	}
+	return "public"
+}
+
+// shareAllowsUser reports whether a viewer may open a share. Public shares are
+// open to everyone; user-scoped shares require the owner or the target user.
+func shareAllowsUser(share database.SharedChatInstance, user *database.User) bool {
+	if share.IsPublic() {
+		return true
+	}
+	if user == nil {
+		return false
+	}
+	return share.AllowsUser(user.ID)
+}
+
+// findShareTargetUser resolves the user a per-user share is scoped to by
+// username (case-insensitive) or UUID.
+func findShareTargetUser(DB *gorm.DB, username, userUUID string) (database.User, error) {
+	var user database.User
+	username = strings.TrimSpace(username)
+	userUUID = strings.TrimSpace(userUUID)
+	if userUUID != "" {
+		err := DB.Where("uuid = ?", userUUID).First(&user).Error
+		return user, err
+	}
+	err := DB.Where("LOWER(username) = ?", strings.ToLower(username)).First(&user).Error
+	return user, err
 }
 
 type PublicInteractionChat struct {
@@ -26,9 +75,18 @@ type PublicInteractionChat struct {
 	InteractionDetails map[string]interface{} `json:"interaction_details,omitempty"`
 }
 
-func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint) (database.SharedChatInstance, error) {
+func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, accessMode string, targetUserID *uint) (database.SharedChatInstance, error) {
+	accessMode = normalizeShareAccessMode(accessMode)
 	var share database.SharedChatInstance
-	err := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, owningUserID).First(&share).Error
+	query := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, owningUserID)
+	if accessMode == "user" {
+		query = query.Where("access_mode = ? AND target_user_id = ?", "user", targetUserID)
+	} else {
+		// Legacy rows predate AccessMode and therefore store an empty value;
+		// treat them as the public share so publishing reuses them.
+		query = query.Where("(access_mode = ? OR access_mode = '' OR access_mode IS NULL)", "public")
+	}
+	err := query.First(&share).Error
 	if err == nil {
 		return share, nil
 	}
@@ -40,6 +98,8 @@ func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint) (d
 		ChatId:        chat.ID,
 		OwningUserId:  owningUserID,
 		ChatShareUUID: uuid.NewString(),
+		AccessMode:    accessMode,
+		TargetUserId:  targetUserID,
 	}
 	if err := DB.Create(&share).Error; err != nil {
 		return database.SharedChatInstance{}, err
@@ -48,7 +108,9 @@ func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint) (d
 	return share, nil
 }
 
-// Publish creates (or returns) a public share UUID for a chat.
+// Publish creates (or returns) a share UUID for a chat. An empty body (or
+// access_mode "public") yields a public share; access_mode "user" plus a target
+// username/UUID yields a share only that user (and the owner) may open.
 //
 //	@Summary      Publish chat
 //	@Description  Publish a chat and return its share UUID
@@ -57,8 +119,9 @@ func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint) (d
 //	@Produce      json
 //	@Security     SessionAuth
 //	@Param        chat_uuid path string true "Chat UUID"
+//	@Param        request body chats.publishChatRequest false "Optional share scope"
 //	@Success      200 {object} SharedChatPublishResponse "Published chat info"
-//	@Failure      400 {string} string "Invalid chat UUID"
+//	@Failure      400 {string} string "Invalid chat UUID or share target"
 //	@Failure      404 {string} string "Chat not found"
 //	@Failure      500 {string} string "Failed to publish chat"
 //	@Router       /api/chat/{chat_uuid}/publish [post]
@@ -81,14 +144,43 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	share, err := ensureOwnedChatShare(DB, chat, user.ID)
+	var payload publishChatRequest
+	if r.Body != nil {
+		if decodeErr := json.NewDecoder(r.Body).Decode(&payload); decodeErr != nil && decodeErr != io.EOF {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+	}
+
+	accessMode := normalizeShareAccessMode(payload.AccessMode)
+	var targetUserID *uint
+	targetUsername := ""
+	targetUserUUID := ""
+	if accessMode == "user" {
+		target, targetErr := findShareTargetUser(DB, payload.TargetUsername, payload.TargetUserUUID)
+		if targetErr != nil {
+			http.Error(w, "Share target user not found", http.StatusBadRequest)
+			return
+		}
+		targetUserID = &target.ID
+		targetUsername = target.Username
+		targetUserUUID = target.UUID
+	}
+
+	share, err := ensureOwnedChatShare(DB, chat, user.ID, accessMode, targetUserID)
 	if err != nil {
 		http.Error(w, "Failed to publish chat", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(SharedChatPublishResponse{ChatUUID: chat.UUID, ChatShareUUID: share.ChatShareUUID})
+	json.NewEncoder(w).Encode(SharedChatPublishResponse{
+		ChatUUID:       chat.UUID,
+		ChatShareUUID:  share.ChatShareUUID,
+		AccessMode:     share.AccessMode,
+		TargetUsername: targetUsername,
+		TargetUserUUID: targetUserUUID,
+	})
 }
 
 // Unpublish removes the public share UUID for a chat.
