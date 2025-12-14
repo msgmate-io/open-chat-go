@@ -142,5 +142,18 @@ func TestMCPToolSchemasMarshal(t *testing.T) {
 		if !strings.Contains(string(encoded), `"type":"object"`) {
 			t.Fatalf("tool %s schema missing object type: %s", tool.Name, encoded)
 		}
+		// `required` must be a JSON array, never null: the MCP TypeScript SDK
+		// rejects an explicit null and makes clients fail with
+		// "Failed to get tools".
+		if strings.Contains(string(encoded), `"required":null`) {
+			t.Fatalf("tool %s schema has required:null: %s", tool.Name, encoded)
+		}
+		required, ok := tool.InputSchema["required"].([]string)
+		if !ok {
+			t.Fatalf("tool %s schema required is not a string array: %T", tool.Name, tool.InputSchema["required"])
+		}
+		if required == nil {
+			t.Fatalf("tool %s schema required is nil, want an empty array", tool.Name)
+		}
 	}
 }
