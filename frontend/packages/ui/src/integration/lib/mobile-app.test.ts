@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   isMobileServerAuthenticated,
+  isMobileServerAuthenticatedWithProbe,
+  probeActiveMobileServerAuthenticated,
   resolveMobileServerAuthSelection,
   type MobileAppConfig,
   type MobileServerConfig,
@@ -27,6 +29,35 @@ describe("isMobileServerAuthenticated", () => {
     expect(isMobileServerAuthenticated(server({ id: "c" }))).toBe(false);
     expect(isMobileServerAuthenticated(null)).toBe(false);
     expect(isMobileServerAuthenticated(undefined)).toBe(false);
+  });
+});
+
+describe("isMobileServerAuthenticatedWithProbe", () => {
+  it("keeps a native positive hint even if the probe has not resolved", () => {
+    expect(
+      isMobileServerAuthenticatedWithProbe(server({ id: "hosted", isAuthenticated: true }), "hosted", false),
+    ).toBe(true);
+  });
+
+  it("trusts the live probe for the active server when the native hint missed", () => {
+    // This is the ci.msgmate.io regression: the native cookie-jar read missed
+    // but the server really had a valid session, so the selector must show Auth.
+    expect(isMobileServerAuthenticatedWithProbe(server({ id: "ci" }), "ci", true)).toBe(true);
+  });
+
+  it("does not mark a non-active server from the active probe", () => {
+    expect(isMobileServerAuthenticatedWithProbe(server({ id: "other" }), "ci", true)).toBe(false);
+  });
+
+  it("stays false when neither the native hint nor the probe authenticated", () => {
+    expect(isMobileServerAuthenticatedWithProbe(server({ id: "ci" }), "ci", false)).toBe(false);
+    expect(isMobileServerAuthenticatedWithProbe(null, "ci", true)).toBe(false);
+  });
+});
+
+describe("probeActiveMobileServerAuthenticated", () => {
+  it("returns false outside a browser runtime", async () => {
+    await expect(probeActiveMobileServerAuthenticated()).resolves.toBe(false);
   });
 });
 
