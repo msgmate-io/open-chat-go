@@ -311,7 +311,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 	listedChat := convertChatToListedChat(user, chat)
 	if data.AutoShare {
-		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID)
+		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID, "public", nil)
 		if shareErr != nil {
 			http.Error(w, "Failed to auto-share chat", http.StatusInternalServerError)
 			return
