@@ -81,8 +81,11 @@ type ChatSettings struct {
 	ConfigData json.RawMessage `json:"config_data" gorm:"type:jsonb"`
 }
 
-// SharedChatInstance links a private chat to a public share UUID owned by a user.
-// It powers publish/unpublish chat sharing and public read-only shared interaction views.
+// SharedChatInstance links a private chat to a share UUID owned by a user.
+// It powers publish/unpublish chat sharing and read-only shared interaction
+// views. A share is either fully public (AccessMode "public", the default) or
+// scoped to a single target user (AccessMode "user", TargetUserId set), in
+// which case only the owner and that user may open it.
 type SharedChatInstance struct {
 	Model
 	ChatId        uint   `json:"-" gorm:"index"`
@@ -90,4 +93,37 @@ type SharedChatInstance struct {
 	OwningUserId  uint   `json:"-" gorm:"index"`
 	OwningUser    User   `json:"-" gorm:"foreignKey:OwningUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	ChatShareUUID string `json:"chat_share_uuid" gorm:"uniqueIndex;not null"`
+	// AccessMode is "public" (anyone with the link) or "user" (only the target
+	// user and the owner). Empty is treated as "public" for legacy rows.
+	AccessMode   string `json:"access_mode" gorm:"default:'public'"`
+	TargetUserId *uint  `json:"-" gorm:"index"`
+	TargetUser   *User  `json:"-" gorm:"foreignKey:TargetUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+}
+
+// ChatPin is a per-user pin flag: a user can pin any chat they participate in
+// so it sorts to the top of their chat list. The (chat_id, user_id) pair is
+// unique.
+type ChatPin struct {
+	Model
+	ChatId uint `json:"-" gorm:"uniqueIndex:idx_chat_pin_chat_user"`
+	Chat   Chat `json:"-" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	UserId uint `json:"-" gorm:"uniqueIndex:idx_chat_pin_chat_user"`
+	User   User `json:"-" gorm:"foreignKey:UserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+}
+
+// IsPublic reports whether the share can be opened by anyone with the link.
+func (s SharedChatInstance) IsPublic() bool {
+	return s.AccessMode == "" || s.AccessMode == "public"
+}
+
+// AllowsUser reports whether the given user id may open a non-public share.
+// The owner always keeps access so they can preview/revoke their own links.
+func (s SharedChatInstance) AllowsUser(userID uint) bool {
+	if s.IsPublic() {
+		return true
+	}
+	if s.OwningUserId == userID {
+		return true
+	}
+	return s.TargetUserId != nil && *s.TargetUserId == userID
 }
