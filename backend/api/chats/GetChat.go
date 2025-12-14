@@ -89,9 +89,12 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	if view := loadChatSettingsViews(DB, []uint{chat.ID})[chat.ID]; view != nil {
 		listedChat.Settings = view
 	}
+	if loadedPins := loadChatPins(DB, user.ID, []uint{chat.ID}); loadedPins[chat.ID] {
+		listedChat.Pinned = true
+	}
 
 	var share database.SharedChatInstance
-	shareErr := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, user.ID).First(&share).Error
+	shareErr := DB.Where("chat_id = ? AND owning_user_id = ? AND (access_mode = '' OR access_mode = 'public' OR access_mode IS NULL)", chat.ID, user.ID).First(&share).Error
 	if shareErr == nil {
 		listedChat.ChatShareUUID = share.ChatShareUUID
 		baseURL := requestBaseURL(r)
