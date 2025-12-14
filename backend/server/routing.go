@@ -424,6 +424,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}", chatsHandler.GetChat)
 	v1PrivateApis.HandleFunc("DELETE /chats/{chat_uuid}", chatsHandler.Delete)
 	v1PrivateApis.HandleFunc("PUT /chats/{chat_uuid}/settings", chatsHandler.UpdateSettings)
+	v1PrivateApis.HandleFunc("PUT /chats/{chat_uuid}/pin", chatsHandler.UpdatePin)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/status", chatsHandler.GetInteractionStatus)
 	v1PrivateApis.HandleFunc("GET /chats/states", chatsHandler.GetChatStates)
 	v1PrivateApis.HandleFunc("GET /chats/action-tasks", chatsHandler.GetActionTasks)
@@ -579,9 +580,9 @@ func BackendRouting(
 		mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
 		mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
 		mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
-		mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
-		mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages))))
-		mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(chatsHandler.GetSharedInteraction)))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages)))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus)))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/access", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(chatsHandler.GetSharedInteractionAccess)))))
 		// The badge is embedded by external consumers (GitHub workflows, the
 		// Python client) that derive it from the human-facing interaction share
