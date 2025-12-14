@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentProps, type ComponentType, type ReactNode } from "react"
 import { mutate } from "swr"
-import { Plus, Trash2, X } from "lucide-react"
+import { Pin, PinOff, Plus, Share2, Trash2, X } from "lucide-react"
 import { Button } from "../button"
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import {
 } from "../dialog"
 import { Input } from "../input"
 import { Icon } from "../icon"
+import { ShareChatModal } from "./ShareChatModal"
 import { useIsSmallScreen } from "../../hooks/use-mobile"
 
 const normalizeTag = (tag: string) => tag.trim().toLowerCase()
@@ -69,8 +70,12 @@ export function ChatSettings({
   const [newTag, setNewTag] = useState("")
   const [savingTags, setSavingTags] = useState(false)
   const [savingTitle, setSavingTitle] = useState(false)
+  const [pinSaving, setPinSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [editTitleOpen, setEditTitleOpen] = useState(false)
+  const pinned = chat?.pinned === true
   const extraNameChanged =
     extraName !== chat?.settings?.title && extraName !== ""
 
@@ -81,6 +86,22 @@ export function ChatSettings({
   useEffect(() => {
     setTags(Array.isArray(chat?.tags) ? chat.tags : [])
   }, [chat?.tags])
+
+  // Opening a share link like `/chat/<uuid>?share=<uuid>` deep-links straight
+  // into the share dialog for that chat.
+  useEffect(() => {
+    if (typeof window === "undefined" || !chat?.uuid) {
+      return
+    }
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("share") === chat.uuid) {
+      setOpen(true)
+      setShareOpen(true)
+    }
+    // Only react to a new chat identity; re-running on every render would
+    // re-open the dialog after the user dismisses it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat?.uuid])
 
   const persistTags = async (nextTags: string[]) => {
     setTags(nextTags)
@@ -150,6 +171,23 @@ export function ChatSettings({
     setExtraName(chat?.settings?.title || "")
   }
 
+  const togglePin = async () => {
+    if (!chat?.uuid) {
+      return
+    }
+    setPinSaving(true)
+    try {
+      await fetch(`/api/v1/chats/${chat.uuid}/pin`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned: !pinned }),
+      })
+      await invalidateChatCaches(chat.uuid)
+    } finally {
+      setPinSaving(false)
+    }
+  }
+
   const deleteChat = async () => {
     if (!chat?.uuid) {
       return
@@ -175,6 +213,97 @@ export function ChatSettings({
     }
   }
 
+  const titleSection = compact ? (
+    <div className="flex items-center justify-between gap-2 px-2 py-1">
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Title</p>
+        <span className="block truncate text-sm text-foreground">
+          {chat?.settings?.title || chat?.partner?.name || "Untitled"}
+        </span>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-8 shrink-0"
+        aria-label="Edit chat title"
+        onClick={() => setEditTitleOpen(true)}
+      >
+        <Icon name="pencil" size="sm" />
+      </Button>
+    </div>
+  ) : (
+    <div className="flex flex-row items-center gap-1 px-2 py-1">
+      <Input
+        type="text"
+        value={extraName}
+        onChange={(e) => setExtraName(e.target.value)}
+        placeholder="Extra name"
+        className="h-8 bg-background"
+      />
+      {(!extraName || !extraNameChanged) && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label="Edit chat title"
+        >
+          <Icon name="pencil" size="sm" />
+        </Button>
+      )}
+      {extraName && extraNameChanged && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label="Save chat title"
+          disabled={savingTitle}
+          onClick={onSaveExtraTitle}
+        >
+          <Icon name="check" size="sm" />
+        </Button>
+      )}
+      {chat?.settings?.title && !extraNameChanged && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label="Clear saved title"
+          disabled={savingTitle}
+          onClick={onClearExtraTitle}
+        >
+          <Icon name="trash" size="sm" />
+        </Button>
+      )}
+      {!chat?.settings?.title && !extraNameChanged && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label="No custom title set"
+        >
+          <Icon name="eraser" size="sm" className="text-muted-foreground" />
+        </Button>
+      )}
+      {extraNameChanged && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          aria-label="Reset title changes"
+          onClick={onResetExtraText}
+        >
+          <Icon name="undo" size="sm" />
+        </Button>
+      )}
+    </div>
+  )
+
   // Generic body shared by the dropdown (desktop) and the modal (small screens).
   // It deliberately avoids DropdownMenu-specific primitives so it can render in
   // either container.
@@ -182,75 +311,17 @@ export function ChatSettings({
     <div className="flex flex-col text-sm">
       <p className="px-2 pb-1 pt-0.5 text-sm font-semibold text-foreground">Chat Settings</p>
       <SettingsSeparator />
-      <div className="flex flex-row items-center gap-1 px-2 py-1">
-        <Input
-          type="text"
-          value={extraName}
-          onChange={(e) => setExtraName(e.target.value)}
-          placeholder="Extra name"
-          className="h-8 bg-background"
-        />
-        {(!extraName || !extraNameChanged) && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="Edit chat title"
-          >
-            <Icon name="pencil" size="sm" />
-          </Button>
-        )}
-        {extraName && extraNameChanged && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="Save chat title"
-            disabled={savingTitle}
-            onClick={onSaveExtraTitle}
-          >
-            <Icon name="check" size="sm" />
-          </Button>
-        )}
-        {chat?.settings?.title && !extraNameChanged && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="Clear saved title"
-            disabled={savingTitle}
-            onClick={onClearExtraTitle}
-          >
-            <Icon name="trash" size="sm" />
-          </Button>
-        )}
-        {!chat?.settings?.title && !extraNameChanged && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="No custom title set"
-          >
-            <Icon name="eraser" size="sm" className="text-muted-foreground" />
-          </Button>
-        )}
-        {extraNameChanged && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="Reset title changes"
-            onClick={onResetExtraText}
-          >
-            <Icon name="undo" size="sm" />
-          </Button>
-        )}
-      </div>
+      {titleSection}
+      <SettingsSeparator />
+      <button
+        type="button"
+        disabled={pinSaving || !chat?.uuid}
+        onClick={() => void togglePin()}
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-50"
+      >
+        {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+        {pinned ? "Unpin chat" : "Pin chat"}
+      </button>
       <SettingsSeparator />
       <div className="px-2 py-1">
         <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Tags</p>
@@ -305,6 +376,19 @@ export function ChatSettings({
         </div>
       </div>
       <SettingsSeparator />
+      <button
+        type="button"
+        disabled={!chat?.uuid}
+        onClick={() => {
+          setShareOpen(true)
+          handleOpenChange(false)
+        }}
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-50"
+      >
+        <Share2 className="size-4" />
+        Share chat
+      </button>
+      <SettingsSeparator />
       {chat?.partner?.is_bot && (
         <>
           <p className="px-2 py-1.5 text-xs font-normal text-muted-foreground">
@@ -355,27 +439,84 @@ export function ChatSettings({
     </div>
   )
 
+  const editTitleDialog = compact ? (
+    <Dialog open={editTitleOpen} onOpenChange={setEditTitleOpen}>
+      <DialogContent
+        data-testid="chat-title-modal"
+        className="w-[calc(100%-2rem)] max-w-xs gap-3 p-4"
+      >
+        <DialogTitle className="text-sm font-semibold">Edit chat title</DialogTitle>
+        <Input
+          autoFocus
+          type="text"
+          value={extraName}
+          onChange={(event) => setExtraName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault()
+              void persistTitle(extraName.trim()).then(() => setEditTitleOpen(false))
+            }
+          }}
+          placeholder="Chat title"
+          className="h-9 bg-background"
+        />
+        <div className="flex justify-end gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            onClick={() => {
+              setExtraName(chat?.settings?.title || "")
+              setEditTitleOpen(false)
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={savingTitle}
+            onClick={() => {
+              void persistTitle(extraName.trim()).then(() => setEditTitleOpen(false))
+            }}
+          >
+            {savingTitle ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  ) : null
+
   if (compact) {
     return (
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        {children({ Trigger })}
-        <DialogContent
-          data-testid="chat-settings-modal"
-          className="max-h-[85vh] w-[calc(100%-2rem)] max-w-sm gap-0 overflow-y-auto p-4"
-        >
-          <DialogTitle className="sr-only">Chat settings</DialogTitle>
-          {content}
-        </DialogContent>
-      </Dialog>
+      <>
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+          {children({ Trigger })}
+          <DialogContent
+            data-testid="chat-settings-modal"
+            className="max-h-[85vh] w-[calc(100%-2rem)] max-w-md gap-0 overflow-y-auto p-4"
+          >
+            <DialogTitle className="sr-only">Chat settings</DialogTitle>
+            {content}
+          </DialogContent>
+        </Dialog>
+        {editTitleDialog}
+        <ShareChatModal chat={chat} open={shareOpen} setOpen={setShareOpen} />
+      </>
     )
   }
 
   return (
-    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
-      {children({ Trigger })}
-      <DropdownMenuContent data-testid="chat-settings-dropdown" className="w-56" align="end">
-        {content}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+        {children({ Trigger })}
+        <DropdownMenuContent data-testid="chat-settings-dropdown" className="w-60" align="end">
+          {content}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ShareChatModal chat={chat} open={shareOpen} setOpen={setShareOpen} />
+    </>
   )
 }
