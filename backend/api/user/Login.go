@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -16,6 +19,59 @@ type UserLogin struct {
 	Password      string `json:"password"`
 	TwoFactorCode string `json:"two_factor_code"`
 	RecoveryCode  string `json:"recovery_code"`
+}
+
+func cookieDomainOverrideFromQuery(r *http.Request) (string, error) {
+	q := r.URL.Query()
+	raw := strings.TrimSpace(q.Get("cookie_domain"))
+	if raw == "" {
+		raw = strings.TrimSpace(q.Get("domain"))
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(q.Get("cookie_origin"))
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(q.Get("origin"))
+	}
+	if raw == "" {
+		return "", nil
+	}
+
+	// If it's an origin URL (https://example.com:123), parse it.
+	host := raw
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return "", fmt.Errorf("invalid cookie origin: %v", err)
+		}
+		host = u.Host
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", nil
+	}
+
+	// Strip port if present.
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if strings.Count(host, ":") == 0 {
+		// no port, ok
+	} else {
+		// could be IPv6 without brackets or other invalid input; fall back to ParseIP check below
+		host = strings.Trim(host, "[]")
+	}
+	host = strings.TrimSpace(strings.Trim(host, "."))
+
+	if host == "" {
+		return "", nil
+	}
+
+	// Browsers don't accept Domain cookies for IPs/localhost; use host-only cookie.
+	if host == "localhost" || net.ParseIP(host) != nil {
+		return "", nil
+	}
+
+	return host, nil
 }
 
 // curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:8080" -d '{"email":"tim+test@timschupp.de","password":"password"}' http://localhost:8080/api/v1/user/login -v
@@ -29,6 +85,8 @@ type UserLogin struct {
 // @Accept       json
 // @Produce      json
 // @Param        request body UserLogin true "Login credentials"
+// @Param        cookie_origin query string false "Optional: cookie origin URL (e.g. https://app.example.com) used to derive the session cookie Domain"
+// @Param        cookie_domain query string false "Optional: cookie domain (e.g. app.example.com) used for the session cookie Domain"
 // @Success      200  {string}  string "Login successful"
 // @Failure      400  {string}  string "Invalid email or password"
 // @Failure      500  {string}  string "Internal server error"
@@ -74,7 +132,16 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie := api.CreateSessionToken(w, h.CookieDomain, token, expiry)
+	cookieDomain := h.CookieDomain
+	if override, err := cookieDomainOverrideFromQuery(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	} else if override != "" || (r.URL.Query().Has("cookie_domain") || r.URL.Query().Has("domain") || r.URL.Query().Has("cookie_origin") || r.URL.Query().Has("origin")) {
+		// If the user explicitly passed a cookie override param and it resolved to empty, we want host-only cookie.
+		cookieDomain = override
+	}
+
+	cookie := api.CreateSessionToken(w, r, cookieDomain, token, expiry)
 
 	// Check if x-cookie-header query parameter is set to true
 	if r.URL.Query().Get("x-cookie-header") == "true" {
@@ -134,7 +201,15 @@ func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie := api.CreateSessionToken(w, h.CookieDomain, token, expiry)
+	cookieDomain := h.CookieDomain
+	if override, err := cookieDomainOverrideFromQuery(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	} else if override != "" || (r.URL.Query().Has("cookie_domain") || r.URL.Query().Has("domain") || r.URL.Query().Has("cookie_origin") || r.URL.Query().Has("origin")) {
+		cookieDomain = override
+	}
+
+	cookie := api.CreateSessionToken(w, r, cookieDomain, token, expiry)
 
 	// Check if x-cookie-header query parameter is set to true
 	if r.URL.Query().Get("x-cookie-header") == "true" {
