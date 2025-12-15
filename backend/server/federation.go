@@ -238,15 +238,22 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 			log.Printf("Skipping domain proxy for %s (handled by domain routing middleware)", proxy.TrafficOrigin)
 			continue
 		}
-
-		// Parse TrafficOrigin and TrafficTarget for non-domain proxies
-		originData := strings.Split(proxy.TrafficOrigin, ":")
-		if len(originData) < 2 {
-			log.Printf("Invalid TrafficOrigin format for proxy %d: %s", proxy.ID, proxy.TrafficOrigin)
+		if proxy.Kind == "node" {
+			spec := strings.TrimSpace(proxy.TrafficOrigin)
+			if strings.HasPrefix(spec, "vip:") || strings.HasPrefix(spec, "bind:") {
+				// Node VIP egress proxies do not use peer_id:port formatting.
+				if err := h.StartNodeVIPProxyEgress(DB, proxy); err != nil {
+					log.Printf("Failed to start node VIP egress proxy %d: %v", proxy.ID, err)
+				}
+			} else if strings.HasPrefix(spec, "tun:") || strings.HasPrefix(spec, "vpn:") {
+				if err := h.StartNodeTUNProxyEgress(DB, proxy); err != nil {
+					log.Printf("Failed to start node TUN egress proxy %d: %v", proxy.ID, err)
+				}
+			} else {
+				log.Printf("Failed to start node proxy %d: unknown traffic_origin spec: %s", proxy.ID, proxy.TrafficOrigin)
+			}
 			continue
 		}
-		originPort := originData[1]
-		originPeerId := originData[0]
 
 		targetData := strings.Split(proxy.TrafficTarget, ":")
 		if len(targetData) < 2 {
@@ -257,12 +264,26 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 		targetPeerId := targetData[0]
 
 		if proxy.Kind == "tcp" {
+			originData := strings.Split(proxy.TrafficOrigin, ":")
+			if len(originData) < 2 {
+				log.Printf("Invalid TrafficOrigin format for proxy %d: %s", proxy.ID, proxy.TrafficOrigin)
+				continue
+			}
+			originPort := originData[1]
+			originPeerId := originData[0]
+
 			node := database.Node{}
 			DB.Where("peer_id = ?", targetPeerId).Preload("Addresses").First(&node)
 			log.Println("Starting proxy for node", node.NodeName, "on port", proxy.Port)
 			protocolID := federation.CreateT1mTCPTunnelProtocolID(originPort, originPeerId, targetPort, targetPeerId)
 			h.StartEgressProxy(DB, proxy, node, node, originPort, proxy.NetworkName, protocolID)
 		} else if proxy.Kind == "ssh" {
+			originData := strings.Split(proxy.TrafficOrigin, ":")
+			if len(originData) < 2 {
+				log.Printf("Invalid TrafficOrigin format for proxy %d: %s", proxy.ID, proxy.TrafficOrigin)
+				continue
+			}
+			originPort := originData[1]
 			portNum, err := strconv.Atoi(proxy.Port)
 			if err != nil {
 				log.Println("Cannot start SSH proxy, invalid port", proxy.Port, err)
@@ -295,6 +316,21 @@ func StartProxies(DB *gorm.DB, h *federation.FederationHandler) {
 		// Skip domain proxies - they are handled by domain routing middleware
 		if proxy.Kind == "domain" {
 			log.Printf("Skipping domain proxy for %s (handled by domain routing middleware)", proxy.TrafficOrigin)
+			continue
+		}
+		if proxy.Kind == "node" {
+			spec := strings.TrimSpace(proxy.TrafficOrigin)
+			if strings.HasPrefix(spec, "vip:") || strings.HasPrefix(spec, "bind:") {
+				if err := h.StartNodeVIPProxyIngress(proxy); err != nil {
+					log.Printf("Failed to start node VIP ingress proxy %d: %v", proxy.ID, err)
+				}
+			} else if strings.HasPrefix(spec, "tun:") || strings.HasPrefix(spec, "vpn:") {
+				if err := h.StartNodeTUNProxyIngress(proxy); err != nil {
+					log.Printf("Failed to start node TUN ingress proxy %d: %v", proxy.ID, err)
+				}
+			} else {
+				log.Printf("Failed to start node proxy %d: unknown traffic_origin spec: %s", proxy.ID, proxy.TrafficOrigin)
+			}
 			continue
 		}
 
