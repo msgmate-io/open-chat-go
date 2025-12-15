@@ -108,8 +108,13 @@ func (h *ChatsHandler) GetSharedInteractionStatus(w http.ResponseWriter, r *http
 		return
 	}
 
-	chat, _, err := getSharedChatByUUID(DB, shareUUID)
+	chat, share, err := getSharedChatByUUID(DB, shareUUID)
 	if err != nil {
+		http.Error(w, "Shared chat not found", http.StatusNotFound)
+		return
+	}
+
+	if !shareAllowsUser(share, util.GetOptionalUser(r)) {
 		http.Error(w, "Shared chat not found", http.StatusNotFound)
 		return
 	}
