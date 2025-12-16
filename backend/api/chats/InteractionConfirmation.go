@@ -4,6 +4,7 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"backend/workqueue"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -269,6 +270,11 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 		http.Error(w, "Failed to enqueue bot reply", http.StatusInternalServerError)
 		return
 	}
+
+	// Emit the interaction-confirmed notification once the interaction leaves
+	// the pending gate and its deferred reply is enqueued. Best-effort and
+	// detached so notification delivery never delays the approval response.
+	go maybeDispatchInteractionConfirmedNotification(context.Background(), DB, chat, *user)
 
 	writeInteractionConfirmationResponse(w, InteractionConfirmationResponse{
 		Success: true,
