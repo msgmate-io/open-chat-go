@@ -78,6 +78,10 @@ func maybeDispatchInteractionCompletedNotification(ctx context.Context, db *gorm
 		"source_integration": "core",
 		"context":            interactionCompletedContext(db, chat, interactionURL, tags),
 	}
+	// The in-app notification can open the finished interaction chat directly.
+	if chatUUID := strings.TrimSpace(chat.UUID); chatUUID != "" {
+		payload["action"] = map[string]interface{}{"type": "chat", "target": chatUUID}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
