@@ -14,16 +14,24 @@ import (
 
 func TestBuildInteractionCompletedBody(t *testing.T) {
 	body := buildInteractionCompletedBody("https://ci.msgmate.io/interaction/abc", "assign", []string{"git", "repo:open-chat-go"})
-	if !strings.HasPrefix(body, "Interaction completed: https://ci.msgmate.io/interaction/abc\n") {
-		t.Fatalf("unexpected body prefix: %q", body)
-	}
-	if !strings.Contains(body, "Type: assign") || !strings.Contains(body, "Tags: git, repo:open-chat-go") {
-		t.Fatalf("unexpected body: %q", body)
+	want := "https://ci.msgmate.io/interaction/abc  Type: assign, Tags: git, repo:open-chat-go"
+	if body != want {
+		t.Fatalf("body = %q, want %q", body, want)
 	}
 
 	empty := buildInteractionCompletedBody("", "interaction", nil)
-	if empty != "Interaction completed\nType: interaction" {
+	if empty != "Type: interaction" {
 		t.Fatalf("unexpected empty-link body: %q", empty)
+	}
+
+	confirmed := buildInteractionConfirmedBody("https://ci.msgmate.io/interaction/abc", "assign", nil)
+	if confirmed != "https://ci.msgmate.io/interaction/abc  Type: assign" {
+		t.Fatalf("unexpected confirmed body: %q", confirmed)
+	}
+
+	action := buildInteractionActionTakenBody("https://ci.msgmate.io/interaction/abc", "ssh_exec", "executed")
+	if action != "https://ci.msgmate.io/interaction/abc  Action: ssh_exec (executed)" {
+		t.Fatalf("unexpected action-taken body: %q", action)
 	}
 }
 
@@ -80,12 +88,14 @@ func TestMaybeDispatchInteractionCompletedNotification(t *testing.T) {
 	runtimecfg.SetAll(map[string]runtimecfg.Value{"PUBLIC_BASE_URL": {Value: "https://ci.msgmate.io/"}})
 	t.Cleanup(func() { runtimecfg.SetAll(previous) })
 
-	var captured map[string]interface{}
+	captured := map[string]map[string]interface{}{}
 	if err := integrationinterface.Register(integrationinterface.Definition{
 		Name: "notifications",
 		Functions: map[string]integrationinterface.Function{
 			"dispatch_notification": func(_ context.Context, payload map[string]interface{}) (interface{}, error) {
-				captured = payload
+				if slug, _ := payload["slug"].(string); slug != "" {
+					captured[slug] = payload
+				}
 				return map[string]interface{}{"ok": true}, nil
 			},
 		},
@@ -128,31 +138,63 @@ func TestMaybeDispatchInteractionCompletedNotification(t *testing.T) {
 	}
 	maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *bot, *owner, message)
 
-	if captured == nil {
-		t.Fatalf("expected the notifications dispatch to be called")
+	completed := captured[notificationSlugInteractionCompleted]
+	if completed == nil {
+		t.Fatalf("expected the completion notification dispatch to be called")
 	}
-	if captured["slug"] != notificationSlugInteractionCompleted {
-		t.Fatalf("slug = %v, want %s", captured["slug"], notificationSlugInteractionCompleted)
+	if completed["slug"] != notificationSlugInteractionCompleted {
+		t.Fatalf("slug = %v, want %s", completed["slug"], notificationSlugInteractionCompleted)
 	}
-	if captured["receiver_user_uuid"] != owner.UUID {
-		t.Fatalf("receiver_user_uuid = %v, want %s", captured["receiver_user_uuid"], owner.UUID)
+	if completed["receiver_user_uuid"] != owner.UUID {
+		t.Fatalf("receiver_user_uuid = %v, want %s", completed["receiver_user_uuid"], owner.UUID)
 	}
-	body, _ := captured["body"].(string)
+	body, _ := completed["body"].(string)
 	if !strings.Contains(body, "https://ci.msgmate.io/interaction/share-completed") {
 		t.Fatalf("body does not carry the interaction link: %q", body)
 	}
-	contextMap, _ := captured["context"].(map[string]interface{})
+	contextMap, _ := completed["context"].(map[string]interface{})
 	if contextMap["repo"] != "msgmate-io/open-chat-go" {
 		t.Fatalf("context repo = %v", contextMap["repo"])
 	}
 
 	// A pending action means the interaction is not actually complete yet.
-	captured = nil
+	delete(captured, notificationSlugInteractionCompleted)
 	pending := message
 	pending.MetaData = database.JSONRaw(`{"finished":true,"confirmable_actions":[{"action_id":"a1","status":"pending"}]}`)
 	maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *bot, *owner, pending)
-	if captured != nil {
+	if captured[notificationSlugInteractionCompleted] != nil {
 		t.Fatalf("a pending confirmable action must not emit a completion notification")
+	}
+
+	// The confirmation gate emits interaction_confirmed with the same compact
+	// one-line body shape (link + type/tags).
+	maybeDispatchInteractionConfirmedNotification(context.Background(), DB, chat, *owner)
+	confirmed := captured[notificationSlugInteractionConfirmed]
+	if confirmed == nil {
+		t.Fatalf("expected interaction_confirmed dispatch")
+	}
+	if confirmed["receiver_user_uuid"] != owner.UUID {
+		t.Fatalf("confirmed receiver_user_uuid = %v, want %s", confirmed["receiver_user_uuid"], owner.UUID)
+	}
+	confirmedBody, _ := confirmed["body"].(string)
+	if !strings.HasPrefix(confirmedBody, "https://ci.msgmate.io/interaction/share-completed  Type: assign") {
+		t.Fatalf("unexpected confirmed body: %q", confirmedBody)
+	}
+
+	// Executing a confirmable action emits interaction_action_taken with the
+	// action + result status in the body and context.
+	MaybeDispatchInteractionActionTakenNotification(context.Background(), DB, chat, *owner, "ssh_exec", "executed")
+	action := captured[notificationSlugInteractionActionTaken]
+	if action == nil {
+		t.Fatalf("expected interaction_action_taken dispatch")
+	}
+	actionBody, _ := action["body"].(string)
+	if !strings.Contains(actionBody, "Action: ssh_exec (executed)") {
+		t.Fatalf("unexpected action-taken body: %q", actionBody)
+	}
+	actionContext, _ := action["context"].(map[string]interface{})
+	if actionContext["action"] != "ssh_exec" || actionContext["action_status"] != "executed" {
+		t.Fatalf("unexpected action-taken context: %v", actionContext)
 	}
 }
 
