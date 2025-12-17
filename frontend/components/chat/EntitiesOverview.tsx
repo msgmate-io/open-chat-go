@@ -27,6 +27,7 @@ import { cn, fetcher } from "@/lib/utils";
 import { useBreakpoint } from "@/components/utils";
 import { CollapseIndicator } from "@open-chat-go/ui";
 import { useSidePanelCollapse } from "@open-chat-go/ui";
+import { NotificationsBell } from "./NotificationsBell";
 
 type ContactRow = {
   contact_token: string;
@@ -883,6 +884,7 @@ export function EntitiesOverview({
                   </Badge>
                 ) : null}
               </Button>
+              <NotificationsBell navigateTo={navigateTo} />
               {canCreateBots ? (
                 <Button type="button" className="w-full sm:w-auto" onClick={() => navigateTo("/chats/bots/create")}>
                   Create bot
