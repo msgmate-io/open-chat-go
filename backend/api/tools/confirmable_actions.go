@@ -2,10 +2,12 @@ package tools
 
 import (
 	"backend/api"
+	"backend/api/chats"
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/server/util"
 	"backend/workqueue"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -726,6 +728,15 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 				response.ContinuationQueued = true
 			}
 		}
+	}
+
+	// Announce that a confirmable action was taken. Actions still waiting for an
+	// SSH-key unlock stay pending and are not announced; executed and failed
+	// actions are terminal. Best-effort and detached so delivery never delays
+	// the response.
+	if !unlockRequired {
+		actionStatus, _ := selectedAction["status"].(string)
+		go chats.MaybeDispatchInteractionActionTakenNotification(context.Background(), DB, chat, *user, targetToolName, actionStatus)
 	}
 
 	response.UpdatedAction = selectedAction
