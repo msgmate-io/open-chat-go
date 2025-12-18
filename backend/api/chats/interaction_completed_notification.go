@@ -155,10 +155,6 @@ func dispatchInteractionNotification(ctx context.Context, db *gorm.DB, slug, tit
 	if !ok || fn == nil {
 		return nil
 	}
-	// The in-app notification can open the finished interaction chat directly.
-	if chatUUID := strings.TrimSpace(chat.UUID); chatUUID != "" {
-		payload["action"] = map[string]interface{}{"type": "chat", "target": chatUUID}
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -322,6 +318,11 @@ func interactionLinkLine(interactionURL, details string) string {
 // interaction link and tags.
 func interactionCompletedContext(db *gorm.DB, chat database.Chat, interactionURL string, tags []string) map[string]interface{} {
 	contextMap := map[string]interface{}{}
+	// The in-app notification opens the finished interaction chat directly;
+	// the notifications integration derives a `chat` action from `chat_uuid`.
+	if chatUUID := strings.TrimSpace(chat.UUID); chatUUID != "" {
+		contextMap["chat_uuid"] = chatUUID
+	}
 	if interactionURL != "" {
 		contextMap["interaction_url"] = interactionURL
 	}
