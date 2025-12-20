@@ -12,6 +12,7 @@
 export { DataTable } from "./components/DataTable";
 export { DropdownSelect, type DropdownSelectItem } from "./components/DropdownSelect";
 export { IntegrationPageShell } from "./components/IntegrationPageShell";
+export { OpenInAppWidget } from "./components/OpenInAppWidget";
 export { MsgmateTokenIcon } from "./components/MsgmateTokenIcon";
 export { SshShellTerminal } from "./components/SshShellTerminal";
 export { ToolInitFields } from "./components/ToolInitFields";
@@ -103,6 +104,7 @@ export * from "./hooks/use-current-user";
 export * from "./hooks/use-terminal-zoom";
 export * from "./hooks/use-panel-zoom";
 export * from "./lib/mobile-app";
+export * from "./lib/mobile-web";
 export * from "./lib/tool-init-registry";
 export * from "./lib/tool-init";
 
