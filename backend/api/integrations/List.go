@@ -9,16 +9,19 @@ import (
 )
 
 type IntegrationListRow struct {
-	Name               string `json:"name"`
-	HasRouteRegistrar  bool   `json:"has_route_registrar"`
-	APIRouteCount      int    `json:"api_route_count"`
-	FrontendRouteCount int    `json:"frontend_route_count"`
-	ModelProviderCount int    `json:"model_provider_count"`
-	FunctionCount      int    `json:"function_count"`
-	RuntimeEnvVarCount int    `json:"runtime_env_var_count"`
-	DefaultBotCount    int    `json:"default_bot_count"`
-	AdminOnly          bool   `json:"admin_only"`
-	UserAccessible     bool   `json:"user_accessible"`
+	Name               string   `json:"name"`
+	HasRouteRegistrar  bool     `json:"has_route_registrar"`
+	APIRouteCount      int      `json:"api_route_count"`
+	FrontendRouteCount int      `json:"frontend_route_count"`
+	FrontendPageCount  int      `json:"frontend_page_count"`
+	FrontendDocCount   int      `json:"frontend_doc_count"`
+	ModelProviderCount int      `json:"model_provider_count"`
+	FunctionCount      int      `json:"function_count"`
+	RuntimeEnvVarCount int      `json:"runtime_env_var_count"`
+	DefaultBotCount    int      `json:"default_bot_count"`
+	AdminOnly          bool     `json:"admin_only"`
+	UserAccessible     bool     `json:"user_accessible"`
+	Labels             []string `json:"labels"`
 }
 
 type IntegrationsListResponse struct {
@@ -50,13 +53,16 @@ func (h *IntegrationsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Name:               def.Name,
 			HasRouteRegistrar:  def.RouteRegistrar != nil,
 			APIRouteCount:      len(def.APIRoutes),
-			FrontendRouteCount: len(def.FrontendRoutes) + len(def.FrontendPages),
+			FrontendRouteCount: len(def.FrontendRoutes),
+			FrontendPageCount:  len(def.FrontendPages),
+			FrontendDocCount:   len(def.FrontendDocs),
 			ModelProviderCount: len(def.ModelProviders),
 			FunctionCount:      len(def.Functions),
 			RuntimeEnvVarCount: len(def.RuntimeEnvVars),
 			DefaultBotCount:    len(def.BotBootstrapConfigs),
 			AdminOnly:          def.AdminOnly,
 			UserAccessible:     def.UserAccessible,
+			Labels:             backendintegrations.LabelsFor(def),
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
