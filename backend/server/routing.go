@@ -674,6 +674,9 @@ func BackendRouting(
 			for _, frontendPage := range integrationDef.FrontendPages {
 				integrationFrontendRoutes[frontendPage.Route] = struct{}{}
 			}
+			for _, frontendDoc := range integrationDef.FrontendDocs {
+				integrationFrontendRoutes[frontendDoc.Route] = struct{}{}
+			}
 		}
 
 		filteredRoutes := make([]string, 0, len(routes))
