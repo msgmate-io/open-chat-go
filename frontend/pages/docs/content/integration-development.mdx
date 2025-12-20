@@ -141,6 +141,44 @@ on `FrontendPage`/`FrontendRoute` to mount a first-party route elsewhere; the
 server serves the embedded page there and reserves it (core page routes that
 collide are de-registered in favour of the integration page).
 
+### Integration documentation pages
+
+An integration can publish documentation pages whose React code lives in the
+integration repository, exactly like its other frontend pages. Declare them
+with `FrontendDocs` and register the matching Vike page/asset in
+`integration.frontend.json`:
+
+```go
+FrontendDocs: []integrationinterface.FrontendDoc{
+    {
+        Route:       "/integrations/my_integration/docs/getting-started",
+        Title:       "Getting Started",
+        Description: "Install and configure the integration.",
+        AssetPath:   "docs/getting-started/index.html",
+        Section:     "Guides",
+        Order:       1,
+    },
+}
+```
+
+`Title`, `Section` and `Order` drive the documentation navigation; `Route` and
+`AssetPath` behave like `FrontendPage`. Documentation routes are served by the
+backend, listed (with their metadata) in the integration overview
+(`frontend_routes` entries with `kind: "doc"`) and surfaced in the sidebar and
+the `/integrations` overview, which can filter integrations by `pages`, `docs`
+or `routes`.
+
+### Integration labels
+
+Integrations are labelled `core` (part of the public `core-only` profile in
+`integrations.yaml`) or `full` (only available in a larger profile)
+automatically, and the `/integrations` overview can filter by label. An
+integration can add its own labels via the definition `Labels` field:
+
+```go
+Labels: []string{"media"},
+```
+
 ## Adding a custom integration
 
 1. **Create the integration repository.** Start a Go module whose package
