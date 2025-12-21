@@ -1,4 +1,5 @@
 import useSWR from "swr"
+import { useEffect } from "react"
 import { usePageContext } from "vike-react/usePageContext"
 import logoUrl from "@/assets/logo.png"
 import { fetcher } from "@/lib/utils"
@@ -45,6 +46,19 @@ type SharedChatResponse = {
     tool_init?: Record<string, unknown>
     system_prompt?: string
   }
+  /**
+   * Follow-up interaction this interaction handed off to (e.g. the agent a
+   * runtime-selector/chooser bot picked). When present, opening the share
+   * redirects to the follow-up so clicking the interaction badge lands on the
+   * interaction that is actually doing the work.
+   */
+  follow_up?: {
+    chat_uuid?: string
+    chat_share_uuid?: string
+    interaction_url?: string
+    agent?: string
+    state?: string
+  }
 }
 
 type SharedMessagesResponse = {
@@ -74,6 +88,24 @@ export default function SharedInteractionPage() {
     return state.partialMessages[chat.uuid]
   })
 
+  const followUpURL =
+    chat?.follow_up?.interaction_url ||
+    (chat?.follow_up?.chat_share_uuid ? `/interaction/${chat.follow_up.chat_share_uuid}` : "") ||
+    (chat?.follow_up?.chat_uuid ? `/chat/${chat.follow_up.chat_uuid}` : "")
+  // `?original=1` keeps the original (pre-follow-up) interaction view reachable.
+  const isOriginalRequested =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("original") === "1"
+
+  // An interaction that handed off to a follow-up (e.g. an agent chooser bot
+  // that picked and started the real agent) should redirect the viewer to the
+  // follow-up so clicking the interaction badge lands on the active work.
+  useEffect(() => {
+    if (!followUpURL || isOriginalRequested || typeof window === "undefined") {
+      return
+    }
+    window.location.replace(followUpURL)
+  }, [followUpURL, isOriginalRequested])
+
   if (chatError || messageError) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4 text-center">
@@ -89,6 +121,23 @@ export default function SharedInteractionPage() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <LoadingSpinner />
+      </div>
+    )
+  }
+
+  if (followUpURL && !isOriginalRequested) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-4 text-center">
+        <LoadingSpinner />
+        <Text type={TextTypes.Body6} color="muted">
+          Opening the follow-up interaction{chat.follow_up?.agent ? ` (${chat.follow_up.agent})` : ""}…
+        </Text>
+        <a href={followUpURL} className="text-sm underline">
+          Continue if you are not redirected
+        </a>
+        <a href="?original=1" className="text-xs text-muted-foreground underline">
+          View the original interaction
+        </a>
       </div>
     )
   }

@@ -501,6 +501,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/view", admin.ViewRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/validate", admin.ValidateRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/raw", admin.SaveRawIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/mutate", admin.MutateRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/download", admin.DownloadRawIntegrationSettings)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
