@@ -75,6 +75,20 @@ type badgeData struct {
 	State   string
 	Color   string
 	Runtime *badgeRuntime
+	// FollowUp, when set, renders a second row beneath the interaction row
+	// describing the follow-up interaction that was started (e.g. the agent a
+	// runtime-selector/chooser bot handed the request off to).
+	FollowUp *badgeFollowUp
+}
+
+// badgeFollowUp is the rendered description of a follow-up interaction shown as
+// a nested badge row.
+type badgeFollowUp struct {
+	Agent   string
+	State   string
+	Color   string
+	Runtime *badgeRuntime
+	URL     string
 }
 
 // badgeSegment is a single rendered section of a badge. When Runtime is set
@@ -159,17 +173,20 @@ func (h *ChatsHandler) GetSharedInteractionBadge(w http.ResponseWriter, r *http.
 	}
 
 	// Active badges animate from a server computed phase, so they must not be
-	// cached for long or the SMIL begin offset freezes at the first fetch.
-	if status.IsActive {
+	// cached for long or the SMIL begin offset freezes at the first fetch. The
+	// same applies when the nested follow-up row is still running.
+	followUp := badgeFollowUpForInteraction(DB, inspector, chat)
+	if status.IsActive || (followUp != nil && followUp.Runtime != nil && followUp.Runtime.Active) {
 		w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
 	}
 
 	data := badgeData{
-		Label:   "open-chat",
-		Host:    resolveBadgeHost(r),
-		State:   state.Label,
-		Color:   state.Color,
-		Runtime: resolveInteractionRuntime(DB, chat, status),
+		Label:    "open-chat",
+		Host:     resolveBadgeHost(r),
+		State:    state.Label,
+		Color:    state.Color,
+		Runtime:  resolveInteractionRuntime(DB, chat, status),
+		FollowUp: followUp,
 	}
 	_, _ = w.Write(renderBadgeSVG(data))
 }
@@ -310,21 +327,26 @@ func renderSimpleBadgeSVG(state badgeState) []byte {
 	}, fmt.Sprintf("open-chat: %s", state.Label))
 }
 
-// renderBadgeSVG renders the detailed badge from the resolved badge data.
+// renderBadgeSVG renders the detailed badge from the resolved badge data. When
+// the interaction started a follow-up interaction (e.g. a runtime-selector
+// chooser handing the request off to the picked agent) the follow-up is
+// rendered as a second row beneath the interaction row.
 func renderBadgeSVG(data badgeData) []byte {
-	segments := make([]badgeSegment, 0, 4)
+	rows := make([][]badgeSegment, 0, 2)
+	parent := make([]badgeSegment, 0, 4)
 	if data.Label != "" {
-		segments = append(segments, badgeSegment{Text: data.Label, Color: "#555"})
+		parent = append(parent, badgeSegment{Text: data.Label, Color: "#555"})
 	}
 	if data.Host != "" {
-		segments = append(segments, badgeSegment{Text: data.Host, Color: "#3b3b3b"})
+		parent = append(parent, badgeSegment{Text: data.Host, Color: "#3b3b3b"})
 	}
 	if data.State != "" {
-		segments = append(segments, badgeSegment{Text: data.State, Color: data.Color})
+		parent = append(parent, badgeSegment{Text: data.State, Color: data.Color})
 	}
 	if data.Runtime != nil {
-		segments = append(segments, badgeSegment{Runtime: data.Runtime, Color: "#3b3b3b"})
+		parent = append(parent, badgeSegment{Runtime: data.Runtime, Color: "#3b3b3b"})
 	}
+	rows = append(rows, parent)
 
 	title := data.Label
 	if data.Host != "" {
@@ -336,57 +358,121 @@ func renderBadgeSVG(data badgeData) []byte {
 	if data.Runtime != nil {
 		title += " " + formatBadgeRuntime(data.Runtime.Seconds)
 	}
-	return renderSegments(segments, strings.TrimSpace(title))
+
+	if data.FollowUp != nil {
+		follow := make([]badgeSegment, 0, 4)
+		follow = append(follow, badgeSegment{Text: "follow-up", Color: "#2b2b2b"})
+		if data.FollowUp.Agent != "" {
+			follow = append(follow, badgeSegment{Text: data.FollowUp.Agent, Color: "#3b3b3b"})
+		}
+		if data.FollowUp.State != "" {
+			follow = append(follow, badgeSegment{Text: data.FollowUp.State, Color: data.FollowUp.Color})
+		}
+		if data.FollowUp.Runtime != nil {
+			follow = append(follow, badgeSegment{Runtime: data.FollowUp.Runtime, Color: "#3b3b3b"})
+		}
+		rows = append(rows, follow)
+
+		title += " -> follow-up"
+		if data.FollowUp.Agent != "" {
+			title += ": " + data.FollowUp.Agent
+		}
+		if data.FollowUp.State != "" {
+			title += " (" + data.FollowUp.State + ")"
+		}
+	}
+	return renderRows(rows, strings.TrimSpace(title), data.FollowUp)
 }
 
-// renderSegments renders a shields-style badge from a list of segments.
+// renderSegments renders a single-row shields-style badge from a list of
+// segments.
 func renderSegments(segments []badgeSegment, title string) []byte {
-	if len(segments) == 0 {
-		segments = []badgeSegment{{Text: "open-chat", Color: "#555"}}
+	return renderRows([][]badgeSegment{segments}, title, nil)
+}
+
+// badgeRowGap is the vertical gap (in px) between stacked badge rows.
+const badgeRowGap = 3
+
+// renderRows renders one or more stacked shields-style badge rows. When the
+// last row belongs to a follow-up interaction (followUp != nil) it is wrapped
+// in an SVG link so renderers that honour SVG anchors can navigate to it.
+func renderRows(rows [][]badgeSegment, title string, followUp *badgeFollowUp) []byte {
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		rows = [][]badgeSegment{{{Text: "open-chat", Color: "#555"}}}
 	}
 
-	widths := make([]int, len(segments))
+	widths := make([][]int, len(rows))
 	totalWidth := 0
-	for i, segment := range segments {
-		widths[i] = badgeSegmentWidth(segment)
-		totalWidth += widths[i]
+	for r, segments := range rows {
+		widths[r] = make([]int, len(segments))
+		rowWidth := 0
+		for i, segment := range segments {
+			widths[r][i] = badgeSegmentWidth(segment)
+			rowWidth += widths[r][i]
+		}
+		if rowWidth > totalWidth {
+			totalWidth = rowWidth
+		}
 	}
 
+	totalHeight := len(rows)*badgeHeight + (len(rows)-1)*badgeRowGap
 	escapedTitle := html.EscapeString(title)
 	var b strings.Builder
 
 	fmt.Fprintf(&b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" role="img" aria-label="%s">`+"\n",
-		totalWidth, badgeHeight, escapedTitle)
+		totalWidth, totalHeight, escapedTitle)
 	fmt.Fprintf(&b, "<title>%s</title>\n", escapedTitle)
 	b.WriteString(`<linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>` + "\n")
-	fmt.Fprintf(&b, `<clipPath id="r"><rect width="%d" height="%d" rx="3" fill="#fff"/></clipPath>`+"\n", totalWidth, badgeHeight)
-	b.WriteString(`<g clip-path="url(#r)">` + "\n")
 
-	x := 0
-	for i, segment := range segments {
-		color := segment.Color
-		if color == "" {
-			color = "#555"
-		}
-		fmt.Fprintf(&b, `<rect x="%d" width="%d" height="%d" fill="%s"/>`+"\n",
-			x, widths[i], badgeHeight, color)
-		x += widths[i]
-	}
-	fmt.Fprintf(&b, `<rect width="%d" height="%d" fill="url(#s)"/>`+"\n", totalWidth, badgeHeight)
-	b.WriteString("</g>\n")
-
-	x = 0
-	for i, segment := range segments {
-		if segment.Runtime != nil && segment.Runtime.Active {
-			b.WriteString(renderRuntimeTicker(segment.Runtime, x, widths[i], i))
-		} else {
-			text := segment.Text
-			if segment.Runtime != nil {
-				text = formatBadgeRuntime(segment.Runtime.Seconds)
+	// Backgrounds, one clip path per row so each row keeps its own rounded
+	// corners.
+	for r, segments := range rows {
+		yOffset := r * (badgeHeight + badgeRowGap)
+		clipID := fmt.Sprintf("r%d", r)
+		fmt.Fprintf(&b, `<clipPath id="%s"><rect y="%d" width="%d" height="%d" rx="3" fill="#fff"/></clipPath>`+"\n",
+			clipID, yOffset, totalWidth, badgeHeight)
+		fmt.Fprintf(&b, `<g clip-path="url(#%s)">`+"\n", clipID)
+		x := 0
+		for i, segment := range segments {
+			color := segment.Color
+			if color == "" {
+				color = "#555"
 			}
-			b.WriteString(renderSegmentLabel(text, x, widths[i]))
+			fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`+"\n",
+				x, yOffset, widths[r][i], badgeHeight, color)
+			x += widths[r][i]
 		}
-		x += widths[i]
+		fmt.Fprintf(&b, `<rect y="%d" width="%d" height="%d" fill="url(#s)"/>`+"\n", yOffset, totalWidth, badgeHeight)
+		b.WriteString("</g>\n")
+	}
+
+	// Labels/tickers. The last row is wrapped in a link when it is a follow-up
+	// so renderers that support SVG anchors can open the follow-up interaction.
+	seed := 0
+	for r, segments := range rows {
+		yOffset := r * (badgeHeight + badgeRowGap)
+		isFollowUpRow := followUp != nil && r == len(rows)-1 && len(rows) > 1
+		linkRow := isFollowUpRow && strings.TrimSpace(followUp.URL) != ""
+		if linkRow {
+			fmt.Fprintf(&b, `<a href="%s" target="_blank" rel="noopener">`+"\n", html.EscapeString(followUp.URL))
+		}
+		x := 0
+		for i, segment := range segments {
+			if segment.Runtime != nil && segment.Runtime.Active {
+				b.WriteString(renderRuntimeTicker(segment.Runtime, x, widths[r][i], seed, yOffset))
+			} else {
+				text := segment.Text
+				if segment.Runtime != nil {
+					text = formatBadgeRuntime(segment.Runtime.Seconds)
+				}
+				b.WriteString(renderSegmentLabel(text, x, widths[r][i], yOffset))
+			}
+			x += widths[r][i]
+			seed++
+		}
+		if linkRow {
+			b.WriteString("</a>\n")
+		}
 	}
 
 	b.WriteString("</svg>\n")
@@ -409,16 +495,17 @@ func badgeSegmentWidth(segment badgeSegment) int {
 	return width + 2*badgePadX
 }
 
-// renderSegmentLabel renders a centered text label with a drop shadow.
-func renderSegmentLabel(text string, x, width int) string {
+// renderSegmentLabel renders a centered text label with a drop shadow at the
+// given row y offset.
+func renderSegmentLabel(text string, x, width, yOffset int) string {
 	escaped := html.EscapeString(text)
 	center := x + width/2
 	var b strings.Builder
 	fmt.Fprintf(&b, `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="%d" font-weight="bold">`+"\n", badgeFontSize)
-	fmt.Fprintf(&b, `<text x="%d" y="14" fill="#010101" fill-opacity=".3">`, center)
+	fmt.Fprintf(&b, `<text x="%d" y="%d" fill="#010101" fill-opacity=".3">`, center, 14+yOffset)
 	b.WriteString(escaped)
 	b.WriteString("</text>\n")
-	fmt.Fprintf(&b, `<text x="%d" y="13.5">`, center)
+	fmt.Fprintf(&b, `<text x="%d" y="%v">`, center, 13.5+float64(yOffset))
 	b.WriteString(escaped)
 	b.WriteString("</text>\n</g>\n")
 	return b.String()
@@ -443,7 +530,7 @@ var tickerColumns = [4]tickerColumn{
 // second inside the SVG. The inner group keeps a static transform matching the
 // server computed value so renderers that strip SMIL still show a correct
 // (non-ticking) timestamp.
-func renderRuntimeTicker(runtime *badgeRuntime, x, width, seed int) string {
+func renderRuntimeTicker(runtime *badgeRuntime, x, width, seed, yOffset int) string {
 	seconds := runtime.Seconds
 	if seconds < 0 {
 		seconds = 0
@@ -463,16 +550,16 @@ func renderRuntimeTicker(runtime *badgeRuntime, x, width, seed int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="%d" font-weight="bold">`+"\n", badgeFontSize)
 	for i, column := range tickerColumns {
-		b.WriteString(renderTickerColumn(column, seconds, columnX[i], seed, i))
+		b.WriteString(renderTickerColumn(column, seconds, columnX[i], seed, i, yOffset))
 	}
 	colonCenter := contentX + 2*tickerDigitWidth + tickerColonWidth/2
-	fmt.Fprintf(&b, `<text x="%d" y="14">:</text>`+"\n", colonCenter)
+	fmt.Fprintf(&b, `<text x="%d" y="%d">:</text>`+"\n", colonCenter, 14+yOffset)
 	b.WriteString("</g>\n")
 	return b.String()
 }
 
 // renderTickerColumn renders one animated digit column of the runtime ticker.
-func renderTickerColumn(column tickerColumn, seconds int64, x, seed, index int) string {
+func renderTickerColumn(column tickerColumn, seconds int64, x, seed, index, yOffset int) string {
 	cellSeconds := column.PeriodSeconds / int64(column.Cells)
 	valueIndex := int64(0)
 	if cellSeconds > 0 {
@@ -484,12 +571,12 @@ func renderTickerColumn(column tickerColumn, seconds int64, x, seed, index int) 
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `<clipPath id="%s"><rect x="%d" y="%d" width="%d" height="%d"/></clipPath>`+"\n",
-		clipID, x, tickerWindowY, tickerDigitWidth, tickerWindowHeight)
+		clipID, x, tickerWindowY+yOffset, tickerDigitWidth, tickerWindowHeight)
 	fmt.Fprintf(&b, `<g clip-path="url(#%s)">`+"\n", clipID)
 	fmt.Fprintf(&b, `<g transform="translate(0,%d)">`+"\n", -int(valueIndex)*tickerCellHeight)
 
 	for cell := 0; cell <= column.Cells; cell++ {
-		baseline := tickerWindowY + badgeFontSize + cell*tickerCellHeight
+		baseline := tickerWindowY + badgeFontSize + cell*tickerCellHeight + yOffset
 		fmt.Fprintf(&b, `<text x="%d" y="%d">%d</text>`+"\n", digitX, baseline, cell%column.Cells)
 	}
 
@@ -497,10 +584,10 @@ func renderTickerColumn(column tickerColumn, seconds int64, x, seed, index int) 
 	keyTimes := make([]string, 0, column.Cells+1)
 	for cell := 0; cell <= column.Cells; cell++ {
 		values = append(values, fmt.Sprintf("0 %d", -cell*tickerCellHeight))
-		switch {
-		case cell == 0:
+		switch cell {
+		case 0:
 			keyTimes = append(keyTimes, "0")
-		case cell == column.Cells:
+		case column.Cells:
 			keyTimes = append(keyTimes, "1")
 		default:
 			keyTimes = append(keyTimes, strconv.FormatFloat(float64(cell)/float64(column.Cells), 'f', 4, 64))

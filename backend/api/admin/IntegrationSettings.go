@@ -482,6 +482,83 @@ func SaveRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type rawConfigMutateResponse struct {
+	Deployment      integrationsettings.DeploymentInfo `json:"deployment"`
+	Persisted       bool                               `json:"persisted"`
+	PersistError    string                             `json:"persist_error,omitempty"`
+	RestartRequired bool                               `json:"restart_required"`
+	RemotePersisted bool                               `json:"remote_persisted"`
+	RemoteTarget    string                             `json:"remote_target,omitempty"`
+	RemoteError     string                             `json:"remote_error,omitempty"`
+}
+
+// rawConfigMutateRequest accepts either the full delta (`set`/`upsert`) or, as a
+// convenience, a single `path` + `value` pair that is treated as one set op.
+type rawConfigMutateRequest struct {
+	integrationsettings.ConfigDelta
+	Path  string      `json:"path,omitempty"`
+	Value interface{} `json:"value,omitempty"`
+}
+
+// MutateRawIntegrationSettings applies a small, non-secret config delta (one or
+// more `set`/`upsert` operations) onto the active config document and persists
+// it. It mirrors the CI config-delta publisher's format so an administrator can
+// update a single value (for example a long kubeconfig anchor) from an
+// externally authenticated CLI without shipping the whole config.
+//
+//	@Summary      Mutate raw integration settings
+//	@Description  Applies set/upsert operations onto the active config document and persists the result.
+//	@Tags         admin
+//	@Accept       json
+//	@Produce      json
+//	@Success      200 {object} rawConfigMutateResponse
+//	@Success      400 {object} rawConfigValidateResponse
+//	@Router       /api/v1/admin/integration-settings/mutate [post]
+func MutateRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdmin(w, r) {
+		return
+	}
+
+	payload := rawConfigMutateRequest{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	delta := payload.ConfigDelta
+	if delta.Empty() && strings.TrimSpace(payload.Path) != "" {
+		delta.Set = []integrationsettings.ConfigSetOp{{Path: strings.TrimSpace(payload.Path), Value: payload.Value}}
+	}
+	if delta.Empty() {
+		http.Error(w, "at least one set or upsert operation (or a path/value pair) is required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := integrationsettings.SetConfigDelta(runtimecfg.GetConfigSource(), delta)
+	if err != nil {
+		var validationErr *integrationsettings.ApplyValidationError
+		if errors.As(err, &validationErr) {
+			writeJSON(w, http.StatusBadRequest, rawConfigValidateResponse{Valid: false, Errors: validationErr.Errors})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, rawConfigMutateResponse{
+		Deployment:      result.Deployment,
+		Persisted:       result.Persisted,
+		PersistError:    result.PersistError,
+		RestartRequired: result.RestartRequired,
+		RemotePersisted: result.RemotePersisted,
+		RemoteTarget:    result.RemoteTarget,
+		RemoteError:     result.RemoteError,
+	})
+}
+
 // DownloadRawIntegrationSettings streams the raw config file after the admin
 // re-authenticates with their password.
 //
