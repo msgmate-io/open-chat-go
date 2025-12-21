@@ -4,16 +4,18 @@ import React, { useEffect, useState, useRef, forwardRef, useCallback, type React
 import { CollapseIndicator } from "../CollapseIndicator";
 import { usePartialMessageStore } from "./PartialMessages";
 import { useSidePanelCollapse } from "./ChatBase";
-import { BotDisplay, Button, DropdownMenuItem, LoadingSpinner, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
+import { BotDisplay, Button, DropdownMenuItem, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
 import { InteractionChatInfo } from "./InteractionChatInfo";
 import { resolveChatUIExtension, type ChatUIContext, type ChatUISendPayload } from "./chat-ui/index";
 import { buildChatRunCommand } from "../../lib/open-chat-run";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
-import { APIRequestError, fetcher } from "../../lib/utils";
+import { APIRequestError, fetcher, cn } from "../../lib/utils";
 import { revalidateChatData } from "../../lib/chat-cache";
 import { useBreakpoint } from "../utils";
 import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
+import { PullToRefresh } from "../PullToRefresh";
+import { Skeleton } from "../../../components/skeleton";
 
 const ScrollButton = React.memo(({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement> }) => {
     const [shouldShow, setShouldShow] = useState(false);
@@ -82,6 +84,7 @@ export function MessagesScroll({
     messages,
     chat,
     mutateMessages,
+    onRefresh,
 }: {
     messages: any,
     chat: any,
@@ -90,6 +93,7 @@ export function MessagesScroll({
     hideInput: boolean;
     footerSlot?: ReactNode;
     mutateMessages: any;
+    onRefresh?: () => void | Promise<unknown>;
 }) {
     const [text, setText] = useState("");
     const { partialMessages, removePartialMessage, addPartialMessage } = usePartialMessageStore()
@@ -138,7 +142,7 @@ export function MessagesScroll({
         };
     }, [chatUUID, addPartialMessage]);
 
-    const { data: integrations } = useSWR<{ rows?: Array<{ name: string }> }>(
+    const { data: integrations, mutate: mutateIntegrations } = useSWR<{ rows?: Array<{ name: string }> }>(
         shouldLoadIntegrations ? "/api/v1/integrations/list" : null,
         fetcher,
     );
@@ -161,6 +165,16 @@ export function MessagesScroll({
         );
         shouldAutoScrollRef.current = distance < AUTO_SCROLL_THRESHOLD;
     }, []);
+
+    // Native pull-to-refresh: reload the page's own fetches (message list and the
+    // integration catalog) on top of the parent's chat/user/status reload.
+    const handlePullRefresh = useCallback(async () => {
+        await Promise.all([
+            onRefresh?.(),
+            mutateMessages(),
+            mutateIntegrations(),
+        ]);
+    }, [onRefresh, mutateMessages, mutateIntegrations]);
 
     // Re-pin to the bottom whenever a different chat is opened.
     useEffect(() => {
@@ -283,11 +297,7 @@ export function MessagesScroll({
 
     const renderMessages = () => {
         if (!messages || !chat || !user) {
-            return (
-                <div className="flex flex-grow w-full h-full items-center content-center justify-center">
-                    <LoadingSpinner />
-                </div>
-            );
+            return <MessagesSkeleton />;
         }
 
         if ((messages.rows?.length || 0) === 0) {
@@ -360,12 +370,15 @@ export function MessagesScroll({
                     onToggleSidebar={onSidebarButtonClick}
                 />
             )}
-            <div
-                ref={scrollRef}
-                onScroll={handleMessagesScroll}
-                className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
-                style={{
-                    paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
+            <PullToRefresh
+                onRefresh={handlePullRefresh}
+                scrollRef={scrollRef}
+                scrollClassName="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
+                scrollProps={{
+                    onScroll: handleMessagesScroll,
+                    style: {
+                        paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
+                    },
                 }}
             >
                 {renderMessages()}
@@ -409,7 +422,7 @@ export function MessagesScroll({
                         interactionState={(chat as any)?.status?.state}
                     />
                 )}
-            </div>
+            </PullToRefresh>
             <ScrollButton scrollRef={scrollRef} />
             {!hideInput &&
                 (() => {
@@ -566,6 +579,27 @@ function AdminImpersonateButton({
 
 const MAX_LOAD_RETRIES = 4;
 
+// Placeholder bubbles shown while the chat/user/message fetches are in flight.
+// The alternating side matches the real message layout so the composer and
+// scroll position do not jump once the messages arrive.
+const MessagesSkeleton = () => (
+    <div className="flex w-full flex-col gap-3" aria-hidden="true">
+        {Array.from({ length: 6 }).map((_, index) => {
+            const isUser = index % 2 === 1;
+            return (
+                <div key={index} className={cn("flex w-full px-1", isUser ? "justify-end" : "justify-start")}>
+                    <Skeleton
+                        className={cn(
+                            "rounded-2xl",
+                            isUser ? "h-14 w-3/5" : "h-20 w-4/5",
+                        )}
+                    />
+                </div>
+            );
+        })}
+    </div>
+);
+
 export function MessagesView({ 
         chatUUID = null, 
         hideInput = false,
@@ -623,6 +657,19 @@ export function MessagesView({
         }
         wasInteractionActiveRef.current = isActive;
     }, [interactionStatus, chatUUID]);
+
+    // Native pull-to-refresh: revalidate every fetch this page renders - the
+    // chat, its messages, the current user, the interaction status and the
+    // chat-derived sidebar caches.
+    const handlePullRefresh = useCallback(async () => {
+        await Promise.all([
+            reloadChat(),
+            mutateMessages(),
+            reloadUser(),
+            mutateInteractionStatus(),
+            revalidateChatData(chatUUID),
+        ]);
+    }, [reloadChat, mutateMessages, reloadUser, mutateInteractionStatus, chatUUID]);
 
     const hasLoadError = Boolean(chatError || messagesError || userError);
     const isOfflineCacheMiss = [chatError, messagesError, userError].some((error) => {
@@ -729,6 +776,7 @@ export function MessagesView({
                     messages={messages}
                     chat={chatWithStatus}
                     mutateMessages={mutateMessages}
+                    onRefresh={handlePullRefresh}
                 />
         </div>
     );
