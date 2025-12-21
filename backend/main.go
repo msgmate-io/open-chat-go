@@ -974,6 +974,7 @@ func main() {
 		},
 		Commands: []*ufcli.Command{
 			cmd.RunCli(),
+			cmd.ConfigCli(),
 			cmd.ServerCli(),
 			cmd.WorkerCli(),
 			cmd.ClientCli(),
