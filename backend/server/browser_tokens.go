@@ -37,6 +37,10 @@ var browserTokenRoutes = []browserTokenRoute{
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}", Scope: database.ScopeInteractionsRead},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/list", Scope: database.ScopeInteractionsRead},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/status", Scope: database.ScopeInteractionsRead},
+
+	// Read-only interaction history MCP server. Restricted to the dedicated
+	// MCP audience/scope the opencode integration mints for agent runtimes.
+	{Method: http.MethodPost, Pattern: "/mcp", Scope: database.ScopeInteractionsMCP},
 }
 
 func normalizeBrowserRoutePath(path string) string {
