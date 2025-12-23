@@ -29,9 +29,12 @@ func TestMatchBrowserTokenRoute(t *testing.T) {
 		{http.MethodGet, "/chats/chat-uuid/messages/list", database.ScopeInteractionsRead, true},
 		{http.MethodGet, "/chats/chat-uuid/status", database.ScopeInteractionsRead, true},
 		{http.MethodGet, "/api/v1/chats/chat-uuid/status", database.ScopeInteractionsRead, true},
+		{http.MethodPost, "/mcp", database.ScopeInteractionsMCP, true},
+		{http.MethodPost, "/api/v1/mcp", database.ScopeInteractionsMCP, true},
 		{http.MethodGet, "/user/self", "", true},
 
 		// default deny
+		{http.MethodGet, "/mcp", "", false},
 		{http.MethodPost, "/bots", "", false},
 		{http.MethodDelete, "/bots/some-bot-uuid", "", false},
 		{http.MethodPost, "/bots/some-bot-uuid/interactions", "", false},
