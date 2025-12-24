@@ -103,6 +103,7 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
+	toolInitData = database.WithTrustedBotRuntime(toolInitData, user)
 	dynamicTools := map[string]interface{}{}
 	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
