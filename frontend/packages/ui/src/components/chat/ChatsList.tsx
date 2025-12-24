@@ -1,6 +1,7 @@
 import { ChatItemCompact } from "./ChatItem"
 import { ProfileCard } from "./ProfileCard"
-import { LoadingSpinner } from "./loading-spinner"
+import { Skeleton } from "../skeleton"
+import { PullToRefresh } from "../../integration/components/PullToRefresh"
 import { getChatTimeBucket } from "../../lib/date"
 import useSWR from 'swr'
 import { DefaultChats } from "./DefaultChats"
@@ -252,6 +253,25 @@ const normalizeChatType = (value: unknown): ChatType | null => {
     return "conversation"
 }
 
+// Placeholder rows shown while the first chat list request is in flight. They
+// mirror the compact chat row geometry (state dot + title + preview) so the list
+// does not jump in height when the real rows arrive.
+const ChatListSkeleton = ({ rows = 8 }: { rows?: number }) => (
+    <div className="flex flex-col gap-1 py-0.5" aria-hidden="true">
+        {Array.from({ length: rows }).map((_, index) => (
+            <div key={index} className="chat-list-row pointer-events-none">
+                <div className="flex items-center gap-2 px-2 py-1.5">
+                    <Skeleton className="size-2 shrink-0 rounded-full" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                        <Skeleton className="h-3 w-2/5 rounded" />
+                        <Skeleton className="h-2.5 w-3/5 rounded" />
+                    </div>
+                </div>
+            </div>
+        ))}
+    </div>
+)
+
 export function ChatsList({
     chatUUID,
     leftPannelCollapsed,
@@ -465,7 +485,7 @@ export function ChatsList({
         setUrlParam(TIME_TO_QUERY_PARAM, timeTo)
     }, [timeFrom, timeTo, setUrlParam])
 
-    const { data: currentChat } = useSWR(
+    const { data: currentChat, mutate: mutateCurrentChat } = useSWR(
         chatUUID ? `/api/v1/chats/${chatUUID}` : null,
         fetcher,
         { revalidateOnFocus: false }
@@ -539,7 +559,7 @@ export function ChatsList({
                 .join(", "),
         [chatTypeFilters]
     )
-    const { data: currentUser } = useCurrentUser()
+    const { data: currentUser, mutate: mutateCurrentUser } = useCurrentUser()
     const isAdmin = currentUser?.is_admin === true
     const [seeAll, setSeeAll] = useState(false)
 
@@ -578,7 +598,7 @@ export function ChatsList({
         return `/api/v1/chats/list?${params.toString()}`
     }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin])
 
-    const { data: availableTags } = useSWR<{ tags?: string[] }>(
+    const { data: availableTags, mutate: mutateAvailableTags } = useSWR<{ tags?: string[] }>(
         showChats ? `/api/v1/chats/tags` : null,
         fetcher,
         { revalidateOnFocus: true }
@@ -597,7 +617,7 @@ export function ChatsList({
         refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 7000),
         revalidateOnFocus: true,
     })
-    const { data: defaultBotContact, isLoading: defaultBotLoading } = useSWR<{ contact_token?: string; name?: string } | null>(
+    const { data: defaultBotContact, isLoading: defaultBotLoading, mutate: mutateDefaultBotContact } = useSWR<{ contact_token?: string; name?: string } | null>(
         showChats ? `/api/v1/contacts/default-bot` : null,
         fetcher,
     )
@@ -651,6 +671,29 @@ export function ChatsList({
         document.addEventListener("visibilitychange", onVisibilityChange)
         return () => document.removeEventListener("visibilitychange", onVisibilityChange)
     }, [mutateChatStates, mutateChats, mutateActionTasksCount])
+
+    // Native pull-to-refresh: revalidate every fetch this page renders so the
+    // whole list (chats, state dots, tags, default bot, action tasks and the
+    // open chat preview) is fresh in one gesture.
+    const handlePullRefresh = useCallback(async () => {
+        await Promise.all([
+            mutateChats(),
+            mutateChatStates(),
+            mutateActionTasksCount(),
+            mutateAvailableTags(),
+            mutateDefaultBotContact(),
+            mutateCurrentChat(),
+            mutateCurrentUser(),
+        ])
+    }, [
+        mutateChats,
+        mutateChatStates,
+        mutateActionTasksCount,
+        mutateAvailableTags,
+        mutateDefaultBotContact,
+        mutateCurrentChat,
+        mutateCurrentUser,
+    ])
 
     const chatStateByUuid = useMemo(() => {
         const map: Record<string, string> = {}
@@ -789,11 +832,7 @@ export function ChatsList({
 
     const renderChatItems = () => {
         if (!chats) {
-            return (
-                <div className="flex h-40 items-center justify-center">
-                    <LoadingSpinner />
-                </div>
-            );
+            return <ChatListSkeleton />;
         }
 
         if (chats.rows.length === 0) {
@@ -929,7 +968,7 @@ export function ChatsList({
                 showCollapseToggle={!hideCollapseToggle}
                 title={title}
             />
-            <div className="chat-list-scroll">
+            <PullToRefresh onRefresh={handlePullRefresh} scrollClassName="chat-list-scroll">
                 {topSection}
                 {showDefaultChats ? (
                     <DefaultChats
@@ -1119,13 +1158,11 @@ export function ChatsList({
                             </div>
                         ) : null}
                         {!isLoading ? renderChatItems() : (
-                            <div className="flex h-40 items-center justify-center">
-                                <LoadingSpinner />
-                            </div>
+                            <ChatListSkeleton />
                         )}
                     </>
                 ) : null}
-            </div>
+            </PullToRefresh>
             <div className="chat-list-footer">
                 <ProfileCard navigateTo={navigateTo} themeSelector={themeSelector} avatarSrc={avatarSrc} />
             </div>

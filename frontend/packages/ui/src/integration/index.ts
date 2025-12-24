@@ -16,6 +16,7 @@ export { OpenInAppWidget } from "./components/OpenInAppWidget";
 export { MsgmateTokenIcon } from "./components/MsgmateTokenIcon";
 export { SshShellTerminal } from "./components/SshShellTerminal";
 export { ToolInitFields } from "./components/ToolInitFields";
+export { PullToRefresh, type PullToRefreshProps } from "./components/PullToRefresh";
 
 export { IntegrationOverviewView } from "./components/chat/IntegrationOverviewView";
 export { AdminAccessGate } from "./components/admin/AdminAccessGate";

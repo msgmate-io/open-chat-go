@@ -46,7 +46,15 @@ export function ChatBase({
     const groupRef = useRef<any>(null)
     const setPanelRef = useSidePanelCollapse(state => state.setPanelRef);
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
-    const [isMobile, setIsMobile] = useState(() => isMobileViewport())
+    const [isMobile, setIsMobile] = useState(() => {
+        // Prefer the pre-hydration native flag written by the bootstrap script in
+        // pages/+Head.tsx so the first client render is already the mobile layout
+        // (no desktop -> mobile flip after hydration).
+        if (typeof document !== "undefined" && document.documentElement.getAttribute("data-openchat-runtime") === "mobile") {
+            return true
+        }
+        return isMobileViewport()
+    })
     const [hasMounted, setHasMounted] = useState(false)
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
     const [desktopLayout, setDesktopLayout] = useState<{ left: number; right: number }>({ left: 25, right: 75 })
