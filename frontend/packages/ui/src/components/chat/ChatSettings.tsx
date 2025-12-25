@@ -17,6 +17,7 @@ import { Input } from "../input"
 import { Icon } from "../icon"
 import { ShareChatModal } from "./ShareChatModal"
 import { useIsSmallScreen } from "../../hooks/use-mobile"
+import { fetcher as apiFetch } from "../../integration/lib/utils"
 
 const normalizeTag = (tag: string) => tag.trim().toLowerCase()
 
@@ -175,15 +176,39 @@ export function ChatSettings({
     if (!chat?.uuid) {
       return
     }
+    const nextPinned = !pinned
     setPinSaving(true)
+    // Optimistically reflect the new pin state in every cached chat list so the
+    // list reorders immediately (native refetches can lag behind the write).
+    void mutate(
+      (key) =>
+        typeof key === "string" && key.startsWith("/api/v1/chats/list"),
+      (current: any) => {
+        if (!current || !Array.isArray(current.rows)) {
+          return current
+        }
+        return {
+          ...current,
+          rows: current.rows.map((row: any) =>
+            row?.uuid === chat.uuid ? { ...row, pinned: nextPinned } : row
+          ),
+        }
+      },
+      { revalidate: false }
+    )
     try {
-      await fetch(`/api/v1/chats/${chat.uuid}/pin`, {
+      // Use the shared authenticated fetcher (credentials + device-online
+      // header + error handling) so the write is forwarded consistently on
+      // native, where a bare same-origin fetch can be dropped by the proxy.
+      await apiFetch(`/api/v1/chats/${chat.uuid}/pin`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pinned: !pinned }),
+        body: JSON.stringify({ pinned: nextPinned }),
       })
-      await invalidateChatCaches(chat.uuid)
+    } catch (error) {
+      console.error("Failed to update chat pin state", error)
     } finally {
+      await invalidateChatCaches(chat.uuid)
       setPinSaving(false)
     }
   }
