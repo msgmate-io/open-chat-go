@@ -2,8 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import useSWR from "swr";
 import { ArrowLeft } from "lucide-react";
 import { cn, Text, TextTypes } from "@open-chat-go/ui";
-
-const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then((res) => res.json());
+import { fetcher } from "../../lib/utils";
 
 type IntegrationRow = {
   name: string;
