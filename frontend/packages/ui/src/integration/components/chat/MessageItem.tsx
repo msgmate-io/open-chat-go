@@ -1,4 +1,5 @@
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import logoUrl from "../../assets/logo.png?inline";
 import Prism from "prismjs";
 import { useEffect, useMemo, useState } from "react";
@@ -33,6 +34,7 @@ import {
 } from "@open-chat-go/ui";
 import { ConfirmableActionWidget, type ConfirmableAction } from "./ConfirmableActionWidget";
 import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
+import { resolveChatUIExtensionForChat } from "./chat-ui/registry";
 import {
   ProviderRetryEventWidget,
   resolveProviderRetryEvent,
@@ -156,6 +158,7 @@ export function MessageMarkdown({ children }: { children: string | null | undefi
   return (
     <MessageMarkdownErrorBoundary>
       <Markdown
+        remarkPlugins={[remarkGfm]}
         components={{
           blockquote: ({ children, ...props }) => (
             <blockquote {...props}>{children}</blockquote>
@@ -171,6 +174,16 @@ export function MessageMarkdown({ children }: { children: string | null | undefi
           p: ({ children }) => <p>{children}</p>,
           code: ({ children, ...props }) => <CodeBlock {...props}>{children}</CodeBlock>,
           pre: ({ children, ...props }) => <CodeWrapper {...props}>{children}</CodeWrapper>,
+          table: ({ children, ...props }) => (
+            <div className="my-3 overflow-x-auto">
+              <table className="chat-markdown-table" {...props}>{children}</table>
+            </div>
+          ),
+          thead: ({ children, ...props }) => <thead {...props}>{children}</thead>,
+          tbody: ({ children, ...props }) => <tbody {...props}>{children}</tbody>,
+          tr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
+          th: ({ children, ...props }) => <th {...props}>{children}</th>,
+          td: ({ children, ...props }) => <td {...props}>{children}</td>,
         }}
       >
         {children || ""}
@@ -716,7 +729,7 @@ export function BotMessageItem({
       backend?: string;
     };
   };
-  chat: { partner?: { name?: string } };
+  chat: { partner?: { name?: string }; config?: { chat_backend?: string; backend?: string } };
   chatUUID?: string;
   rerunSourceMessageUUID?: string;
   selfIsSender?: boolean;
@@ -800,6 +813,16 @@ export function BotMessageItem({
   const isQueuedMessageUUID = typeof message.uuid === "string" && message.uuid.startsWith("queued_");
   const isQueuePending = message?.meta_data?.queue_state === "queued" || isQueuedMessageUUID;
   const toolCalls = (message?.tool_calls || []) as MessageToolCall[];
+  // An integration (keyed on the chat's chat_backend) may supply a custom
+  // message body that renders the assistant text and its tool calls inline, in
+  // order. When present it replaces the default summarised tool-call block and
+  // the markdown body; the thoughts blocks and confirmable-action widgets below
+  // are still rendered by the core.
+  const CustomMessageBody = resolveChatUIExtensionForChat({
+    chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+    chat,
+    toolCalls,
+  })?.MessageBody;
   const executionBlockedReason = isPartialMessageUUID
     ? "Action is still syncing. Wait for the final message to appear, then execute."
     : undefined;
@@ -849,7 +872,7 @@ export function BotMessageItem({
           </Collapsible>
         )}
 
-      {!metaFinished && toolCalls.length > 0 && (
+      {!CustomMessageBody && !metaFinished && toolCalls.length > 0 && (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
@@ -888,7 +911,18 @@ export function BotMessageItem({
             </Collapsible>
           )}
 
-      {metaFinished && toolCalls.length > 0 && (
+      {CustomMessageBody ? (
+        <CustomMessageBody
+          messageUUID={message.uuid}
+          text={normalizedMessageText}
+          toolCalls={toolCalls}
+          meta={(message.meta_data ?? {}) as Record<string, unknown>}
+          isGenerating={!metaFinished}
+          interactionState={interactionState}
+        />
+      ) : null}
+
+      {!CustomMessageBody && metaFinished && toolCalls.length > 0 && (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
@@ -922,7 +956,7 @@ export function BotMessageItem({
         <ConfirmableEventIndicator message={message} />
       ) : providerRetryEvent ? (
         <ProviderRetryEventWidget event={providerRetryEvent} />
-      ) : (
+      ) : CustomMessageBody ? null : (
         <MessageMarkdown>{normalizedMessageText}</MessageMarkdown>
       )}
       <FileAttachmentsList attachments={attachments} />
