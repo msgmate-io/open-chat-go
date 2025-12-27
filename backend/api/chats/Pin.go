@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type updateChatPinRequest struct {
@@ -76,7 +77,7 @@ func (h *ChatsHandler) UpdatePin(w http.ResponseWriter, r *http.Request) {
 
 	if payload.Pinned {
 		pin := database.ChatPin{ChatId: chat.ID, UserId: user.ID}
-		if err := DB.Where("chat_id = ? AND user_id = ?", chat.ID, user.ID).FirstOrCreate(&pin).Error; err != nil {
+		if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&pin).Error; err != nil {
 			http.Error(w, "Unable to pin chat", http.StatusInternalServerError)
 			return
 		}
