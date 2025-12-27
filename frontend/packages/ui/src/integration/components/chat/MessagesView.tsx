@@ -6,7 +6,7 @@ import { usePartialMessageStore } from "./PartialMessages";
 import { useSidePanelCollapse } from "./ChatBase";
 import { BotDisplay, Button, DropdownMenuItem, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
 import { InteractionChatInfo } from "./InteractionChatInfo";
-import { resolveChatUIExtension, type ChatUIContext, type ChatUISendPayload } from "./chat-ui/index";
+import { resolveChatUIExtensionForChat, type ChatUIContext, type ChatUISendPayload } from "./chat-ui/index";
 import { buildChatRunCommand } from "../../lib/open-chat-run";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher, cn } from "../../lib/utils";
@@ -292,8 +292,12 @@ export function MessagesScroll({
         navigateTo: (to) => navigate(to),
     };
     // chat_backend selects the chat UI extension; legacy chats stored the chat
-    // backend name in backend, so fall back to it.
-    const uiExtension = resolveChatUIExtension(chat?.config?.chat_backend ?? chat?.config?.backend);
+    // backend name in backend, so fall back to it. An extension may also match
+    // by predicate for chats that never set a chat_backend key.
+    const uiExtension = resolveChatUIExtensionForChat({
+        chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+        chat,
+    });
 
     const renderMessages = () => {
         if (!messages || !chat || !user) {
