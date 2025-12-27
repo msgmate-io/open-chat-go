@@ -6,11 +6,26 @@ on:
       deployment_name:
         description: Deployment name used by the CI deploy workflow
         required: false
+        type: choice
+        options:
+          - msgmate-io-staging
+          - msgmate-io-ci
+          - msgmate-io-pr-deployment
+          - msgmate-io-production
         default: msgmate-io-staging
       target_ref:
-        description: Target ref or SHA to deploy
+        description: Target ref or SHA to deploy (pick a common ref, or 'custom' to type one below)
         required: false
+        type: choice
+        options:
+          - main
+          - production
+          - custom
         default: main
+      target_ref_custom:
+        description: Custom ref or SHA (used only when target_ref is 'custom')
+        required: false
+        default: ""
       ci_repository:
         description: CI repository that contains the deploy workflow
         required: false
@@ -296,6 +311,7 @@ jobs:
       CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
+      TARGET_REF_CUSTOM_INPUT: ${{ github.event.inputs.target_ref_custom }}
       AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
     steps:
@@ -401,7 +417,11 @@ jobs:
             fi
           else
             DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ env.DEPLOYMENT_STAGING }}}"
-            TARGET_REF="${TARGET_REF_INPUT:-main}"
+            if [ "${TARGET_REF_INPUT:-main}" = "custom" ]; then
+              TARGET_REF="${TARGET_REF_CUSTOM_INPUT:-main}"
+            else
+              TARGET_REF="${TARGET_REF_INPUT:-main}"
+            fi
             PR_NUMBER=""
             SOURCE_REPOSITORY="${{ github.repository }}"
             SHOULD_DEPLOY="deploy"
