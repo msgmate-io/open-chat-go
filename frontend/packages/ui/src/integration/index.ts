@@ -67,6 +67,7 @@ export {
   listChatSearchActions,
   registerChatUIHelper,
   resolveChatUIExtension,
+  resolveChatUIExtensionForChat,
   resolveChatUIHelper,
 } from "./components/chat/chat-ui/registry";
 export type {
@@ -77,7 +78,10 @@ export type {
   ChatUIContext,
   ChatUIDetailsProps,
   ChatUIExtension,
+  ChatUIExtensionMatchContext,
   ChatUIInputProps,
+  ChatUIMessageBody,
+  ChatUIMessageBodyProps,
   ChatUIMessageExtrasProps,
   ChatUIMessageRenderer,
   ChatUISendPayload,
