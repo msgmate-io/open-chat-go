@@ -105,6 +105,8 @@ type IntegrationOverviewResponse struct {
 	RuntimeEnvVars    []IntegrationRuntimeEnvVarOverview `json:"runtime_env_vars"`
 	DefaultBots       []IntegrationDefaultBotOverview    `json:"default_bots"`
 	Labels            []string                           `json:"labels"`
+	SourceRepository  string                             `json:"source_repository,omitempty"`
+	SourceRef         string                             `json:"source_ref,omitempty"`
 }
 
 func pathParamsFromRoute(route string) []IntegrationAPIParameterOverview {
@@ -464,6 +466,13 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		return defaultBots[i].PrimaryOwner < defaultBots[j].PrimaryOwner
 	})
 
+	sourceRepository := ""
+	sourceRef := ""
+	if source, ok := backendintegrations.SourceRepository(def.Name); ok {
+		sourceRepository = strings.TrimSpace(source.Repository)
+		sourceRef = strings.TrimSpace(source.Ref)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(IntegrationOverviewResponse{
 		Name:              def.Name,
@@ -476,5 +485,7 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		RuntimeEnvVars:    runtimeEnvVars,
 		DefaultBots:       defaultBots,
 		Labels:            backendintegrations.LabelsFor(def),
+		SourceRepository:  sourceRepository,
+		SourceRef:         sourceRef,
 	})
 }
