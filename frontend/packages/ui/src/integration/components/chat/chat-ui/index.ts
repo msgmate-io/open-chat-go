@@ -6,7 +6,10 @@ export type {
   ChatUIContext,
   ChatUIDetailsProps,
   ChatUIExtension,
+  ChatUIExtensionMatchContext,
   ChatUIInputProps,
+  ChatUIMessageBody,
+  ChatUIMessageBodyProps,
   ChatUIMessageExtrasProps,
   ChatUIMessageRenderer,
   ChatUISendPayload,
@@ -19,5 +22,6 @@ export {
   listChatSearchActions,
   registerChatUIHelper,
   resolveChatUIExtension,
+  resolveChatUIExtensionForChat,
   listChatUIMessageRenderers,
 } from "./registry";
