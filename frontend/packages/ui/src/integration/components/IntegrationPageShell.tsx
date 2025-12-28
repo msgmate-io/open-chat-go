@@ -64,7 +64,7 @@ export function IntegrationPageShell({
       mobileViewMode={mobileViewMode}
     >
       <div
-        className={`mx-auto flex h-full min-h-0 w-full ${maxWidthClassName} flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-4 md:px-6 ${className}`.trim()}
+        className={`mx-auto flex h-full min-h-0 w-full ${maxWidthClassName} flex-col gap-3 overflow-y-auto px-3 py-3 sm:px-4 md:px-5 ${className}`.trim()}
       >
         {children}
       </div>
