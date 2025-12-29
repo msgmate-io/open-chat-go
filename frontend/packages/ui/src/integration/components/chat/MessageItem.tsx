@@ -525,7 +525,14 @@ function ConfirmableEventIndicator({
   const event = message.meta_data?.confirmable_action_execution as Record<string, unknown> | undefined;
   const phase = (message.meta_data?.event_phase as string | undefined) || "completed";
   const targetTool = String(event?.target_tool_name || "tool");
-  const action = phase === "requested" ? "Execution requested" : phase === "failed" ? "Execution failed" : "Execution completed";
+  const action =
+    phase === "requested"
+      ? "Execution requested"
+      : phase === "failed"
+        ? "Execution failed"
+        : phase === "rejected"
+          ? "Execution rejected"
+          : "Execution completed";
   const text = typeof message.text === "string" ? message.text.trim() : "";
   const looksJSON = (text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"));
   return (
@@ -745,6 +752,21 @@ export function BotMessageItem({
   const thinkTagExtraction = useMemo(() => extractThoughtsFromThinkTags(message.text), [message.text]);
   const normalizedMessageText = thinkTagExtraction.thoughts.length > 0 ? thinkTagExtraction.cleanText : (message.text || "");
 
+  // The chat UI extension is resolved here (not just for the message body) so
+  // an extension that renders its confirmable actions inline can also suppress
+  // the confirmation lifecycle messages. Those event messages duplicate the
+  // inline confirm/execute widget the extension renders on the source message,
+  // so they are hidden when the extension opts in.
+  const uiExtension = resolveChatUIExtensionForChat({
+    chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+    chat,
+    toolCalls: message?.tool_calls || [],
+  });
+  const inlineConfirmableActions = Boolean(uiExtension?.inlineConfirmableActions);
+  if (inlineConfirmableActions && isConfirmableEvent) {
+    return null;
+  }
+
   const handleCopy = () => {
     if (normalizedMessageText) {
       navigator.clipboard.writeText(normalizedMessageText);
@@ -816,13 +838,10 @@ export function BotMessageItem({
   // An integration (keyed on the chat's chat_backend) may supply a custom
   // message body that renders the assistant text and its tool calls inline, in
   // order. When present it replaces the default summarised tool-call block and
-  // the markdown body; the thoughts blocks and confirmable-action widgets below
-  // are still rendered by the core.
-  const CustomMessageBody = resolveChatUIExtensionForChat({
-    chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
-    chat,
-    toolCalls,
-  })?.MessageBody;
+  // the markdown body. When the extension also sets `inlineConfirmableActions`
+  // it renders the confirmable-action widgets itself and the core suppresses
+  // its own widgets, the confirm hint and the lifecycle event bubbles.
+  const CustomMessageBody = uiExtension?.MessageBody;
   const executionBlockedReason = isPartialMessageUUID
     ? "Action is still syncing. Wait for the final message to appear, then execute."
     : undefined;
@@ -919,6 +938,12 @@ export function BotMessageItem({
           meta={(message.meta_data ?? {}) as Record<string, unknown>}
           isGenerating={!metaFinished}
           interactionState={interactionState}
+          chatUUID={chatUUID}
+          confirmableActions={confirmableActions}
+          executionBlockedReason={executionBlockedReason}
+          onMutate={() => {
+            void revalidateChatData(chatUUID);
+          }}
         />
       ) : null}
 
@@ -930,7 +955,7 @@ export function BotMessageItem({
         />
       )}
 
-      {chatUUID && message.uuid && confirmableActions.length > 0
+      {!inlineConfirmableActions && chatUUID && message.uuid && confirmableActions.length > 0
         ? confirmableActions.map((action) => (
             <ConfirmableActionWidget
               key={`${message.uuid}-${action.action_id}`}
@@ -945,7 +970,8 @@ export function BotMessageItem({
           ))
         : null}
 
-      {!isConfirmableEvent &&
+      {!inlineConfirmableActions &&
+      !isConfirmableEvent &&
       !message.text?.trim() &&
       confirmableActions.length > 0 &&
       nonEmptyThoughts.length === 0 ? (
