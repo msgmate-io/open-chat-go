@@ -43,3 +43,17 @@ backend/go.work.sum
 backend/integrations/externalintegrations/imports_gen.go
 .integrations
 integrations.local.yaml
+
+# Keep VCS metadata, local build artifacts and the host-side Go build cache out
+# of the build context: they are never used inside the image and previously
+# inflated the transferred context (integration `.git` dirs + a stale 165 MB
+# backend/backend binary).
+**/.git
+**/node_modules
+**/*.map
+.ci-cache
+backend/backend
+backend/data.db*
+backend/server/frontend
+clients/integrations/**/.git
+
