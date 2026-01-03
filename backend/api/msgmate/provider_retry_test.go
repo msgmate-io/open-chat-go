@@ -199,6 +199,50 @@ func TestEffectiveProviderRetryAttempts(t *testing.T) {
 	}
 }
 
+func TestProviderRetryOptionsFromConfigDefaultsToEnabled(t *testing.T) {
+	opts := providerRetryOptionsFromConfig(map[string]interface{}{})
+	if !opts.Enabled {
+		t.Fatal("provider_retry must default to enabled so one blip cannot dead-end an interaction")
+	}
+	if opts.MaxAttempts != 3 {
+		t.Fatalf("MaxAttempts = %d, want 3", opts.MaxAttempts)
+	}
+	if opts.BaseBackoff != 2*time.Second {
+		t.Fatalf("BaseBackoff = %s, want 2s", opts.BaseBackoff)
+	}
+	if opts.MaxBackoff != 30*time.Second {
+		t.Fatalf("MaxBackoff = %s, want 30s", opts.MaxBackoff)
+	}
+	if got := effectiveProviderRetryAttempts(opts); got != 3 {
+		t.Fatalf("effective attempts = %d, want 3", got)
+	}
+}
+
+func TestProviderRetryOptionsFromConfigHonorsExplicitDisable(t *testing.T) {
+	opts := providerRetryOptionsFromConfig(map[string]interface{}{"provider_retry": false})
+	if opts.Enabled {
+		t.Fatal("explicit provider_retry: false must keep the single-attempt behavior")
+	}
+	if got := effectiveProviderRetryAttempts(opts); got != 1 {
+		t.Fatalf("effective attempts = %d, want 1", got)
+	}
+}
+
+func TestProviderRetryOptionsFromConfigOverrides(t *testing.T) {
+	opts := providerRetryOptionsFromConfig(map[string]interface{}{
+		"provider_retry":                true,
+		"provider_retry_max":            5,
+		"provider_retry_backoff_ms":     500,
+		"provider_retry_backoff_max_ms": 4000,
+	})
+	if !opts.Enabled || opts.MaxAttempts != 5 {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+	if opts.BaseBackoff != 500*time.Millisecond || opts.MaxBackoff != 4*time.Second {
+		t.Fatalf("unexpected backoff: base=%s max=%s", opts.BaseBackoff, opts.MaxBackoff)
+	}
+}
+
 func TestExtractProviderErrorDetailOpenRouter(t *testing.T) {
 	body := `{"error":{"message":"nvidia/nemotron is temporarily rate-limited upstream","code":429,"metadata":{"provider_name":"CoreWeave","raw":"rate_limit_exceeded"}}}`
 	summary, providerName := extractProviderErrorDetail(429, body)
