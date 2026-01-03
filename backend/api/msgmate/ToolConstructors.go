@@ -53,6 +53,14 @@ func NewCreateConfirmableActionSuggestionTool() Tool {
 	return NewToolFromDefinition(tooldefs.CreateConfirmableActionSuggestionToolDef)
 }
 
+func NewWebFetchTool() Tool {
+	return NewToolFromDefinition(tooldefs.WebFetchToolDef)
+}
+
+func NewWebSearchTool() Tool {
+	return NewToolFromDefinition(tooldefs.WebSearchToolDef)
+}
+
 func NewToolInitTestToolPassThrough() Tool {
 	return NewToolFromDefinition(tooldefs.ToolInitTestToolPassThroughDef)
 }
@@ -68,4 +76,6 @@ func registerBuiltinTools() {
 	registerToolConstructor("n8n_trigger_workflow_webhook", nil, NewN8NTriggerWorkflowWebhookTool)
 	registerToolConstructor("create_confirmable_action_suggestion", nil, NewCreateConfirmableActionSuggestionTool)
 	registerToolConstructor("tool_init_test_tool_pass_through", nil, NewToolInitTestToolPassThrough)
+	registerToolConstructor("web_fetch", nil, NewWebFetchTool)
+	registerToolConstructor("web_search", nil, NewWebSearchTool)
 }
