@@ -17,8 +17,9 @@ import (
 const maxProviderRetryAttempts = 8
 
 // ProviderRetryOptions configures automatic retries of pre-stream provider
-// request failures. Enabled defaults to false so chats without the flag keep
-// the legacy single-attempt behavior.
+// request failures. Retries are enabled by default (at least one retry) so a
+// single transient provider blip cannot dead-end an interaction; a chat can
+// still opt out explicitly with provider_retry: false.
 type ProviderRetryOptions struct {
 	Enabled     bool
 	MaxAttempts int           // total attempts including the first one
@@ -331,15 +332,16 @@ func TruncateFailureDetail(detail string) string {
 }
 
 // providerRetryOptionsFromConfig reads the optional provider retry flags from
-// a chat config map. All flags are optional; when provider_retry is unset or
-// false the returned options keep the legacy single-attempt behavior.
+// a chat config map. All flags are optional. provider_retry defaults to true so
+// every interaction gets at least one retry after a transient pre-stream
+// provider failure; a chat opts out explicitly with provider_retry: false.
 //
-//	provider_retry:            bool,   default false
+//	provider_retry:            bool,   default true
 //	provider_retry_max:        int     (total attempts, default 3)
 //	provider_retry_backoff_ms: int     (base back-off delay, default 2000)
 //	provider_retry_backoff_max_ms: int (back-off cap, default 30000)
 func providerRetryOptionsFromConfig(configMap map[string]interface{}) ProviderRetryOptions {
-	enabled := mapGetOrDefault[bool](configMap, "provider_retry", false)
+	enabled := mapGetOrDefault[bool](configMap, "provider_retry", true)
 	if !enabled {
 		return ProviderRetryOptions{Enabled: false, MaxAttempts: 1}
 	}
