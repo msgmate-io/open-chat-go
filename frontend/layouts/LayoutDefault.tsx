@@ -12,6 +12,7 @@ import "@fontsource/signika-negative/700.css";
 import "./style.css";
 import "./tailwind.css";
 import "@/integrations/extensions.gen";
+import "@/components/chat/NotificationsSidebarIndicator";
 import React, { useEffect, useRef, useState } from "react";
 import { applyTheme, isThemeName } from "@/lib/theme";
 import { applyDocumentTitle } from "@open-chat-go/ui";

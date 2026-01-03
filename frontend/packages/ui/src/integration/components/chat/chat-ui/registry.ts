@@ -1,5 +1,6 @@
 import type {
   ChatSearchAction,
+  ChatSidebarHeaderAction,
   ChatUIExtension,
   ChatUIExtensionMatchContext,
   ChatUIMessageRenderer,
@@ -9,6 +10,7 @@ const extensions = new Map<string, ChatUIExtension>();
 const messageRenderers: ChatUIMessageRenderer[] = [];
 const helpers = new Map<string, unknown>();
 const searchActions = new Map<string, ChatSearchAction>();
+const sidebarHeaderActions = new Map<string, ChatSidebarHeaderAction>();
 
 export function registerChatUIExtension(extension: ChatUIExtension): void {
   const key = (extension.chatBackend || "").trim().toLowerCase();
@@ -72,6 +74,18 @@ export function registerChatSearchAction(action: ChatSearchAction): void {
 
 export function listChatSearchActions(): ChatSearchAction[] {
   return [...searchActions.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+export function registerChatSidebarHeaderAction(action: ChatSidebarHeaderAction): void {
+  const key = (action.id || "").trim();
+  if (!key || !action.Component) {
+    return;
+  }
+  sidebarHeaderActions.set(key, { ...action, id: key });
+}
+
+export function listChatSidebarHeaderActions(): ChatSidebarHeaderAction[] {
+  return [...sidebarHeaderActions.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
 export function registerChatUIHelper(name: string, helper: unknown): void {
