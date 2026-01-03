@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,6 +98,89 @@ func TestProviderRetryBackoffDelay(t *testing.T) {
 	// Zero base falls back to the default.
 	if got := providerRetryBackoffDelay(1, 0, 0); got != 2*time.Second {
 		t.Fatalf("default base: got %s", got)
+	}
+}
+
+func TestClassifyGenerationFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantReason  string
+		wantSummary bool
+	}{
+		{
+			name:       "nil is internal",
+			err:        nil,
+			wantReason: FailureReasonInternal,
+		},
+		{
+			name:       "unclassified is internal",
+			err:        fmt.Errorf("unexpected decoder failure"),
+			wantReason: FailureReasonInternal,
+		},
+		{
+			name:       "context window",
+			err:        fmt.Errorf("error: maximum context length is 128000 tokens"),
+			wantReason: FailureReasonContextWindow,
+		},
+		{
+			name:        "provider http failure",
+			err:         &ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"rate limited"}}`, Attempts: 2},
+			wantReason:  FailureReasonProviderError,
+			wantSummary: true,
+		},
+		{
+			name:       "legacy provider status string",
+			err:        fmt.Errorf("non-200 response: 503 gateway down"),
+			wantReason: FailureReasonProviderError,
+		},
+		{
+			name:       "transient network",
+			err:        fmt.Errorf("request failed: Post \"https://x\": connection reset by peer"),
+			wantReason: FailureReasonTransientNetwork,
+		},
+		{
+			name:       "plain transient marker",
+			err:        fmt.Errorf("broken pipe"),
+			wantReason: FailureReasonTransientNetwork,
+		},
+		{
+			name:       "unrecognised request failure is internal",
+			err:        fmt.Errorf("request failed: unsupported protocol"),
+			wantReason: FailureReasonInternal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyGenerationFailure(tt.err)
+			if got.Reason != tt.wantReason {
+				t.Fatalf("Reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if tt.wantSummary && got.ProviderSummary == "" {
+				t.Fatalf("expected a provider summary for %v", tt.err)
+			}
+			if got.Reason == FailureReasonProviderError && got.ProviderAttempts < 1 {
+				t.Fatalf("provider failures must report at least one attempt, got %d", got.ProviderAttempts)
+			}
+		})
+	}
+}
+
+func TestTruncateFailureDetail(t *testing.T) {
+	long := ""
+	for i := 0; i < 400; i++ {
+		long += "x"
+	}
+	got := TruncateFailureDetail(long)
+	if len(got) >= len(long) || got == long {
+		t.Fatalf("expected truncation, got %d chars", len(got))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+	if got := TruncateFailureDetail("  spaced  "); got != "spaced" {
+		t.Fatalf("expected trimmed detail, got %q", got)
 	}
 }
 
