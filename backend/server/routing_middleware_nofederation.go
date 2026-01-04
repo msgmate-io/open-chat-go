@@ -1,4 +1,5 @@
 //go:build !federation
+// +build !federation
 
 package server
 
