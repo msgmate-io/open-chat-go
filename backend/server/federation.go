@@ -1,3 +1,5 @@
+//go:build federation
+
 package server
 
 /**
@@ -13,6 +15,12 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -22,11 +30,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"gorm.io/gorm"
-	"io"
-	"log"
-	"os"
-	"strconv"
-	"strings"
 )
 
 func CreateHost(
