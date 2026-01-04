@@ -1,3 +1,5 @@
+//go:build federation
+
 package test
 
 import (
