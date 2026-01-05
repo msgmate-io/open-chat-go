@@ -1286,7 +1286,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 
 				if tool, found := NewToolByName(toolCall.ToolName); found {
-					if tool.GetRequiresConfirmation() {
+					// Only report a static confirmation requirement for a call
+					// that actually paused. A code-defined resolver may have
+					// auto-resolved the call (eg coder_ask in an autonomous
+					// session), in which case its result is a normal succeeded
+					// tool output and must not render as a pending confirmation.
+					if toolStatus == ToolCallStatusPendingConfirmation && tool.GetRequiresConfirmation() {
 						toolCallRepr["requires_confirmation"] = true
 					}
 					if confirmationMeta, ok := parseConfirmActionPayload(toolCall.Result); ok {
