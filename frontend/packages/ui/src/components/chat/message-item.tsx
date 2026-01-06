@@ -342,6 +342,7 @@ export function BotMessageShell({
   footer,
   align = "start",
   showIdentity = true,
+  showAvatar = true,
 }: {
   senderLabel?: ReactNode;
   senderMeta?: ReactNode;
@@ -351,10 +352,11 @@ export function BotMessageShell({
   footer?: ReactNode;
   align?: "start" | "end";
   showIdentity?: boolean;
+  showAvatar?: boolean;
 }) {
   return (
     <MessageRow align={align}>
-      {align === "start" && showIdentity ? (
+      {align === "start" && showAvatar ? (
         <div className="hidden shrink-0 flex-col items-center gap-1 md:flex">
           <MessageAvatar variant="bot" src={avatarSrc} label={String(senderLabel)} />
           {avatarFooter ? <div className="flex w-full justify-center">{avatarFooter}</div> : null}
