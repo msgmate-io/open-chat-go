@@ -144,10 +144,29 @@ HOST_GOARCH="$(go env GOHOSTARCH)"
 # replaces all msgmate module paths, so go.mod no longer hardcodes integrations.
 export GOWORK="$PWD/go.work"
 
+# Optional integration-provided auxiliary binaries (e.g. the Rust TUI). Each
+# selected integration may ship an `integration.bundle.json`; when its tool is
+# available and the target is native, the binary is built and embedded into the
+# open-chat binary via a Go build tag recorded in .generated/bundle_tags.
+# Best-effort: failures only drop the bundle (and its tag), never the build.
+BUNDLE_SCRIPT="$REPO_ROOT/development/scripts/bundle_integration_assets.py"
+if [ -f "$BUNDLE_SCRIPT" ] && command -v python3 >/dev/null 2>&1; then
+  echo "Bundling optional integration assets..."
+  python3 "$BUNDLE_SCRIPT" "$REPO_ROOT" || \
+    echo "warning: integration asset bundling failed" >&2
+fi
+
 BUILD_TAGS_FILE="$PWD/.generated/build_tags"
 GO_TAGS=""
 if [ -f "$BUILD_TAGS_FILE" ]; then
   GO_TAGS="$(cat "$BUILD_TAGS_FILE")"
+fi
+BUNDLE_TAGS_FILE="$PWD/.generated/bundle_tags"
+if [ -f "$BUNDLE_TAGS_FILE" ]; then
+  BUNDLE_TAGS="$(cat "$BUNDLE_TAGS_FILE")"
+  if [ -n "$BUNDLE_TAGS" ]; then
+    GO_TAGS="${GO_TAGS:+$GO_TAGS,}$BUNDLE_TAGS"
+  fi
 fi
 if [ -n "$GO_TAGS" ]; then
   export GOFLAGS="${GOFLAGS:+$GOFLAGS }-tags=${GO_TAGS}"
