@@ -34,6 +34,7 @@ import {
 } from "@open-chat-go/ui";
 import { ConfirmableActionWidget, type ConfirmableAction } from "./ConfirmableActionWidget";
 import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
+import { ToolValueText } from "./ToolCallDetail";
 import { resolveChatUIExtensionForChat } from "./chat-ui/registry";
 import {
   ProviderRetryEventWidget,
@@ -330,7 +331,6 @@ function ToolCallLineSection({
   }
 
   const preview = toolValuePreview(value);
-  const pretty = typeof value === "string" ? value : safeJSONStringify(value, true);
 
   return (
     <Collapsible id={id}>
@@ -339,9 +339,9 @@ function ToolCallLineSection({
         <span className="ml-2 truncate text-right">{preview}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-        <pre className="scrollbar-hidden mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/30 p-2 text-xs leading-5">
-          {pretty}
-        </pre>
+        <div className="mt-1">
+          <ToolValueText value={value} />
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -842,12 +842,15 @@ export function BotMessageItem({
   // it renders the confirmable-action widgets itself and the core suppresses
   // its own widgets, the confirm hint and the lifecycle event bubbles.
   const CustomMessageBody = uiExtension?.MessageBody;
+  const CustomThoughts = uiExtension?.Thoughts;
+  const hideBotAvatar = Boolean(uiExtension?.hideBotAvatar);
+  const hideMessageActions = Boolean(uiExtension?.hideMessageActions);
   const executionBlockedReason = isPartialMessageUUID
     ? "Action is still syncing. Wait for the final message to appear, then execute."
     : undefined;
   const canCopyMessage = normalizedMessageText.trim().length > 0;
   const canRegenerate = Boolean(chatUUID && rerunSourceMessageUUID);
-  const showMessageActions = showToolbar && (canCopyMessage || canRegenerate);
+  const showMessageActions = showToolbar && (canCopyMessage || canRegenerate) && !hideMessageActions;
 
   return (
     <BotMessageShell
@@ -856,6 +859,7 @@ export function BotMessageItem({
       senderMeta={senderMeta}
       avatarSrc={logoUrl}
       showIdentity={showBotIdentity}
+      showAvatar={showBotIdentity && !hideBotAvatar}
       avatarFooter={showMessageActions ? (
         <BotMessageActionsMenu
           onCopy={handleCopy}
@@ -877,8 +881,17 @@ export function BotMessageItem({
         nonEmptyThoughts.length === 0 &&
         (message?.tool_calls?.length ?? 0) === 0 && <BootingIndicator label="Msgmate Booting" />}
 
-      {!metaFinished &&
-        nonEmptyThoughts.length > 0 && (
+      {!metaFinished && nonEmptyThoughts.length > 0 ? (
+        CustomThoughts ? (
+          <CustomThoughts
+            messageUUID={message.uuid}
+            thoughts={nonEmptyThoughts}
+            steps={thinkingSteps}
+            thinkingTime={message?.meta_data?.thinking_time}
+            isGenerating
+            isFinished={false}
+          />
+        ) : (
           <Collapsible open id={`thoughts-${message.uuid}`}>
             <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
               <ShinyText>Thinking… ({message?.meta_data?.thinking_time})</ShinyText>
@@ -889,7 +902,8 @@ export function BotMessageItem({
               ))}
             </CollapsibleContent>
           </Collapsible>
-        )}
+        )
+      ) : null}
 
       {!CustomMessageBody && !metaFinished && toolCalls.length > 0 && (
         <ToolCallsGroup
@@ -906,8 +920,18 @@ export function BotMessageItem({
         />
       )}
 
-      {metaFinished && thinkingSteps.length > 0
-        ? thinkingSteps.map((step, index) => (
+      {metaFinished && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
+        CustomThoughts ? (
+          <CustomThoughts
+            messageUUID={message.uuid}
+            thoughts={nonEmptyThoughts}
+            steps={thinkingSteps}
+            thinkingTime={message?.meta_data?.thinking_time}
+            isGenerating={false}
+            isFinished
+          />
+        ) : thinkingSteps.length > 0 ? (
+          thinkingSteps.map((step, index) => (
             <Collapsible key={`${message.uuid}-thinking-step-${index}`} id={`thought-step-${message.uuid}-${index}`}>
               <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
                 Thought {index + 1}{step.duration ? ` (${step.duration})` : ""}
@@ -917,18 +941,19 @@ export function BotMessageItem({
               </CollapsibleContent>
             </Collapsible>
           ))
-        : metaFinished && nonEmptyThoughts.length > 0 && (
-            <Collapsible id={`thoughts-${message.uuid}`}>
-              <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
-                Thoughts{message?.meta_data?.thinking_time ? ` for ${message?.meta_data?.thinking_time}` : ""}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                {nonEmptyThoughts.map((thought, index) => (
-                  <div key={index}>{wrapInBlockquote(thought)}</div>
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+        ) : (
+          <Collapsible id={`thoughts-${message.uuid}`}>
+            <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
+              Thoughts{message?.meta_data?.thinking_time ? ` for ${message?.meta_data?.thinking_time}` : ""}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+              {nonEmptyThoughts.map((thought, index) => (
+                <div key={index}>{wrapInBlockquote(thought)}</div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        )
+      ) : null}
 
       {CustomMessageBody ? (
         <CustomMessageBody
