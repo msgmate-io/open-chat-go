@@ -67,6 +67,18 @@ interface InteractionChatInfoProps {
   showMobileHeaderControls?: boolean;
   leftPannelCollapsed?: boolean;
   onToggleSidebar?: () => void;
+  /**
+   * Hide the model chip in the header. Integration details panels that render
+   * the model in their own card (eg the msgmate coder) set this so the model is
+   * shown in one place instead of duplicated in the header.
+   */
+  hideModelDisplay?: boolean;
+  /**
+   * Extra items rendered in the header overflow menu. Integrations use this to
+   * surface their own actions (eg "Configure msgmate coder") without forking the
+   * shared interaction header.
+   */
+  extraMenuItems?: React.ReactNode;
 }
 
 type ChatStatusLike = { is_active?: boolean; state?: string } | null | undefined;
@@ -115,6 +127,8 @@ export function InteractionChatInfo({
   isSharedView = false,
   leftPannelCollapsed = false,
   onToggleSidebar,
+  hideModelDisplay = false,
+  extraMenuItems,
 }: InteractionChatInfoProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
@@ -188,10 +202,12 @@ export function InteractionChatInfo({
                 ? chatTitle
                 : `${partner?.name || "Bot"} ${isInteractionChat ? "interaction" : "conversation"}`}
             </p>
-            <BotDisplay
-              selectedModel={config.model}
-              className="max-w-[14rem] rounded-lg border-border/60 bg-card/80 px-2 py-0.5 text-xs shadow-none md:max-w-[18rem] md:px-2.5 md:py-1 md:text-[13px]"
-            />
+            {hideModelDisplay ? null : (
+              <BotDisplay
+                selectedModel={config.model}
+                className="max-w-[14rem] rounded-lg border-border/60 bg-card/80 px-2 py-0.5 text-xs shadow-none md:max-w-[18rem] md:px-2.5 md:py-1 md:text-[13px]"
+              />
+            )}
           </div>
           {statusBadge ? (
             <Badge
@@ -219,6 +235,7 @@ export function InteractionChatInfo({
                   View tool init
                 </DropdownMenuItem>
               ) : null}
+              {extraMenuItems}
               <DropdownMenuItem
                 onClick={() => setIsExpanded((prev) => !prev)}
                 aria-expanded={isExpanded}
