@@ -760,12 +760,60 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      # Per-integration checkout cache. `sync --frozen` re-validates the pinned
+      # commits and only clones what is missing, so restoring the checkouts turns
+      # the ~49s clone of ~29 repos into a few seconds.
+      #
+      # Security note (CodeQL actions/cache-poisoning/direct-cache): this workflow
+      # is also triggered by workflow_dispatch, which runs in the default-branch
+      # cache scope while checking out untrusted PR code. Caching a path *inside*
+      # the checkout would let that code write to (and poison) the default-branch
+      # cache, so the cached copy is kept in $RUNNER_TEMP - outside
+      # GITHUB_WORKSPACE - and copied in/out around the materialization step.
+      - name: Cache integration checkouts
+        id: integrations-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openchat-integrations
+          key: integrations-staged-${{ runner.os }}-${{ hashFiles('integrations.lock.json', 'profile_setup.yaml') }}
+          restore-keys: |
+            integrations-staged-${{ runner.os }}-
+
+      - name: Seed integration checkouts from cache
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$RUNNER_TEMP/openchat-integrations"
+          if [ ! -d "$CACHE_DIR" ]; then
+            echo "No cached integration checkouts; sync will clone them."
+            exit 0
+          fi
+          mkdir -p clients/integrations .integrations
+          if [ -d "$CACHE_DIR/clients/integrations" ]; then
+            cp -a "$CACHE_DIR/clients/integrations/." clients/integrations/
+          fi
+          if [ -d "$CACHE_DIR/.integrations" ]; then
+            cp -a "$CACHE_DIR/.integrations/." .integrations/
+          fi
+
       - name: Materialize full integrations
         run: |
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
           "$BUILD_TOOLS" sync --frozen --profile full
+
+      - name: Stage integration checkouts for the cache
+        if: always() && steps.integrations-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$RUNNER_TEMP/openchat-integrations"
+          mkdir -p "$CACHE_DIR/clients/integrations" "$CACHE_DIR/.integrations"
+          if [ -d clients/integrations ]; then
+            cp -a clients/integrations/. "$CACHE_DIR/clients/integrations/"
+          fi
+          if [ -d .integrations ]; then
+            cp -a .integrations/. "$CACHE_DIR/.integrations/"
+          fi
 
       - name: Resolve image metadata
         id: image
@@ -788,6 +836,29 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Persist the container's Go build cache between runs and inject it into
+      # the build through the `gobuildcache` build context (see Dockerfile). The
+      # Dockerfile's type=cache mount is intentionally NOT exported by
+      # cache-to=type=registry, so this actions/cache directory is the only
+      # durable compiler cache for the image build.
+      #
+      # Security note (CodeQL actions/cache-poisoning/direct-cache): keep the
+      # cache outside GITHUB_WORKSPACE. workflow_dispatch runs in the
+      # default-branch cache scope while checking out untrusted PR code, so an
+      # in-workspace path (e.g. .ci-cache/go-build) would let that code poison the
+      # default-branch cache. $RUNNER_TEMP is not under the checkout.
+      - name: Restore Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/open-chat-go-build-cache
+          key: docker-go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            docker-go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
+            docker-go-build-${{ runner.os }}-
+
+      - name: Ensure Go build cache directory exists
+        run: mkdir -p "$RUNNER_TEMP/open-chat-go-build-cache"
+
       - name: Build and push backend image
         id: build
         uses: docker/build-push-action@v6
@@ -799,6 +870,11 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
+          # Bind the restored host-side Go build cache into the builder as the
+          # `gobuildcache` named context (the Dockerfile defines an empty scratch
+          # stage with the same name as the local-build fallback).
+          build-contexts: |
+            gobuildcache=${{ runner.temp }}/open-chat-go-build-cache
           # Registry layer cache (mode=max also caches intermediate stages).
           # Measured: adding a second type=gha,mode=max exporter pushed the
           # "Build Backend Image Once" job from ~5m21s to ~6m10s - the GHA cache
@@ -978,6 +1054,17 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
             go-build-${{ runner.os }}-
+
+      - name: Cache integration checkouts
+        if: steps.context.outputs.should_test != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            clients/integrations
+            .integrations
+          key: integrations-${{ runner.os }}-${{ hashFiles('integrations.lock.json', 'profile_setup.yaml') }}
+          restore-keys: |
+            integrations-${{ runner.os }}-
 
       - name: Materialize full integration test module set
         if: steps.context.outputs.should_test != ''
