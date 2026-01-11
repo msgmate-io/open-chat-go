@@ -76,12 +76,19 @@ on:
       - closed
 
 concurrency:
+  # Key pull-request runs by PR number *and* head SHA. A run that is parked
+  # waiting on a protected deployment environment is not cancelled by
+  # `cancel-in-progress` (GitHub does not cancel environment-gated runs), so a
+  # plain `pr-ci-<number>` group lets one stale, unapproved run block every
+  # later run for the same PR. Scoping to the head SHA lets a fresh push start
+  # immediately; the per-environment `pr-deploy-<number>` job concurrency still
+  # serialises/cancels the actual deploys.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
         || github.event.action == 'closed'
         && format('merged-deploy-{0}', github.event.pull_request.base.ref)
-        || format('pr-ci-{0}', github.event.pull_request.number) }}
+        || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
   cancel-in-progress: true
 
 permissions:
