@@ -7,14 +7,17 @@ package webtools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -26,8 +29,21 @@ const (
 	// MaxSearchLimit caps the requested number of search results.
 	MaxSearchLimit = 20
 
+	// networkAttempts is how many times a transient network failure (a
+	// connection reset, EOF or timeout) is retried before giving up. The
+	// keyless DuckDuckGo fallback intermittently resets connections from
+	// datacenter IPs, so a single attempt surfaces as a spurious tool error.
+	networkAttempts = 3
+	// networkRetryBaseDelay is the backoff before the first retry; it grows
+	// linearly per attempt.
+	networkRetryBaseDelay = 300 * time.Millisecond
+
 	fetchUserAgent = "Mozilla/5.0 (compatible; OpenChatBot/1.0; +https://msgmate.io)"
 )
+
+// httpClient is shared across web tool requests so connections are pooled and
+// reused, which reduces the chance of a transient reset.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // FetchResult is a readable view of a fetched document.
 type FetchResult struct {
@@ -60,6 +76,84 @@ var (
 	htmlTagAny       = regexp.MustCompile(`(?s)<[^>]+>`)
 )
 
+// doRequest executes an HTTP request, retrying transient network failures (a
+// connection reset, EOF or timeout) up to networkAttempts times with a short
+// linear backoff. build must return a fresh request for every attempt because
+// a request body can only be read once. The caller's context bounds the total
+// time spent, so retries stop as soon as it is done.
+func doRequest(ctx context.Context, build func() (*http.Request, error)) (*http.Response, error) {
+	var lastErr error
+	for attempt := 1; attempt <= networkAttempts; attempt++ {
+		req, err := build()
+		if err != nil {
+			return nil, err
+		}
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		lastErr = err
+		if !isTransientNetworkError(err) || attempt == networkAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt) * networkRetryBaseDelay):
+		}
+	}
+	return nil, lastErr
+}
+
+// isTransientNetworkError reports whether err is a transient network failure
+// worth retrying: connection resets/refusals, broken pipes, EOFs and timeouts.
+// Permanent failures (a not-found DNS name, context cancellation or a deadline
+// already reached) are not retried.
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return false
+	}
+	// A net.Error covers timeouts, but *url.Error also implements net.Error
+	// for every transport failure, so only an actual timeout qualifies here;
+	// resets and refusals are caught by the syscall checks below.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, fragment := range []string{
+		"connection reset by peer",
+		"connection refused",
+		"broken pipe",
+		"i/o timeout",
+		"tls handshake timeout",
+		"unexpected eof",
+		"server closed idle connection",
+	} {
+		if strings.Contains(msg, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
 // Fetch retrieves a URL and returns a bounded, readable text representation.
 // HTML documents are converted to plain text; other text content is returned
 // as-is. maxBytes <= 0 uses DefaultMaxBytes.
@@ -75,15 +169,15 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 		maxBytes = DefaultMaxBytes
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return FetchResult{}, err
-	}
-	req.Header.Set("User-Agent", fetchUserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := doRequest(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", fetchUserAgent)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.5")
+		return req, nil
+	})
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -141,14 +235,16 @@ func searchSearx(ctx context.Context, base, query string, limit int) ([]SearchRe
 	params := url.Values{}
 	params.Set("q", query)
 	params.Set("format", "json")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+params.Encode(), nil)
+	resp, err := doRequest(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+params.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", fetchUserAgent)
+		return req, nil
+	})
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", fetchUserAgent)
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("search request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
@@ -178,20 +274,24 @@ func searchSearx(ctx context.Context, base, query string, limit int) ([]SearchRe
 }
 
 // searchDuckDuckGo parses the keyless DuckDuckGo HTML endpoint. It is a
-// best-effort fallback used when no search backend is configured.
+// best-effort fallback used when no search backend is configured. Transient
+// connection resets (common from datacenter IPs) are retried by doRequest.
 func searchDuckDuckGo(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 	params := url.Values{}
 	params.Set("q", query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://html.duckduckgo.com/html/", strings.NewReader(params.Encode()))
+	form := params.Encode()
+	resp, err := doRequest(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://html.duckduckgo.com/html/", strings.NewReader(form))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", fetchUserAgent)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req, nil
+	})
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", fetchUserAgent)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("web search request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
