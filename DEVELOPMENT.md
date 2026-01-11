@@ -8,6 +8,37 @@ You should always try to call and test endpoints you implement while you are imp
 
 You should only implement actual integration tests if asked, or suggest to implement them if you really think appropriate.
 
+### Pull-request CI labels and deployment policy
+
+PR CI (`.github/workflows/run-pr-ci-tests-and-deployments.yaml`) is driven
+entirely by labels applied to the pull request when it is opened: `test`,
+`build`, `e2e`, `sandbox-test`, `test-core-only`, `ai-test-mock`,
+`ai-test-real` and `deploy` (`release-android` only on an explicit Android
+request; `slow-android-build-test` only on an explicit maintainer request).
+Two of them stand apart: `deploy` and `sandbox-test` spin up a deployment and
+run the expensive post-deploy suites, so they touch an environment.
+
+Policy:
+
+- Use `deploy` and `sandbox-test` **only on dedicated consolidation PRs
+  targeting `main`** (the `chore/consolidate-*` PRs) — the single place where a
+  batch of ready changes is verified as a whole. Feature, bugfix, docs and
+  chore PRs carry the ordinary code-change labels only.
+- A same-repository PR targeting `main` is the CI-environment case: its
+  deploy/test gate uses the **unprotected** `msgmate-io-ci` GitHub environment,
+  so the full suite — including the post-deploy sandbox and real-AI suites —
+  runs without an admin confirmation.
+- Every other PR keeps the protected `msgmate-io-pr-deployment` environment and
+  therefore needs an explicit maintainer approval before it deploys (and before
+  its post-deploy suites can run).
+- Production promotion (`main` → `production`) always keeps the
+  admin-protected `msgmate-io-production` environment.
+- Maintainers may make rare, deliberate exceptions (for example to validate an
+  infrastructure change); the risk is theirs and they should say so on the PR.
+
+Never wait for or poll CI, deployments or approvals from an agent turn; report
+what is pending instead.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git
