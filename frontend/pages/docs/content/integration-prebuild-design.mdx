@@ -1,0 +1,229 @@
+---
+title: Integration Prebuild & Linkage Design
+path: integration-prebuild-design
+description: Why committed integration binaries, Go plugins and c-shared libraries do not work here, and the incremental path towards prebuilt, dynamically loaded integrations.
+order: 34
+section: Platform
+---
+
+## Context
+
+Today every build compiles the whole server together with every selected
+integration, regardless of which integration actually changed. The natural
+question is whether each integration repository can commit a **prebuilt binary
+artifact** (an object/archive, a Go plugin, or a `c-shared`/`c-archive`
+library) and have the core binary **link only the integrations that changed**.
+
+This page records the outcome of the feasibility investigation: the literal
+proposal does not work with Go as it is used here, but there is a realistic,
+incremental path that reaches the same goal without breaking the build model.
+
+## Verdict at a glance
+
+*Partially feasible — but not the way it is usually imagined, and not as a
+pure win.*
+
+The proposal of committing a pre-compiled object per integration and having the
+core dynamically link only the changed ones is **not supported by Go's build
+model**, for three independent reasons:
+
+1. **Go has no supported "link this archive later" mechanism.** `go build` /
+   `go link` consume the content-addressed **build cache** (`$GOCACHE`), not
+   arbitrary archives checked into a repository. Go already recompiles only
+   changed packages and relinks when its cache is warm; a committed archive
+   layer is a manual, version-specific, brittle reimplementation of that cache.
+2. **Integrations are not encapsulated.** Each add-on integration imports core
+   `backend/...` packages, and the core blank-imports the integrations. That is
+   a **bidirectional compile-time graph**, so any core change invalidates every
+   integration regardless of the linkage mechanism. There is no stable ABI
+   boundary to link across.
+3. **Production binaries are static (`CGO_ENABLED=0`, `FROM scratch`).** They
+   cannot load a dynamic shared object at runtime, which rules out a plain
+   Go `plugin` / `c-shared` approach for the main release artifact.
+
+The realistic ordering is: **harness Go's own build cache first** (low risk,
+high value), **decouple integrations behind a stable Host interface** (the
+precondition for any prebuild), and **only then choose a linkage or transport
+mechanism** for prebuilt artifacts.
+
+## How integrations reach the binary today
+
+- `integrations.yaml` at the repository root declares the public integrations
+  and profiles; private integrations and larger profiles come from a private
+  manifest fragment that `openchat-integrations setup` mirrors in.
+- `openchat-integrations resolve` generates:
+  - `backend/go.work` — a workspace that `use`s the core, the two interface
+    modules and every resolved integration;
+  - `backend/integrations/externalintegrations/imports_gen.go` — **blank
+    imports of the selected integrations**, the single edge that pulls the
+    integration packages (and their `init()`) into the binary;
+  - `backend/.generated/build_tags` — the union of per-integration build tags
+    plus `coreonly` for the published profile.
+- Each integration's `init()` calls
+  `integrationinterface.MustRegister(Definition{...})`, populating a global
+  registry that the core copies into `backend/integrations` at startup.
+
+The whole thing is therefore a **single Go build**: one module graph, one
+`go build`, one binary. Nothing is loaded after the fact.
+
+## Why the naive approaches fail
+
+### Committed `.a` archives / per-integration binaries
+
+There is no supported link path for a committed archive. Go's build cache keys
+(`actionID`) include the toolchain, the exact compiler flags and the transitive
+inputs of a package. Checked-in archives are therefore invalidated constantly
+and are not reusable across toolchains, platforms or dependency changes. Even if
+linking worked, it would just be a worse copy of the cache Go already keeps.
+
+### Go plugins (`-buildmode=plugin`)
+
+A Go plugin is only compatible with a host built with the **same toolchain,
+the same flags and byte-identical copies of every shared package**. Because
+integrations import `backend/...`, any core change would force rebuilding every
+plugin — exactly the problem we are trying to avoid. Plugins are also
+Linux/macOS only and are incompatible with the static `scratch` release image
+(a plugin needs a dynamic runtime and `cgo`/`dlopen`).
+
+### `c-archive` / `c-shared`
+
+These require `cgo` and a dynamic runtime, which directly conflicts with the
+`CGO_ENABLED=0`, `FROM scratch` production model. The Android build
+(`gomobile bind`) is the only native-linking precedent in the tree and already
+needs linker workarounds; it is not a template for the server binary.
+
+### WASI / WASM (e.g. wazero)
+
+WebAssembly is cross-platform and ABI-isolated, which is attractive, but it
+requires redesigning the entire integration contract: the `Definition` holds
+non-serializable Go values and integrations reach the database and core through
+host functions, so every API route, model, migration, bootstrap step and tool
+would have to be expressed as a serializable manifest plus host-function RPC.
+That is a much larger project than "commit a binary".
+
+## The real blockers
+
+### 1. A bidirectional compile-time graph
+
+There is no one-way dependency. The core blank-imports integrations so their
+`init()` runs; integrations import the core to do their work. A single shared
+module graph means the compiler sees a core change as an input to every
+integration package, so per-integration invalidation is impossible until the
+core→integration edge is the only remaining one-way edge.
+
+### 2. Integrations import `backend/...`
+
+Add-on integrations routinely import core internals: `backend/database`,
+`backend/server/util`, `backend/runtimecfg`, `backend/api/msgmate`,
+`backend/chatstate`, `backend/secretstore` and more, plus models and the tool
+interface. Any of these changing is a legitimate reason to rebuild the
+integration, so no artifact boundary can be stable while these imports exist.
+
+### 3. The `Definition` is not serializable
+
+The registration surface contains live Go values — embedded `fs.FS`, an
+`http.ServeMux` registrar, `func() []interface{}` model factories, `gorm.DB`
+access and `toolinterface.Definition.Run` function values. None of these cross
+an ABI boundary or a process boundary, so there is no wire format that could be
+used to load a prebuilt integration without an interface redesign.
+
+### 4. Static, cross-platform production images
+
+The published server is a static binary in a `scratch` image for multiple
+platforms. Dynamic loading (`plugin`) and `cgo`-based linkage (`c-shared`,
+`c-archive`) are both off the table for that artifact, and a Linux-only
+mechanism would not cover the other supported targets.
+
+## Recommended incremental path
+
+### Phase 1 — Harness Go's own build cache
+
+The practical pain ("we rebuild everything") is largely a **cold build-cache
+problem in CI/Docker**, not an inherent Go limitation. Persist the Go build
+cache across runs and seed it into the image build so the compiler reuses the
+third-party dependency graph and only recompiles the changed integration before
+relinking. No integration or interface source changes are required.
+
+- Restore the Go build cache with `actions/cache` (the same
+  `go-build-<os>-<go.sum>-<sha>` key pattern the Go-test job already writes) and
+  feed it into the image build as a **bind build-context**, then copy it into
+  the compiler cache directory. Bind mounts are not exported as image layers,
+  which avoids the registry-cache bloat that made the earlier
+  BuildKit-registry-cache attempt a net regression on CI.
+- Keep the existing standard-library prewarm layer for the cache-miss case.
+- Caveat: the host toolchain and the builder image toolchain must be the same
+  patch version for the cache action IDs to match; a mismatch only means a
+  silent miss (no speedup), not a failure.
+
+This work is tracked under the build-time umbrella **ci#382**.
+
+### Phase 2 — Decouple integrations behind a stable Host interface
+
+To make a per-integration artifact depend only on stable inputs, remove the
+`backend/...` import edge: expose the handful of core APIs integrations need
+behind a stable `Host` interface in the interface module, implemented by a core
+adapter package and injected at startup. Only after this does an integration's
+compile inputs become its own source plus the interface module and third-party
+dependencies — the precondition for any prebuild.
+
+This is a larger, cross-repository refactor and must be staged per integration
+with its own PRs. It is tracked as **ci#410**, and is independently valuable
+(smaller blast radius, clearer ownership) even if Phase 3 never happens.
+
+### Phase 3 — Choose a linkage or transport mechanism, then publish artifacts
+
+Only after Phase 2, pick the mechanism deliberately rather than by default:
+
+| Mechanism | Platforms | Runtime model | Trade-off |
+| --- | --- | --- | --- |
+| Go plugin (`-buildmode=plugin`) | Linux/macOS only | Dynamic `.so` in a glibc/musl image | Tools must keep exact toolchain/flag/shared-package identity with the host. |
+| WASI / WASM (wazero) | Cross-platform | In-process sandbox, host-function RPC | Cross-platform and isolated, but requires the full `Definition` redesign. |
+| Sidecar process (gRPC/HTTP) | Cross-platform | Separate process | Same interface redesign, different transport; extra process supervision. |
+
+Whichever is chosen, the **primary static release can keep statically linking
+integrations**, while a separate dynamic build target consumes prebuilt artifacts
+for the platforms where they exist.
+
+### Artifact publishing model
+
+Do **not** commit binaries into git (bloat, stale/integrity risk, licensing
+ambiguity). Instead each integration repository publishes its artifact as a
+**release asset or OCI artifact**, addressed by
+`(go_version, GOOS/GOARCH, interface_commit)`. `integrations.lock.json` pins
+those coordinates (URL + `sha256`) alongside the current commit pins, and
+`openchat-integrations sync` fetches the artifacts for the selected platform.
+The core then loads prebuilt artifacts where available and falls back to the
+statically linked import otherwise.
+
+## Risks and open questions
+
+- The Phase 1 cache layer must be measured in CI before it is trusted; an
+  earlier registry-cache variant regressed image build time because cache I/O
+  dominated the saved recompile.
+- Phase 2 is large (many integrations, several core packages) and must be done
+  completely — a partial decoupling leaves the `backend` edge in place and
+  defeats prebuild invalidation.
+- Go plugins remain fragile (toolchain identity, Linux/macOS only, incompatible
+  with the static `scratch` release image).
+- The interface rewrite required by WASM/sidecar is significantly larger than
+  "commit a binary"; set expectations accordingly.
+
+## Summary
+
+| Decision | Outcome |
+| --- | --- |
+| Commit prebuilt binaries into integration repos | **No** — no supported Go link path; use release/OCI artifacts. |
+| Dynamic linking via Go plugin / `c-shared` | **No** for the static `scratch` release; Linux-only and fragile in general. |
+| Reuse Go's own build cache in CI/Docker | **Yes, first** — solves most of the "rebuild everything" pain. |
+| Decouple integrations behind a `Host` interface | **Yes, next** — prerequisite for any prebuild; valuable on its own. |
+| Prebuilt artifacts + on-demand loading | **Later** — only after decoupling, with the transport chosen deliberately. |
+
+## References
+
+- Build-time umbrella (Go build cache): ci#382 — *Reduce binary footprint and
+  further reduce build time*.
+- Decoupling effort (stable Host interface): ci#410 — *Reduce the heavy Go
+  dependency / integration compile footprint*.
+- [Integration Development](/docs#integration-development) — the integration
+  and tool interfaces, manifest and profiles.
+- [Integrations & Tools](/docs#integrations) — registry, access model and tools.
