@@ -39,6 +39,41 @@ Policy:
 Never wait for or poll CI, deployments or approvals from an agent turn; report
 what is pending instead.
 
+### Autonomous development-admin loop
+
+The open-chat-go development-admin agents share one lifecycle policy. It is
+shipped as the `open-chat-development-admin-loop-policy` anchor in the
+ci.msgmate.io config
+(`config-deltas/issue-431-development-admin-loop.yaml` in the private
+`msgmate-io/open-chat-go-ci` repository, also defined by the native
+`issue-413-…` / `issue-421-…` deltas so each is self-contained) and is
+referenced by both the opencode agents (`consolidate-changes-bot`,
+`open-chat-development-lead`, `open-chat-go-ci-admin`) and the native
+msgmate-coder agents (`msgmate-coder-consolidate-bot`,
+`msgmate-coder-development-lead`).
+
+1. **Merge when green.** An agent MAY merge its own consolidation PR into
+   `main`, but only once every required check on that PR has passed; a
+   same-repository consolidation PR reaches green without a human approval (see
+   the label policy above). If a required check is pending or failing, the agent
+   keeps developing and fixing the PR branch until it is green — it never merges
+   a red or unverified PR.
+2. **Verify the deployment after merging.** Merging a PR to `main` triggers the
+   `merged-deploy-main` flow, which deploys to `msgmate-io-ci`
+   (ci.msgmate.io). The agent then monitors and verifies that the deployment is
+   healthy and the merged features behave as expected, using the reproducible
+   checks the CI repository provides (`Live Runtime Canary`, log monitoring).
+3. **Loop on breakage.** If the deployment or a feature is broken, the agent
+   files an issue per distinct problem plus a fix and opens a new consolidation
+   PR that updates ci.msgmate.io again, repeating (merge when green → verify →
+   file issues and fixes → new consolidation PR) until everything works and all
+   reasonably-closable issues are done.
+4. **PR-label policy.** `deploy`/`sandbox-test` only on consolidation PRs to
+   `main`, with a rare deliberate exception stated on the PR (see above).
+
+The tracked, reviewable operational copy of this policy lives in the private
+`msgmate-io/open-chat-go-ci` repository's `AGENTS.md`.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git
