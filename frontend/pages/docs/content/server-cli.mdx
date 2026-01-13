@@ -97,19 +97,6 @@ so existing installations can enforce 2FA without manual enrollment. See
 [Authentication → Pre-configuring 2FA for bootstrap users](/docs#authentication)
 for details and secret-handling guidance.
 
-### SSH bootstrap
-
-The SSH integration can be provisioned declaratively. Each flag accepts a JSON
-object/array or a file path and can be repeated.
-
-| Flag | Env var |
-| --- | --- |
-| `--add-ssh-keys-from-config` | `ADD_SSH_KEYS_FROM_CONFIG` |
-| `--add-ssh-servers-from-config` | `ADD_SSH_SERVERS_FROM_CONFIG` |
-| `--add-ssh-key-grants-from-config` | `ADD_SSH_KEY_GRANTS_FROM_CONFIG` |
-| `--add-ssh-server-grants-from-config` | `ADD_SSH_SERVER_GRANTS_FROM_CONFIG` |
-| `--add-ssh-default-owner` | `ADD_SSH_DEFAULT_OWNER` |
-
 ### Worker flags
 
 | Flag | Env var | Default | Purpose |
