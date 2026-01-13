@@ -40,12 +40,11 @@ list (`GET /api/v1/chats/list?tags=...&exclude_tags=...`). Automation- and
 git-triggered chats are hidden by default via the `automation` and `trigger`
 tags.
 
-OpenCode coding interactions add a compact, self-describing tag pair so the
+Automated coding interactions add a compact, self-describing tag pair so the
 workspace and the trigger can be filtered independently:
 
 | Tag | Meaning |
 | --- | --- |
-| `opencode` | the interaction runs through the OpenCode backend |
 | `repo:<slug>` | the workspace repository, e.g. `repo:open-chat-go` |
 | `via:<trigger>` | how it was triggered: `via:assign`, `via:mention`, `via:review`, `via:comment`, `via:plan`, `via:chat` |
 
@@ -69,6 +68,7 @@ URLs:
 - `GET /api/interaction/{chat_share_uuid}`
 - `GET /api/interaction/{chat_share_uuid}/messages`
 - `GET /api/interaction/{chat_share_uuid}/status`
+- `GET /api/interaction/{chat_share_uuid}/access`
 - `GET /api/interaction/{chat_share_uuid}/badge.svg`
 
 The badge is also served at `GET /interaction/{chat_share_uuid}/badge.svg`
