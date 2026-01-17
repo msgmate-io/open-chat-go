@@ -314,6 +314,7 @@ func streamChatCompletion(
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
+		emptyContinuationRetried := false
 		var toolCallResult *toolCallResult
 		var err error
 
@@ -401,6 +402,18 @@ func streamChatCompletion(
 			if toolCallResult.err != nil {
 				log.Printf("Error: %v", toolCallResult.err)
 				return
+			}
+
+			// A post-confirmation continuation that produces neither text nor a
+			// tool call is useless and is often a truncated provider emission;
+			// retry it once before giving up so an intermittent blip does not
+			// silently abandon the remaining task steps (ci#428).
+			if aiResponseComplete && meta.PostConfirmationContinuation && !emptyContinuationRetried &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" {
+				emptyContinuationRetried = true
+				aiResponseComplete = false
+				log.Printf("Post-confirmation continuation produced an empty assistant message; retrying once")
+				continue
 			}
 
 			// If AI response is complete and no more tools are being called, execute completion tools
@@ -793,6 +806,140 @@ func truncateToolResultForModel(result string) string {
 	return result[:maxContentLen] + notice
 }
 
+// processParsedToolCall executes or surfaces a single fully parsed tool call,
+// whether it came from a structured streaming delta or was recovered from a
+// DeepSeek DSML block in the assistant content. It mirrors the structured
+// path's confirmation/caching semantics and records the outcome on result. The
+// caller is responsible for stopping the enclosing batch once result.stopAfterTool
+// is set.
+func processParsedToolCall(
+	id string,
+	name string,
+	arguments string,
+	toolMap map[string]Tool,
+	executedToolResults map[string]string,
+	result *toolCallResult,
+	toolChan chan<- ToolCall,
+) {
+	if name == "" || arguments == "" {
+		return
+	}
+
+	tool, exists := toolMap[name]
+	if !exists {
+		log.Printf("Warning: Tool '%s' not found in toolMap", name)
+		return
+	}
+
+	toolInput, parseErr := tool.ParseArguments(arguments)
+	if parseErr != nil {
+		return
+	}
+
+	fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", name)
+	fmt.Printf("Tool ID: %s\n", id)
+	fmt.Printf("Arguments: %s\n", arguments)
+
+	contentSignature := fmt.Sprintf("%s:%s", name, strings.TrimSpace(arguments))
+	if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
+		// Only successful calls are cached, so a cache hit is a repeat of a call
+		// that already succeeded. Failures are deliberately not cached: the state
+		// may change between two identical calls (e.g. a coding workspace becomes
+		// selected after the first read failed), and replaying a stale error would
+		// trap the model in a failure loop instead of letting it recover.
+		log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
+
+		result.usedTool = true
+		result.id = id
+		result.toolName = name
+		result.arguments = arguments
+		result.result = cachedResult
+		result.status = ToolCallStatusSucceeded
+		result.error = ""
+
+		toolChan <- ToolCall{
+			ToolName:  name,
+			ToolInput: toolInput,
+			Id:        id,
+			Result:    cachedResult,
+			Status:    ToolCallStatusSucceeded,
+			Error:     "",
+		}
+		return
+	}
+
+	result.usedTool = true
+	result.id = id
+	result.toolName = name
+	result.arguments = arguments
+
+	toolChan <- ToolCall{
+		ToolName:  name,
+		ToolInput: toolInput,
+		Id:        id,
+		Result:    "",
+		Status:    ToolCallStatusOngoing,
+	}
+
+	var toolResult string
+	status := ToolCallStatusSucceeded
+	toolErr := ""
+	requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
+	switch {
+	case requiresConfirmation:
+		continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
+		toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
+		status = ToolCallStatusPendingConfirmation
+
+		modelResult := toolResult
+		if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
+			modelResult = blockMessage
+		}
+		result.result = modelResult
+		if tool.GetStopOnFirstConfirmableToolCall() {
+			result.stopAfterTool = true
+		}
+	case resolvedResult != "":
+		// A code-defined resolver (eg coder_ask in an autonomous session)
+		// decided the call must not be confirmed and supplied the answer
+		// itself; use it as the tool result and continue instead of pausing
+		// for the user.
+		toolResult = resolvedResult
+		result.result = resolvedResult
+		status = ToolCallStatusSucceeded
+	default:
+		executedResult, runErr := tool.RunTool(toolInput)
+		if runErr != nil {
+			log.Printf("Error executing tool %s: %v", name, runErr)
+			toolResult = buildToolErrorPlaceholder(name, runErr)
+			result.result = toolResult
+			status = ToolCallStatusFailed
+			toolErr = runErr.Error()
+		} else {
+			toolResult = executedResult
+			result.result = executedResult
+			status = ToolCallStatusSucceeded
+		}
+	}
+
+	toolChan <- ToolCall{
+		ToolName:  name,
+		ToolInput: toolInput,
+		Id:        id,
+		Result:    toolResult,
+		Status:    status,
+		Error:     toolErr,
+	}
+	result.status = status
+	result.error = toolErr
+	// Cache only successful results. Caching failures would make an identical
+	// retry (after the underlying state changed) replay the stale error instead
+	// of re-executing the tool.
+	if status == ToolCallStatusSucceeded {
+		executedToolResults[contentSignature] = toolResult
+	}
+}
+
 func processStreamingResponseReader(
 	reader *bufio.Reader,
 	toolMap map[string]Tool,
@@ -809,6 +956,10 @@ func processStreamingResponseReader(
 		arguments string
 	}
 	var aiResponseBuilder strings.Builder
+	// dsmlDetected records that the model emitted an inline DeepSeek DSML
+	// tool-call block in the content. Such content is never user-facing: it is
+	// withheld from the client stream and recovered (or reported) at the end.
+	dsmlDetected := false
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -853,7 +1004,14 @@ func processStreamingResponseReader(
 		delta := chunk.Choices[0].Delta
 
 		if delta.Content != "" {
-			chunkChan <- delta.Content
+			if !dsmlDetected && containsDSMLMarker(delta.Content) {
+				dsmlDetected = true
+			}
+			// Never forward inline DSML tool-call fragments as assistant text;
+			// they are recovered (or reported) after the stream ends.
+			if !dsmlDetected {
+				chunkChan <- delta.Content
+			}
 			aiResponseBuilder.WriteString(delta.Content)
 		}
 
@@ -893,121 +1051,15 @@ func processStreamingResponseReader(
 				continue
 			}
 
-			tool, exists := toolMap[currentToolCall.name]
-			if !exists {
-				log.Printf("Warning: Tool '%s' not found in toolMap", currentToolCall.name)
-				continue
-			}
-
-			toolInput, parseErr := tool.ParseArguments(currentToolCall.arguments)
-			if parseErr != nil {
-				continue
-			}
-
-			fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", currentToolCall.name)
-			fmt.Printf("Tool ID: %s\n", currentToolCall.id)
-			fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
-
-			contentSignature := fmt.Sprintf("%s:%s", currentToolCall.name, strings.TrimSpace(currentToolCall.arguments))
-			if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
-				// Only successful calls are cached, so a cache hit is a repeat of
-				// a call that already succeeded. Failures are deliberately not
-				// cached: the state may change between two identical calls (e.g.
-				// a coding workspace becomes selected after the first read
-				// failed), and replaying a stale error would trap the model in a
-				// failure loop instead of letting it recover.
-				log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
-
-				result.usedTool = true
-				result.id = currentToolCall.id
-				result.toolName = currentToolCall.name
-				result.arguments = currentToolCall.arguments
-				result.result = cachedResult
-				result.status = ToolCallStatusSucceeded
-				result.error = ""
-
-				toolChan <- ToolCall{
-					ToolName:  currentToolCall.name,
-					ToolInput: toolInput,
-					Id:        currentToolCall.id,
-					Result:    cachedResult,
-					Status:    ToolCallStatusSucceeded,
-					Error:     "",
-				}
-				break
-			}
-
-			result.usedTool = true
-			result.id = currentToolCall.id
-			result.toolName = currentToolCall.name
-			result.arguments = currentToolCall.arguments
-
-			toolChan <- ToolCall{
-				ToolName:  currentToolCall.name,
-				ToolInput: toolInput,
-				Id:        currentToolCall.id,
-				Result:    "",
-				Status:    ToolCallStatusOngoing,
-			}
-
-			var toolResult string
-			status := ToolCallStatusSucceeded
-			toolErr := ""
-			requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
-			switch {
-			case requiresConfirmation:
-				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
-				toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
-				status = ToolCallStatusPendingConfirmation
-
-				modelResult := toolResult
-				if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
-					modelResult = blockMessage
-				}
-				result.result = modelResult
-				if tool.GetStopOnFirstConfirmableToolCall() {
-					result.stopAfterTool = true
-				}
-			case resolvedResult != "":
-				// A code-defined resolver (eg coder_ask in an autonomous session)
-				// decided the call must not be confirmed and supplied the answer
-				// itself; use it as the tool result and continue instead of
-				// pausing for the user.
-				toolResult = resolvedResult
-				result.result = resolvedResult
-				status = ToolCallStatusSucceeded
-			default:
-				executedResult, runErr := tool.RunTool(toolInput)
-				if runErr != nil {
-					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
-					toolResult = buildToolErrorPlaceholder(currentToolCall.name, runErr)
-					result.result = toolResult
-					status = ToolCallStatusFailed
-					toolErr = runErr.Error()
-				} else {
-					toolResult = executedResult
-					result.result = toolResult
-					status = ToolCallStatusSucceeded
-				}
-			}
-
-			toolChan <- ToolCall{
-				ToolName:  currentToolCall.name,
-				ToolInput: toolInput,
-				Id:        currentToolCall.id,
-				Result:    toolResult,
-				Status:    status,
-				Error:     toolErr,
-			}
-			result.status = status
-			result.error = toolErr
-			// Cache only successful results. Caching failures would make an
-			// identical retry (after the underlying state changed) replay the
-			// stale error instead of re-executing the tool.
-			if status == ToolCallStatusSucceeded {
-				executedToolResults[contentSignature] = toolResult
-			}
-
+			processParsedToolCall(
+				currentToolCall.id,
+				currentToolCall.name,
+				currentToolCall.arguments,
+				toolMap,
+				executedToolResults,
+				result,
+				toolChan,
+			)
 			break
 		}
 
@@ -1025,6 +1077,36 @@ func processStreamingResponseReader(
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
+
+	// Recover an inline DeepSeek DSML tool-call block that the provider did not
+	// map onto the structured tool_calls field. Without this the raw fragment
+	// was stored as the assistant text and the tool loop finished silently,
+	// abandoning the rest of a multi-step task (ci#428).
+	if !result.usedTool && dsmlDetected {
+		recovered := parseDSMLToolCalls(result.aiResponse, toolMap)
+		if len(recovered) == 0 {
+			return result, fmt.Errorf(
+				"model returned a malformed DeepSeek DSML tool-call block in the assistant content and no tool call could be recovered",
+			)
+		}
+		for i, call := range recovered {
+			processParsedToolCall(
+				fmt.Sprintf("dsml-call-%d", i+1),
+				call.ToolName,
+				call.Arguments,
+				toolMap,
+				executedToolResults,
+				result,
+				toolChan,
+			)
+			if result.stopAfterTool {
+				break
+			}
+		}
+		// The raw DSML fragment is not user-facing assistant text.
+		result.aiResponse = ""
+	}
+
 	return result, nil
 }
 
