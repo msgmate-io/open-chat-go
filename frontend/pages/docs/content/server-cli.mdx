@@ -19,6 +19,7 @@ open-chat server   [flags]   # API + optional embedded worker + frontend
 open-chat worker   [flags]   # background worker only
 open-chat run      [flags]   # one-shot interaction, prints the bot reply
 open-chat client   <cmd>     # authenticated API calls for scripts
+open-chat tui      [flags]   # launch the terminal UI (when bundled)
 ```
 
 Run `open-chat <command> --help` to print the authoritative flag list for the
@@ -96,19 +97,6 @@ server enables TOTP 2FA for that user at startup and seeds the recovery codes,
 so existing installations can enforce 2FA without manual enrollment. See
 [Authentication → Pre-configuring 2FA for bootstrap users](/docs#authentication)
 for details and secret-handling guidance.
-
-### SSH bootstrap
-
-The SSH integration can be provisioned declaratively. Each flag accepts a JSON
-object/array or a file path and can be repeated.
-
-| Flag | Env var |
-| --- | --- |
-| `--add-ssh-keys-from-config` | `ADD_SSH_KEYS_FROM_CONFIG` |
-| `--add-ssh-servers-from-config` | `ADD_SSH_SERVERS_FROM_CONFIG` |
-| `--add-ssh-key-grants-from-config` | `ADD_SSH_KEY_GRANTS_FROM_CONFIG` |
-| `--add-ssh-server-grants-from-config` | `ADD_SSH_SERVER_GRANTS_FROM_CONFIG` |
-| `--add-ssh-default-owner` | `ADD_SSH_DEFAULT_OWNER` |
 
 ### Worker flags
 
@@ -206,6 +194,13 @@ open-chat client hash-password --password "$NEW_PASSWORD"
 Shared flags: `--host` (`OPEN_CHAT_HOST`, default `http://localhost:1984`),
 `--api-token` (`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
 their own `open-chat client ...` subcommands.
+
+## `open-chat tui`
+
+Launches the terminal UI when the `tui` integration is part of the build. All
+arguments after the command name are forwarded to the TUI, so its own flags
+(for example `--where` and `--version`) work through `open-chat tui`. See
+[Terminal UI](/docs#tui) for usage and configuration.
 
 ## `open-chat.json` example
 
