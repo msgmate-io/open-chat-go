@@ -133,3 +133,121 @@ func TestDoRequestDoesNotRetryPermanentErrors(t *testing.T) {
 		t.Fatalf("expected a single attempt, got %d", transport.calls)
 	}
 }
+
+// cannedTransport returns a fixed response for every request, so the search
+// parsers can be exercised against challenge pages and payloads offline.
+type cannedTransport struct {
+	status int
+	body   string
+}
+
+func (c *cannedTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: c.status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(c.body)),
+	}, nil
+}
+
+func withCannedResponse(t *testing.T, status int, body string) {
+	t.Helper()
+	old := httpClient
+	httpClient = &http.Client{Transport: &cannedTransport{status: status, body: body}}
+	t.Cleanup(func() { httpClient = old })
+}
+
+func TestSearchDuckDuckGoChallengePageIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusAccepted, `<html><body>anomaly detected</body></html>`)
+	results, err := searchDuckDuckGo(context.Background(), "golang net/http", 5)
+	if !errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("expected ErrSearchUnavailable, got %v (results=%v)", err, results)
+	}
+}
+
+func TestSearchDuckDuckGoChallengeMarkersWithOKStatusIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `<html><body>Unusual traffic from your network</body></html>`)
+	_, err := searchDuckDuckGo(context.Background(), "golang net/http", 5)
+	if !errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("expected ErrSearchUnavailable, got %v", err)
+	}
+}
+
+func TestSearchDuckDuckGoEmptyAnomalyIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `<html><body>nothing useful here</body></html>`)
+	_, err := searchDuckDuckGo(context.Background(), "golang net/http", 5)
+	if !errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("expected ErrSearchUnavailable, got %v", err)
+	}
+}
+
+func TestSearchDuckDuckGoNoResultsPageIsEmptyNotError(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `<html><body><div class="no-results">No results.</div></body></html>`)
+	results, err := searchDuckDuckGo(context.Background(), "asdfqwerzxcv", 5)
+	if err != nil {
+		t.Fatalf("expected no error for an explicit no-results page, got %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected zero results, got %d", len(results))
+	}
+}
+
+func TestSearchDuckDuckGoParsesResults(t *testing.T) {
+	page := `<html><body>` +
+		`<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fpkg.go.dev%2Fnet%2Fhttp">pkg.go.dev net/http</a>` +
+		`<a class="result__snippet">Package http provides HTTP client and server implementations.</a>` +
+		`</body></html>`
+	withCannedResponse(t, http.StatusOK, page)
+	results, err := searchDuckDuckGo(context.Background(), "golang net/http", 5)
+	if err != nil {
+		t.Fatalf("expected parsed results, got %v", err)
+	}
+	if len(results) != 1 || results[0].URL != "https://pkg.go.dev/net/http" {
+		t.Fatalf("unexpected results: %+v", results)
+	}
+}
+
+func TestSearchSearxNonJSONResponseIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `<html><body>search is offline</body></html>`)
+	_, err := searchSearx(context.Background(), "http://searx.invalid", "golang net/http", 5)
+	if !errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("expected ErrSearchUnavailable, got %v", err)
+	}
+}
+
+func TestSearchSearxEmptyResultsIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `{"results":[]}`)
+	_, err := searchSearx(context.Background(), "http://searx.invalid", "golang net/http", 5)
+	if !errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("expected ErrSearchUnavailable, got %v", err)
+	}
+}
+
+func TestSearchSearxChallengePageIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `<html><body>Please solve this captcha</body></html>`)
+	_, err := searchSearx(context.Background(), "http://searx.invalid", "golang net/http", 5)
+	if !errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("expected ErrSearchUnavailable, got %v", err)
+	}
+}
+
+func TestSearchSearxParsesResults(t *testing.T) {
+	withCannedResponse(t, http.StatusOK, `{"results":[{"title":"net/http","url":"https://pkg.go.dev/net/http","content":"Package http"}]}`)
+	results, err := searchSearx(context.Background(), "http://searx.invalid", "golang net/http", 5)
+	if err != nil {
+		t.Fatalf("expected parsed results, got %v", err)
+	}
+	if len(results) != 1 || results[0].URL != "https://pkg.go.dev/net/http" {
+		t.Fatalf("unexpected results: %+v", results)
+	}
+}
+
+func TestSearchSearxNon2xxIsError(t *testing.T) {
+	withCannedResponse(t, http.StatusServiceUnavailable, `nope`)
+	_, err := searchSearx(context.Background(), "http://searx.invalid", "golang net/http", 5)
+	if err == nil {
+		t.Fatal("expected an error for a non-2xx response")
+	}
+	if errors.Is(err, ErrSearchUnavailable) {
+		t.Fatalf("a transport-level status must not be ErrSearchUnavailable: %v", err)
+	}
+}
