@@ -45,6 +45,34 @@ const (
 // reused, which reduces the chance of a transient reset.
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
+// ErrSearchUnavailable signals that a search backend answered with a 2xx
+// response that is not a usable result set: an anti-bot/challenge page or an
+// empty response with no result markup. It lets callers (and the model)
+// distinguish "search is down" from a genuine "no matches", instead of
+// silently surfacing count:0.
+var ErrSearchUnavailable = errors.New("search backend unavailable")
+
+// challengeMarkers are fragments found in anti-bot/challenge pages served in
+// place of search results. DuckDuckGo answers its keyless HTML endpoint with
+// HTTP 202 and an "anomaly" page when it decides the caller looks like a bot;
+// other deployments reuse the same markers. Matching is case-insensitive.
+var challengeMarkers = []string{
+	"anomaly",
+	"duckduckgo.com/challenge",
+	"duckduckgo.com/anomaly",
+	"bots use duckduckgo",
+	"unusual traffic",
+	"captcha",
+}
+
+// ddgNoResultsMarkers identify a genuine empty-result page from the DuckDuckGo
+// HTML endpoint, so an intentional "no matches" is not misreported as a broken
+// backend.
+var ddgNoResultsMarkers = []string{
+	"no-results",
+	"no results",
+}
+
 // FetchResult is a readable view of a fetched document.
 type FetchResult struct {
 	URL         string `json:"url"`
@@ -209,7 +237,9 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 
 // Search runs a web search and returns the top results. It uses a
 // SearXNG-compatible JSON endpoint when OPENCHAT_WEB_SEARCH_URL is configured
-// and otherwise falls back to the keyless DuckDuckGo HTML endpoint.
+// and otherwise falls back to the keyless DuckDuckGo HTML endpoint. A backend
+// that answers with a 2xx but no usable results (an anti-bot/challenge page or
+// an empty payload) fails with ErrSearchUnavailable rather than an empty set.
 func Search(ctx context.Context, query string, limit int, site string) ([]SearchResult, error) {
 	q := strings.TrimSpace(query)
 	if q == "" {
@@ -250,6 +280,13 @@ func searchSearx(ctx context.Context, base, query string, limit int) ([]SearchRe
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("search endpoint returned %d", resp.StatusCode)
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, DefaultMaxBytes))
+	if err != nil {
+		return nil, err
+	}
+	if isChallengeResponse(resp.StatusCode, body) {
+		return nil, fmt.Errorf("%w: search endpoint returned an anti-bot challenge page (status %d)", ErrSearchUnavailable, resp.StatusCode)
+	}
 	var payload struct {
 		Results []struct {
 			Title   string `json:"title"`
@@ -257,8 +294,8 @@ func searchSearx(ctx context.Context, base, query string, limit int) ([]SearchRe
 			Content string `json:"content"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, DefaultMaxBytes)).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("invalid search response: %w", err)
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("%w: invalid search response (status %d): %v", ErrSearchUnavailable, resp.StatusCode, err)
 	}
 	out := make([]SearchResult, 0, len(payload.Results))
 	for _, r := range payload.Results {
@@ -270,7 +307,35 @@ func searchSearx(ctx context.Context, base, query string, limit int) ([]SearchRe
 			break
 		}
 	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%w: search endpoint returned no results (status %d)", ErrSearchUnavailable, resp.StatusCode)
+	}
 	return out, nil
+}
+
+// isChallengeResponse reports whether a 2xx response is an anti-bot/challenge
+// page rather than a usable result payload. DuckDuckGo uses HTTP 202 for its
+// "anomaly" page; some deployments return 200 with the same body markers.
+func isChallengeResponse(status int, body []byte) bool {
+	if status == http.StatusAccepted {
+		return true
+	}
+	if status < 200 || status > 299 {
+		return false
+	}
+	return containsAnyFold(string(body), challengeMarkers)
+}
+
+// containsAnyFold reports whether body contains any of markers,
+// case-insensitively.
+func containsAnyFold(body string, markers []string) bool {
+	lower := strings.ToLower(body)
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // searchDuckDuckGo parses the keyless DuckDuckGo HTML endpoint. It is a
@@ -302,6 +367,9 @@ func searchDuckDuckGo(ctx context.Context, query string, limit int) ([]SearchRes
 		return nil, err
 	}
 	page := string(body)
+	if isChallengeResponse(resp.StatusCode, body) {
+		return nil, fmt.Errorf("%w: duckduckgo returned an anti-bot challenge page (status %d)", ErrSearchUnavailable, resp.StatusCode)
+	}
 
 	links := ddgResultLink.FindAllStringSubmatch(page, -1)
 	snippets := ddgSnippet.FindAllStringSubmatch(page, -1)
@@ -323,6 +391,12 @@ func searchDuckDuckGo(ctx context.Context, query string, limit int) ([]SearchRes
 		if len(out) >= limit {
 			break
 		}
+	}
+	// A usable response that parses to zero results is an anomaly unless
+	// DuckDuckGo explicitly said it found nothing; otherwise the challenge
+	// page's 2xx would keep yielding a silent count:0.
+	if len(out) == 0 && !containsAnyFold(page, ddgNoResultsMarkers) {
+		return nil, fmt.Errorf("%w: duckduckgo returned no parseable results (status %d)", ErrSearchUnavailable, resp.StatusCode)
 	}
 	return out, nil
 }

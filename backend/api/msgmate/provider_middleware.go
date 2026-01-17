@@ -81,6 +81,11 @@ type providerRequestMeta struct {
 	// Attempt is the 1-based attempt number of the current HTTP request
 	// within its tool-call round.
 	Attempt int
+	// PostConfirmationContinuation marks a turn that continues an interaction
+	// after a confirmable action executed. Such turns are retried once when the
+	// model returns an assistant message with neither text nor tool calls, so an
+	// intermittent provider emission cannot silently abandon the task (ci#428).
+	PostConfirmationContinuation bool
 }
 
 // runProviderRequestMiddleware invokes all registered middlewares in the
