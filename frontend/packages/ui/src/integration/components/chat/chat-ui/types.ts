@@ -249,6 +249,15 @@ export interface ChatUIExtension {
    */
   hideMessageActions?: boolean;
   /**
+   * When true, consecutive assistant messages from the same sender are merged
+   * into a single bubble (one sender header) while preserving their original
+   * order. Integrations whose bot emits many short turns — typically an agent
+   * that pauses after each tool call or confirmation — use this to avoid a wall
+   * of repeated sender headers. A normal user message (or a visible event
+   * message) ends the run, so unrelated turns are never merged.
+   */
+  groupConsecutiveMessages?: boolean;
+  /**
    * Optional compact renderer for the assistant's thinking/thoughts. When
    * provided it replaces the core's thoughts blocks (both the live "Thinking…"
    * and the finished "Thoughts"/step variants).
