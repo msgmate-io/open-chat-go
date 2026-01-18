@@ -91,6 +91,8 @@ export type {
   ChatUIMessageRenderer,
   ChatUISendPayload,
   ChatUIToolCall,
+  ChatUIThoughtsProps,
+  ChatUIStatusIndicatorProps,
 } from "./components/chat/chat-ui/types";
 export { ChatUIMessageExtras } from "./components/chat/ChatUIMessageExtras";
 
