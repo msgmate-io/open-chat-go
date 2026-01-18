@@ -220,6 +220,24 @@ func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
 	return selectors
 }
 
+// trustedRuntimeSelfHost returns the base URL an in-process tool execution can
+// use to call back into the backend API. It mirrors the confirmable-action
+// executor's toolRuntimeSelfHost: the bot client normally carries the
+// configured backend host, but a tool-backed bot reply must still be able to
+// address the API when that host is unset, so fall back to the configured
+// self host (HOST/PORT) instead of leaving api_host empty.
+func trustedRuntimeSelfHost() string {
+	host := strings.TrimSpace(os.Getenv("HOST"))
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		port = "1984"
+	}
+	return fmt.Sprintf("http://%s:%s", host, port)
+}
+
 func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) map[string]interface{} {
 	runtime := map[string]interface{}{
 		"chat_uuid":     strings.TrimSpace(chatUUID),
@@ -227,8 +245,14 @@ func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) 
 		"bot_user_id":   aih.botContext.BotUser.ID,
 		"bot_user_uuid": strings.TrimSpace(aih.botContext.BotUser.UUID),
 	}
+	// api_host is always populated so runtime-aware tools (eg the native
+	// coder's hive-mind tools) never fail with "missing api_host/session_id in
+	// tool init" even when the bot client has no host configured.
+	runtime["api_host"] = trustedRuntimeSelfHost()
 	if aih.botContext != nil && aih.botContext.Client != nil {
-		runtime["api_host"] = strings.TrimSpace(aih.botContext.Client.GetHost())
+		if host := strings.TrimSpace(aih.botContext.Client.GetHost()); host != "" {
+			runtime["api_host"] = host
+		}
 		runtime["session_id"] = strings.TrimSpace(aih.botContext.Client.GetSessionId())
 	}
 	return runtime
@@ -775,26 +799,23 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 			toolsData = append(toolsData, tool.ConstructTool())
 			toolMap[toolName] = tool
 			toolMap[tool.GetToolFunctionName()] = tool
-			if tool.GetRequiresInit() {
-				initData, ok := toolInit[toolName]
-				if !ok {
-					initData, ok = toolInit[actualToolName]
-				}
-				if ok {
-					log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
-				} else {
-					// A RequiresInit tool with no explicit tool_init usually
-					// self-initializes from the injected trusted runtime (eg the
-					// native coder tools read api_host/session_id/_runtime). Only
-					// warn when there is no runtime to inject at all, so a real
-					// misconfiguration stays visible without one noisy line per
-					// tool per interaction.
-					if len(trustedRuntime) == 0 {
-						log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					}
-					tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
-				}
+			// Inject the trusted runtime into every tool the loop runs, not
+			// only those that declare RequiresInit. Tool-backed bots (eg the
+			// native coder) expose integration tools such as the hive-mind
+			// lookup/observe/state/influence tools that forward their call to
+			// the backend API and read api_host/session_id from init, but may
+			// not ship an init schema. An explicit tool_init entry still wins
+			// for api_host; the trusted session_id and _runtime are always
+			// attached so runtime-aware tools never start with an empty scope.
+			initData, ok := toolInit[toolName]
+			if !ok {
+				initData, ok = toolInit[actualToolName]
+			}
+			if ok {
+				log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+				tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
+			} else {
+				tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
 			}
 		}
 	}
