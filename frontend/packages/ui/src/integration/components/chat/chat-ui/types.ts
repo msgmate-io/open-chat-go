@@ -143,6 +143,20 @@ export interface ChatUIThoughtsProps {
 }
 
 /**
+ * Props passed to an extension's optional compact booting/queued status
+ * indicator. The core shows a placeholder while an empty, in-flight assistant
+ * turn has nothing to render yet; an integration can replace it with a smaller,
+ * on-brand status (for example a small chip with a status dot) instead of the
+ * default text block.
+ */
+export interface ChatUIStatusIndicatorProps {
+  /** "queued" while the interaction waits in the provider queue, else "booting". */
+  kind: "booting" | "queued";
+  /** Default human-readable label ("Msgmate Booting" / "Msgmate Agent Queued"). */
+  label: string;
+}
+
+/**
  * Context a chat UI extension predicate is resolved against. It lets an
  * integration select its views for a chat that has no explicit `chat_backend`
  * key (eg a tool-only agent whose bots never set one), by matching on the chat
@@ -263,6 +277,13 @@ export interface ChatUIExtension {
    * and the finished "Thoughts"/step variants).
    */
   Thoughts?: ComponentType<ChatUIThoughtsProps>;
+  /**
+   * Optional compact renderer for the "booting" / "queued" placeholder shown
+   * while an empty, in-flight assistant turn has nothing to render yet. When
+   * provided it replaces the core's larger `ShinyText` booting block — used by
+   * the coder to keep the wait calm and small on small/native screens.
+   */
+  StatusIndicator?: ComponentType<ChatUIStatusIndicatorProps>;
   /** Message input with two modes: before the chat started and after. */
   MessageInput?: {
     isPreStart: (ctx: ChatUIContext) => boolean;
