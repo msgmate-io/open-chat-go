@@ -41,6 +41,7 @@ import {
   resolveProviderRetryEvent,
 } from "./ProviderRetryEventWidget";
 import { revalidateChatData } from "../../lib/chat-cache";
+import { isQueuePendingMessage, resolveStatusIndicator } from "../../lib/status-indicator";
 import { MoreHorizontal } from "lucide-react";
 
 export { PendingMessageItem, ShinyText };
@@ -838,8 +839,7 @@ export function BotMessageItem({
     .filter((thought) => thought.length > 0)
     .filter((thought, index, allThoughts) => allThoughts.indexOf(thought) === index);
   const isPartialMessageUUID = typeof message.uuid === "string" && message.uuid.startsWith("partial_");
-  const isQueuedMessageUUID = typeof message.uuid === "string" && message.uuid.startsWith("queued_");
-  const isQueuePending = message?.meta_data?.queue_state === "queued" || isQueuedMessageUUID;
+  const isQueuePending = isQueuePendingMessage(message);
   const toolCalls = (message?.tool_calls || []) as MessageToolCall[];
   // An integration (keyed on the chat's chat_backend) may supply a custom
   // message body that renders the assistant text and its tool calls inline, in
@@ -849,8 +849,19 @@ export function BotMessageItem({
   // its own widgets, the confirm hint and the lifecycle event bubbles.
   const CustomMessageBody = uiExtension?.MessageBody;
   const CustomThoughts = uiExtension?.Thoughts;
+  const CustomStatusIndicator = uiExtension?.StatusIndicator;
   const hideBotAvatar = Boolean(uiExtension?.hideBotAvatar);
   const hideMessageActions = Boolean(uiExtension?.hideMessageActions);
+  // While an empty, in-flight turn has nothing to render yet, show the queued /
+  // booting placeholder. An integration can supply a compact replacement
+  // (`StatusIndicator`); the core default stays for everything else.
+  const statusIndicator = resolveStatusIndicator({
+    finished: Boolean(metaFinished),
+    queuePending: isQueuePending,
+    hasText: normalizedMessageText.length > 0,
+    hasThoughts: nonEmptyThoughts.length > 0,
+    toolCallCount: message?.tool_calls?.length ?? 0,
+  });
   const executionBlockedReason = isPartialMessageUUID
     ? "Action is still syncing. Wait for the final message to appear, then execute."
     : undefined;
@@ -860,17 +871,15 @@ export function BotMessageItem({
 
   const content = (
     <>
-      {isQueuePending &&
-        !metaFinished &&
-        normalizedMessageText === "" &&
-        nonEmptyThoughts.length === 0 &&
-        (message?.tool_calls?.length ?? 0) === 0 && <BootingIndicator label="Msgmate Agent Queued" />}
-
-      {!isQueuePending &&
-        !metaFinished &&
-        normalizedMessageText === "" &&
-        nonEmptyThoughts.length === 0 &&
-        (message?.tool_calls?.length ?? 0) === 0 && <BootingIndicator label="Msgmate Booting" />}
+      {statusIndicator
+        ? CustomStatusIndicator
+          ? (
+              <CustomStatusIndicator kind={statusIndicator.kind} label={statusIndicator.label} />
+            )
+          : (
+              <BootingIndicator label={statusIndicator.label} />
+            )
+        : null}
 
       {!metaFinished && nonEmptyThoughts.length > 0 ? (
         CustomThoughts ? (
