@@ -134,6 +134,32 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
 
+### Native coding-agent sandboxes
+
+The native `msgmate_coder` coding agents can run each chat in a **fully
+isolated, per-chat coding sandbox** instead of a shared bootstrap workspace.
+The chat-init `coder_select_workspace` `auto_sandbox` option provisions the
+sandbox through the sandbox integration, which owns the Docker and Kubernetes
+backends; on Kubernetes it is an ephemeral privileged pod with its own
+persistent workspace and state PVCs, so the checkout survives restarts and stays
+**continuable** across messages for its TTL. A periodic reaper tears the backing
+pod and PVCs down when the sandbox expires.
+
+The sandbox target is selectable three ways, per field, with precedence
+**chat-init input → per-agent shared config → deployment env**:
+
+- chat-init: `sandbox_backend`, `sandbox_template`, `sandbox_image`,
+  `sandbox_workspace_size`;
+- per-agent shared config: `coder_sandbox_backend`, `coder_sandbox_template`,
+  `coder_sandbox_image`, `coder_sandbox_workspace_size`;
+- deployment env: `OCI_MSGMATE_CODER_TEMP_SANDBOX_BACKEND` and its
+  `_TEMPLATE` / `_IMAGE` / `_WORKSPACE_SIZE` counterparts.
+
+When no backend is configured (or no sandbox integration is present), the
+legacy first-enabled-SSH-server behavior is kept, so existing deployments are
+unaffected. The OpenCode-based coding bots remain the default/backup route and
+are not modified by the native sandbox flow.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
