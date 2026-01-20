@@ -1,5 +1,5 @@
 import useSWR, { mutate } from "swr"
-import { MessageItem } from "./MessageItem"
+import { MessageItem, BotMessageGroup } from "./MessageItem"
 import React, { useEffect, useState, useRef, forwardRef, useCallback, type ReactNode } from 'react';
 import { CollapseIndicator } from "../CollapseIndicator";
 import { usePartialMessageStore } from "./PartialMessages";
@@ -8,6 +8,7 @@ import { BotDisplay, Button, DropdownMenuItem, MessageInputWithFiles, Text, Text
 import { InteractionChatInfo } from "./InteractionChatInfo";
 import { resolveChatUIExtensionForChat, type ChatUIContext, type ChatUISendPayload } from "./chat-ui/index";
 import { buildChatRunCommand } from "../../lib/open-chat-run";
+import { buildMessageGroups } from "../../lib/message-groups";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher, cn } from "../../lib/utils";
 import { revalidateChatData } from "../../lib/chat-cache";
@@ -321,34 +322,47 @@ export function MessagesScroll({
 
         // Create a reversed copy of the messages array
         const reversedMessages = [...messages.rows].reverse();
-        
-        let lastUserMessageUUID: string | undefined;
 
-        return reversedMessages.map((message: any) => {
-            const isAutomatedSender = Boolean(message?.sender_is_automated);
-            const isEventMessage = String(message?.data_type || "") === "event";
+        const toItemMessage = (message: any) => ({
+            uuid: message.uuid,
+            text: message.text || '',
+            send_at: message.send_at || '',
+            thoughts: message.reasoning || [],
+            meta_data: message?.meta_data,
+            tool_calls: message?.tool_calls || []
+        });
 
-            let rerunSourceMessageUUID: string | undefined;
-            if (isAutomatedSender) {
-                rerunSourceMessageUUID = lastUserMessageUUID;
-            } else if (!isEventMessage) {
-                lastUserMessageUUID = message.uuid;
+        // Integrations whose bot emits many short turns (the msgmate coder
+        // pauses after each confirmed tool call) opt into merging consecutive
+        // turns into one bubble. Confirmable-action lifecycle events are
+        // transparent for grouping when the extension renders them inline,
+        // since the core hides those bubbles entirely.
+        const nodes = buildMessageGroups(reversedMessages, {
+            groupConsecutive: Boolean(uiExtension?.groupConsecutiveMessages),
+            suppressConfirmableEvents: Boolean(uiExtension?.inlineConfirmableActions),
+        });
+        return nodes.map((node) => {
+            if (node.kind === "group") {
+                return (
+                    <BotMessageGroup
+                        key={node.key}
+                        messages={node.messages.map(toItemMessage)}
+                        chat={chat}
+                        chatUUID={chatUUID || undefined}
+                        rerunSourceMessageUUID={node.rerunSourceMessageUUID}
+                        interactionState={(chat as any)?.status?.state}
+                    />
+                );
             }
 
+            const message = node.message;
             return (
                 <MessageItem
-                    key={`msg_${message.uuid}`}
-                    message={{
-                        uuid: message.uuid,
-                        text: message.text || '',
-                        send_at: message.send_at || '',
-                        thoughts: message.reasoning || [],
-                        meta_data: message?.meta_data,
-                        tool_calls: message?.tool_calls || []
-                    }}
+                    key={node.key}
+                    message={toItemMessage(message)}
                     chat={chat}
                     chatUUID={chatUUID || undefined}
-                    rerunSourceMessageUUID={rerunSourceMessageUUID}
+                    rerunSourceMessageUUID={node.rerunSourceMessageUUID}
                     selfIsSender={user?.uuid === message.sender_uuid}
                     isBotChat={true}
                     interactionState={(chat as any)?.status?.state}
