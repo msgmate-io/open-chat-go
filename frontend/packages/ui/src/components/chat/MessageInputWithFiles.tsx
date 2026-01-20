@@ -1,6 +1,15 @@
 import { forwardRef, useState, type ClipboardEvent, type ReactNode } from "react";
 import { Search } from "lucide-react";
-import { AttachFileMenuItem, UploadedFilesPreview, useFileUpload } from "./FileUpload";
+import {
+  AttachFileMenuItem,
+  AttachImageMenuItem,
+  FilePickerInput,
+  IMAGE_UPLOAD_ACCEPT,
+  FILE_UPLOAD_ACCEPT,
+  UploadedFilesPreview,
+  useFileUpload,
+  type UploadedFileRecord,
+} from "./FileUpload";
 import { ComposerOptionsMenu } from "./ComposerOptionsMenu";
 import { MessageComposer, type MessageComposerProps } from "./message-composer";
 
@@ -25,18 +34,21 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
     },
     ref
   ) {
-    const [uploadedFiles, setUploadedFiles] = useState<
-      Array<{ fileId: string; fileName: string; displayName?: string }>
-    >([]);
+    const [uploadedFiles, setUploadedFiles] = useState<UploadedFileRecord[]>([]);
 
-    const handleFileUploaded = (fileId: string, fileName: string) => {
-      setUploadedFiles((prev) => [...prev, { fileId, fileName }]);
+    const handleFileUploaded = (file: UploadedFileRecord) => {
+      setUploadedFiles((prev) => [...prev, file]);
     };
 
-    const { uploadFile } = useFileUpload({
-      onFileUploaded: handleFileUploaded,
-      reuploadToOpenAI: botConfig?.backend === "openai",
-    });
+    const reuploadToOpenAI = botConfig?.backend === "openai";
+
+    // Two independent pickers: "Attach file" accepts every supported type and
+    // "Attach image" is restricted to images so mobile can surface the gallery
+    // and camera directly. Both are hidden inputs rendered at the composer root
+    // (not inside the dropdown portal) so the native host's file-chooser
+    // callback still finds a mounted input when the menu closes.
+    const fileUpload = useFileUpload({ onFileUploaded: handleFileUploaded, reuploadToOpenAI });
+    const imageUpload = useFileUpload({ onFileUploaded: handleFileUploaded, reuploadToOpenAI });
 
     const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
       onPaste?.(event);
@@ -54,9 +66,7 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
       if (files.length === 0) return;
 
       event.preventDefault();
-      for (const file of files) {
-        await uploadFile(file);
-      }
+      await fileUpload.uploadFiles(files);
     };
 
     const handleFileRemoved = (fileId: string) => {
@@ -77,34 +87,50 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
     const toolsEnabled = Boolean(botConfig?.tools && botConfig.tools.length > 0);
 
     return (
-      <MessageComposer
-        ref={ref}
-        {...props}
-        setText={setText}
-        botConfig={botConfig}
-        onSendMessage={handleSendMessage}
-        onPaste={handlePaste}
-        hasAttachments={uploadedFiles.length > 0}
-        placeholder={props.placeholder ?? "Send message to Msgmate.io"}
-        attachmentsPreview={
-          <UploadedFilesPreview uploadedFiles={uploadedFiles} onFileRemoved={handleFileRemoved} />
-        }
-        footerOptions={
-          <ComposerOptionsMenu>
-            <AttachFileMenuItem
-              onFileUploaded={handleFileUploaded}
-              reuploadToOpenAI={botConfig?.backend === "openai"}
-            />
-            {toolsEnabled ? (
-              <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
-                <Search className="size-3.5" />
-                Tools enabled
-              </div>
-            ) : null}
-            {footerMenuItems}
-          </ComposerOptionsMenu>
-        }
-      />
+      <>
+        <FilePickerInput
+          inputRef={fileUpload.fileInputRef}
+          accept={FILE_UPLOAD_ACCEPT}
+          onFileSelect={fileUpload.handleFileSelect}
+        />
+        <FilePickerInput
+          inputRef={imageUpload.fileInputRef}
+          accept={IMAGE_UPLOAD_ACCEPT}
+          onFileSelect={imageUpload.handleFileSelect}
+        />
+        <MessageComposer
+          ref={ref}
+          {...props}
+          setText={setText}
+          botConfig={botConfig}
+          onSendMessage={handleSendMessage}
+          onPaste={handlePaste}
+          hasAttachments={uploadedFiles.length > 0}
+          placeholder={props.placeholder ?? "Send message to Msgmate.io"}
+          attachmentsPreview={
+            <UploadedFilesPreview uploadedFiles={uploadedFiles} onFileRemoved={handleFileRemoved} />
+          }
+          footerOptions={
+            <ComposerOptionsMenu>
+              <AttachFileMenuItem
+                onSelect={fileUpload.openFilePicker}
+                uploading={fileUpload.isUploading}
+              />
+              <AttachImageMenuItem
+                onSelect={imageUpload.openFilePicker}
+                uploading={imageUpload.isUploading}
+              />
+              {toolsEnabled ? (
+                <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+                  <Search className="size-3.5" />
+                  Tools enabled
+                </div>
+              ) : null}
+              {footerMenuItems}
+            </ComposerOptionsMenu>
+          }
+        />
+      </>
     );
   }
 );
