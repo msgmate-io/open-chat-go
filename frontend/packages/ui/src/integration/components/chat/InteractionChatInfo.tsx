@@ -79,6 +79,13 @@ interface InteractionChatInfoProps {
    * shared interaction header.
    */
   extraMenuItems?: React.ReactNode;
+  /**
+   * Actions rendered as a compact, right-aligned row at the bottom of the header
+   * card. Integrations use this to float small controls on the chat header (eg
+   * the msgmate coder's workspace shell and Open-Chat TUI launchers) without
+   * forking the shared interaction header.
+   */
+  headerActions?: React.ReactNode;
 }
 
 type ChatStatusLike = { is_active?: boolean; state?: string } | null | undefined;
@@ -129,6 +136,7 @@ export function InteractionChatInfo({
   onToggleSidebar,
   hideModelDisplay = false,
   extraMenuItems,
+  headerActions,
 }: InteractionChatInfoProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
@@ -245,6 +253,10 @@ export function InteractionChatInfo({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {headerActions ? (
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-1">{headerActions}</div>
+        ) : null}
 
         {isExpanded && (
           <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
