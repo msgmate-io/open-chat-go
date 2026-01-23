@@ -80,12 +80,13 @@ func BackendServer(
 	sslKeyPrefix string,
 	frontendProxy string,
 	cookieDomain string,
-) (*http.Server, *websocket.WebSocketHandler, *integrations.SignalIntegrationService, string, error) {
+) (*http.Server, *websocket.WebSocketHandler, *integrations.SignalIntegrationService, *integrations.MatrixIntegrationService, string, error) {
 	var protocol string
 	var fullHost string
 	var router *http.ServeMux
 	var websocketHandler *websocket.WebSocketHandler
 	var signalService *integrations.SignalIntegrationService
+	var matrixService *integrations.MatrixIntegrationService
 	var server *http.Server
 
 	// Create the Signal Integration Service with the correct protocol
@@ -106,15 +107,15 @@ func BackendServer(
 		// for tls proviving keyPrefix is required!
 		q := DB.Where("key_type = ? AND key_name = ?", "cert", fmt.Sprintf("%s_cert.pem", sslKeyPrefix)).First(&certPEM)
 		if q.Error != nil {
-			return nil, nil, nil, "", fmt.Errorf("Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!")
+			return nil, nil, nil, nil, "", fmt.Errorf("Couldn't find cert key for node, if you want to use TLS for this proxy create the keys first!")
 		}
 		q = DB.Where("key_type = ? AND key_name = ?", "key", fmt.Sprintf("%s_key.pem", sslKeyPrefix)).First(&keyPEM)
 		if q.Error != nil {
-			return nil, nil, nil, "", fmt.Errorf("Couldn't find key key for node, if you want to use TLS for this proxy create the keys first!")
+			return nil, nil, nil, nil, "", fmt.Errorf("Couldn't find key key for node, if you want to use TLS for this proxy create the keys first!")
 		}
 		q = DB.Where("key_type = ? AND key_name = ?", "issuer", fmt.Sprintf("%s_issuer.pem", sslKeyPrefix)).First(&issuerPEM)
 		if q.Error != nil {
-			return nil, nil, nil, "", fmt.Errorf("Couldn't find issuer key for node, if you want to use TLS for this proxy create the keys first!")
+			return nil, nil, nil, nil, "", fmt.Errorf("Couldn't find issuer key for node, if you want to use TLS for this proxy create the keys first!")
 		}
 
 		certPEMBytes = certPEM.KeyContent
@@ -122,7 +123,7 @@ func BackendServer(
 		defaultCert, err := tls.X509KeyPair(certPEMBytes, keyPEMBytes)
 		if err != nil {
 			log.Printf("Error loading certificates: %v", err)
-			return nil, nil, nil, "", fmt.Errorf("Error loading certificates: %v", err)
+			return nil, nil, nil, nil, "", fmt.Errorf("Error loading certificates: %v", err)
 		}
 
 		// Create SNI-based TLS configuration
@@ -158,7 +159,8 @@ func BackendServer(
 		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 
 		signalService = integrations.NewSignalIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
-		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, debug, frontendProxy, cookieDomain)
+		matrixService = integrations.NewMatrixIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
+		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:      fmt.Sprintf("%s:%d", host, port),
 			Handler:   router,
@@ -169,14 +171,15 @@ func BackendServer(
 		fullHost = fmt.Sprintf("%s://%s:%d", protocol, host, port)
 
 		signalService = integrations.NewSignalIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
-		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, debug, frontendProxy, cookieDomain)
+		matrixService = integrations.NewMatrixIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
+		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", host, port),
 			Handler: router,
 		}
 	}
 
-	return server, websocketHandler, signalService, fullHost, nil
+	return server, websocketHandler, signalService, matrixService, fullHost, nil
 }
 
 // New function to create an HTTP fallback server for local access when TLS is enabled
@@ -194,8 +197,9 @@ func CreateHTTPFallbackServer(
 	// Create a separate HTTP server for local access
 	// This allows local clients to connect even when TLS certificates are expired
 	signalService := integrations.NewSignalIntegrationService(DB, mainServerURL)
+	matrixService := integrations.NewMatrixIntegrationService(DB, mainServerURL)
 	// Use the same routing as the main server to ensure all middleware and authentication works
-	router, _ := BackendRouting(DB, federationHandler, schedulerService, signalService, debug, frontendProxy, cookieDomain)
+	router, _ := BackendRouting(DB, federationHandler, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
 
 	// Wrap the router with localhost-only middleware for security
 	localhostOnlyRouter := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

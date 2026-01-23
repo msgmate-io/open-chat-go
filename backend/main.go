@@ -5,11 +5,33 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	ufcli "github.com/urfave/cli/v3"
 	"log"
 	"os"
 	"os/exec"
+
+	ufcli "github.com/urfave/cli/v3"
 )
+
+//	@title							Open Chat API
+//	@version						1.0
+//	@description					API for Open Chat application
+//
+//	@tag.name						chats
+//	@tag.description				Chats hold a collection of messages and files or meta-data, they are central to how open-chat works and are used to hold information for interactions and integratins
+//
+// 	@tag.name						messages
+//	@tag.description				Messages are the atomic data point of open-chat, they may hold any sort of supported information, they may also reference information in external locations. Messages are collected in a chat. Messages can have only one creator/sender but are received by all chat members.
+//
+//	@tag.name						integrations
+//	@tag.description				These apis implement custom logic that allow open-chat to interface with seveal existing service or tools. Any functionality is specific to integrations, but they share a common api interface.
+//
+//	@tag.name						users
+//	@tag.description				Everything user management related, users are also used to abstract access permissions. Chats have users as participants, only users share each others contact may create a shared chat.
+//
+//	@securityDefinitions.apikey		SessionAuth
+//	@in								cookie
+//	@name							session_id
+//	@description					Session cookie obtained from login endpoint
 
 func main() {
 	var runCmd *ufcli.Command
