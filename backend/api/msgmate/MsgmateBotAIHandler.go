@@ -327,6 +327,10 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
+	// context_summary is a compacted summary of earlier turns persisted by the
+	// native coder agent (msgmate_coder/coder_compact, ci#394). It is injected
+	// as a leading system message so the dropped history survives in context.
+	contextSummary := mapGetOrDefault[string](configMap, "context_summary", "")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
 	samplingParams := samplingParamsFromConfig(configMap)
 	providerRetryOptions := providerRetryOptionsFromConfig(configMap)
@@ -361,6 +365,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 
 	// Build OpenAI messages
 	openAiMessages := aih.buildOpenAIMessages(paginatedMessages, message, systemPrompt, backend)
+	openAiMessages = injectContextSummary(openAiMessages, contextSummary)
 
 	// Setup tools
 	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
@@ -671,6 +676,31 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	}
 
 	return openAiMessages
+}
+
+// injectContextSummary inserts a compacted session summary as a leading system
+// message, immediately after the primary system prompt, so earlier turns that
+// have aged out of the context window survive in the model context. It is a
+// no-op when summary is empty.
+func injectContextSummary(messages []map[string]interface{}, summary string) []map[string]interface{} {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return messages
+	}
+	entry := map[string]interface{}{
+		"role":    "system",
+		"content": "Session summary (compacted context from earlier turns):\n" + summary,
+	}
+	if len(messages) == 0 {
+		return []map[string]interface{}{entry}
+	}
+	if role, _ := messages[0]["role"].(string); role == "system" {
+		out := make([]map[string]interface{}, 0, len(messages)+1)
+		out = append(out, messages[0], entry)
+		out = append(out, messages[1:]...)
+		return out
+	}
+	return append([]map[string]interface{}{entry}, messages...)
 }
 
 // processMessageAttachments processes attachments for historical messages
