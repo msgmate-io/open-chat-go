@@ -308,7 +308,7 @@ func ServerCli() *cli.Command {
 			defer schedulerService.Stop()
 
 			// Pass external settings to BackendServer (serves HTTPS if enabled)
-			s, ch, signalService, _, err := server.BackendServer(
+			s, ch, signalService, matrixService, _, err := server.BackendServer(
 				DB,
 				federationHandler,
 				schedulerService,
@@ -537,6 +537,13 @@ func ServerCli() *cli.Command {
 				signalService.StartAllActiveIntegrations()
 			} else {
 				log.Println("No Signal integration service found")
+			}
+
+			if matrixService != nil {
+				log.Println("Starting all active Matrix integrations...")
+				matrixService.StartAllActiveIntegrations()
+			} else {
+				log.Println("No Matrix integration service found")
 			}
 
 			// Start HTTP fallback server when TLS is enabled for local access

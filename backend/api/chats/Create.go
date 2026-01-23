@@ -21,13 +21,15 @@ type CreateChat struct {
 // Create a chat
 //
 //	@Summary      Create a chat
-//	@Description  Create a chat
+//	@Description  Create a new chat with another user, optionally including a first message and attachments
 //	@Tags         chats
 //	@Accept       json
 //	@Produce      json
-//	@Success      200  {string}  string	"Chat created"
-//	@Failure      400  {string}  string	"Invalid chat"
-//	@Failure      500  {object}  string	"Internal server error"
+//	@Security     SessionAuth
+//	@Param        request body CreateChat true "Chat creation request"
+//	@Success      200  {object}  ListedChat	"Chat created successfully"
+//	@Failure      400  {string}  string	"Invalid request - bad JSON, missing contact token, or invalid contact token" Example("Invalid contact token")
+//	@Failure      500  {string}  string	"Internal server error - failed to marshal attachment metadata" Example("Failed to marshal attachment metadata")
 //	@Router       /api/v1/chats/create [post]
 func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	log.Printf("=== ChatsHandler.Create START ===")
