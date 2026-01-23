@@ -12,7 +12,18 @@ import (
 )
 
 // Delete handles the deletion of an integration by ID for the authenticated user.
-// DELETE /api/v1/integrations/{id}
+//
+//	@Summary      Delete integration
+//	@Description  Delete an integration by its ID for the authenticated user. This also handles integration-specific cleanup such as stopping Docker containers for Signal integrations.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        id path int true "Integration ID"
+//	@Success      200 {object} map[string]interface{} "Success message"
+//	@Failure      400 {string} string "Unable to get database or user or invalid ID"
+//	@Failure      404 {string} string "Integration not found"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/{id} [delete]
 func (h *IntegrationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {

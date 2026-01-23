@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // IntegrationStatus represents the status response for an integration
@@ -19,7 +21,19 @@ type IntegrationStatus struct {
 }
 
 // GetIntegrationStatus handles the status endpoint for integrations
-// GET /api/v1/integrations/{integration_type}/{integration_alias}/status
+//
+//	@Summary      Get integration status
+//	@Description  Retrieve the status and health of an integration by type and alias. For Signal integrations, this checks the Docker container health and account configuration status.
+//	@Tags         integrations
+//	@Accept       json
+//	@Produce      json
+//	@Param        integration_type path string true "Integration type (e.g., signal)"
+//	@Param        integration_alias path string true "Integration alias/name"
+//	@Success      200 {object} IntegrationStatus "Integration status including health and configuration state"
+//	@Failure      400 {string} string "Unable to get database or user, or integration not active"
+//	@Failure      404 {string} string "Integration not found"
+//	@Failure      500 {string} string "Internal server error"
+//	@Router       /api/v1/integrations/{integration_type}/{integration_alias}/status [get]
 func (h *IntegrationsHandler) GetIntegrationStatus(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -72,6 +86,12 @@ func (h *IntegrationsHandler) GetIntegrationStatus(w http.ResponseWriter, r *htt
 		status, err = h.getSignalIntegrationStatus(config, integrationAlias)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Error getting Signal integration status: %v", err), http.StatusInternalServerError)
+			return
+		}
+	case "matrix":
+		status, err = h.getMatrixIntegrationStatus(DB, integration, config)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error getting Matrix integration status: %v", err), http.StatusInternalServerError)
 			return
 		}
 	default:
@@ -276,4 +296,85 @@ func (h *IntegrationsHandler) getSignalIntegrationStatus(config map[string]inter
 			Data:   "QR code not available or could not be parsed",
 		}, nil
 	}
+}
+
+// getMatrixIntegrationStatus checks the status of a Matrix integration
+func (h *IntegrationsHandler) getMatrixIntegrationStatus(DB *gorm.DB, integration database.Integration, config map[string]interface{}) (IntegrationStatus, error) {
+	// Extract Matrix configuration
+	homeserver, ok := config["homeserver"].(string)
+	if !ok {
+		return IntegrationStatus{}, fmt.Errorf("invalid homeserver in integration config")
+	}
+
+	userID, ok := config["user_id"].(string)
+	if !ok {
+		return IntegrationStatus{}, fmt.Errorf("invalid user_id in integration config")
+	}
+
+	// Get the Matrix client state
+	var clientState database.MatrixClientState
+	if err := DB.Where("integration_id = ?", integration.ID).First(&clientState).Error; err != nil {
+		return IntegrationStatus{
+			Status: "error",
+			Health: "unhealthy",
+			Data:   "Matrix client state not found",
+		}, nil
+	}
+
+	// Check if the Matrix service is available and client is active
+	clientActive := false
+	if h.MatrixService != nil {
+		clientActive = h.MatrixService.IsClientActive(integration.ID)
+	}
+
+	// Build status data
+	statusData := map[string]interface{}{
+		"homeserver":      homeserver,
+		"user_id":         userID,
+		"device_id":       clientState.DeviceID,
+		"device_verified": clientState.DeviceVerified,
+		"last_sync":       clientState.LastSyncAt,
+		"client_active":   clientActive,
+		"cross_signing":   clientState.CrossSigningSetup,
+	}
+
+	// Determine overall status
+	status := "configured"
+	health := "healthy"
+
+	if !clientActive {
+		health = "degraded"
+		statusData["warning"] = "Matrix client is not actively syncing"
+	}
+
+	if !clientState.DeviceVerified {
+		status = "unverified"
+		statusData["action_required"] = "Device verification is recommended for encrypted messaging"
+	}
+
+	// Check if homeserver is reachable
+	wellKnownURL := fmt.Sprintf("%s/.well-known/matrix/client", homeserver)
+	resp, err := http.Get(wellKnownURL)
+	if err != nil {
+		// Try versions endpoint
+		versionsURL := fmt.Sprintf("%s/_matrix/client/versions", homeserver)
+		resp, err = http.Get(versionsURL)
+		if err != nil {
+			health = "unhealthy"
+			statusData["error"] = fmt.Sprintf("Cannot reach homeserver: %v", err)
+		}
+	}
+	if resp != nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			health = "degraded"
+			statusData["warning"] = fmt.Sprintf("Homeserver returned status %d", resp.StatusCode)
+		}
+	}
+
+	return IntegrationStatus{
+		Status: status,
+		Health: health,
+		Data:   statusData,
+	}, nil
 }
