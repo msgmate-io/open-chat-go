@@ -99,4 +99,44 @@ describe("buildMessageGroups", () => {
 
     expect(nodes.map((node) => node.kind)).toEqual(["single", "single", "single"]);
   });
+
+  it("groups a run of consecutive automated bot turns and lets a user turn break it", () => {
+    const nodes = buildMessageGroups(
+      [user("u1"), bot("b1"), bot("b2"), bot("b3"), user("u2"), bot("b4")],
+      { groupConsecutive: true },
+    );
+
+    expect(nodes.map((node) => node.kind)).toEqual(["single", "group", "single", "single"]);
+    if (nodes[1].kind === "group") {
+      expect(nodes[1].messages.map((message) => message.uuid)).toEqual(["b1", "b2", "b3"]);
+      expect(nodes[1].rerunSourceMessageUUID).toBe("u1");
+    }
+    expect(nodes[3]).toMatchObject({
+      kind: "single",
+      message: { uuid: "b4" },
+      rerunSourceMessageUUID: "u2",
+    });
+  });
+
+  it("only groups messages flagged sender_is_automated", () => {
+    const nodes = buildMessageGroups(
+      [bot("b1", { sender_is_automated: false }), bot("b2", { sender_is_automated: false })],
+      { groupConsecutive: true },
+    );
+
+    expect(nodes.map((node) => node.kind)).toEqual(["single", "single"]);
+  });
+
+  it("only suppresses confirmable-action events, not other lifecycle events", () => {
+    const nodes = buildMessageGroups(
+      [
+        bot("b1"),
+        bot("evt", { data_type: "event", meta_data: { event_type: "provider_retry" } }),
+        bot("b2"),
+      ],
+      { groupConsecutive: true, suppressConfirmableEvents: true },
+    );
+
+    expect(nodes.map((node) => node.kind)).toEqual(["single", "single", "single"]);
+  });
 });
