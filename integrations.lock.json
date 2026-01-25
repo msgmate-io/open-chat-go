@@ -16,7 +16,7 @@
     "rest_api_tool": {
       "repo": "https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration",
       "ref": "main",
-      "commit": "b29baf75b10fd43315e8f08963a0d6f049c284b9",
+      "commit": "1075649a6addca88f8043e293212a0e80f2e3ebe",
       "source": "git"
     }
   }
