@@ -29,8 +29,13 @@ COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
 
 ARG MVPAPP_VERSION=dockerbuild
+ARG FEDERATION_ENABLED=false
 RUN ls -alt
-RUN bash full_build.sh --no-frontend
+RUN if [ "$FEDERATION_ENABLED" = "true" ]; then \
+        bash full_build.sh --no-frontend; \
+    else \
+        bash full_build.sh --no-frontend --no-federation; \
+    fi
 
 FROM scratch AS prod
 COPY --from=builder /backend/backend /backend
