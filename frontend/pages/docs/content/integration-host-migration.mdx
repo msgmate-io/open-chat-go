@@ -31,11 +31,19 @@ interface itself:
 | `host.Logger().Infof/Warnf/Errorf/Debugf` | ad-hoc logging |
 | `host.HTTP().DBAndUser(r)` | `backend/server/util.GetDBAndUser` |
 | `host.HTTP().OptionalUser(r)` | `backend/server/util.GetOptionalUser` |
-| `host.Storage().Handle()` | the raw persistence handle (`*gorm.DB`) |
+| `storage.Handle()` (from `HTTP().DBAndUser`) | the raw persistence handle (`*gorm.DB`) |
 
 `Storage.Handle()` returns `interface{}` on purpose: the ORM is a third-party
 dependency owned by the caller, so the interface module does not depend on gorm
 and the boundary does not leak core types.
+
+A callable tool definition is expressed with the stable
+`github.com/msgmate-io/go-tool-interface/toolinterface.Definition` type
+(re-exported as `integrationinterface.Definition.ToolDefinitions`) instead of
+the core's `backend/api/msgmate/tools.ToolDefinition`. It carries the full
+`InputSchema` JSON schema precisely so an integration can build model-callable
+tools without importing the core. At the core boundary a small conversion
+(`toolDefinitionFromIntegration`) maps it back onto the core type.
 
 ## Migration recipe
 
@@ -75,6 +83,13 @@ and the boundary does not leak core types.
    so the core package is only referenced through the Host. Do **not** add
    integration-specific methods to `Host` — that would re-couple the surface.
 
+   When the core still needs that logic for its own features (for example to
+   build bot tool snapshots), have the integration expose it over
+   integration-owned types (`toolinterface.Definition`, the integration's own
+   models, `integrationinterface.User`) and convert at the core boundary in a
+   thin wrapper. The core keeps its own copy of any shared model it still
+   queries internally; the integration owns the migration of the table.
+
 5. **Request-scoped identity** comes back as `integrationinterface.User`
    (`ID() uint`, `Username()`, `Email()`, `IsAdmin()`), so replace `user.ID`
    field access with `user.ID()`.
@@ -89,7 +104,41 @@ and the boundary does not leak core types.
 
    The MCP integration (`mcp`) was migrated first: its transitive dependency
    count dropped from 349 to 226 and its `backend/...` dependency count from 11
-   to 0.
+   to 0. The REST API tool integration (`rest_api_tool`) followed: 338 to 227
+   packages and 6 to 0 `backend/...` packages. The Go client (`go_client`) never
+   imported `backend/...` (238 packages, 0) and needed no change.
+
+## Migration status
+
+Migrated onto `Host` so far (transitive `go list -deps` delta, `full` profile):
+
+| integration | packages | `backend/...` |
+| --- | --- | --- |
+| `mcp` | 349 → 226 | 11 → 0 |
+| `rest_api_tool` | 338 → 227 | 6 → 0 |
+| `hive_mind` | 335 → 226 | 4 → 0 |
+| `builders_toolbox` | 335 → 226 | 4 → 0 |
+| `stats_and_usage` | 335 → 226 | 4 → 0 |
+| `docker_sandbox` | 706 → 706 | 4 → 0 direct¹ |
+| `go_client` | 238 → 238 | 0 → 0 |
+
+¹ `docker_sandbox`'s own imports are clean; its transitive count is unchanged
+because it depends on the not-yet-migrated `opencode`/`msgmate_coder`
+integrations. The transitive number only drops once an integration's **whole
+closure** is off `backend/...`.
+
+Still importing `backend/...` directly (candidates for follow-up increments):
+
+- **Base types only** (`database.Model`/`User`/`JSONRaw` → local projections):
+  `tailscale` (also needs `IsAutomated` on the request user), `tui` (no imports).
+- **Read-only core-table projections** (like the MCP/`stats_and_usage` pattern):
+  `kubernetes` (`users`, `chats`, `shared_chat_configs`, tool-init manager),
+  `matrix`, `stats_and_usage` (done).
+- **Needs business-logic moves / non-Host capabilities**: `git`
+  (`backend/api/websocket`, `backend/api/msgmate`), `signal`/`slack`
+  (`backend/api/msgmate`), `tvault` (`backend/secretstore`), `msgmate_coder`
+  (`backend` root, `backend/webtools`, `backend/api/...`), `docker_sandbox`
+  (done), `opencode` (`backend/chatstate`, `backend/api/websocket`).
 
 ## Notes and follow-ups
 
@@ -99,6 +148,11 @@ and the boundary does not leak core types.
   separately per the design doc.
 - Unit tests that need a real database may keep importing `backend/database` and
   `backend/integrationhost`; test-only imports do not affect the compiled
-  integration artifact's dependency graph.
+  integration artifact's dependency graph. Because integration-owned models are
+  no longer in the core migration list, a test package that migrates the schema
+  itself must register them first:
+  `database.RegisterExternalModels(integrations.AdditionalModels()...)` before
+  `database.SetupDatabase` (see `backend/api/bots/testmain_test.go`), mirroring
+  `backend/cmd/server.go`.
 - `HostVersion` must be bumped whenever `Host` or one of its sub-interfaces
   changes so integrations can gate behaviour on the version they observe.
