@@ -29,22 +29,22 @@ jobs:
             goos: linux
             goarch: arm64
             artifact_name: backend-linux-arm64
-          - os: ubuntu-latest
-            goos: windows
-            goarch: amd64
-            artifact_name: backend-windows-amd64.exe
-          - os: ubuntu-latest
-            goos: windows
-            goarch: arm64
-            artifact_name: backend-windows-arm64.exe
-          - os: ubuntu-latest
-            goos: darwin
-            goarch: amd64
-            artifact_name: backend-darwin-amd64
-          - os: ubuntu-latest
-            goos: darwin
-            goarch: arm64
-            artifact_name: backend-darwin-arm64
+          #- os: ubuntu-latest
+          #  goos: windows
+          #  goarch: amd64
+          #  artifact_name: backend-windows-amd64.exe
+          #- os: ubuntu-latest
+          #  goos: windows
+          #  goarch: arm64
+          #  artifact_name: backend-windows-arm64.exe
+          #- os: ubuntu-latest
+          #  goos: darwin
+          #  goarch: amd64
+          #  artifact_name: backend-darwin-amd64
+          #- os: ubuntu-latest
+          #  goos: darwin
+          #  goarch: arm64
+          #  artifact_name: backend-darwin-arm64
 
           # --- Additional targets (disabled for now) ---
           # - os: macos-13  # Intel runner
