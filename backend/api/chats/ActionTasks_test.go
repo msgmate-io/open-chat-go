@@ -86,6 +86,29 @@ func TestPendingActionsForMessageRecognizesKinds(t *testing.T) {
 	}
 }
 
+func TestPendingConfirmableActionCarriesProposedParams(t *testing.T) {
+	message := database.Message{MetaData: database.JSONRaw(`{"confirmable_actions":[{
+		"action_id":"a1","status":"pending","target_tool_name":"coder_write",
+		"title":"Write file","confirm_label":"Write it","continue_after_execute":true,
+		"input":{"path":"src/app.ts","content":"export const answer = 42;"}
+	}]}`)}
+
+	actions := pendingActionsForMessage(message)
+	if len(actions) != 1 {
+		t.Fatalf("expected exactly one action, got %d (%+v)", len(actions), actions)
+	}
+	got := actions[0]
+	if got.Input["path"] != "src/app.ts" || got.Input["content"] != "export const answer = 42;" {
+		t.Fatalf("proposed params not carried on the action: %+v", got.Input)
+	}
+	if got.ConfirmLabel != "Write it" {
+		t.Fatalf("expected confirm_label to be carried, got %q", got.ConfirmLabel)
+	}
+	if !got.ContinueAfterExecute {
+		t.Fatalf("expected continue_after_execute to be carried")
+	}
+}
+
 func TestActionTaskKeyIsStableAndNormalized(t *testing.T) {
 	first := actionTaskKey("  CHAT-UUID  ", " Message-UUID ")
 	second := actionTaskKey("chat-uuid", "message-uuid")
