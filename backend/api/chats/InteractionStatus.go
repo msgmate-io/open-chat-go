@@ -292,13 +292,18 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 						continue
 					}
 					if status, _ := action["status"].(string); status == "pending" {
+						actionInput, _ := action["input"].(map[string]interface{})
+						continueAfterExecute, _ := action["continue_after_execute"].(bool)
 						actions = append(actions, ActionTaskAction{
-							Kind:           ActionTaskKindConfirmableAction,
-							ActionId:       actionTaskStringField(action, "action_id"),
-							Title:          actionTaskStringField(action, "title"),
-							Description:    actionTaskStringField(action, "description"),
-							TargetToolName: actionTaskStringField(action, "target_tool_name"),
-							DangerLevel:    actionTaskStringField(action, "danger_level"),
+							Kind:                 ActionTaskKindConfirmableAction,
+							ActionId:             actionTaskStringField(action, "action_id"),
+							Title:                actionTaskStringField(action, "title"),
+							Description:          actionTaskStringField(action, "description"),
+							TargetToolName:       actionTaskStringField(action, "target_tool_name"),
+							DangerLevel:          actionTaskStringField(action, "danger_level"),
+							Input:                actionInput,
+							ConfirmLabel:         actionTaskStringField(action, "confirm_label"),
+							ContinueAfterExecute: continueAfterExecute,
 						})
 					}
 				}
