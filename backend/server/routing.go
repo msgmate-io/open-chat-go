@@ -295,7 +295,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
 	providerMiddlewares := CreateStack(
-		getDomainRoutingMiddleware(DB),
+		getDomainRoutingMiddleware(DB, cookieDomain),
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 	)
