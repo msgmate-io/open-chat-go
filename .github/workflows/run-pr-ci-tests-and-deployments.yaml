@@ -2342,6 +2342,63 @@ jobs:
 
           echo "Full suite gate satisfied."
 
+  # Final, additive gate. It runs after every existing suite/merge gate (the
+  # deploy-gated sandbox and real-AI suites flow through
+  # `pr-test-merge-requirement` / `full-suite-gate`) and fails the run when any
+  # tracked component is not pinned to the latest upstream `main`:
+  #
+  #   * public submodules  - the gitlink SHA recorded in the commit tree;
+  #   * public integrations - `integrations.lock.json`;
+  #   * private integrations - the private lock mirrored from the `ci` checkout;
+  #   * private repos       - the ref-following repos in `profile_setup.yaml`.
+  #
+  # Escape hatches for deliberate lag (both keep the drift visible in the
+  # check output): the tracked `pin-policy.yaml` allow-list and the
+  # `pin-drift-allowed` pull-request label. The check fails closed with an
+  # itemised report whenever a pin cannot be determined, so it never passes
+  # silently. See `development/scripts/check_pin_freshness.py`.
+  pin-freshness-gate:
+    name: Pin Freshness Gate
+    runs-on: ubuntu-latest
+    needs:
+      - run-pr-ci-tests-and-deployments
+      - pr-test-merge-requirement
+      - full-suite-gate
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      needs.run-pr-ci-tests-and-deployments.result != 'skipped'
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          # Submodule contents are not needed: the gate reads the gitlink SHAs
+          # recorded in the commit tree and compares them with `git ls-remote`.
+          submodules: false
+
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Check every tracked pin against its upstream ref
+        env:
+          PIN_DRIFT_ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'pin-drift-allowed') }}
+        run: |
+          set -euo pipefail
+          # The build-tools venv (created by profile-setup) ships PyYAML, used to
+          # read profile_setup.yaml and pin-policy.yaml; fall back to system
+          # python3 when it is already available.
+          PYTHON="python3"
+          if [ -x ".venv/bin/python" ]; then
+            PYTHON=".venv/bin/python"
+          fi
+          "$PYTHON" development/scripts/check_pin_freshness.py --root .
+
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
