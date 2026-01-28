@@ -97,6 +97,14 @@ func (u user) IsAdmin() bool    { return u.u.IsAdmin }
 // httpAdapter resolves request-scoped services from the core request context.
 type httpAdapter struct{}
 
+func (httpAdapter) DB(r *http.Request) (integrationinterface.Storage, error) {
+	db, err := util.GetDB(r)
+	if err != nil {
+		return nil, err
+	}
+	return storage{db: db}, nil
+}
+
 func (httpAdapter) DBAndUser(r *http.Request) (integrationinterface.Storage, integrationinterface.User, error) {
 	db, coreUser, err := util.GetDBAndUser(r)
 	if err != nil {
