@@ -119,6 +119,10 @@ Migrated onto `Host` so far (transitive `go list -deps` delta, `full` profile):
 | `hive_mind` | 335 → 226 | 4 → 0 |
 | `builders_toolbox` | 335 → 226 | 4 → 0 |
 | `stats_and_usage` | 335 → 226 | 4 → 0 |
+| `ssh` | 350 → 251 | 4 → 0 |
+| `voice` | 422 → 319 | 4 → 0 |
+| `email` | 336 → 230 | 4 → 0 |
+| `notifications` | 336 → 228 | 4 → 0 |
 | `docker_sandbox` | 706 → 706 | 4 → 0 direct¹ |
 | `go_client` | 238 → 238 | 0 → 0 |
 
@@ -129,16 +133,28 @@ closure** is off `backend/...`.
 
 Still importing `backend/...` directly (candidates for follow-up increments):
 
-- **Base types only** (`database.Model`/`User`/`JSONRaw` → local projections):
-  `tailscale` (also needs `IsAutomated` on the request user), `tui` (no imports).
-- **Read-only core-table projections** (like the MCP/`stats_and_usage` pattern):
-  `kubernetes` (`users`, `chats`, `shared_chat_configs`, tool-init manager),
-  `matrix`, `stats_and_usage` (done).
-- **Needs business-logic moves / non-Host capabilities**: `git`
-  (`backend/api/websocket`, `backend/api/msgmate`), `signal`/`slack`
-  (`backend/api/msgmate`), `tvault` (`backend/secretstore`), `msgmate_coder`
-  (`backend` root, `backend/webtools`, `backend/api/...`), `docker_sandbox`
-  (done), `opencode` (`backend/chatstate`, `backend/api/websocket`).
+- **Chat-backend / websocket registration** (`backend/api/msgmate`,
+  `backend/api/websocket`, `backend/chatstate`): `matrix` (also needs user
+  creation), `signal`, `slack`, `git`, `opencode`.
+- **Secret store** (`backend/secretstore`): `tvault`.
+- **Business-logic moves / non-Host capabilities**: `internal_automations`
+  (`backend/workqueue`, `server/util.GetAsynqClient`, global DB, bot-runtime
+  and chat/message tables), `account_management` (`backend/api/user`,
+  account-state/email-verification write helpers, `backend/workqueue`), `admin`
+  (`backend/api/msgmate`, `backend/integrationsettings`, `backend/servicecontrol`
+  and many read/write helpers), `msgmate_coder` (`backend` root,
+  `backend/webtools`, `backend/api/...`).
+- `tui` has no `backend/...` imports (nothing to do).
+
+### Host capability additions
+
+Migrating the public/full-only batch required one additive capability: the
+`HTTP` sub-interface gained `DB(r)` (the request-scoped storage handle without
+an authenticated user) so public endpoints (for example the notification
+preview pages) no longer import `backend/server/util.GetDB`. `HostVersion` was
+bumped to `2`; the change is additive and the adapter implements both
+`DB`/`DBAndUser`. Do **not** add integration-specific methods to `Host` — only
+general capabilities like this belong on the surface.
 
 ## Notes and follow-ups
 
