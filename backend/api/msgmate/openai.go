@@ -3,6 +3,7 @@ package msgmate
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -237,6 +238,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 //  2. usage: a channel for usage information (if any occur)
 //  3. errs: a channel for errors (if any occur)
 func streamChatCompletion(
+	ctx context.Context,
 	host string,
 	model string,
 	backend string,
@@ -319,6 +321,14 @@ func streamChatCompletion(
 		var err error
 
 		for {
+			// A stop signal aborts the whole tool loop: once the context is
+			// cancelled neither the provider request nor any further tool body
+			// may run, so the already-dispatched turn cannot keep emitting
+			// results after the user pressed stop.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				errChan <- ctxErr
+				return
+			}
 			if totalToolCalls >= toolCallMaxTotal {
 				errChan <- fmt.Errorf("exceeded maximum number of tool calls (%d)", toolCallMaxTotal)
 				return
@@ -336,13 +346,18 @@ func streamChatCompletion(
 			for {
 				attempts++
 				toolCallResult, err = processStreamingRequest(
-					host, model, backend, currentMessages, tools, toolMap, apiKey,
+					ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 					executedToolResults,
 					chunkChan, usageChan, toolChan, errChan,
 					samplingParams,
 					providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts},
 				)
 				if err == nil {
+					break
+				}
+				// A cancelled context is terminal: never retry (which would
+				// re-run the generation after a stop).
+				if ctx.Err() != nil {
 					break
 				}
 				// Never retry mid-stream failures (they may have already
@@ -363,14 +378,23 @@ func streamChatCompletion(
 				if retryOpts.OnRetryAttempt != nil {
 					retryOpts.OnRetryAttempt(attempts, maxAttempts, err, retryAt)
 				}
-				time.Sleep(delay)
+				// Wait for the backoff, but abandon it immediately if the user
+				// stops the response.
+				select {
+				case <-ctx.Done():
+				case <-time.After(delay):
+				}
+				if ctx.Err() != nil {
+					err = ctx.Err()
+					break
+				}
 			}
 			// Record how many attempts were made so the final error message
 			// can describe the retries.
 			if preErr, ok := err.(*ProviderRequestError); ok {
 				preErr.Attempts = attempts
 			}
-			if err != nil && isContextWindowExceededError(err) {
+			if err != nil && ctx.Err() == nil && isContextWindowExceededError(err) {
 				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
 				if trimmed {
 					log.Printf(
@@ -380,7 +404,7 @@ func streamChatCompletion(
 					)
 					currentMessages = trimmedMessages
 					toolCallResult, err = processStreamingRequest(
-						host, model, backend, currentMessages, tools, toolMap, apiKey,
+						ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
 						samplingParams,
@@ -592,6 +616,7 @@ type toolCallResult struct {
 }
 
 func processStreamingRequest(
+	ctx context.Context,
 	host, model, backend string,
 	messages []map[string]interface{},
 	tools []interface{},
@@ -610,7 +635,7 @@ func processStreamingRequest(
 		if err != nil {
 			return nil, err
 		}
-		return processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+		return processStreamingResponseReader(ctx, reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 	}
 
 	normalizedMessages := normalizeMessagesForBackend(messages, backend)
@@ -658,7 +683,7 @@ func processStreamingRequest(
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
 	if err != nil {
 		reportOutcome(0, fmt.Errorf("failed to create request: %w", err), nil, nil)
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -690,7 +715,7 @@ func processStreamingRequest(
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	result, streamErr := processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+	result, streamErr := processStreamingResponseReader(ctx, reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 
 	var usage *TokenUsage
 	var response map[string]interface{}
@@ -818,6 +843,7 @@ func truncateToolResultForModel(result string) string {
 // caller is responsible for stopping the enclosing batch once result.stopAfterTool
 // is set.
 func processParsedToolCall(
+	ctx context.Context,
 	id string,
 	name string,
 	arguments string,
@@ -827,6 +853,13 @@ func processParsedToolCall(
 	toolChan chan<- ToolCall,
 ) {
 	if name == "" || arguments == "" {
+		return
+	}
+
+	// The stop button cancels the generation context; never dispatch a tool
+	// body after that, even if the provider stream still delivered the call.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		log.Printf("Skipping tool %s: generation cancelled", name)
 		return
 	}
 
@@ -913,7 +946,15 @@ func processParsedToolCall(
 		result.result = resolvedResult
 		status = ToolCallStatusSucceeded
 	default:
-		executedResult, runErr := tool.RunTool(toolInput)
+		var (
+			executedResult string
+			runErr         error
+		)
+		if contextTool, ok := tool.(ContextTool); ok {
+			executedResult, runErr = contextTool.RunToolContext(ctx, toolInput)
+		} else {
+			executedResult, runErr = tool.RunTool(toolInput)
+		}
 		if runErr != nil {
 			log.Printf("Error executing tool %s: %v", name, runErr)
 			toolResult = buildToolErrorPlaceholder(name, runErr)
@@ -946,6 +987,7 @@ func processParsedToolCall(
 }
 
 func processStreamingResponseReader(
+	ctx context.Context,
 	reader *bufio.Reader,
 	toolMap map[string]Tool,
 	executedToolResults map[string]string,
@@ -967,6 +1009,11 @@ func processStreamingResponseReader(
 	dsmlDetected := false
 
 	for {
+		// A stop aborts the reader immediately: don't keep consuming the
+		// provider stream (or dispatch its tool calls) after cancellation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		line, err := reader.ReadString('\n')
 		if err == io.EOF {
 			break
@@ -1057,6 +1104,7 @@ func processStreamingResponseReader(
 			}
 
 			processParsedToolCall(
+				ctx,
 				currentToolCall.id,
 				currentToolCall.name,
 				currentToolCall.arguments,
@@ -1096,6 +1144,7 @@ func processStreamingResponseReader(
 		}
 		for i, call := range recovered {
 			processParsedToolCall(
+				ctx,
 				fmt.Sprintf("dsml-call-%d", i+1),
 				call.ToolName,
 				call.Arguments,
