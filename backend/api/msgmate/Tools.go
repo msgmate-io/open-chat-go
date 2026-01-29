@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	tooldefs "backend/api/msgmate/tools"
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -32,6 +33,14 @@ type Tool interface {
 	GetConfirmationBlockMessage() string
 	ConstructTool() interface{}
 	SetInitData(data interface{})
+}
+
+// ContextTool is the optional cancellation-aware extension of Tool. A tool that
+// can honour a user stop (eg the native coder's workspace tools, which call
+// back into the integration over HTTP) implements it; every other tool is
+// executed through Tool.RunTool as before.
+type ContextTool interface {
+	RunToolContext(ctx context.Context, input interface{}) (string, error)
 }
 
 type ToolConstructor func() Tool
