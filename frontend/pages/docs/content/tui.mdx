@@ -7,9 +7,10 @@ adminOnly: false
 section: Clients
 ---
 
-Open Chat Go ships a full-screen terminal client. It connects to one or more
-Open Chat servers, keeps you signed in on the device, and lets you chat with
-your default bot without leaving the shell.
+Open Chat Go ships a full-screen terminal client written in Go. It connects to
+one or more Open Chat servers, keeps you signed in on the device, and lets you
+chat with your default bot — or attach to an existing chat — without leaving the
+shell.
 
 ## Launching
 
@@ -17,12 +18,13 @@ your default bot without leaving the shell.
 open-chat tui
 ```
 
-If your build bundles the TUI, the command extracts and runs the embedded
-binary. Otherwise it looks for an `open-chat-tui` executable on `PATH`, next to
-the `open-chat` binary, or in `~/.cargo/bin`. Set `OPEN_CHAT_TUI_BIN` to point at
-a specific binary:
+The TUI runs in-process from the `open-chat` binary when the `tui` integration
+is part of the build. It also runs standalone: build (or install) the
+`open-chat-tui` executable and run it directly, or set `OPEN_CHAT_TUI_BIN` to
+point at a specific binary:
 
 ```bash
+go install github.com/msgmate-io/tui-integration/cmd/open-chat-tui@latest
 OPEN_CHAT_TUI_BIN="$PWD/target/release/open-chat-tui" open-chat tui
 ```
 
@@ -35,7 +37,8 @@ OPEN_CHAT_TUI_BIN="$PWD/target/release/open-chat-tui" open-chat tui
   authorization page and polls until the device is approved, or by pasting a
   personal access token (`ocat_…`) under **Authorize via API key**.
 - **Chat** — messages go to your default bot; the conversation renders in the
-  same terminal session.
+  same terminal session. When a chat is pre-bound (see below) the TUI attaches
+  to it directly instead of creating a new one.
 
 ## Configuration
 
@@ -63,6 +66,29 @@ open-chat tui --where      # print the config file path
 open-chat tui --version
 ```
 
+### Environment overrides
+
+The TUI also honours environment variables, which is how the forwarded
+sandbox TUI is started authenticated:
+
+- `OPENCHAT_SERVER_URL` / `OCI_MSGMATE_CODER_SERVER_URL` — server to dial back
+  to (overrides the active server's URL).
+- `OPENCHAT_ACCESS_TOKEN` / `OCI_MSGMATE_CODER_ACCESS_TOKEN` — bearer token to
+  use without an interactive login.
+- `OPENCHAT_CHAT_UUID` — attach to this existing chat instead of creating a new
+  one.
+- `OPEN_CHAT_TUI_CONFIG_DIR` — directory holding the generated `config.json`.
+
 The TUI talks to the regular HTTP API (version probe, `user/self`, the CLI
 browser-auth endpoints, chats and messages), so anything that works in a browser
 session works from the terminal too.
+
+## Forwarded TUI in a coding sandbox
+
+The msgmate coder integration can forward this TUI into a chat's coding
+sandbox. It mints a short-lived, audience-bound (`coder-tui`) access token for
+the caller, writes it to a `0600` config inside the sandbox, and starts
+`open-chat-tui` bound to the chat (`OPENCHAT_SERVER_URL`, `OPENCHAT_CHAT_UUID`),
+so a freshly provisioned sandbox opens an authenticated, logged-in TUI attached
+to that chat's session. Install the `open-chat-tui` binary in the sandbox image
+or via the workspace `setup_commands`.
