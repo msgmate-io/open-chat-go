@@ -143,7 +143,7 @@ func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, *
 	// valid on explicitly allowlisted routes and must carry the required
 	// scope for the route.
 	if strings.TrimSpace(accessToken.Audience) != "" {
-		requiredScope, routeAllowed := matchBrowserTokenRoute(r.Method, r.URL.Path)
+		requiredScope, routeAllowed := matchRestrictedTokenRoute(accessToken.Audience, r.Method, r.URL.Path)
 		if !routeAllowed {
 			return nil, nil, false
 		}
