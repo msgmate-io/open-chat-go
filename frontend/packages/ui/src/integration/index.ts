@@ -37,6 +37,11 @@ export {
 } from "./components/chat/MessageItem";
 export { ConfirmableActionWidget } from "./components/chat/ConfirmableActionWidget";
 export type { ConfirmableAction } from "./components/chat/ConfirmableActionWidget";
+export {
+  mergeConfirmableAction,
+  extractConfirmableActionsFromMeta,
+  type ActionTaskActionSummary,
+} from "./components/chat/actionTasks";
 export { ToolCallDetail, ToolKeyValueTable, ToolValueText } from "./components/chat/ToolCallDetail";
 export { ProviderRetryEventWidget, resolveProviderRetryEvent, type ProviderRetryEvent } from "./components/chat/ProviderRetryEventWidget";
 export { InteractionChatInfo } from "./components/chat/InteractionChatInfo";

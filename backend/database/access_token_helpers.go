@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -56,6 +57,55 @@ func RevokeChildAccessTokens(tx *gorm.DB, parentTokenID uint) error {
 	return tx.Model(&AccessToken{}).
 		Where("parent_token_id = ? AND revoked_at IS NULL", parentTokenID).
 		Update("revoked_at", &now).Error
+}
+
+// MintScopedAccessToken creates a short-lived, audience-bound access token for
+// a user and returns the raw credential exactly once (only its hash is
+// persisted). A non-empty audience makes the token default-deny: the server
+// only accepts it on the routes allowlisted for that audience. scopes may be
+// empty to grant the whole allowlist. When parentTokenID is non-zero the token
+// is linked to that credential, so revoking or expiring the parent invalidates
+// the child. A non-positive ttl creates a non-expiring token (used for tests).
+func MintScopedAccessToken(tx *gorm.DB, userID uint, name, audience, scopes string, ttl time.Duration, parentTokenID uint) (string, AccessToken, error) {
+	if tx == nil {
+		return "", AccessToken{}, fmt.Errorf("database handle is nil")
+	}
+	if userID == 0 {
+		return "", AccessToken{}, fmt.Errorf("user id is required")
+	}
+	trimmedAudience := strings.TrimSpace(audience)
+	if trimmedAudience == "" {
+		return "", AccessToken{}, fmt.Errorf("audience is required")
+	}
+
+	raw, prefix, hash, err := GenerateRawAccessToken()
+	if err != nil {
+		return "", AccessToken{}, fmt.Errorf("generating token: %w", err)
+	}
+
+	var expiresAt *time.Time
+	if ttl > 0 {
+		expiry := time.Now().Add(ttl)
+		expiresAt = &expiry
+	}
+
+	token := AccessToken{
+		UserId:      userID,
+		Name:        strings.TrimSpace(name),
+		TokenPrefix: prefix,
+		TokenHash:   hash,
+		ExpiresAt:   expiresAt,
+		Audience:    trimmedAudience,
+		Scopes:      strings.TrimSpace(scopes),
+	}
+	if parentTokenID != 0 {
+		pid := parentTokenID
+		token.ParentTokenId = &pid
+	}
+	if err := tx.Create(&token).Error; err != nil {
+		return "", AccessToken{}, fmt.Errorf("persisting token: %w", err)
+	}
+	return raw, token, nil
 }
 
 // CleanupExpiredBrowserAccessTokens removes expired browser-audience tokens
