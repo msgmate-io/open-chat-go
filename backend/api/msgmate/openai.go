@@ -1003,10 +1003,11 @@ func processStreamingResponseReader(
 		arguments string
 	}
 	var aiResponseBuilder strings.Builder
-	// dsmlDetected records that the model emitted an inline DeepSeek DSML
-	// tool-call block in the content. Such content is never user-facing: it is
-	// withheld from the client stream and recovered (or reported) at the end.
-	dsmlDetected := false
+	// inlineToolCallDetected records that the model emitted an inline tool-call
+	// block (DeepSeek DSML or Anthropic/XML) in the content. Such content is
+	// never user-facing: it is withheld from the client stream and recovered
+	// (or reported) at the end.
+	inlineToolCallDetected := false
 
 	for {
 		// A stop aborts the reader immediately: don't keep consuming the
@@ -1056,12 +1057,12 @@ func processStreamingResponseReader(
 		delta := chunk.Choices[0].Delta
 
 		if delta.Content != "" {
-			if !dsmlDetected && containsDSMLMarker(delta.Content) {
-				dsmlDetected = true
+			if !inlineToolCallDetected && containsInlineToolCall(delta.Content) {
+				inlineToolCallDetected = true
 			}
 			// Never forward inline DSML tool-call fragments as assistant text;
 			// they are recovered (or reported) after the stream ends.
-			if !dsmlDetected {
+			if !inlineToolCallDetected {
 				chunkChan <- delta.Content
 			}
 			aiResponseBuilder.WriteString(delta.Content)
@@ -1131,21 +1132,21 @@ func processStreamingResponseReader(
 
 	result.aiResponse = aiResponseBuilder.String()
 
-	// Recover an inline DeepSeek DSML tool-call block that the provider did not
-	// map onto the structured tool_calls field. Without this the raw fragment
-	// was stored as the assistant text and the tool loop finished silently,
-	// abandoning the rest of a multi-step task (ci#428).
-	if !result.usedTool && dsmlDetected {
-		recovered := parseDSMLToolCalls(result.aiResponse, toolMap)
+	// Recover an inline tool-call block (DeepSeek DSML or Anthropic/XML) that
+	// the provider did not map onto the structured tool_calls field. Without
+	// this the raw fragment was stored as the assistant text and the tool loop
+	// finished silently, abandoning the rest of a multi-step task (ci#428).
+	if !result.usedTool && inlineToolCallDetected {
+		recovered := parseInlineToolCalls(result.aiResponse, toolMap)
 		if len(recovered) == 0 {
 			return result, fmt.Errorf(
-				"model returned a malformed DeepSeek DSML tool-call block in the assistant content and no tool call could be recovered",
+				"model returned a malformed inline tool-call block in the assistant content and no tool call could be recovered",
 			)
 		}
 		for i, call := range recovered {
 			processParsedToolCall(
 				ctx,
-				fmt.Sprintf("dsml-call-%d", i+1),
+				fmt.Sprintf("inline-call-%d", i+1),
 				call.ToolName,
 				call.Arguments,
 				toolMap,
@@ -1157,7 +1158,7 @@ func processStreamingResponseReader(
 				break
 			}
 		}
-		// The raw DSML fragment is not user-facing assistant text.
+		// The raw inline fragment is not user-facing assistant text.
 		result.aiResponse = ""
 	}
 
