@@ -71,6 +71,57 @@ func TestMatchBrowserTokenRoute(t *testing.T) {
 	}
 }
 
+func TestMatchRestrictedTokenRoute(t *testing.T) {
+	cases := []struct {
+		audience string
+		method   string
+		path     string
+		wantOK   bool
+	}{
+		// browser-api keeps its existing allowlist
+		{database.AudienceBrowserAPI, http.MethodGet, "/user/self", true},
+		{database.AudienceBrowserAPI, http.MethodPost, "/chats/chat-uuid/messages/send", false},
+
+		// coder-tui can attach to and post in the bound chat
+		{database.AudienceCoderTUI, http.MethodGet, "/user/self", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/list", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/api/v1/chats/chat-uuid/messages/list", true},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/send", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/contacts/default-bot", true},
+
+		// coder-tui is still default-deny elsewhere
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/create", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/contacts/list", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/admin/users", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/user/access-tokens", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/bots/list", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/contact", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/list/extra", false},
+
+		// mcp-interaction may only reach the read-only interaction MCP endpoint
+		{database.AudienceMCPInteraction, http.MethodPost, "/mcp", true},
+		{database.AudienceMCPInteraction, http.MethodPost, "/api/v1/mcp", true},
+		{database.AudienceMCPInteraction, http.MethodGet, "/user/self", false},
+		{database.AudienceMCPInteraction, http.MethodGet, "/chats/chat-uuid/messages/list", false},
+		{database.AudienceMCPInteraction, http.MethodPost, "/chats/chat-uuid/messages/send", false},
+		{database.AudienceMCPInteraction, http.MethodGet, "/admin/users", false},
+		{database.AudienceMCPInteraction, http.MethodPost, "/bots/bot/config", false},
+
+		// unknown audiences never resolve
+		{"something-else", http.MethodGet, "/user/self", false},
+		{"", http.MethodGet, "/user/self", false},
+	}
+
+	for _, tc := range cases {
+		_, ok := matchRestrictedTokenRoute(tc.audience, tc.method, tc.path)
+		if ok != tc.wantOK {
+			t.Errorf("matchRestrictedTokenRoute(%q, %q, %q) = (%v), want %v",
+				tc.audience, tc.method, tc.path, ok, tc.wantOK)
+		}
+	}
+}
+
 func TestCORSMiddlewarePreflightAndHeaders(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
