@@ -42,6 +42,13 @@ const (
 	// browser token it never grants the admin "see all chats" scope, so an
 	// agent runtime can only read the interactions its owner participates in.
 	AudienceMCPInteraction = "mcp-interaction"
+	// AudienceCoderTUI marks the short-lived, default-deny credential the
+	// msgmate_coder integration mints for the Open-Chat TUI forwarded into a
+	// per-chat coding sandbox. It is restricted to the exact routes that TUI
+	// needs to attach to and chat within the caller's bound session (user self,
+	// the chat and its messages, and the default bot lookup), so a leaked
+	// sandbox config can only read/post to chats as the minting user.
+	AudienceCoderTUI = "coder-tui"
 
 	ScopeBotsRead         = "bots:read"
 	ScopeBotsWrite        = "bots:write"
