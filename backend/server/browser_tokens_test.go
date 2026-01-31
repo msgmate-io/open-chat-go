@@ -99,6 +99,15 @@ func TestMatchRestrictedTokenRoute(t *testing.T) {
 		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/contact", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/list/extra", false},
 
+		// mcp-interaction may only reach the read-only interaction MCP endpoint
+		{database.AudienceMCPInteraction, http.MethodPost, "/mcp", true},
+		{database.AudienceMCPInteraction, http.MethodPost, "/api/v1/mcp", true},
+		{database.AudienceMCPInteraction, http.MethodGet, "/user/self", false},
+		{database.AudienceMCPInteraction, http.MethodGet, "/chats/chat-uuid/messages/list", false},
+		{database.AudienceMCPInteraction, http.MethodPost, "/chats/chat-uuid/messages/send", false},
+		{database.AudienceMCPInteraction, http.MethodGet, "/admin/users", false},
+		{database.AudienceMCPInteraction, http.MethodPost, "/bots/bot/config", false},
+
 		// unknown audiences never resolve
 		{"something-else", http.MethodGet, "/user/self", false},
 		{"", http.MethodGet, "/user/self", false},
