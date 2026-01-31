@@ -828,6 +828,11 @@ export function BotMessageItem({
   const confirmableActions = (message.meta_data?.confirmable_actions || fallbackConfirmableActions).filter(
     (action) => !!action?.action_id && !!action?.target_tool_name
   );
+  // The latest still-unconfirmed action is the one blocking the chat, so its
+  // widget auto-expands (the user may still collapse it manually).
+  const lastPendingActionId = [...confirmableActions]
+    .reverse()
+    .find((action) => (action.status ?? "pending") === "pending")?.action_id;
   const thinkingSteps = (message?.meta_data?.thinking_steps || [])
     .map((step) => ({
       text: typeof step?.text === "string" ? step.text.trim() : "",
@@ -988,6 +993,7 @@ export function BotMessageItem({
               messageUUID={message.uuid}
               action={action}
               executionBlockedReason={executionBlockedReason}
+              autoExpand={action.action_id === lastPendingActionId}
               onExecuted={() => {
                 void revalidateChatData(chatUUID);
               }}
