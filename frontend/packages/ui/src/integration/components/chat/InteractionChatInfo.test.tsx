@@ -59,3 +59,21 @@ describe("InteractionChatInfo headerActions slot", () => {
     expect(html).toBe("");
   });
 });
+
+// The desktop header used to draw the model indicator as its own oversized row;
+// it is now merged inline with the chat title as a compact chip (ci#488).
+describe("InteractionChatInfo merged model chip", () => {
+  it("renders the model chip inline with the chat title", () => {
+    const html = renderToStaticMarkup(<InteractionChatInfo chat={interactionChat} />);
+
+    expect(html).toContain("gpt-4o");
+    // The title and model chip share one flex row.
+    expect(html).toContain("flex min-w-0 items-center gap-2");
+  });
+
+  it("hides the model chip when an integration renders it in its own card", () => {
+    const html = renderToStaticMarkup(<InteractionChatInfo chat={interactionChat} hideModelDisplay />);
+
+    expect(html).not.toContain("gpt-4o");
+  });
+});
