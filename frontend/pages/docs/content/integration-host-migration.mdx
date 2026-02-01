@@ -32,6 +32,20 @@ interface itself:
 | `host.HTTP().DBAndUser(r)` | `backend/server/util.GetDBAndUser` |
 | `host.HTTP().OptionalUser(r)` | `backend/server/util.GetOptionalUser` |
 | `storage.Handle()` (from `HTTP().DBAndUser`) | the raw persistence handle (`*gorm.DB`) |
+| `storage.Global()` (from `host.Storage()`) | `backend/database.GetGlobalDB` |
+| `host.Chat().HasActiveGeneration/.CancelActiveGeneration` | `backend/api/msgmate` generation registry |
+| `host.Workspace()` (`CanonicalKey/Acquire/Status`) | `backend/workspacelease` |
+| `host.Web()` (`Fetch/Search/DefaultSearchLimit`) | `backend/webtools` |
+| `host.Tokens()` (`GenerateRaw/MintScoped/PruneMismatched`) | `backend/database` access-token helpers |
+| `host.Tools()` (`DiscoverMCPTools/GetToolInitData`) | `backend/api/msgmate` MCP snapshot, `backend/database` tool-init manager |
+| `integrationinterface.RegisterChatBackend(spec)` | `backend/api/msgmate.RegisterChatBackend` + `backend/chatstate` registration |
+
+`HostVersion` 3 adds `Storage.Global`, `Chat`, `Workspace`, `Web`, `Tokens` and
+`Tools`. External chat backends are declared with
+`integrationinterface.RegisterChatBackend(ChatBackendSpec{...})` from package
+init (no Host required); the core adapter drains the registry after installing
+the Host and wires the declared backend/state-provider/interrupt-handler into
+the core chat-backend and chat-state registries.
 
 `Storage.Handle()` returns `interface{}` on purpose: the ORM is a third-party
 dependency owned by the caller, so the interface module does not depend on gorm
@@ -130,34 +144,32 @@ Migrated onto `Host` so far (transitive `go list -deps` delta, `full` profile):
 | `email` | 336 → 230 | 4 → 0 |
 | `notifications` | 336 → 228 | 4 → 0 |
 | `docker_sandbox` | 706 → 706 | 4 → 0 direct¹ |
+| `opencode` | 362 → 253 | 12 → 0 |
+| `msgmate_coder` | 361 → 245 | 11 → 0 |
 | `go_client` | 238 → 238 | 0 → 0 |
 
 ¹ `docker_sandbox`'s own imports are clean; its transitive count is unchanged
-because it depends on the not-yet-migrated `opencode`/`msgmate_coder`
-integrations. The transitive number only drops once an integration's **whole
-closure** is off `backend/...`.
+because it depends on integrations that still import `backend/...`.
 
 Still importing `backend/...` directly (candidates for follow-up increments):
 
 - **Chat-backend / websocket registration** (`backend/api/msgmate`,
   `backend/api/websocket`, `backend/chatstate`): `matrix` (also needs user
-  creation), `signal`, `slack`, `git`, `opencode`.
+  creation), `signal`, `slack`, `git`, `admin`.
 - **Secret store** (`backend/secretstore`): `tvault`.
 - **Read-only core-table projections** (like the MCP/`stats_and_usage`/`kubernetes`
-  pattern): none left — `kubernetes` (done) replicated the `users`, `chats`,
-  `shared_chat_configs` and `tool_init_data` read paths locally.
+  pattern): none left.
 - **Business-logic moves / non-Host capabilities**: `internal_automations`
   (`backend/workqueue`, `server/util.GetAsynqClient`, global DB, bot-runtime
   and chat/message tables), `account_management` (`backend/api/user`,
   account-state/email-verification write helpers, `backend/workqueue`), `admin`
   (`backend/api/msgmate`, `backend/integrationsettings`, `backend/servicecontrol`
-  and many read/write helpers), `msgmate_coder` (`backend` root,
-  `backend/webtools`, `backend/api/...`).
+  and many read/write helpers).
 - `tui` has no `backend/...` imports (nothing to do).
 
 These remaining edges share one root cause: the core has no stable Host
 capability for the chat-backend/websocket registration (matrix, git, signal,
-slack, opencode) or the secret store (tvault), so decoupling them means moving
+slack, admin) or the secret store (tvault), so decoupling them means moving
 that logic into the integration or designing a new versioned Host capability —
 staged separately per the design doc.
 
@@ -170,6 +182,14 @@ preview pages) no longer import `backend/server/util.GetDB`. `HostVersion` was
 bumped to `2`; the change is additive and the adapter implements both
 `DB`/`DBAndUser`. Do **not** add integration-specific methods to `Host` — only
 general capabilities like this belong on the surface.
+
+Migrating the coded integrations (`opencode`, `msgmate_coder`) required the
+generic capabilities listed in the surface table above: `Storage.Global` and
+the `Chat`, `Workspace`, `Web`, `Tokens` and `Tools` sub-interfaces.
+`HostVersion` was bumped to `3`. External chat backends are declared with
+`integrationinterface.RegisterChatBackend` from package init, so registration
+does not depend on Host installation order; the core adapter drains the
+registry in `integrationhost.Install`.
 
 ## Notes and follow-ups
 
