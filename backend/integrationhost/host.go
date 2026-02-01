@@ -23,17 +23,27 @@ import (
 )
 
 // Install makes the core adapter the process-wide Host. Call it once at server
-// startup, before any integration bootstrap hook or HTTP handler runs.
+// startup, before any integration bootstrap hook or HTTP handler runs. It also
+// wires any integration-declared chat backends into the core registries.
 func Install() {
 	integrationinterface.SetHost(host{})
+	installChatBackends()
 }
 
 type host struct{}
 
-func (host) Version() int                        { return integrationinterface.HostVersion }
-func (host) Config() integrationinterface.Config { return config{} }
-func (host) Logger() integrationinterface.Logger { return stdLogger{} }
-func (host) HTTP() integrationinterface.HTTP     { return httpAdapter{} }
+func (host) Version() int                         { return integrationinterface.HostVersion }
+func (host) Config() integrationinterface.Config  { return config{} }
+func (host) Logger() integrationinterface.Logger  { return stdLogger{} }
+func (host) HTTP() integrationinterface.HTTP      { return httpAdapter{} }
+func (host) Storage() integrationinterface.Storage { return storage{db: database.GetGlobalDB()} }
+func (host) Chat() integrationinterface.Chat      { return chatAdapter{} }
+func (host) Workspace() integrationinterface.Workspace {
+	return workspaceAdapter{}
+}
+func (host) Web() integrationinterface.Web   { return webAdapter{} }
+func (host) Tokens() integrationinterface.Tokens { return tokensAdapter{} }
+func (host) Tools() integrationinterface.Tools   { return toolsAdapter{} }
 
 // config adapts the resolved runtime configuration (backend/runtimecfg) to the
 // stable Config surface.
@@ -83,6 +93,8 @@ type storage struct {
 }
 
 func (s storage) Handle() interface{} { return s.db }
+
+func (s storage) Global() interface{} { return database.GetGlobalDB() }
 
 // user wraps the core user model behind the identity-only User surface.
 type user struct {
