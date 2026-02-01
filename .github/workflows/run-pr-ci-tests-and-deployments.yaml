@@ -83,11 +83,19 @@ concurrency:
   # later run for the same PR. Scoping to the head SHA lets a fresh push start
   # immediately; the per-environment `pr-deploy-<number>` job concurrency still
   # serialises/cancels the actual deploys.
+  #
+  # The same reasoning applies to the post-merge flow: a stalled merged-deploy
+  # run guarded by a protected environment cannot be cancelled with
+  # `cancel-in-progress`, so keying merged runs only by `base.ref` let one stale
+  # merge block every later merge (`merged-deploy-main` starvation). Keying them
+  # by the merge commit lets a fresh merge start immediately;
+  # `cancel-superseded-merged-deployment` then cancels the stale run and the
+  # per-environment dispatch job concurrency serialises the actual deploys.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
         || github.event.action == 'closed'
-        && format('merged-deploy-{0}', github.event.pull_request.base.ref)
+        && format('merged-deploy-{0}-{1}', github.event.pull_request.base.ref, github.event.pull_request.merge_commit_sha)
         || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
   cancel-in-progress: true
 
@@ -2665,10 +2673,11 @@ jobs:
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Wait for dispatched CI deployment workflow
-        timeout-minutes: 6
+        timeout-minutes: 30
         env:
           DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+          CI_WAIT_MAX_SECONDS: "1500"
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
@@ -2692,9 +2701,24 @@ jobs:
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
+          poll_interval=15
+          # Cover a full 12-25 minute deploy instead of the old ~5 minute bound,
+          # which falsely failed while the dispatched deploy was still running.
+          deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          attempt=0
 
-          for attempt in $(seq 1 20); do
-            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          while :; do
+            attempt=$((attempt + 1))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              break
+            fi
+
+            if ! runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
+              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+              interruptible_sleep "$poll_interval"
+              continue
+            fi
 
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
               def candidates:
@@ -2712,16 +2736,16 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
-              interruptible_sleep 15
+              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
             IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/20: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
 
             if [ "$run_status" != "completed" ]; then
-              interruptible_sleep 15
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
@@ -2733,7 +2757,6 @@ jobs:
             exit 1
           done
 
-          echo "Timed out waiting for dispatched CI deployment workflow."
           exit 1
 
   run-pr-ci-ai-real-after-deploy:
@@ -3031,6 +3054,61 @@ jobs:
               -d "$payload"
           fi
 
+  cancel-superseded-merged-deployment:
+    name: Cancel Superseded Merged Deployments
+    runs-on: ubuntu-latest
+    # The per-merge-scoped top-level concurrency group (see the workflow-level
+    # `concurrency`) lets a fresh merge start immediately instead of queueing
+    # behind a stale merged-deployment run. A stale run can be parked on a
+    # protected deployment environment, and GitHub refuses to auto-cancel
+    # environment-gated runs with `cancel-in-progress`; that stale run then also
+    # holds the per-branch job concurrency group and starves the fresh dispatch.
+    # This job explicitly cancels every superseded merged-deployment run for this
+    # repository so the fresh dispatch can proceed.
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+    steps:
+      - name: Cancel superseded merged-deployment runs
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          workflow="run-pr-ci-tests-and-deployments.yaml"
+          current_run="${{ github.run_id }}"
+          now_epoch="$(date +%s)"
+
+          for status in queued in_progress waiting requested pending; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${repo}/actions/workflows/${workflow}/runs?event=pull_request&status=${status}&per_page=50")"
+
+            # A merged/closed PR run no longer carries a `pull_requests` entry,
+            # whereas an open-PR run does. Guard with a short age threshold so a
+            # just-created open-PR run is never cancelled in the brief window
+            # before GitHub attaches its pull request.
+            mapfile -t run_ids < <(jq -r \
+              --arg current "$current_run" \
+              --argjson now "$now_epoch" '
+              .workflow_runs[]
+              | select(.id != ($current | tonumber))
+              | select((.pull_requests // []) | length == 0)
+              | select(((.created_at | fromdateiso8601) // $now) < ($now - 120))
+              | .id' <<< "$runs_json")
+
+            for run_id in "${run_ids[@]:-}"; do
+              [ -n "$run_id" ] || continue
+              echo "Cancelling superseded merged-deployment run ${run_id} (status ${status})."
+              curl -fsSL -X POST \
+                -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${repo}/actions/runs/${run_id}/cancel" \
+                >/dev/null || echo "::warning::Failed to cancel run ${run_id}; continuing."
+            done
+          done
+
   resolve-merged-deployment:
     name: Resolve Merged Deployment
     runs-on: ubuntu-latest
@@ -3296,7 +3374,7 @@ jobs:
   dispatch-merged-deployment:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment, post-merged-deploy-approval-link]
+    needs: [resolve-merged-deployment, post-merged-deploy-approval-link, cancel-superseded-merged-deployment]
     if: |
       always() &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
@@ -3323,10 +3401,11 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
-            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+            jq -r --arg deployment "$DEPLOYMENT_NAME" --arg dispatch_id "$DISPATCH_RUN_ID" \
               '.workflow_runs[]
               | select((.display_title // "") | startswith("Deploy " + $deployment))
               | select((.display_title // "") | contains("PR#") | not)
+              | select((.display_title // "") | endswith($dispatch_id) | not)
               | .id' <<< "$runs_json" | while read -r run_id; do
               if [ -n "$run_id" ]; then
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
@@ -3578,9 +3657,10 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
-        timeout-minutes: 25
+        timeout-minutes: 30
         env:
           DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+          CI_WAIT_MAX_SECONDS: "1500"
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
@@ -3604,9 +3684,24 @@ jobs:
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          poll_interval=15
+          # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
+          # (25 min) of polling, with the job capped 5 min above that.
+          deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          attempt=0
 
-          for attempt in $(seq 1 40); do
-            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          while :; do
+            attempt=$((attempt + 1))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              break
+            fi
+
+            if ! runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
+              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+              interruptible_sleep "$poll_interval"
+              continue
+            fi
 
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
               [
@@ -3619,19 +3714,19 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/40: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
+              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
               if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
                 echo "Recent CI workflow titles:"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
               fi
-              interruptible_sleep 15
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
-            echo "Attempt $attempt/40: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              interruptible_sleep 15
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
@@ -3643,7 +3738,6 @@ jobs:
             exit 1
           done
 
-          echo "Timed out waiting for dispatched CI deployment workflow."
           if [ -n "$run_url" ]; then
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
@@ -3652,8 +3746,10 @@ jobs:
   dispatch-merged-ci-deployment:
     name: Dispatch Merged CI Deployment
     runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment]
+    needs: [resolve-merged-deployment, cancel-superseded-merged-deployment]
     if: |
+      always() &&
+      needs.resolve-merged-deployment.result == 'success' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
     concurrency:
@@ -3678,10 +3774,11 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
-            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+            jq -r --arg deployment "$DEPLOYMENT_NAME" --arg dispatch_id "$DISPATCH_RUN_ID" \
               '.workflow_runs[]
               | select((.display_title // "") | startswith("Deploy " + $deployment))
               | select((.display_title // "") | contains("PR#") | not)
+              | select((.display_title // "") | endswith($dispatch_id) | not)
               | .id' <<< "$runs_json" | while read -r run_id; do
               if [ -n "$run_id" ]; then
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
@@ -3733,9 +3830,10 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
-        timeout-minutes: 25
+        timeout-minutes: 30
         env:
           DEPLOYMENT_NAME: ${{ env.DEPLOYMENT_CI }}
+          CI_WAIT_MAX_SECONDS: "1500"
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
@@ -3759,9 +3857,24 @@ jobs:
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          poll_interval=15
+          # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
+          # (25 min) of polling, with the job capped 5 min above that.
+          deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          attempt=0
 
-          for attempt in $(seq 1 40); do
-            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          while :; do
+            attempt=$((attempt + 1))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              break
+            fi
+
+            if ! runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
+              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+              interruptible_sleep "$poll_interval"
+              continue
+            fi
 
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
               [
@@ -3774,19 +3887,19 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/40: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
+              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
               if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
                 echo "Recent CI workflow titles:"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
               fi
-              interruptible_sleep 15
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
-            echo "Attempt $attempt/40: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              interruptible_sleep 15
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
@@ -3798,7 +3911,6 @@ jobs:
             exit 1
           done
 
-          echo "Timed out waiting for dispatched CI deployment workflow."
           if [ -n "$run_url" ]; then
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
