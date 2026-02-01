@@ -246,6 +246,56 @@ func TestParseAnthropicToolCalls(t *testing.T) {
 	}
 }
 
+// TestStreamChatCompletionRetriesMalformedInlineToolCall guards that an
+// intermittent, unrecoverable inline tool-call block is retried once instead of
+// abandoning the task (ci#428).
+func TestStreamChatCompletionRetriesMalformedInlineToolCall(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if requests.Add(1) == 1 {
+			// Unrecoverable: control tokens but no function name / JSON payload.
+			_, _ = io.WriteString(w, dsmlTestSSE(dsmlTestToken("tool_calls_begin")+"\n"+dsmlTestToken("tool_call_begin")))
+			return
+		}
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+
+	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
+		server.URL, "some-model", "litellm", 4, 3,
+		[]map[string]interface{}{{"role": "user", "content": "hi"}},
+		nil, map[string]Tool{}, "test-key", nil, nil, nil, SamplingParams{}, ProviderRetryOptions{},
+		providerRequestMeta{ChatUUID: "chat-1"},
+	)
+
+	var content strings.Builder
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for c := range chunks {
+			content.WriteString(c)
+		}
+	}()
+	for range usage {
+	}
+	for range toolCalls {
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("malformed inline tool call retry should recover, got: %v", err)
+	}
+	<-drained
+
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("expected 2 provider requests (malformed + one retry), got %d", got)
+	}
+	if content.String() != "ok" {
+		t.Fatalf("expected the retry to stream ok, got %q", content.String())
+	}
+}
+
 // TestStreamChatCompletionRetriesEmptyPostConfirmationContinuation covers the
 // minimum fallback of ci#428: a post-confirmation continuation that yields an
 // assistant message with neither text nor tool calls is retried once.
