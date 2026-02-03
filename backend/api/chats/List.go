@@ -281,6 +281,42 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Pinned chats must stay visible even after they age out of the current
+	// page (ci#512): an old pinned chat that is no longer among the most recent
+	// rows used to silently disappear from the list. On the first page, top the
+	// result up with every pinned chat that still matches the active filters and
+	// merge the ones missing from the page in front of it. Deduplicate by id so
+	// a pin that already appears in the page is not returned twice.
+	if pagination.Page <= 1 {
+		pinnedChats := []database.Chat{}
+		pinnedErr := query.
+			Where("id IN (?)", DB.Model(&database.ChatPin{}).
+				Select("chat_id").
+				Where("user_id = ?", user.ID)).
+			Preload("User1").
+			Preload("User2").
+			Preload("SharedConfig").
+			Preload("LatestMessage").
+			Find(&pinnedChats).Error
+		if pinnedErr != nil {
+			// Never let the pinned top-up break the primary list.
+			log.Printf("Failed to load pinned chats for user %d: %v", user.ID, pinnedErr)
+		} else if len(pinnedChats) > 0 {
+			seen := make(map[uint]bool, len(chats))
+			for _, chat := range chats {
+				seen[chat.ID] = true
+			}
+			merged := make([]database.Chat, 0, len(pinnedChats)+len(chats))
+			for _, chat := range pinnedChats {
+				if !seen[chat.ID] {
+					merged = append(merged, chat)
+					seen[chat.ID] = true
+				}
+			}
+			chats = append(merged, chats...)
+		}
+	}
+
 	listedChats := make([]ListedChat, len(chats))
 	for i, chat := range chats {
 		listedChats[i] = convertChatToListedChat(user, chat)
