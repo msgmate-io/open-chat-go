@@ -40,6 +40,18 @@ const (
 	DefaultToolCallMaxFailed          = 3
 	DefaultContextRetryTailMessages   = 14
 	DefaultToolResultMaxCharsForModel = 12000
+
+	// Context-window retry (ci#394 gap 7). When a provider rejects a request for
+	// exceeding the context window the tool loop trims the history and retries.
+	// A single cut is often not enough for a long session and a cut that lands
+	// inside a tool-call/tool-result pair yields a request the provider rejects
+	// outright, so the retry shrinks in rounds down to a floor, repairing the
+	// tool pairing after every cut and finally falling back to truncating
+	// oversized message contents when the message count cannot be reduced
+	// further.
+	contextRetryShrinkRounds      = 4
+	contextRetryTailFloorMessages = 4
+	contextRetryMaxMessageChars   = 4000
 )
 
 type ToolCallsResult struct {
@@ -397,14 +409,27 @@ func streamChatCompletion(
 				preErr.Attempts = attempts
 			}
 			if err != nil && ctx.Err() == nil && isContextWindowExceededError(err) {
-				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
-				if trimmed {
+				// Progressive shrink (ci#394 gap 7). Each round cuts a larger
+				// tail (never the leading system messages, so an injected
+				// compaction summary survives) and repairs the tool-call /
+				// tool-result pairing so the retried request stays valid; when
+				// the message count can no longer be reduced, oversized message
+				// contents are truncated instead.
+				for round := 0; round <= contextRetryShrinkRounds; round++ {
+					shrunkMessages, shrunk := shrinkMessagesForContextRetry(currentMessages, round)
+					if !shrunk {
+						shrunkMessages, shrunk = shrinkOversizedContextMessages(currentMessages, contextRetryMaxMessageChars)
+					}
+					if !shrunk {
+						break
+					}
 					log.Printf(
-						"Context window exceeded; retrying with trimmed history (%d -> %d messages)",
+						"Context window exceeded; retrying with trimmed history (%d -> %d messages, round %d)",
 						len(currentMessages),
-						len(trimmedMessages),
+						len(shrunkMessages),
+						round,
 					)
-					currentMessages = trimmedMessages
+					currentMessages = shrunkMessages
 					toolCallResult, err = processStreamingRequest(
 						ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 						executedToolResults,
@@ -412,6 +437,9 @@ func streamChatCompletion(
 						samplingParams,
 						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
 					)
+					if err == nil || ctx.Err() != nil || !isContextWindowExceededError(err) {
+						break
+					}
 				}
 			}
 			// An inline tool-call block from which no call could be recovered is
@@ -796,25 +824,44 @@ func isContextWindowExceededError(err error) bool {
 		strings.Contains(errLower, "context length")
 }
 
+// trimMessagesForContextRetry trims the oldest turns once the provider has
+// rejected a request for exceeding the context window. It preserves every
+// leading system message (so an injected compaction summary survives) and
+// returns false when the history cannot be reduced further.
 func trimMessagesForContextRetry(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
-	if len(messages) <= DefaultContextRetryTailMessages {
+	return shrinkMessagesForContextRetry(messages, 0)
+}
+
+// contextRetryTailForRound halves the retained tail on every successive shrink
+// round, down to a floor that still leaves the model enough recent turns to
+// continue the work.
+func contextRetryTailForRound(round int) int {
+	tail := DefaultContextRetryTailMessages
+	for i := 0; i < round; i++ {
+		tail /= 2
+		if tail <= contextRetryTailFloorMessages {
+			return contextRetryTailFloorMessages
+		}
+	}
+	return tail
+}
+
+// shrinkMessagesForContextRetry cuts the history back to round's tail size,
+// keeping the leading system messages, and repairs the tool-call/tool-result
+// pairing of the result. It reports false when the message count cannot be
+// reduced (round 0), or when the cut would leave the history shorter than the
+// caller can retry with.
+func shrinkMessagesForContextRetry(messages []map[string]interface{}, round int) ([]map[string]interface{}, bool) {
+	if round < 0 {
+		round = 0
+	}
+	tail := contextRetryTailForRound(round)
+	if len(messages) <= tail {
 		return messages, false
 	}
 
-	// Preserve every leading system message, not just the first: a compacted
-	// session summary is injected as a second system message right after the
-	// primary system prompt (ci#394), and dropping it here would silently lose
-	// the compacted context the agent is relying on.
-	leadingSystem := 0
-	for leadingSystem < len(messages) {
-		role, _ := messages[leadingSystem]["role"].(string)
-		if role != "system" {
-			break
-		}
-		leadingSystem++
-	}
-
-	tailStart := len(messages) - DefaultContextRetryTailMessages
+	leadingSystem := leadingSystemMessageCount(messages)
+	tailStart := len(messages) - tail
 	if tailStart < leadingSystem {
 		tailStart = leadingSystem
 	}
@@ -822,15 +869,257 @@ func trimMessagesForContextRetry(messages []map[string]interface{}) ([]map[strin
 		return messages, false
 	}
 
-	trimmed := make([]map[string]interface{}, 0, leadingSystem+DefaultContextRetryTailMessages)
+	trimmed := make([]map[string]interface{}, 0, leadingSystem+tail)
 	trimmed = append(trimmed, messages[:leadingSystem]...)
 	trimmed = append(trimmed, messages[tailStart:]...)
 
-	if len(trimmed) >= len(messages) {
+	// A cut can land inside an assistant tool_calls message and its tool
+	// results; the provider rejects such a history outright, so repair the
+	// pairing before retrying with it.
+	repaired, _ := repairToolCallPairing(trimmed)
+
+	if len(repaired) >= len(messages) {
 		return messages, false
 	}
+	if !hasConversationalTurn(repaired) {
+		return messages, false
+	}
+	return repaired, true
+}
 
-	return trimmed, true
+// leadingSystemMessageCount counts the leading system messages of a request.
+func leadingSystemMessageCount(messages []map[string]interface{}) int {
+	count := 0
+	for count < len(messages) {
+		role, _ := messages[count]["role"].(string)
+		if role != "system" {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+// hasConversationalTurn reports whether a message list still carries at least
+// one non-system turn to answer.
+func hasConversationalTurn(messages []map[string]interface{}) bool {
+	for _, message := range messages {
+		if role, _ := message["role"].(string); role != "system" {
+			return true
+		}
+	}
+	return false
+}
+
+// toolCallIDsOf returns the tool-call ids declared by an assistant message,
+// tolerating both the []map[string]interface{} shape the loop builds and the
+// []interface{} shape a decoded request carries.
+func toolCallIDsOf(message map[string]interface{}) []string {
+	raw, ok := message["tool_calls"]
+	if !ok {
+		return nil
+	}
+	ids := make([]string, 0, 2)
+	appendCall := func(call map[string]interface{}) {
+		id, _ := call["id"].(string)
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	switch calls := raw.(type) {
+	case []map[string]interface{}:
+		for _, call := range calls {
+			appendCall(call)
+		}
+	case []interface{}:
+		for _, entry := range calls {
+			if call, ok := entry.(map[string]interface{}); ok {
+				appendCall(call)
+			}
+		}
+	}
+	return ids
+}
+
+// toolCallIDOf returns the tool_call_id a tool-result message answers.
+func toolCallIDOf(message map[string]interface{}) string {
+	id, _ := message["tool_call_id"].(string)
+	return strings.TrimSpace(id)
+}
+
+// repairToolCallPairing makes a message list acceptable to an OpenAI-compatible
+// provider after an arbitrary cut:
+//
+//   - a declared tool call with no tool result anywhere in the list is removed
+//     from its assistant message (an unanswered call is a hard provider error),
+//   - an assistant message left with neither tool calls nor content is dropped,
+//   - a tool result whose id was never declared *before* it (an orphaned result
+//     from a mid-pair cut) is dropped.
+//
+// It returns the repaired list and whether anything changed. When nothing
+// changed the original slice is returned unchanged.
+func repairToolCallPairing(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
+	answered := map[string]bool{}
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		if role != "tool" {
+			continue
+		}
+		if id := toolCallIDOf(message); id != "" {
+			answered[id] = true
+		}
+	}
+
+	changed := false
+	declared := map[string]bool{}
+	out := make([]map[string]interface{}, 0, len(messages))
+
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		switch role {
+		case "assistant":
+			ids := toolCallIDsOf(message)
+			if len(ids) == 0 {
+				out = append(out, message)
+				continue
+			}
+			unanswered := false
+			for _, id := range ids {
+				if !answered[id] {
+					unanswered = true
+					break
+				}
+			}
+			if !unanswered {
+				for _, id := range ids {
+					declared[id] = true
+				}
+				out = append(out, message)
+				continue
+			}
+			// At least one declared call is unanswered: keep the answered ones.
+			changed = true
+			kept := keepAnsweredToolCalls(message["tool_calls"], answered)
+			if len(kept) == 0 {
+				if !messageHasContent(message) {
+					continue // drop the empty assistant tool-call shell
+				}
+				stripped := make(map[string]interface{}, len(message))
+				for key, value := range message {
+					if key == "tool_calls" {
+						continue
+					}
+					stripped[key] = value
+				}
+				out = append(out, stripped)
+				continue
+			}
+			clone := make(map[string]interface{}, len(message))
+			for key, value := range message {
+				clone[key] = value
+			}
+			clone["tool_calls"] = kept
+			for _, call := range kept {
+				if id, _ := call["id"].(string); strings.TrimSpace(id) != "" {
+					declared[strings.TrimSpace(id)] = true
+				}
+			}
+			out = append(out, clone)
+		case "tool":
+			id := toolCallIDOf(message)
+			if id == "" || !declared[id] {
+				changed = true
+				continue
+			}
+			out = append(out, message)
+		default:
+			out = append(out, message)
+		}
+	}
+
+	if !changed {
+		return messages, false
+	}
+	return out, true
+}
+
+// keepAnsweredToolCalls filters a message's tool_calls to the ones that have a
+// matching tool result, preserving the original ordering and value shape.
+func keepAnsweredToolCalls(raw interface{}, answered map[string]bool) []map[string]interface{} {
+	kept := make([]map[string]interface{}, 0, 2)
+	appendCall := func(call map[string]interface{}) {
+		id, _ := call["id"].(string)
+		if answered[strings.TrimSpace(id)] {
+			kept = append(kept, call)
+		}
+	}
+	switch calls := raw.(type) {
+	case []map[string]interface{}:
+		for _, call := range calls {
+			appendCall(call)
+		}
+	case []interface{}:
+		for _, entry := range calls {
+			if call, ok := entry.(map[string]interface{}); ok {
+				appendCall(call)
+			}
+		}
+	}
+	return kept
+}
+
+// messageHasContent reports whether a message carries non-empty content.
+func messageHasContent(message map[string]interface{}) bool {
+	switch content := message["content"].(type) {
+	case string:
+		return strings.TrimSpace(content) != ""
+	case []map[string]interface{}:
+		return len(content) > 0
+	case []interface{}:
+		return len(content) > 0
+	}
+	return false
+}
+
+// shrinkOversizedContextMessages is the last-resort context fallback: when the
+// message count can no longer be reduced (for example a very long session whose
+// history is already only a few huge tool results), truncate the oversized
+// string contents instead. Leading system messages are never touched, so an
+// injected compaction summary survives intact.
+func shrinkOversizedContextMessages(messages []map[string]interface{}, maxChars int) ([]map[string]interface{}, bool) {
+	if maxChars <= 0 {
+		return messages, false
+	}
+	changed := false
+	out := make([]map[string]interface{}, len(messages))
+	copy(out, messages)
+	for i, message := range out {
+		if role, _ := message["role"].(string); role == "system" {
+			continue
+		}
+		content, ok := message["content"].(string)
+		if !ok || len(content) <= maxChars {
+			continue
+		}
+		notice := fmt.Sprintf("\n\n[context retry: content truncated from %d to %d chars to fit the model context]", len(content), maxChars)
+		clone := make(map[string]interface{}, len(message))
+		for key, value := range message {
+			clone[key] = value
+		}
+		clone["content"] = content[:maxChars] + notice
+		out[i] = clone
+		changed = true
+	}
+	if !changed {
+		return messages, false
+	}
+	// A cut can also leave an orphaned tool result behind, so keep the retry
+	// request valid.
+	repaired, _ := repairToolCallPairing(out)
+	if !hasConversationalTurn(repaired) {
+		return messages, false
+	}
+	return repaired, true
 }
 
 func truncateToolResultForModel(result string) string {
