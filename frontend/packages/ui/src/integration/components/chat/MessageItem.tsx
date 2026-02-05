@@ -41,6 +41,7 @@ import {
   resolveProviderRetryEvent,
 } from "./ProviderRetryEventWidget";
 import { revalidateChatData } from "../../lib/chat-cache";
+import { latestPendingConfirmableActionId } from "../../lib/confirmable-actions";
 import { isQueuePendingMessage, resolveStatusIndicator } from "../../lib/status-indicator";
 import { MoreHorizontal } from "lucide-react";
 
@@ -830,9 +831,7 @@ export function BotMessageItem({
   );
   // The latest still-unconfirmed action is the one blocking the chat, so its
   // widget auto-expands (the user may still collapse it manually).
-  const lastPendingActionId = [...confirmableActions]
-    .reverse()
-    .find((action) => (action.status ?? "pending") === "pending")?.action_id;
+  const lastPendingActionId = latestPendingConfirmableActionId(confirmableActions);
   const thinkingSteps = (message?.meta_data?.thinking_steps || [])
     .map((step) => ({
       text: typeof step?.text === "string" ? step.text.trim() : "",
