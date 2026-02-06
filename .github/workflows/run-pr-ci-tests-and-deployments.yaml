@@ -2753,6 +2753,15 @@ jobs:
               exit 0
             fi
 
+            if [ "$run_conclusion" = "cancelled" ]; then
+              # A superseded dispatched deploy (cancel-in-progress in the CI
+              # repo's per-deployment concurrency, e.g. after a rapid re-push) is
+              # not a failure: a newer run owns that deploy. Treating it as a
+              # hard failure turned the whole PR run red while the newer deploy
+              # was still running.
+              echo "Dispatched CI deployment workflow was superseded (cancelled); not a failure."
+              exit 0
+            fi
             echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
             exit 1
           done
@@ -3734,6 +3743,15 @@ jobs:
             if [ "$run_conclusion" = "success" ]; then
               exit 0
             fi
+            if [ "$run_conclusion" = "cancelled" ]; then
+              # A superseded dispatched deploy (cancel-in-progress in the CI
+              # repo's per-deployment concurrency, e.g. after a rapid re-push) is
+              # not a failure: a newer run owns that deploy. Treating it as a
+              # hard failure turned the whole PR run red while the newer deploy
+              # was still running.
+              echo "Dispatched CI deployment workflow was superseded (cancelled); not a failure."
+              exit 0
+            fi
             echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
             exit 1
           done
@@ -3905,6 +3923,15 @@ jobs:
 
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
             if [ "$run_conclusion" = "success" ]; then
+              exit 0
+            fi
+            if [ "$run_conclusion" = "cancelled" ]; then
+              # A superseded dispatched deploy (cancel-in-progress in the CI
+              # repo's per-deployment concurrency, e.g. after a rapid re-push) is
+              # not a failure: a newer run owns that deploy. Treating it as a
+              # hard failure turned the whole PR run red while the newer deploy
+              # was still running.
+              echo "Dispatched CI deployment workflow was superseded (cancelled); not a failure."
               exit 0
             fi
             echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
