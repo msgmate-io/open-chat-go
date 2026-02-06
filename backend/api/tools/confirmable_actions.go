@@ -702,7 +702,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 				},
 			}
 			eventFailedMetaBytes, _ := json.Marshal(eventFailedMeta)
-			eventFailedText := fmt.Sprintf("Confirmed action `%s` failed.", targetToolName)
+			eventFailedText := confirmableFailureText(targetToolName, execErr)
 			eventFailedMessage := database.Message{
 				ChatId:     chat.ID,
 				SenderId:   botUserID,
@@ -788,4 +788,32 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	response.UpdatedAction = selectedAction
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// confirmableFailureText builds the user-visible text for a failed confirmable
+// action. It includes the underlying tool error so the chat explains *why* the
+// action failed instead of showing a bare "failed" bubble; the untruncated error
+// is still recorded in the message metadata.
+func confirmableFailureText(toolName string, execErr error) string {
+	text := fmt.Sprintf("Confirmed action `%s` failed.", toolName)
+	if execErr == nil {
+		return text
+	}
+	reason := strings.TrimSpace(execErr.Error())
+	if reason == "" {
+		return text
+	}
+	return fmt.Sprintf("Confirmed action `%s` failed.\n\n%s", toolName, clipConfirmableError(reason))
+}
+
+// clipConfirmableError bounds the failure reason embedded in the chat text so a
+// pathological tool error cannot bloat the message. The metadata keeps the full
+// error.
+func clipConfirmableError(reason string) string {
+	const maxConfirmableErrorRunes = 4000
+	runes := []rune(reason)
+	if len(runes) <= maxConfirmableErrorRunes {
+		return reason
+	}
+	return string(runes[:maxConfirmableErrorRunes]) + "\n… (truncated)"
 }
