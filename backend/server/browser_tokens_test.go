@@ -90,6 +90,12 @@ func TestMatchRestrictedTokenRoute(t *testing.T) {
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/send", true},
 		{database.AudienceCoderTUI, http.MethodGet, "/contacts/default-bot", true},
 
+		// coder-tui can drive the inline confirmations it renders
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/msg-uuid/confirm-actions/act/execute", true},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/msg-uuid/confirm-actions/act/reject", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/msg-uuid/confirm-actions/act/execute", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/msg-uuid/confirm-actions/act/execute/extra", false},
+
 		// coder-tui is still default-deny elsewhere
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/create", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/contacts/list", false},
