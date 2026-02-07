@@ -56,6 +56,10 @@ var coderTUITokenRoutes = []browserTokenRoute{
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/list", Scope: ""},
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/send", Scope: ""},
+	// The forwarded TUI surfaces the coder's confirmable actions inline, so it
+	// can approve or reject a parked tool call exactly like the web widget.
+	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", Scope: ""},
+	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/reject", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/contacts/default-bot", Scope: ""},
 }
 
