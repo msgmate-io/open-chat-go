@@ -10,6 +10,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// CancelPendingConfirmableActionsForChat exposes the parked-confirmation voiding
+// to other core packages (the trusted agent-stop surface) so an agent managed
+// from outside its chat can be stopped authoritatively.
+func CancelPendingConfirmableActionsForChat(db *gorm.DB, chatID uint, cancelledByUUID string) (int, error) {
+	return cancelPendingConfirmableActionsForChat(db, chatID, cancelledByUUID)
+}
+
 // cancelPendingConfirmableActionsForChat voids every pending confirmable action
 // a chat is currently parked on.
 //
