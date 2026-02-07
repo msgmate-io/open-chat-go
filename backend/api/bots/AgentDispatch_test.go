@@ -199,10 +199,23 @@ func TestAgentListGetContinueAndStop(t *testing.T) {
 		t.Fatalf("expected the nudge message to be persisted, count=%d", msgCount)
 	}
 
-	// Get returns the interaction.
+	// Get returns the interaction plus its recent transcript.
 	getRR := agentDispatchRequest(t, DB, owner, "GET", "/api/v1/agents/interactions/"+chatUUID, map[string]string{"chat_uuid": chatUUID}, nil, client, inspector, hr.AgentGet)
 	if getRR.Code != 200 {
 		t.Fatalf("expected get status 200, got %d: %s", getRR.Code, getRR.Body.String())
+	}
+	var getBody struct {
+		Row      AgentInteractionView     `json:"row"`
+		Messages []AgentTranscriptMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &getBody); err != nil {
+		t.Fatalf("failed to decode get response: %v", err)
+	}
+	if getBody.Row.ChatUUID != chatUUID {
+		t.Fatalf("expected get row for chat %s, got %s", chatUUID, getBody.Row.ChatUUID)
+	}
+	if len(getBody.Messages) < 2 {
+		t.Fatalf("expected the transcript to include the start + nudge messages, got %d", len(getBody.Messages))
 	}
 
 	// Stop is idempotent and succeeds.
