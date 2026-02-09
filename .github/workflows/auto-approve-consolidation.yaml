@@ -77,7 +77,7 @@ jobs:
             gh api --paginate \
               "repos/${{ github.repository }}/commits/${head_sha}/pulls" \
               --jq '.[] | select(.base.ref == "main")
-                        | select(.head.repo.full_name == ${{ github.repository }})
+                        | select(.head.repo.full_name == "${{ github.repository }}")
                         | select(.head.ref | startswith("chore/consolidate-"))
                         | .number'
           )
