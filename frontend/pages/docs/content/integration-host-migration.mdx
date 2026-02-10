@@ -128,50 +128,91 @@ tools without importing the core. At the core boundary a small conversion
 
 ## Migration status
 
-Migrated onto `Host` so far (transitive `go list -deps` delta, `full` profile):
+Measured with `go list -deps` (and `-deps -test` for the test-only column) from
+the integration `main` revisions pinned in `integrations.lock.json`, in a Go
+workspace that uses `backend/` plus every integration module (`full` profile):
 
-| integration | packages | `backend/...` |
+| integration | packages | `backend/...` | test-only `backend/...` |
+| --- | --- | --- | --- |
+| `mcp` | 349 → 227 | 11 → 0 | 13 |
+| `rest_api_tool` | 338 → 228 | 6 → 0 | 0 |
+| `hive_mind` | 335 → 227 | 4 → 0 | 0 |
+| `builders_toolbox` | 335 → 227 | 4 → 0 | 13 |
+| `stats_and_usage` | 335 → 227 | 4 → 0 | 13 |
+| `tailscale` | 745 → 653 | 2 → 0 | 0 |
+| `kubernetes` | 1021 → 961 | 3 → 0 | 13 |
+| `ssh` | 350 → 252 | 4 → 0 | 13 |
+| `voice` | 422 → 320 | 4 → 0 | 0 |
+| `email` | 336 → 231 | 4 → 0 | 13 |
+| `notifications` | 336 → 229 | 4 → 0 | 13 |
+| `docker_sandbox` | 706 → 635 | 4 → 0 direct¹ | 2 |
+| `opencode` | 362 → 253 | 12 → 0 | 13 |
+| `msgmate_coder` | 361 → 245 | 11 → 0 | 13 |
+| `go_client` | 238 → 239 | 0 → 0 | 0 |
+| `tui` | 268 → 269 | 0 → 0 | 0 |
+
+¹ `docker_sandbox`'s own imports are clean; its transitive count is held up by
+the integrations it depends on that still import `backend/...`.
+
+**Read the test-only column carefully.** A migrated integration whose *test*
+package still imports `backend/...` is fully decoupled in the compiled artifact.
+Test imports do not enter the shipped dependency graph — that is exactly why the
+recipe below lets test packages keep importing `backend/database` and
+`backend/integrationhost` — so the production column is the one that matters for
+per-integration prebuilds. The test-only column is measured with
+`go list -deps -test` and is informational: it is what the Go-test CI job pays
+when it compiles the integration's tests.
+
+### Still coupled in the compiled artifact (8)
+
+| integration | `backend/...` | core packages still imported |
 | --- | --- | --- |
-| `mcp` | 349 → 226 | 11 → 0 |
-| `rest_api_tool` | 338 → 227 | 6 → 0 |
-| `hive_mind` | 335 → 226 | 4 → 0 |
-| `builders_toolbox` | 335 → 226 | 4 → 0 |
-| `stats_and_usage` | 335 → 226 | 4 → 0 |
-| `tailscale` | 745 → 652 | 2 → 0 |
-| `kubernetes` | 1021 → 960 | 3 → 0 |
-| `ssh` | 350 → 251 | 4 → 0 |
-| `voice` | 422 → 319 | 4 → 0 |
-| `email` | 336 → 230 | 4 → 0 |
-| `notifications` | 336 → 228 | 4 → 0 |
-| `docker_sandbox` | 706 → 706 | 4 → 0 direct¹ |
-| `opencode` | 362 → 253 | 12 → 0 |
-| `msgmate_coder` | 361 → 245 | 11 → 0 |
-| `go_client` | 238 → 238 | 0 → 0 |
+| `admin` | 15 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `integrationhost`, `integrationsettings`, `runtimecfg`, `server/util`, `servicecontrol`, `webtools`, `workqueue`, `workspacelease` |
+| `git` | 13 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `integrationhost`, `runtimecfg`, `server/util`, `webtools`, `workqueue`, `workspacelease` |
+| `matrix` | 11 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `runtimecfg`, `server/util`, `webtools`, `workqueue` |
+| `signal` | 11 | same set as `matrix` |
+| `slack` | 11 | same set as `matrix` |
+| `account_management` | 8 | `api`, `api/user`, `api/websocket`, `database`, `runtimecfg`, `secretstore`, `server/util`, `workqueue` |
+| `internal_automations` | 5 | `api/websocket`, `database`, `runtimecfg`, `server/util`, `workqueue` |
+| `tvault` | 5 | `api/websocket`, `database`, `runtimecfg`, `secretstore`, `server/util` |
 
-¹ `docker_sandbox`'s own imports are clean; its transitive count is unchanged
-because it depends on integrations that still import `backend/...`.
+These eight fall into exactly three groups, each blocked on one missing stable
+capability rather than on per-integration work:
 
-Still importing `backend/...` directly (candidates for follow-up increments):
+1. **Chat-backend / websocket registration** (`matrix`, `signal`, `slack`, `git`,
+   `admin`): they call `msgmate.RegisterChatBackend` / `chatstate` directly,
+   plus chat/contact/message tables. The **generic** form of this already exists
+   — `integrationinterface.RegisterChatBackend(ChatBackendSpec)` from package
+   init (HostVersion 3) — so these are mechanical migrations, not new surface.
+2. **Secret store** (`tvault`): it *implements* the core `secretstore.Provider`
+   and registers itself there. Decoupling needs a versioned Host capability for
+   the secret store (provider registration + seal/unseal), the one genuinely new
+   sub-interface in this list.
+3. **Business-logic moves** (`internal_automations`, `account_management`,
+   `admin`): `workqueue`, `server/util.GetAsynqClient`, the global DB, user
+   creation and account-state/email-verification write helpers. These are not
+   capability gaps but logic that has to move into the integration (or a Host
+   capability for the queue), which is why they are staged last.
 
-- **Chat-backend / websocket registration** (`backend/api/msgmate`,
-  `backend/api/websocket`, `backend/chatstate`): `matrix` (also needs user
-  creation), `signal`, `slack`, `git`, `admin`.
-- **Secret store** (`backend/secretstore`): `tvault`.
-- **Read-only core-table projections** (like the MCP/`stats_and_usage`/`kubernetes`
-  pattern): none left.
-- **Business-logic moves / non-Host capabilities**: `internal_automations`
-  (`backend/workqueue`, `server/util.GetAsynqClient`, global DB, bot-runtime
-  and chat/message tables), `account_management` (`backend/api/user`,
-  account-state/email-verification write helpers, `backend/workqueue`), `admin`
-  (`backend/api/msgmate`, `backend/integrationsettings`, `backend/servicecontrol`
-  and many read/write helpers).
-- `tui` has no `backend/...` imports (nothing to do).
+Per the design doc, the remaining edges must not be closed by adding
+integration-specific methods to `Host`; only general capabilities belong there.
 
-These remaining edges share one root cause: the core has no stable Host
-capability for the chat-backend/websocket registration (matrix, git, signal,
-slack, admin) or the secret store (tvault), so decoupling them means moving
-that logic into the integration or designing a new versioned Host capability —
-staged separately per the design doc.
+### Migration recipe additions (learned in this pass)
+
+- Keep test-only `backend/...` imports, but make them explicit: the artifact is
+  decoupled as soon as the production packages are, so the follow-up measurement
+  is `go list -deps <module>` (no `-test`) — then `grep -c '^backend/'`.
+- The measurement is only meaningful with a correct workspace: `GOWORK` must be
+  set to a `go.work` that `use`s `backend/` plus the integration modules, and the
+  module pattern passed to `go list` is resolved through that workspace, not from
+  the directory the checkouts happen to live in. Use
+  `backend/scripts/integration_dep_surface.py` to reproduce the table above.
+- `msgmate_coder_integration_wt*`, `msgmate_coder_ask_wt`,
+  `msgmate_coder_task_hardening` and `msgmate_coder_trust` all declare the
+  *same* module path (`github.com/msgmate-io/msgmate-coder-integration`). They
+  are worktree copies and must not be added to the same `go.work`
+  simultaneously, or `go` reports “module appears multiple times in workspace”;
+  measure the canonical checkout only.
 
 ### Host capability additions
 
