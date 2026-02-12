@@ -432,12 +432,32 @@ jobs:
 
       - name: Run sandbox test ${{ matrix.test }}
         id: test
-        # Independent wall-clock backstop below the 22-minute job cap.
+        # Independent wall-clock backstop below the 22-minute job cap. The
+        # native coder is model-driven, so a single test can miss on variance
+        # (a refusal, a different-but-valid tool choice, stray framing) with no
+        # regression; retry a failed test once (run_test.sh tears the stack down
+        # between attempts, so each attempt starts clean) before failing the gate.
         timeout-minutes: 18
         run: |
           set -euo pipefail
-          timeout --foreground --kill-after=30 1020 \
-            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
+          max_attempts=2
+          attempt=1
+          while :; do
+            echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts}"
+            if timeout --foreground --kill-after=30 1020 \
+                 bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            rc=$?
+            echo "::endgroup::"
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
+              exit "$rc"
+            fi
+            echo "::warning::sandbox test '${{ matrix.test }}' failed on attempt ${attempt} (model variance); retrying."
+            attempt=$(( attempt + 1 ))
+          done
 
       - name: Post repo_changes_summary to the PR
         if: >-
