@@ -1,0 +1,144 @@
+name: Auto-approve consolidation PRs
+
+# ci#538: let a green `chore/consolidate-*` PR merge autonomously.
+#
+# A consolidation PR is the single batch-verification PR against `main` and is
+# always authored by the automation identity (`cur1ousdude`), which cannot
+# approve its own PR. This workflow posts the one required approving review on
+# behalf of a *distinct* reviewer identity once the required PR CI run has
+# finished successfully, so the branch protection rule is satisfied without a
+# human click while the required status checks still gate the merge.
+#
+# Scope is deliberately narrow: only `chore/consolidate-*` PRs in this
+# repository, only after `Run PR CI Tests and Deployments` concluded success,
+# and only one approval is posted.
+#
+# Required admin step (one of):
+#   * Preferred: create a dedicated reviewer identity (GitHub App or a
+#     fine-grained PAT with `pull_requests: write`) and store its token as the
+#     repository secret `CONSOLIDATE_APPROVER_TOKEN`. This keeps the reviewer
+#     distinct from the PR author.
+#   * Or: enable repository setting *Actions > General > "Allow GitHub Actions
+#     to create and approve pull requests"* so the fallback `github.token`
+#     (identity `github-actions[bot]`) may approve.
+# If neither is configured (no secret and the setting is off), the run warns
+# and exits without approving; a human still has to approve.
+
+on:
+  workflow_run:
+    workflows:
+      - "Run PR CI Tests and Deployments"
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to approve (manual escape hatch)"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: auto-approve-consolidation-${{ github.event.workflow_run.head_branch || github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    name: Approve green consolidation PR
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    steps:
+      - name: Resolve candidate PRs
+        id: prs
+        env:
+          GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER_INPUT: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # The dispatch input reaches this shell; never interpolate it into
+            # the script (ci#538 review). Require a plain number and pass it
+            # through the environment instead.
+            case "$PR_NUMBER_INPUT" in
+              ''|*[!0-9]*)
+                echo "::error::pr_number must be a positive integer."
+                exit 1
+                ;;
+            esac
+            echo "prs=${PR_NUMBER_INPUT}" >> "$GITHUB_OUTPUT"
+            echo "Resolved manual PR #${PR_NUMBER_INPUT}."
+            exit 0
+          fi
+
+          head_sha="${{ github.event.workflow_run.head_sha }}"
+          # PRs whose head is this commit, restricted to consolidation branches
+          # targeting main in this repository.
+          mapfile -t numbers < <(
+            gh api --paginate \
+              "repos/${{ github.repository }}/commits/${head_sha}/pulls" \
+              --jq '.[] | select(.base.ref == "main")
+                        | select(.head.repo.full_name == "${{ github.repository }}")
+                        | select(.head.ref | startswith("chore/consolidate-"))
+                        | .number'
+          )
+          if [ "${#numbers[@]}" -eq 0 ]; then
+            echo "No consolidation PR found for ${head_sha}; nothing to approve."
+            echo "prs=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          joined="$(IFS=,; echo "${numbers[*]}")"
+          echo "prs=${joined}" >> "$GITHUB_OUTPUT"
+          echo "Consolidation PRs for ${head_sha}: ${joined}"
+
+      - name: Approve
+        if: ${{ steps.prs.outputs.prs != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          HAS_APPROVER_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN != '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          PRS: ${{ steps.prs.outputs.prs }}
+          RUN_URL: ${{ github.event.workflow_run.html_url || 'manual dispatch' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_APPROVER_TOKEN" != "true" ] && \
+             [ "$EVENT_NAME" = "workflow_run" ]; then
+            echo "::warning::No CONSOLIDATE_APPROVER_TOKEN configured; falling back to github.token. This only works when Actions are allowed to approve PRs."
+          fi
+
+          reviewer="$(gh api user --jq '.login' 2>/dev/null || echo '')"
+          echo "Approving as '${reviewer:-unknown}'."
+          failures=0
+          IFS=',' read -ra numbers <<< "$PRS"
+          for number in "${numbers[@]}"; do
+            echo "::group::PR #${number}"
+            author="$(gh pr view "$number" --repo "${{ github.repository }}" --json author --jq '.author.login' 2>/dev/null || echo '')"
+            if [ -n "$reviewer" ] && [ "$author" = "$reviewer" ]; then
+              echo "::warning::PR #${number} is authored by '${reviewer}'; cannot self-approve, skipping."
+              failures=$((failures + 1))
+              echo "::endgroup::"
+              continue
+            fi
+            if gh pr review "$number" --repo "${{ github.repository }}" --approve \
+                 --body "Auto-approved: the required PR CI run (${RUN_URL}) succeeded and this is a consolidation PR (ci#538)."; then
+              echo "Approved PR #${number}."
+            else
+              echo "::error::Failed to approve PR #${number}."
+              failures=$((failures + 1))
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$failures" -ne 0 ]; then
+            echo "::error::${failures} PR(s) could not be auto-approved."
+            exit 1
+          fi
