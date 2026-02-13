@@ -62,11 +62,22 @@ jobs:
         id: prs
         env:
           GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER_INPUT: ${{ github.event.inputs.pr_number }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "prs=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
-            echo "Resolved manual PR #${{ github.event.inputs.pr_number }}."
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # The dispatch input reaches this shell; never interpolate it into
+            # the script (ci#538 review). Require a plain number and pass it
+            # through the environment instead.
+            case "$PR_NUMBER_INPUT" in
+              ''|*[!0-9]*)
+                echo "::error::pr_number must be a positive integer."
+                exit 1
+                ;;
+            esac
+            echo "prs=${PR_NUMBER_INPUT}" >> "$GITHUB_OUTPUT"
+            echo "Resolved manual PR #${PR_NUMBER_INPUT}."
             exit 0
           fi
 
@@ -94,17 +105,21 @@ jobs:
         if: ${{ steps.prs.outputs.prs != '' }}
         env:
           GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          HAS_APPROVER_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN != '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          PRS: ${{ steps.prs.outputs.prs }}
+          RUN_URL: ${{ github.event.workflow_run.html_url || 'manual dispatch' }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.CONSOLIDATE_APPROVER_TOKEN }}" ] && \
-             [ "${{ github.event_name }}" = "workflow_run" ]; then
+          if [ "$HAS_APPROVER_TOKEN" != "true" ] && \
+             [ "$EVENT_NAME" = "workflow_run" ]; then
             echo "::warning::No CONSOLIDATE_APPROVER_TOKEN configured; falling back to github.token. This only works when Actions are allowed to approve PRs."
           fi
 
           reviewer="$(gh api user --jq '.login' 2>/dev/null || echo '')"
           echo "Approving as '${reviewer:-unknown}'."
           failures=0
-          IFS=',' read -ra numbers <<< "${{ steps.prs.outputs.prs }}"
+          IFS=',' read -ra numbers <<< "$PRS"
           for number in "${numbers[@]}"; do
             echo "::group::PR #${number}"
             author="$(gh pr view "$number" --repo "${{ github.repository }}" --json author --jq '.author.login' 2>/dev/null || echo '')"
@@ -115,7 +130,7 @@ jobs:
               continue
             fi
             if gh pr review "$number" --repo "${{ github.repository }}" --approve \
-                 --body "Auto-approved: the required PR CI run (${{ github.event.workflow_run.html_url || 'manual dispatch' }}) succeeded and this is a consolidation PR (ci#538)."; then
+                 --body "Auto-approved: the required PR CI run (${RUN_URL}) succeeded and this is a consolidation PR (ci#538)."; then
               echo "Approved PR #${number}."
             else
               echo "::error::Failed to approve PR #${number}."

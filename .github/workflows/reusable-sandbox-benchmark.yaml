@@ -444,12 +444,14 @@ jobs:
           attempt=1
           while :; do
             echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts}"
+            rc=0
             if timeout --foreground --kill-after=30 1020 \
                  bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"; then
               echo "::endgroup::"
               exit 0
+            else
+              rc=$?
             fi
-            rc=$?
             echo "::endgroup::"
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
