@@ -225,6 +225,93 @@ func TestAgentListGetContinueAndStop(t *testing.T) {
 	}
 }
 
+func TestAgentDispatchScopesManagementToCaller(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.agent.scope@example.com", false)
+	_, leadUser := createBotRuntimeForTest(t, DB, owner, "scope-lead")
+	workerRuntime, workerUser := createBotRuntimeForTest(t, DB, owner, "scope-worker")
+	_, intruderUser := createBotRuntimeForTest(t, DB, owner, "scope-intruder")
+
+	client, inspector, cleanup := setupAsynqTest(t)
+	defer cleanup()
+	hr := &BotsHandler{}
+
+	// The lead bot dispatches the worker on the owner's behalf.
+	rr := agentDispatchRequest(t, DB, &leadUser, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
+		Bot:              workerRuntime.UUID,
+		Message:          "do the work",
+		AutoContinue:     true,
+		AutoContinueMax:  5,
+		CompletionMarker: "<<DONE>>",
+	}, client, inspector, hr.AgentDispatch)
+	if rr.Code != 200 {
+		t.Fatalf("expected dispatch status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var dispatch map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &dispatch); err != nil {
+		t.Fatalf("failed to decode dispatch response: %v", err)
+	}
+	chatUUID, _ := dispatch["chat_uuid"].(string)
+	if chatUUID == "" {
+		t.Fatalf("expected chat_uuid in dispatch response: %s", rr.Body.String())
+	}
+
+	// The dispatcher identity and the attached auto-continue budget are recorded.
+	var chat database.Chat
+	if err := DB.Preload("SharedConfig").Where("uuid = ?", chatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected interaction chat to exist: %v", err)
+	}
+	config := map[string]interface{}{}
+	_ = json.Unmarshal(chat.SharedConfig.ConfigData, &config)
+	meta, _ := config["agent_dispatch"].(map[string]interface{})
+	if got, _ := meta["dispatched_by"].(string); got != leadUser.UUID {
+		t.Fatalf("expected dispatched_by=%s, got %q", leadUser.UUID, got)
+	}
+	if got, _ := meta["auto_continue_max"].(float64); int(got) != 5 {
+		t.Fatalf("expected auto_continue_max=5 recorded, got %v", meta["auto_continue_max"])
+	}
+
+	// The lead (dispatcher), the worker (participant) and the owner (human) may
+	// read/steer it.
+	for name, caller := range map[string]*database.User{
+		"dispatcher": &leadUser,
+		"worker":     &workerUser,
+		"owner":      owner,
+	} {
+		getRR := agentDispatchRequest(t, DB, caller, "GET", "/api/v1/agents/interactions/"+chatUUID, map[string]string{"chat_uuid": chatUUID}, nil, client, inspector, hr.AgentGet)
+		if getRR.Code != 200 {
+			t.Fatalf("%s: expected get status 200, got %d: %s", name, getRR.Code, getRR.Body.String())
+		}
+	}
+
+	// An unrelated bot acting for the same owner must not reach it.
+	intruderGet := agentDispatchRequest(t, DB, &intruderUser, "GET", "/api/v1/agents/interactions/"+chatUUID, map[string]string{"chat_uuid": chatUUID}, nil, client, inspector, hr.AgentGet)
+	if intruderGet.Code != 404 {
+		t.Fatalf("intruder: expected get status 404, got %d: %s", intruderGet.Code, intruderGet.Body.String())
+	}
+	intruderStop := agentDispatchRequest(t, DB, &intruderUser, "POST", "/api/v1/agents/interactions/"+chatUUID+"/stop", map[string]string{"chat_uuid": chatUUID}, nil, client, inspector, hr.AgentStop)
+	if intruderStop.Code != 404 {
+		t.Fatalf("intruder: expected stop status 404, got %d: %s", intruderStop.Code, intruderStop.Body.String())
+	}
+
+	// The intruder's list must not include the interaction.
+	listRR := agentDispatchRequest(t, DB, &intruderUser, "GET", "/api/v1/agents/interactions", nil, nil, client, inspector, hr.AgentList)
+	if listRR.Code != 200 {
+		t.Fatalf("intruder: expected list status 200, got %d: %s", listRR.Code, listRR.Body.String())
+	}
+	var listBody struct {
+		Rows []AgentInteractionView `json:"rows"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("failed to decode intruder list: %v", err)
+	}
+	for _, row := range listBody.Rows {
+		if row.ChatUUID == chatUUID {
+			t.Fatalf("intruder list must not include the lead-dispatched chat %s", chatUUID)
+		}
+	}
+}
+
 func containsString(values database.StringSliceJSON, target string) bool {
 	for _, value := range values {
 		if value == target {
