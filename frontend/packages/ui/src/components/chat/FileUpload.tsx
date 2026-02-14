@@ -51,6 +51,22 @@ export function isImageMimeType(mimeType?: string): boolean {
   return typeof mimeType === "string" && mimeType.startsWith("image/");
 }
 
+/**
+ * Pure helper: does this drag payload carry files (as opposed to a text
+ * selection or a link)? Only file drags should open the drop affordance and be
+ * accepted on drop, so dragging selected text over the composer is left alone.
+ */
+export function hasFileDrag(dataTransfer: DataTransfer | null | undefined): boolean {
+  if (!dataTransfer) return false;
+  return Array.from(dataTransfer.types ?? []).includes("Files");
+}
+
+/** Pure helper: the files carried by a drop event, as a plain array. */
+export function filesFromDataTransfer(dataTransfer: DataTransfer | null | undefined): File[] {
+  if (!dataTransfer) return [];
+  return Array.from(dataTransfer.files ?? []);
+}
+
 export function isAllowedUpload(file: File): boolean {
   if (file.size > MAX_UPLOAD_SIZE) {
     alert("File too large. Maximum size is 5MB.");
@@ -172,6 +188,91 @@ export function useFileUpload({
     uploadFiles,
     openFilePicker: () => fileInputRef.current?.click(),
   };
+}
+
+/**
+ * Drag-and-drop source for the composer. Returns a small set of props to
+ * spread onto the drop target and an `isDragging` flag for the visual
+ * affordance. A depth counter keeps the highlight stable while the pointer
+ * moves across the target's own children (each child fires dragenter/leave).
+ */
+export function useFileDropzone({
+  onFilesDropped,
+  disabled = false,
+}: {
+  onFilesDropped: (files: File[]) => void | Promise<void>;
+  disabled?: boolean;
+}) {
+  const [isDragging, setIsDragging] = useState(false);
+  const dragDepth = useRef(0);
+
+  const reset = useCallback(() => {
+    dragDepth.current = 0;
+    setIsDragging(false);
+  }, []);
+
+  const onDragEnter = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (disabled || !hasFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      dragDepth.current += 1;
+      setIsDragging(true);
+    },
+    [disabled]
+  );
+
+  const onDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (disabled || !hasFileDrag(event.dataTransfer)) return;
+      // Preventing the default is what marks the element as a valid drop
+      // target; without it the browser refuses the drop.
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    },
+    [disabled]
+  );
+
+  const onDragLeave = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (disabled || !hasFileDrag(event.dataTransfer)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setIsDragging(false);
+    },
+    [disabled]
+  );
+
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (disabled || !hasFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      const files = filesFromDataTransfer(event.dataTransfer);
+      reset();
+      if (files.length > 0) {
+        void onFilesDropped(files);
+      }
+    },
+    [disabled, onFilesDropped, reset]
+  );
+
+  return {
+    isDragging,
+    dropzoneProps: { onDragEnter, onDragOver, onDragLeave, onDrop },
+  };
+}
+
+/**
+ * Visual affordance shown over the composer while files are dragged onto it.
+ * Purely presentational; the drop target itself lives on the wrapper.
+ */
+export function FileDropOverlay({ visible }: { visible: boolean }) {
+  if (!visible) return null;
+
+  return (
+    <div className="message-composer-dropzone" role="presentation" aria-hidden="true">
+      <Paperclip className="size-5" />
+      <span>Drop files to attach</span>
+    </div>
+  );
 }
 
 export function getFileIcon(mimeType?: string) {
