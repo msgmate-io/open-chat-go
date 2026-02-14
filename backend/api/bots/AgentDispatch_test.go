@@ -1,6 +1,7 @@
 package bots
 
 import (
+	"backend/api/chats"
 	"backend/database"
 	"bytes"
 	"context"
@@ -222,6 +223,56 @@ func TestAgentListGetContinueAndStop(t *testing.T) {
 	stopRR := agentDispatchRequest(t, DB, owner, "POST", "/api/v1/agents/interactions/"+chatUUID+"/stop", map[string]string{"chat_uuid": chatUUID}, nil, client, inspector, hr.AgentStop)
 	if stopRR.Code != 200 {
 		t.Fatalf("expected stop status 200, got %d: %s", stopRR.Code, stopRR.Body.String())
+	}
+}
+
+func TestAgentContinueResumesAutoContinue(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.agent.resume@example.com", false)
+	bot := createBotForInteractionTest(t, DB, owner, "resume-agent")
+
+	client, inspector, cleanup := setupAsynqTest(t)
+	defer cleanup()
+	hr := &BotsHandler{}
+
+	rr := agentDispatchRequest(t, DB, owner, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
+		Bot:          bot.UUID,
+		Message:      "start",
+		AutoContinue: true,
+	}, client, inspector, hr.AgentDispatch)
+	if rr.Code != 200 {
+		t.Fatalf("expected dispatch status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var dispatch map[string]interface{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &dispatch)
+	chatUUID, _ := dispatch["chat_uuid"].(string)
+
+	var chat database.Chat
+	if err := DB.Where("uuid = ?", chatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected chat: %v", err)
+	}
+	if err := chats.StopAutoContinueForChat(DB, chat.ID, "needs_human"); err != nil {
+		t.Fatalf("stop loop: %v", err)
+	}
+	if status := chats.AutoContinueStatusForChat(DB, chat); !status.Enabled || status.StopReason != "needs_human" {
+		t.Fatalf("expected a stopped loop, got %+v", status)
+	}
+
+	continueRR := agentDispatchRequest(t, DB, owner, "POST",
+		"/api/v1/agents/interactions/"+chatUUID+"/continue",
+		map[string]string{"chat_uuid": chatUUID},
+		map[string]interface{}{"message": "keep going", "resume_auto_continue": true},
+		client, inspector, hr.AgentContinue)
+	if continueRR.Code != 200 {
+		t.Fatalf("expected continue status 200, got %d: %s", continueRR.Code, continueRR.Body.String())
+	}
+	var continueBody map[string]interface{}
+	_ = json.Unmarshal(continueRR.Body.Bytes(), &continueBody)
+	if resumed, _ := continueBody["auto_continue_resumed"].(bool); !resumed {
+		t.Fatalf("expected auto_continue_resumed=true, got %s", continueRR.Body.String())
+	}
+	if status := chats.AutoContinueStatusForChat(DB, chat); status.StopReason != "" {
+		t.Fatalf("expected the loop to be resumed, got %+v", status)
 	}
 }
 
