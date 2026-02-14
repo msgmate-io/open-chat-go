@@ -36,7 +36,7 @@ export {
   MessageLink,
 } from "./components/chat/MessageItem";
 export { ConfirmableActionWidget } from "./components/chat/ConfirmableActionWidget";
-export type { ConfirmableAction } from "./components/chat/ConfirmableActionWidget";
+export type { ConfirmableAction, ConfirmableActionExtraControls } from "./components/chat/ConfirmableActionWidget";
 export {
   mergeConfirmableAction,
   extractConfirmableActionsFromMeta,

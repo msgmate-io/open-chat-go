@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, Check, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
@@ -35,6 +35,18 @@ type ConfirmableActionExecuteResponse = {
   success: boolean;
   status?: string;
   error?: string;
+};
+
+/**
+ * The control object handed to `extraActions` so an integration can offer a
+ * per-action alternative (eg "switch to autonomous") and then run the pending
+ * action with the same semantics as the built-in Confirm and execute button.
+ */
+export type ConfirmableActionExtraControls = {
+  /** Execute the pending action with the currently proposed input. */
+  execute: () => Promise<void>;
+  /** True while an execute/reject request is in flight. */
+  busy: boolean;
 };
 
 function isCoderFileAction(action: ConfirmableAction): boolean {
@@ -145,6 +157,7 @@ export function ConfirmableActionWidget({
   executionBlockedReason,
   autoExpand,
   onExecuted,
+  extraActions,
 }: {
   chatUUID: string;
   messageUUID: string;
@@ -157,6 +170,16 @@ export function ConfirmableActionWidget({
    */
   autoExpand?: boolean;
   onExecuted?: () => void;
+  /**
+   * Optional extra controls rendered in the pending action's button row, after
+   * Confirm/Reject. It is passed a small control object so an integration can
+   * offer a per-action alternative that changes how the *chat* handles
+   * confirmations and then run the pending action itself — e.g. the msgmate
+   * coder's "switch to autonomous" (trust the chat so no further confirmation is
+   * asked, ci#548). Only called for a pending action, so the core hardcodes no
+   * integration-specific policy.
+   */
+  extraActions?: (controls: ConfirmableActionExtraControls) => ReactNode;
 }) {
   const [inputText] = useState(JSON.stringify(action.input ?? {}, null, 2));
   const [busy, setBusy] = useState(false);
@@ -473,6 +496,10 @@ export function ConfirmableActionWidget({
                   </Button>
                 </div>
               </div>
+            ) : null}
+
+            {isPending && extraActions ? (
+              <div className="flex flex-wrap items-center gap-2">{extraActions({ execute: executeAction, busy })}</div>
             ) : null}
           </div>
         </CollapsibleContent>
