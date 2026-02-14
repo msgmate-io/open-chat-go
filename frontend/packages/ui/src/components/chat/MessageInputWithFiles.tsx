@@ -3,10 +3,12 @@ import { Search } from "lucide-react";
 import {
   AttachFileMenuItem,
   AttachImageMenuItem,
+  FileDropOverlay,
   FilePickerInput,
   IMAGE_UPLOAD_ACCEPT,
   FILE_UPLOAD_ACCEPT,
   UploadedFilesPreview,
+  useFileDropzone,
   useFileUpload,
   type UploadedFileRecord,
 } from "./FileUpload";
@@ -49,6 +51,14 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
     // callback still finds a mounted input when the menu closes.
     const fileUpload = useFileUpload({ onFileUploaded: handleFileUploaded, reuploadToOpenAI });
     const imageUpload = useFileUpload({ onFileUploaded: handleFileUploaded, reuploadToOpenAI });
+
+    // Web drag-and-drop: dropping files anywhere on the composer uploads them
+    // through the same multi-file path as the pickers. Disabled while an upload
+    // is already in flight to avoid stacking drop targets.
+    const dropzone = useFileDropzone({
+      onFilesDropped: fileUpload.uploadFiles,
+      disabled: fileUpload.isUploading,
+    });
 
     const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
       onPaste?.(event);
@@ -98,38 +108,41 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
           accept={IMAGE_UPLOAD_ACCEPT}
           onFileSelect={imageUpload.handleFileSelect}
         />
-        <MessageComposer
-          ref={ref}
-          {...props}
-          setText={setText}
-          botConfig={botConfig}
-          onSendMessage={handleSendMessage}
-          onPaste={handlePaste}
-          hasAttachments={uploadedFiles.length > 0}
-          placeholder={props.placeholder ?? "Send message to Msgmate.io"}
-          attachmentsPreview={
-            <UploadedFilesPreview uploadedFiles={uploadedFiles} onFileRemoved={handleFileRemoved} />
-          }
-          footerOptions={
-            <ComposerOptionsMenu>
-              <AttachFileMenuItem
-                onSelect={fileUpload.openFilePicker}
-                uploading={fileUpload.isUploading}
-              />
-              <AttachImageMenuItem
-                onSelect={imageUpload.openFilePicker}
-                uploading={imageUpload.isUploading}
-              />
-              {toolsEnabled ? (
-                <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
-                  <Search className="size-3.5" />
-                  Tools enabled
-                </div>
-              ) : null}
-              {footerMenuItems}
-            </ComposerOptionsMenu>
-          }
-        />
+        <div className="relative w-full shrink-0" {...dropzone.dropzoneProps}>
+          <MessageComposer
+            ref={ref}
+            {...props}
+            setText={setText}
+            botConfig={botConfig}
+            onSendMessage={handleSendMessage}
+            onPaste={handlePaste}
+            hasAttachments={uploadedFiles.length > 0}
+            placeholder={props.placeholder ?? "Send message to Msgmate.io"}
+            attachmentsPreview={
+              <UploadedFilesPreview uploadedFiles={uploadedFiles} onFileRemoved={handleFileRemoved} />
+            }
+            footerOptions={
+              <ComposerOptionsMenu>
+                <AttachFileMenuItem
+                  onSelect={fileUpload.openFilePicker}
+                  uploading={fileUpload.isUploading}
+                />
+                <AttachImageMenuItem
+                  onSelect={imageUpload.openFilePicker}
+                  uploading={imageUpload.isUploading}
+                />
+                {toolsEnabled ? (
+                  <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+                    <Search className="size-3.5" />
+                    Tools enabled
+                  </div>
+                ) : null}
+                {footerMenuItems}
+              </ComposerOptionsMenu>
+            }
+          />
+          <FileDropOverlay visible={dropzone.isDragging} />
+        </div>
       </>
     );
   }
