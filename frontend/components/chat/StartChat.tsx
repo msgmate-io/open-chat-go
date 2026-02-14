@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BotSelector, Button, ComposerOptionsMenu, DropdownMenuItem, MessageInput, LoadingSpinner, Text, TextTypes } from "@open-chat-go/ui";
+import { BotSelector, Button, DropdownMenuItem, MessageInputWithFiles, LoadingSpinner, Text, TextTypes } from "@open-chat-go/ui";
 import { BotStartDetails, type StartBotRecord } from './BotStartDetails';
 import { CollapseIndicator } from "@open-chat-go/ui";
 import { useSidePanelCollapse } from "@open-chat-go/ui";
@@ -196,6 +196,7 @@ export function StartChat({
         nextRoute: "chat" | "voice" = "chat",
         toolInitOverride?: Record<string, unknown>,
         sharedConfigOverride?: Record<string, unknown>,
+        attachmentsOverride?: Array<{ file_id: string; display_name?: string }>,
     ) => {
         if (isStarting) return
 
@@ -234,6 +235,18 @@ export function StartChat({
                 }
             }
 
+            // Attachments can arrive two ways before the chat exists: files the
+            // mobile share sheet handed us, and files uploaded through the
+            // composer's attach/drop/paste affordances. Both go on the first
+            // message of the freshly created chat.
+            const attachments = [
+                ...pendingAttachments.map((attachment) => ({
+                    file_id: attachment.fileId,
+                    display_name: attachment.displayName || attachment.fileName,
+                })),
+                ...(attachmentsOverride ?? []),
+            ]
+
             const response = await fetch("/api/v1/chats/create", {
                 method: "POST",
                 credentials: "include",
@@ -243,14 +256,7 @@ export function StartChat({
                     first_message: text.trim(),
                     chat_type: "conversation",
                     shared_config: sharedConfig,
-                    ...(pendingAttachments.length > 0
-                        ? {
-                              attachments: pendingAttachments.map((attachment) => ({
-                                  file_id: attachment.fileId,
-                                  display_name: attachment.displayName || attachment.fileName,
-                              })),
-                          }
-                        : {}),
+                    ...(attachments.length > 0 ? { attachments } : {}),
                 }),
             })
 
@@ -444,29 +450,30 @@ export function StartChat({
                             setText={setText}
                         />
                     ) : (
-                        <MessageInput
+                        <MessageInputWithFiles
                             ref={textareaRef}
                             text={text}
                             setText={setText}
-                            onSendMessage={() => startChat("chat")}
+                            onSendMessage={(attachments) => startChat("chat", undefined, undefined, attachments)}
                             isLoading={isStarting}
+                            botConfig={selectedModelConfig as { backend?: string; tools?: string[]; reasoning?: boolean }}
                             placeholder={isBotContact ? "Ask something to start the interaction..." : "Write your first message..."}
-                            footerOptions={
-                                isBotContact ? (
-                                    <ComposerOptionsMenu>
-                                        {isBotContact && isVoiceIntegrationEnabled ? (
-                                            <DropdownMenuItem
-                                                onClick={() => startChat("voice")}
-                                                disabled={isStarting}
-                                                className="gap-2"
-                                            >
-                                                <Mic className="size-4" />
-                                                Voice mode
-                                            </DropdownMenuItem>
-                                        ) : null}
+                            footerMenuItems={
+                                <>
+                                    {isBotContact && isVoiceIntegrationEnabled ? (
+                                        <DropdownMenuItem
+                                            onClick={() => startChat("voice")}
+                                            disabled={isStarting}
+                                            className="gap-2"
+                                        >
+                                            <Mic className="size-4" />
+                                            Voice mode
+                                        </DropdownMenuItem>
+                                    ) : null}
+                                    {isBotContact ? (
                                         <MessageInputOptionsMenuItems getCommand={buildStartRunCommand} />
-                                    </ComposerOptionsMenu>
-                                ) : undefined
+                                    ) : null}
+                                </>
                             }
                         />
                     )}

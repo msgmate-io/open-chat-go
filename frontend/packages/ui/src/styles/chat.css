@@ -126,6 +126,12 @@
     @apply flex flex-wrap gap-2;
   }
 
+  /* Drag-and-drop affordance: covers the composer while files are dragged over
+     it. Matches the composer's radius so the dashed border reads as a dropzone. */
+  .message-composer-dropzone {
+    @apply pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 rounded-3xl border-2 border-dashed border-primary bg-background/85 text-sm font-medium text-primary backdrop-blur-sm;
+  }
+
   /* On small/native screens the row gutters and bubble padding shrink so the
      transcript keeps as much horizontal room as possible; desktop keeps the
      roomier spacing. `min-w-0`/`max-w-full` plus the markdown wrapping rules
