@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatToolDuration,
   resolveToolCallStatus,
   summarizeToolCalls,
   toolCallCategory,
+  toolCallDurationMs,
+  toolCallStartedAtMs,
   toolCallSummary,
   toolDisplayLabel,
   toolResultPreview,
@@ -134,5 +137,25 @@ describe("toolStatusDotClasses", () => {
   it("animates only while a call is ongoing", () => {
     expect(toolStatusDotClasses("ongoing")).toContain("animate-pulse");
     expect(toolStatusDotClasses("succeeded")).not.toContain("animate-pulse");
+  });
+});
+
+describe("tool call timing (ci#569)", () => {
+  it("reads started_at and duration_ms from number or string payloads", () => {
+    expect(toolCallStartedAtMs({ started_at: 1_700_000_000_000 })).toBe(1_700_000_000_000);
+    expect(toolCallStartedAtMs({ started_at: "1700000000000" })).toBe(1_700_000_000_000);
+    expect(toolCallStartedAtMs({ started_at: 0 })).toBeUndefined();
+    expect(toolCallStartedAtMs({})).toBeUndefined();
+    expect(toolCallDurationMs({ duration_ms: 820 })).toBe(820);
+    expect(toolCallDurationMs({ duration_ms: "820" })).toBe(820);
+    expect(toolCallDurationMs({ duration_ms: 0 })).toBe(0);
+    expect(toolCallDurationMs({})).toBeUndefined();
+  });
+
+  it("formats sub-second, second and minute durations compactly", () => {
+    expect(formatToolDuration(820)).toBe("820ms");
+    expect(formatToolDuration(1400)).toBe("1.4s");
+    expect(formatToolDuration(63_000)).toBe("1m 03s");
+    expect(formatToolDuration(Number.NaN)).toBe("");
   });
 });
