@@ -44,6 +44,13 @@ import (
 // interaction it participates in or that it dispatched (ci#540). A dispatch
 // records the dispatching bot as `agent_dispatch.dispatched_by` so a lead agent
 // can steer the agents it started.
+//
+// A bot may additionally opt into a wider team/repo-tag scope by declaring
+// `agent_scope_tags` in its (runtime) shared config, eg
+// `"agent_scope_tags": ["repo:open-chat-go"]`. An automated caller whose
+// declared scope tags match an interaction's tags may manage that interaction
+// even when it neither participates in nor dispatched it. The key is opt-in:
+// absent it the gate above is unchanged (least privilege).
 
 // resolveActingUser maps a session principal to the user an agent-management call
 // acts for. A human session acts for itself; an automated (bot) session acts for
@@ -607,7 +614,10 @@ func findManageableInteraction(DB *gorm.DB, caller, actingUser *database.User, c
 //   - an automated caller may only manage an interaction it is the automated
 //     participant of, or that it dispatched (recorded as
 //     `agent_dispatch.dispatched_by`), so one owner's unrelated bot cannot
-//     enumerate or stop another agent's chat.
+//     enumerate or stop another agent's chat;
+//   - an automated caller that declared `agent_scope_tags` in its shared
+//     config may additionally manage an interaction whose tags match one of the
+//     declared scope tags (the opt-in team/repo-tag scope, ci#540 follow-up).
 func callerMayManageInteraction(DB *gorm.DB, caller, actingUser *database.User, chat database.Chat) bool {
 	if caller == nil {
 		return false
@@ -618,7 +628,81 @@ func callerMayManageInteraction(DB *gorm.DB, caller, actingUser *database.User, 
 	if bot := automatedParticipant(chat); bot != nil && bot.ID == caller.ID {
 		return true
 	}
-	return chatDispatchedBy(DB, chat, caller.UUID)
+	if chatDispatchedBy(DB, chat, caller.UUID) {
+		return true
+	}
+	return scopeTagsMatchInteraction(callerDeclaredScopeTags(DB, caller), chat.Tags)
+}
+
+// agentScopeTagsConfigKey is the shared-config key an automated caller uses to
+// opt into the wider team/repo-tag management scope (ci#540 follow-up). It holds
+// a list of tags, eg `["repo:open-chat-go"]`.
+const agentScopeTagsConfigKey = "agent_scope_tags"
+
+// callerDeclaredScopeTags returns the scope tags an automated caller declared in
+// its bot runtime's shared config. Humans have no declared scope (they manage
+// their own interactions through the acting-user scope) and a bot without the
+// key returns nil, so the least-privilege participant-or-dispatcher gate stays
+// unchanged unless a bot explicitly opts in.
+func callerDeclaredScopeTags(DB *gorm.DB, caller *database.User) []string {
+	if caller == nil || !caller.IsAutomated {
+		return nil
+	}
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("bot_user_id = ?", caller.ID).First(&runtime).Error; err != nil {
+		return nil
+	}
+	if len(runtime.DefaultSharedConfig) == 0 {
+		return nil
+	}
+	config := map[string]interface{}{}
+	if err := json.Unmarshal(runtime.DefaultSharedConfig, &config); err != nil {
+		return nil
+	}
+	return normalizeScopeTags(config[agentScopeTagsConfigKey])
+}
+
+// normalizeScopeTags turns the raw shared-config value of `agent_scope_tags`
+// into a normalized tag list. The value may be a JSON array of strings or a
+// single string; anything else (or an empty list) yields nil.
+func normalizeScopeTags(raw interface{}) []string {
+	var tags []string
+	switch value := raw.(type) {
+	case []interface{}:
+		for _, item := range value {
+			if s, ok := item.(string); ok {
+				tags = append(tags, s)
+			}
+		}
+	case []string:
+		tags = value
+	case string:
+		tags = []string{value}
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return []string(database.NormalizeChatTags(tags))
+}
+
+// scopeTagsMatchInteraction reports whether any of the given scope tags matches
+// one of the interaction's tags. Tags are compared after the same normalization
+// used when they are written (lowercased, trimmed), so matching is exact and
+// predictable.
+func scopeTagsMatchInteraction(scopeTags []string, chatTags database.StringSliceJSON) bool {
+	if len(scopeTags) == 0 {
+		return false
+	}
+	declared := map[string]struct{}{}
+	for _, tag := range database.NormalizeChatTags(scopeTags) {
+		declared[tag] = struct{}{}
+	}
+	for _, tag := range database.NormalizeChatTags([]string(chatTags)) {
+		if _, ok := declared[tag]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // chatDispatchedBy reports whether the interaction's agent_dispatch metadata
