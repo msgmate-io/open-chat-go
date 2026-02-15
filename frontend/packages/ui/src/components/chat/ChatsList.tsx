@@ -24,6 +24,12 @@ import { Activity, Ban, Calendar, Check, Search, SlidersHorizontal, Tag, X } fro
 import { cn } from "../../lib/utils"
 import { useCurrentUser } from "../../integration/hooks/use-current-user"
 import { listChatSearchActions } from "../../integration/components/chat/chat-ui/registry"
+import {
+    CHAT_LIST_PAGE_SIZE,
+    chatStatesRefreshInterval,
+    collectAutomatedChatUuids,
+    hasMoreChats,
+} from "./chat-list-helpers"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
@@ -570,13 +576,20 @@ export function ChatsList({
     const hasTimeFilter = Boolean(timeFrom || timeTo)
     const hasStateFilter = stateFilter !== null
     const extraFilterCount = (hasSearchFilter ? 1 : 0) + (hasTagFilter ? 1 : 0) + (hasTimeFilter ? 1 : 0) + (hasNonDefaultExcludeTagFilter ? 1 : 0) + (hasStateFilter ? 1 : 0)
-    
+
+    // Fetch-pagination: the sidebar renders one page of chats and grows the
+    // requested limit as the user asks for older chats, so it never loads the
+    // whole history up front (ci#579).
+    const [chatLimit, setChatLimit] = useState(CHAT_LIST_PAGE_SIZE)
+
     const chatsListUrl = useCallback(() => {
         if (!showChats) {
             return null
         }
         const params = new URLSearchParams()
         params.set("chat_types", serializeChatTypes(chatTypeFilters))
+        params.set("page", "1")
+        params.set("limit", String(chatLimit))
         if (searchQuery.trim()) {
             params.set(SEARCH_QUERY_PARAM, searchQuery.trim())
         }
@@ -596,7 +609,13 @@ export function ChatsList({
             params.set("scope", "all")
         }
         return `/api/v1/chats/list?${params.toString()}`
-    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin])
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin, chatLimit])
+
+    // Changing any filter changes the result set, so collapse back to the first
+    // page instead of keeping a stale "load more" depth.
+    useEffect(() => {
+        setChatLimit(CHAT_LIST_PAGE_SIZE)
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, seeAll])
 
     const { data: availableTags, mutate: mutateAvailableTags } = useSWR<{ tags?: string[] }>(
         showChats ? `/api/v1/chats/tags` : null,
@@ -611,7 +630,10 @@ export function ChatsList({
         return Array.from(set).sort()
     }, [availableTags, tagFilters, excludeTagFilters])
 
-    const { data: chats, isLoading, mutate: mutateChats } = useSWR(chatsListUrl, fetcher, {
+    const { data: chats, isLoading, isValidating, mutate: mutateChats } = useSWR(chatsListUrl, fetcher, {
+        // Keep the previous page visible while a "load more" request grows the
+        // limit, so the list does not flash back to a skeleton (ci#579).
+        keepPreviousData: true,
         // Keep the list fresh so newly created chats show up without a manual
         // reload, but pause polling while the tab is hidden.
         refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 7000),
@@ -622,31 +644,37 @@ export function ChatsList({
         fetcher,
     )
 
+    // Automated chats are the only ones that carry a live state indicator.
+    const automatedChatUuids = useMemo(() => collectAutomatedChatUuids(chats?.rows), [chats])
+
     const botChatUuids = useMemo(() => {
-        if (!chats?.rows) {
+        if (automatedChatUuids.size === 0) {
             return null
         }
-        const uuids = chats.rows
-            .filter((chat: { uuid?: string; partner?: { is_automated?: boolean } }) =>
-                Boolean(chat?.uuid && chat?.partner?.is_automated)
-            )
-            .map((chat: { uuid?: string }) => chat.uuid as string)
-        return uuids.length > 0 ? uuids : null
-    }, [chats])
+        return Array.from(automatedChatUuids)
+    }, [automatedChatUuids])
 
     const chatStatesKey = useMemo(
         () => (botChatUuids ? `/api/v1/chats/states?chat_uuids=${botChatUuids.join(",")}` : null),
         [botChatUuids]
     )
 
-    const { data: chatStates, mutate: mutateChatStates } = useSWR(
+    const { data: chatStates, error: chatStatesError, mutate: mutateChatStates } = useSWR(
         chatStatesKey,
         fetcher,
         {
-            refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 3000),
+            // Poll fast only while an interaction is live; back off when every
+            // listed interaction is idle/finished (ci#579).
+            refreshInterval: (latest: { states?: Array<{ state?: string }> } | undefined) =>
+                chatStatesRefreshInterval(latest?.states, typeof document !== "undefined" && document.hidden),
             revalidateOnFocus: true,
         }
     )
+
+    // The batch state request has not resolved yet; automated rows show a
+    // placeholder dot in the meantime so their row does not shift. On error we
+    // stop reserving the slot rather than pulsing forever.
+    const chatStatesLoading = chatStatesKey !== null && chatStates === undefined && !chatStatesError
 
     const { data: actionTasksCount, mutate: mutateActionTasksCount } = useSWR<{ count: number }>(
         showDefaultChats ? `/api/v1/chats/action-tasks?count_only=1` : null,
@@ -938,6 +966,8 @@ export function ChatsList({
                 isSelected={chat.uuid === chatUUID}
                 navigateTo={navigateWithFilter}
                 state={chatStateByUuid[chat.uuid]}
+                stateTracked={automatedChatUuids.has(chat.uuid)}
+                stateLoading={chatStatesLoading}
                 tags={chat.tags}
                 onDeleted={handleChatDeleted}
             />
@@ -966,6 +996,29 @@ export function ChatsList({
                 }
             }
             items.push(renderRow(chat))
+        }
+
+        // Fetch-pagination footer: offer older chats without loading the whole
+        // history. `total` comes from the list API; the row count includes the
+        // pinned top-up, so it is the exact "have we shown everything" check.
+        if (hasMoreChats({ total: chats.total, rowCount: chats.rows.length, limit: chatLimit })) {
+            // `keepPreviousData` keeps the old page (with its smaller `limit`)
+            // visible while the larger page loads, so a mismatch means a
+            // "load more" request is in flight.
+            const loadingMore = isValidating && (chats.limit ?? chatLimit) < chatLimit
+            items.push(
+                <div key="chat-list-load-more" className="px-2 py-2">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full text-muted-foreground"
+                        disabled={loadingMore}
+                        onClick={() => setChatLimit((current) => current + CHAT_LIST_PAGE_SIZE)}
+                    >
+                        {loadingMore ? "Loading older chats…" : "Load more"}
+                    </Button>
+                </div>
+            )
         }
 
         return items
