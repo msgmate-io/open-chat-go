@@ -365,7 +365,7 @@ jobs:
     # Hard cap for the whole matrix job. The LLM interaction is capped via
     # SANDBOX_INTERACTION_TIMEOUT; tests may override per-test via config.json
     # "interaction_timeout". Extra minutes cover startup/verification/upload.
-    timeout-minutes: 22
+    timeout-minutes: 46
     needs: [discover, backend-image, sandbox-image-ensure]
     if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
     strategy:
@@ -437,7 +437,7 @@ jobs:
         # (a refusal, a different-but-valid tool choice, stray framing) with no
         # regression; retry a failed test once (run_test.sh tears the stack down
         # between attempts, so each attempt starts clean) before failing the gate.
-        timeout-minutes: 18
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           max_attempts=2

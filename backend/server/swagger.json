@@ -4411,6 +4411,9 @@
                         "$ref": "#/definitions/chats.ListedChat"
                     }
                 },
+                "total": {
+                    "type": "integer"
+                },
                 "total_pages": {
                     "type": "integer"
                 }

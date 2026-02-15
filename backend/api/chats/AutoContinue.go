@@ -58,6 +58,13 @@ const (
 	// autoContinueHumanMarkerKey overrides the default human sentinel.
 	autoContinueHumanMarkerKey = "auto_continue_human_marker"
 
+	// autoContinueTaskCompletedKey is a message-metadata flag an agent may set to
+	// declare the whole task complete. It is the machine-readable counterpart of
+	// the completion text sentinel: a completion tool (or any backend that can
+	// annotate its final message) stops the loop deterministically without
+	// having to append a marker line to the visible reply.
+	autoContinueTaskCompletedKey = "task_completed"
+
 	// agentDispatchConfigKey is the shared-config block written by the trusted
 	// agent-dispatch surface; its options are honoured as a fallback so a
 	// dispatched agent keeps working in-product.
@@ -89,9 +96,18 @@ const (
 // autoContinueSettingsSchema documents the state keys stored in
 // database.ChatSettings for the loop.
 const (
-	autoContinueTurnsStateKey      = "auto_continue_turns"
-	autoContinueStoppedStateKey    = "auto_continue_stopped"
-	autoContinueStopReasonStateKey = "auto_continue_stop_reason"
+	autoContinueTurnsStateKey             = "auto_continue_turns"
+	autoContinueStoppedStateKey           = "auto_continue_stopped"
+	autoContinueStopReasonStateKey        = "auto_continue_stop_reason"
+	autoContinuePendingStateKey           = "auto_continue_pending"
+	autoContinuePendingSourceMessageState = "auto_continue_pending_source_message_id"
+)
+
+// Transient auto-continuation stop reasons. They describe a momentary refusal
+// (a live turn, an already-outstanding continuation, a turn that has not been
+// evaluated yet) and must never latch the loop off.
+const (
+	continuationInFlightReason = "continuation_in_flight"
 )
 
 // AutoContinueConfig is the resolved auto-continuation policy of an interaction.
@@ -129,8 +145,13 @@ func ResolveAutoContinueConfig(config map[string]interface{}) AutoContinueConfig
 
 	if value, ok := configInt(config, autoContinueMaxKey); ok {
 		resolved.MaxTurns = value
+	} else if value, ok := configInt(dispatch, autoContinueMaxKey); ok {
+		// Honour the budget attached by POST /api/v1/agents/dispatch.
+		resolved.MaxTurns = value
 	}
 	if value, ok := configInt(config, autoContinueDelayKey); ok {
+		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
+	} else if value, ok := configInt(dispatch, autoContinueDelayKey); ok {
 		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
 	}
 	if value := configString(config, autoContinuePromptKey); value != "" {
@@ -194,6 +215,15 @@ type autoContinueState struct {
 	Turns      int
 	Stopped    bool
 	StopReason string
+	// Pending records that a continuation prompt has been scheduled and its bot
+	// turn has not produced a new completion yet, while PendingSourceMessageID
+	// remembers the bot message the continuation was scheduled for. Together
+	// they make "no overlapping turns" durable: even if the queue inspector is
+	// unavailable (or the wake-up is re-derived from a stale event), a second
+	// continuation for the same turn is refused until a newer bot message
+	// proves the outstanding continuation ran.
+	Pending                bool
+	PendingSourceMessageID uint
 }
 
 // autoContinueDecision is the outcome of the loop decision for one finished
@@ -206,15 +236,21 @@ type autoContinueDecision struct {
 	Turns      int
 	MaxTurns   int
 	StopReason string
+	// SourceMessageID is the bot message the decision was taken for. It is
+	// persisted as the outstanding-continuation marker so a duplicate
+	// completion event for the same turn cannot schedule a second turn.
+	SourceMessageID uint
 }
 
 // decideAutoContinue decides whether a finished automated turn should schedule
 // another turn. It is deliberately pure (no I/O) so the whole policy is unit
 // testable: it never continues a failed turn, a turn that still waits on the
-// user (a pending action), a turn that emitted a stop marker, a chat with a
-// live turn, or one whose budget is exhausted.
+// user (a pending action), a turn that emitted a stop marker (text sentinel or
+// the machine-readable `task_completed` flag), a chat with a live turn, a chat
+// whose previous continuation is still outstanding, or one whose budget is
+// exhausted.
 func decideAutoContinue(config AutoContinueConfig, state autoContinueState, message database.Message, meta map[string]interface{}, activeTurn bool) autoContinueDecision {
-	decision := autoContinueDecision{Turns: state.Turns, MaxTurns: config.MaxTurns}
+	decision := autoContinueDecision{Turns: state.Turns, MaxTurns: config.MaxTurns, SourceMessageID: message.ID}
 	if !config.Enabled {
 		return decision
 	}
@@ -230,6 +266,13 @@ func decideAutoContinue(config AutoContinueConfig, state autoContinueState, mess
 		decision.StopReason = "turn_in_flight"
 		return decision
 	}
+	// A scheduled continuation whose bot turn has not produced a *newer*
+	// completion yet must not be doubled up. The marker is per source message,
+	// so the normal wake-up (which returns a fresh bot message) clears it.
+	if continuationOutstanding(state, message) {
+		decision.StopReason = continuationInFlightReason
+		return decision
+	}
 	if !isInteractionCompletionMetadata(message, meta) {
 		decision.StopReason = "not_a_clean_completion"
 		return decision
@@ -238,8 +281,8 @@ func decideAutoContinue(config AutoContinueConfig, state autoContinueState, mess
 		decision.StopReason = "pending_action"
 		return decision
 	}
-	if reason, stopped := config.IsStopMarker(messageText(message)); stopped {
-		decision.StopReason = reason
+	if stopReason, stopped := autoContinueStopSignal(config, message, meta); stopped {
+		decision.StopReason = stopReason
 		return decision
 	}
 	if state.Turns >= config.MaxTurns {
@@ -251,6 +294,40 @@ func decideAutoContinue(config AutoContinueConfig, state autoContinueState, mess
 	decision.Prompt = config.Prompt
 	decision.Delay = config.Delay
 	return decision
+}
+
+// continuationOutstanding reports whether a continuation prompt was already
+// scheduled for this exact bot message and has not been superseded by a newer
+// one.
+func continuationOutstanding(state autoContinueState, message database.Message) bool {
+	if !state.Pending {
+		return false
+	}
+	if state.PendingSourceMessageID == 0 {
+		return true
+	}
+	if message.ID == 0 {
+		return true
+	}
+	return message.ID == state.PendingSourceMessageID
+}
+
+// autoContinueStopSignal reports whether an agent reply declares the loop done.
+// The text sentinel is the primary convention; the machine-readable
+// `task_completed` metadata flag (set by a completion tool or any backend that
+// can annotate its final message) is honoured as an equivalent completion
+// signal, so a loop stops deterministically even when the visible reply cannot
+// carry a marker line.
+func autoContinueStopSignal(config AutoContinueConfig, message database.Message, meta map[string]interface{}) (string, bool) {
+	if reason, stopped := config.IsStopMarker(messageText(message)); stopped {
+		return reason, true
+	}
+	if meta != nil {
+		if completed, _ := meta[autoContinueTaskCompletedKey].(bool); completed {
+			return "completed", true
+		}
+	}
+	return "", false
 }
 
 // maybeAutoContinueInteraction is the completion choke-point hook. It schedules
@@ -351,8 +428,10 @@ func scheduleAutoContinuePrompt(ctx context.Context, db *gorm.DB, client *asynq.
 	}
 
 	return saveAutoContinueState(db, chat.ID, autoContinueState{
-		Turns:   decision.Turns + 1,
-		Stopped: false,
+		Turns:                  decision.Turns + 1,
+		Stopped:                false,
+		Pending:                true,
+		PendingSourceMessageID: decision.SourceMessageID,
 	})
 }
 
@@ -474,11 +553,31 @@ func StopAutoContinueForChat(db *gorm.DB, chatID uint, reason string) error {
 		return nil
 	}
 	state.Stopped = true
+	state.Pending = false
+	state.PendingSourceMessageID = 0
 	if strings.TrimSpace(reason) != "" {
 		state.StopReason = strings.TrimSpace(reason)
 	} else {
 		state.StopReason = "stopped"
 	}
+	return saveAutoContinueState(db, chatID, state)
+}
+
+// ResumeAutoContinueForChat clears a terminal loop stop so a stalled/stopped
+// self-driving interaction can self-drive again after a nudge (ci#540
+// `hive_mind_agent_continue`). It only clears the stop latch; the turn counter
+// is left intact so the remaining budget still applies. A chat whose loop was
+// never enabled is untouched.
+func ResumeAutoContinueForChat(db *gorm.DB, chatID uint) error {
+	if db == nil || chatID == 0 {
+		return nil
+	}
+	state := loadAutoContinueState(db, chatID)
+	if !state.Stopped && strings.TrimSpace(state.StopReason) == "" {
+		return nil
+	}
+	state.Stopped = false
+	state.StopReason = ""
 	return saveAutoContinueState(db, chatID, state)
 }
 
@@ -494,6 +593,10 @@ func loadAutoContinueState(db *gorm.DB, chatID uint) autoContinueState {
 	}
 	state.Stopped = configBool(config, autoContinueStoppedStateKey)
 	state.StopReason = configString(config, autoContinueStopReasonStateKey)
+	state.Pending = configBool(config, autoContinuePendingStateKey)
+	if pendingSource, ok := configInt(config, autoContinuePendingSourceMessageState); ok && pendingSource > 0 {
+		state.PendingSourceMessageID = uint(pendingSource)
+	}
 	return state
 }
 
@@ -513,6 +616,12 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 	}
 	config[autoContinueTurnsStateKey] = state.Turns
 	config[autoContinueStoppedStateKey] = state.Stopped
+	config[autoContinuePendingStateKey] = state.Pending
+	if state.PendingSourceMessageID > 0 {
+		config[autoContinuePendingSourceMessageState] = state.PendingSourceMessageID
+	} else {
+		delete(config, autoContinuePendingSourceMessageState)
+	}
 	if state.StopReason != "" {
 		config[autoContinueStopReasonStateKey] = state.StopReason
 	} else {
@@ -535,13 +644,15 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 // must not latch the loop off.
 func recordAutoContinueStop(db *gorm.DB, chat database.Chat, state autoContinueState, reason string) {
 	switch strings.TrimSpace(reason) {
-	case "", "continuation", "not_a_clean_completion", "turn_in_flight", "pending_action":
+	case "", "continuation", "not_a_clean_completion", "turn_in_flight", "pending_action", continuationInFlightReason:
 		return
 	}
 	if state.Stopped && state.StopReason == reason {
 		return
 	}
 	state.Stopped = true
+	state.Pending = false
+	state.PendingSourceMessageID = 0
 	state.StopReason = reason
 	if err := saveAutoContinueState(db, chat.ID, state); err != nil {
 		log.Printf("auto-continue: failed to record stop reason %q for chat %s: %v", reason, chat.UUID, err)
