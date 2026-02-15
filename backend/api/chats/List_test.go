@@ -134,6 +134,34 @@ func TestListPinnedChatAlreadyInPageNotDuplicated(t *testing.T) {
 	}
 }
 
+// TestListReportsTotalMatchingChats guards ci#579: the list response carries the
+// total number of chats matching the active filters, so the frontend can decide
+// whether older chats remain to fetch without guessing from the page size.
+func TestListReportsTotalMatchingChats(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "list-total-owner@example.com", false)
+	bot := createUserForChatsTest(t, DB, "list-total-bot@example.com", false)
+
+	const total = 5
+	for i := 0; i < total; i++ {
+		createChatOfType(t, DB, owner, bot, "conversation")
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/chats/list?page=1&limit=2", nil)
+	req = withActionTasksUser(req, DB, owner)
+	rr := httptest.NewRecorder()
+	h := &ChatsHandler{}
+	h.List(rr, req)
+
+	page := decodeListedChats(t, rr)
+	if page.Total != total {
+		t.Fatalf("expected total=%d, got %d", total, page.Total)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("expected the page to honor limit=2, got %d rows", len(page.Rows))
+	}
+}
+
 // TestListPinnedTopUpNotCappedByPageSize guards the ci#512 review: the pinned
 // top-up must return EVERY matching pin, not just one page's worth. It used to
 // reuse the already-paginated query (GORM mutates the statement in place when
