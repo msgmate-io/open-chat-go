@@ -37,8 +37,11 @@ import { ConfirmableActionWidget, type ConfirmableAction } from "./ConfirmableAc
 import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
 import { ToolValueText } from "./ToolCallDetail";
 import {
+  formatToolDuration,
   isCompletedToolStatus,
   resolveToolCallStatus,
+  toolCallDurationMs,
+  toolCallStartedAtMs,
   toolCallSummary,
   toolDisplayLabel,
   toolResultPreview,
@@ -46,6 +49,7 @@ import {
   toolStatusDotClasses,
   toolStatusLabel,
   type ToolCallLike,
+  type ToolCallStatus,
 } from "./toolCallSummary";
 import { resolveChatUIExtensionForChat } from "./chat-ui/registry";
 import {
@@ -298,6 +302,45 @@ function ToolCallLineSection({
   );
 }
 
+// ToolCallTiming shows a per-tool-call time affordance (ci#569): a live timer
+// that ticks up while the call is ongoing and its recorded duration once it
+// completes. It renders nothing when the backend did not report any timing.
+function ToolCallTiming({ toolCall, status }: { toolCall: ToolCallLike; status: ToolCallStatus }) {
+  const startedAt = toolCallStartedAtMs(toolCall);
+  const duration = toolCallDurationMs(toolCall);
+  const [now, setNow] = useState(() => Date.now());
+  const isLive = status === "ongoing" && duration === undefined && startedAt !== undefined;
+
+  useEffect(() => {
+    if (!isLive) {
+      return;
+    }
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isLive]);
+
+  let label = "";
+  if (duration !== undefined) {
+    label = formatToolDuration(duration);
+  } else if (startedAt !== undefined) {
+    label = formatToolDuration(Math.max(0, now - startedAt));
+  }
+  if (!label) {
+    return null;
+  }
+
+  return (
+    <span
+      data-testid="tool-call-timing"
+      className="shrink-0 tabular-nums text-[10px] text-muted-foreground"
+      title={isLive ? "Elapsed time" : "Duration"}
+      aria-label={isLive ? `Running for ${label}` : `Took ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function ToolCallsGroup({
   messageUUID,
   toolCalls,
@@ -346,6 +389,7 @@ function ToolCallsGroup({
                       {preview ? (
                         <span className="hidden text-[10px] text-muted-foreground sm:inline">{preview}</span>
                       ) : null}
+                      <ToolCallTiming toolCall={toolCall} status={status} />
                       <span
                         className={cn(
                           "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
