@@ -48,4 +48,42 @@ describe("BotMessageItem running affordances", () => {
     expect(html).toContain("npm run build");
     expect(html).toContain("exit 0");
   });
+
+  it("renders a completed tool call's recorded duration (ci#569)", () => {
+    const html = render({
+      uuid: "m4",
+      text: "done",
+      meta_data: { finished: false },
+      tool_calls: [
+        {
+          name: "bash",
+          arguments: { command: "sleep 1" },
+          result: { exit_code: 0 },
+          status: "succeeded",
+          started_at: 1_700_000_000_000,
+          duration_ms: 1400,
+        },
+      ],
+    });
+    expect(html).toContain('data-testid="tool-call-timing"');
+    expect(html).toContain("1.4s");
+  });
+
+  it("renders a live elapsed timer for an ongoing timed tool call (ci#569)", () => {
+    const html = render({
+      uuid: "m5",
+      text: "working",
+      meta_data: { finished: false },
+      tool_calls: [
+        {
+          name: "bash",
+          arguments: { command: "sleep 30" },
+          status: "ongoing",
+          started_at: Date.now() - 2500,
+        },
+      ],
+    });
+    expect(html).toContain('data-testid="tool-call-timing"');
+    expect(html).toContain("Running for");
+  });
 });
