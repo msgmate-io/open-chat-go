@@ -1418,6 +1418,15 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if strings.TrimSpace(toolCall.Error) != "" {
 					toolCallRepr["error"] = toolCall.Error
 				}
+				// Per-call timing (ci#569): a live started_at lets the UI run a
+				// timer while the call is ongoing, and duration_ms renders the
+				// final elapsed time once it completes.
+				if toolCall.StartedAtUnixMs > 0 {
+					toolCallRepr["started_at"] = toolCall.StartedAtUnixMs
+				}
+				if toolCall.DurationMs > 0 {
+					toolCallRepr["duration_ms"] = toolCall.DurationMs
+				}
 
 				if tool, found := NewToolByName(toolCall.ToolName); found {
 					// Only report a static confirmation requirement for a call
