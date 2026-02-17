@@ -37,8 +37,12 @@ import { ConfirmableActionWidget, type ConfirmableAction } from "./ConfirmableAc
 import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
 import { ToolValueText } from "./ToolCallDetail";
 import {
+  formatToolDuration,
   isCompletedToolStatus,
+  plural,
   resolveToolCallStatus,
+  toolCallDurationMs,
+  toolCallStartedAtMs,
   toolCallSummary,
   toolDisplayLabel,
   toolResultPreview,
@@ -46,7 +50,14 @@ import {
   toolStatusDotClasses,
   toolStatusLabel,
   type ToolCallLike,
+  type ToolCallStatus,
 } from "./toolCallSummary";
+import {
+  buildTurnBlocks,
+  parseTurnTimeline,
+  type TurnBlock,
+  type TurnThoughtBlock,
+} from "./turnTimeline";
 import { resolveChatUIExtensionForChat } from "./chat-ui/registry";
 import {
   ProviderRetryEventWidget,
@@ -298,6 +309,201 @@ function ToolCallLineSection({
   );
 }
 
+// ToolCallTiming shows a per-tool-call time affordance (ci#569): a live timer
+// that ticks up while the call is running, and the recorded duration once it
+// completed. It renders nothing when the backend reported no timing, so older
+// messages are unchanged.
+function ToolCallTiming({ toolCall, status }: { toolCall: ToolCallLike; status: ToolCallStatus }) {
+  const startedAt = toolCallStartedAtMs(toolCall);
+  const duration = toolCallDurationMs(toolCall);
+  const [now, setNow] = useState(() => Date.now());
+  // The timer only runs while the call is actually ongoing; a finished call
+  // freezes into its recorded duration.
+  const isLive = status === "ongoing" && duration === undefined && startedAt !== undefined;
+
+  useEffect(() => {
+    if (!isLive) {
+      return;
+    }
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isLive]);
+
+  let label = "";
+  if (duration !== undefined) {
+    label = formatToolDuration(duration);
+  } else if (startedAt !== undefined) {
+    // The start stamp comes from the server, so a client clock that is behind
+    // must not render a negative elapsed time.
+    label = formatToolDuration(Math.max(0, now - startedAt));
+  }
+  if (!label) {
+    return null;
+  }
+
+  return (
+    <span
+      data-testid="tool-call-timing"
+      className="shrink-0 tabular-nums text-[10px] text-muted-foreground"
+      title={isLive ? "Elapsed time" : "Duration"}
+      aria-label={isLive ? `Running for ${label}` : `Took ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+// ToolCallCard renders one tool call: a status dot, the friendly tool label, the
+// per-tool parameter summary, a short result preview, the call's timing and the
+// status badge, with the detailed parameters/result/error one click away. It is
+// the single row used both by the summarised tool-call group and by the ordered
+// turn sequence (thoughts between the calls).
+function ToolCallCard({
+  messageUUID,
+  toolCall,
+  index,
+}: {
+  messageUUID: string;
+  toolCall: MessageToolCall;
+  index: number;
+}) {
+  const status = resolveToolCallStatus(toolCall);
+  const cardId = `${messageUUID}-tool-call-${index}`;
+  const label = toolDisplayLabel(toolCall?.name);
+  const summary = toolCallSummary(toolCall);
+  const preview = toolResultPreview(toolCall);
+
+  return (
+    <Collapsible defaultOpen={!isCompletedToolStatus(status)} id={`tool-call-card-${cardId}`}>
+      <div className="overflow-hidden rounded-lg border border-border/70 bg-card/60">
+        <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/30">
+          <span
+            className={cn("size-1.5 shrink-0 rounded-full", toolStatusDotClasses(status))}
+            aria-hidden="true"
+          />
+          <span className="shrink-0 font-medium">{label}</span>
+          {summary ? (
+            <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+              {summary}
+            </span>
+          ) : null}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {preview ? (
+              <span className="hidden text-[10px] text-muted-foreground sm:inline">{preview}</span>
+            ) : null}
+            <ToolCallTiming toolCall={toolCall} status={status} />
+            <span
+              className={cn(
+                "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                toolStatusBadgeClasses(status)
+              )}
+            >
+              {toolStatusLabel(status)}
+            </span>
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+          <div className="space-y-1 border-t border-border/60 px-2 py-2">
+            <ToolCallLineSection
+              id={`tool-call-params-${messageUUID}-${index}`}
+              label="Parameters"
+              value={toolCall?.arguments}
+            />
+            <ToolCallLineSection
+              id={`tool-call-result-${messageUUID}-${index}`}
+              label="Result"
+              value={toolCall?.result}
+            />
+            <ToolCallLineSection
+              id={`tool-call-error-${messageUUID}-${index}`}
+              label="Error"
+              value={toolCall?.error}
+            />
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
+}
+
+// TurnThoughtBlock renders one reasoning block the agent produced, in place in
+// the ordered turn sequence (ci#569), so the user can follow what the agent was
+// thinking between its tool calls. A block that is still being produced keeps a
+// pulsing marker.
+function TurnThoughtBlockView({ text, durationMs, streaming }: TurnThoughtBlock) {
+  const duration = durationMs !== undefined ? formatToolDuration(durationMs) : "";
+  return (
+    <div
+      data-testid="turn-thought"
+      className="rounded-lg border border-dashed border-border/70 bg-muted/15 px-2.5 py-1.5"
+    >
+      <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            streaming ? "animate-pulse bg-sky-500" : "bg-muted-foreground/40"
+          )}
+          aria-hidden="true"
+        />
+        <span>{streaming ? "Thinking" : "Thought"}</span>
+        {duration ? <span className="normal-case tabular-nums tracking-normal">{duration}</span> : null}
+      </div>
+      <div className="scrollbar-hidden max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+// TurnSequence renders an assistant turn as its ordered blocks: the reasoning
+// the agent produced, the tool call it then dispatched, the next reasoning
+// block, and so on (ci#569). It replaces the separate "thoughts above, tool
+// calls below" layout for turns the backend reported a timeline for.
+function TurnSequence({
+  messageUUID,
+  thoughtBlocks,
+  toolCalls,
+  header,
+  defaultOpen = false,
+}: {
+  messageUUID: string;
+  thoughtBlocks: TurnThoughtBlock[];
+  toolCalls: MessageToolCall[];
+  header: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const blocks = useMemo<TurnBlock[]>(
+    () => buildTurnBlocks({ timeline: thoughtBlocks, toolCalls }),
+    [thoughtBlocks, toolCalls],
+  );
+
+  if (blocks.length === 0) {
+    return null;
+  }
+
+  return (
+    <Collapsible defaultOpen={defaultOpen} id={`turn-sequence-${messageUUID}`}>
+      <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">{header}</CollapsibleTrigger>
+      <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+        <div className="space-y-2" data-testid="turn-sequence">
+          {blocks.map((block, blockIndex) =>
+            block.kind === "tool_call" ? (
+              <ToolCallCard
+                key={`${messageUUID}-tool-call-${block.index}`}
+                messageUUID={messageUUID}
+                toolCall={block.call as MessageToolCall}
+                index={block.index}
+              />
+            ) : (
+              <TurnThoughtBlockView key={`${messageUUID}-thought-${blockIndex}`} {...block} />
+            ),
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function ToolCallsGroup({
   messageUUID,
   toolCalls,
@@ -318,67 +524,14 @@ function ToolCallsGroup({
       <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">{header}</CollapsibleTrigger>
       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
         <div className="space-y-2">
-          {toolCalls.map((toolCall, index) => {
-            const status = resolveToolCallStatus(toolCall);
-            const cardId = `${messageUUID}-tool-call-${index}`;
-            const label = toolDisplayLabel(toolCall?.name);
-            const summary = toolCallSummary(toolCall);
-            const preview = toolResultPreview(toolCall);
-            return (
-              <Collapsible
-                key={cardId}
-                defaultOpen={!isCompletedToolStatus(status)}
-                id={`tool-call-card-${cardId}`}
-              >
-                <div className="overflow-hidden rounded-lg border border-border/70 bg-card/60">
-                  <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/30">
-                    <span
-                      className={cn("size-1.5 shrink-0 rounded-full", toolStatusDotClasses(status))}
-                      aria-hidden="true"
-                    />
-                    <span className="shrink-0 font-medium">{label}</span>
-                    {summary ? (
-                      <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-                        {summary}
-                      </span>
-                    ) : null}
-                    <span className="ml-auto flex shrink-0 items-center gap-1">
-                      {preview ? (
-                        <span className="hidden text-[10px] text-muted-foreground sm:inline">{preview}</span>
-                      ) : null}
-                      <span
-                        className={cn(
-                          "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                          toolStatusBadgeClasses(status)
-                        )}
-                      >
-                        {toolStatusLabel(status)}
-                      </span>
-                    </span>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                    <div className="space-y-1 border-t border-border/60 px-2 py-2">
-                      <ToolCallLineSection
-                        id={`tool-call-params-${messageUUID}-${index}`}
-                        label="Parameters"
-                        value={toolCall?.arguments}
-                      />
-                      <ToolCallLineSection
-                        id={`tool-call-result-${messageUUID}-${index}`}
-                        label="Result"
-                        value={toolCall?.result}
-                      />
-                      <ToolCallLineSection
-                        id={`tool-call-error-${messageUUID}-${index}`}
-                        label="Error"
-                        value={toolCall?.error}
-                      />
-                    </div>
-                  </CollapsibleContent>
-                </div>
-              </Collapsible>
-            );
-          })}
+          {toolCalls.map((toolCall, index) => (
+            <ToolCallCard
+              key={`${messageUUID}-tool-call-${index}`}
+              messageUUID={messageUUID}
+              toolCall={toolCall}
+              index={index}
+            />
+          ))}
         </div>
       </CollapsibleContent>
     </Collapsible>
@@ -804,9 +957,38 @@ export function BotMessageItem({
     .map((thought) => (typeof thought === "string" ? thought.trim() : ""))
     .filter((thought) => thought.length > 0)
     .filter((thought, index, allThoughts) => allThoughts.indexOf(thought) === index);
+  const timelineThoughts = useMemo(
+    () => parseTurnTimeline(message?.meta_data as Record<string, unknown> | undefined),
+    [message.meta_data],
+  );
+  // A turn the backend reported an ordered timeline for is rendered as its
+  // sequence of reasoning blocks and tool calls (ci#569). Extensions that
+  // provide their own message body keep rendering their own rows.
+  const usesTurnSequence = timelineThoughts.length > 0 && !uiExtension?.MessageBody;
   const isPartialMessageUUID = typeof message.uuid === "string" && message.uuid.startsWith("partial_");
   const isQueuePending = isQueuePendingMessage(message);
   const toolCalls = (message?.tool_calls || []) as MessageToolCall[];
+  const toolCallLabel = toolCalls.length === 1 ? "1 tool call" : `${toolCalls.length} tool calls`;
+  const thoughtCountLabel = plural(timelineThoughts.length, "thought");
+  // The header of the ordered sequence summarises what the turn did without
+  // hiding it: the blocks are rendered open, the header is the collapse handle.
+  const turnSequenceHeader =
+    toolCalls.length > 0 ? (
+      metaFinished ? (
+        <>
+          {timelineThoughts.length > 0 ? `${thoughtCountLabel} · ` : ""}
+          {toolCallLabel}
+        </>
+      ) : (
+        <ShinyText>
+          {timelineThoughts.length > 0 ? "Thinking" : "Calling tools"} ({toolCallLabel})
+        </ShinyText>
+      )
+    ) : metaFinished ? (
+      `${thoughtCountLabel}`
+    ) : (
+      <ShinyText>Thinking…</ShinyText>
+    );
   // An integration (keyed on the chat's chat_backend) may supply a custom
   // message body that renders the assistant text and its tool calls inline, in
   // order. When present it replaces the default summarised tool-call block and
@@ -851,7 +1033,7 @@ export function BotMessageItem({
             )
         : null}
 
-      {!metaFinished && nonEmptyThoughts.length > 0 ? (
+      {!metaFinished && nonEmptyThoughts.length > 0 && !usesTurnSequence ? (
         CustomThoughts ? (
           <CustomThoughts
             messageUUID={message.uuid}
@@ -875,7 +1057,7 @@ export function BotMessageItem({
         )
       ) : null}
 
-      {!CustomMessageBody && !metaFinished && toolCalls.length > 0 && (
+      {!CustomMessageBody && !metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
@@ -890,7 +1072,17 @@ export function BotMessageItem({
         />
       )}
 
-      {metaFinished && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
+      {usesTurnSequence ? (
+        <TurnSequence
+          messageUUID={message.uuid}
+          thoughtBlocks={timelineThoughts}
+          toolCalls={toolCalls}
+          header={turnSequenceHeader}
+          defaultOpen
+        />
+      ) : null}
+
+      {metaFinished && !usesTurnSequence && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
         CustomThoughts ? (
           <CustomThoughts
             messageUUID={message.uuid}
@@ -942,7 +1134,7 @@ export function BotMessageItem({
         />
       ) : null}
 
-      {!CustomMessageBody && metaFinished && toolCalls.length > 0 && (
+      {!CustomMessageBody && metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
