@@ -52,6 +52,14 @@ PRIVATE_LOCK_CANDIDATES = (
     ".integrations/private/integrations.private.lock.json",
     "development/ci/openchat/integrations.private.lock.json",
 )
+PRIVATE_MANIFEST_CANDIDATES = (
+    ".integrations/private/integrations.private.yaml",
+    "development/ci/openchat/integrations.private.yaml",
+)
+PUBLIC_MANIFEST = "integrations.yaml"
+# The integration manager (`openchat-integrations resolve`) writes the profile's
+# build tags here; reuse them so the frozen build matches the prepared profile.
+BUILD_TAGS_FILE = Path("backend") / ".generated" / "build_tags"
 
 
 class CheckError(RuntimeError):
@@ -168,14 +176,12 @@ def checkout(repo: str, commit: str, dest: Path) -> Tuple[bool, str]:
     return True, ""
 
 
-def build_workspace(root: Path, workspace: Path, components: List[Component], extra_uses: List[Path], tags: str) -> Tuple[int, str]:
+def build_workspace(root: Path, module_dirs: List[Path], tags: str) -> Tuple[int, str]:
     gowork = root / GOWORK_REL
     lines = ["go 1.26.0", "", "use ("]
     lines.append("\t.")
-    for path in extra_uses:
+    for path in module_dirs:
         lines.append(f"\t{os.path.relpath(path, gowork.parent)}")
-    for comp in components:
-        lines.append(f"\t{os.path.relpath(workspace / comp.path, gowork.parent)}")
     lines.append(")")
     gowork.write_text("\n".join(lines) + "\n")
 
@@ -234,8 +240,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"::error::no lock file found at {root / PUBLIC_LOCK}")
         return 1
 
-    locks = [Path(p) for p in (args.lock or [PUBLIC_LOCK])]
-    manifests = [Path(p) for p in (args.manifest or ["integrations.yaml"])]
+    if args.lock:
+        locks = [Path(p) for p in args.lock]
+    else:
+        # The workspace the profile-setup step prepared contains every pinned
+        # integration (public and, when materialized, private); the generated
+        # imports reference them all, so the frozen tree must too.
+        locks = [Path(PUBLIC_LOCK)]
+        locks += [Path(rel) for rel in PRIVATE_LOCK_CANDIDATES if (root / rel).exists()]
+
+    if args.manifest:
+        manifests = [Path(p) for p in args.manifest]
+    else:
+        manifests = [Path(PUBLIC_MANIFEST)]
+        manifests += [Path(rel) for rel in PRIVATE_MANIFEST_CANDIDATES if (root / rel).exists()]
+
+    tags = args.tags
+    if not tags:
+        tags_file = root / BUILD_TAGS_FILE
+        if tags_file.is_file():
+            tags = tags_file.read_text().strip()
 
     try:
         lock: Dict[str, dict] = {}
@@ -272,7 +296,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not url:
             continue
         ident = f"submodule:{path}"
-        components.append(Component(ident, url, sha, f"{WORKSPACE_DIR}-submodule/{path}", "submodule"))
+        components.append(Component(ident, url, sha, path, "submodule"))
 
     print(f"Frozen workspace check: build the pinned {args.label} tree")
     print(f"Repository: {root}")
@@ -280,26 +304,37 @@ def main(argv: Optional[List[str]] = None) -> int:
     print()
 
     results: List[Result] = []
+    module_dirs: List[Path] = []
     failures = 0
     for comp in components:
-        if comp.kind == "submodule":
-            dest = root / WORKSPACE_DIR / "submodules" / comp.path
-        else:
-            dest = workspace / comp.path
+        dest = workspace / comp.path
         ok, detail = checkout(comp.repo, comp.commit, dest)
         results.append(Result(comp, "OK" if ok else "FAILED", detail))
         if not ok:
             failures += 1
+        elif (dest / "go.mod").is_file():
+            # Only Go modules belong in the workspace file; the interface
+            # submodules are Go modules, but js_client / oc_python_client /
+            # build-tools are not and would make `go work` fail to load.
+            module_dirs.append(dest)
 
-    extra_uses = [
-        root / WORKSPACE_DIR / "submodules" / c.path for c in components if c.kind == "submodule"
-    ]
+    # Some integration modules carry `replace backend => ../../../backend`
+    # (relative to `clients/integrations/<name>`); mirror the real backend into
+    # the frozen tree so that replacement resolves to the same tree the build
+    # runs from instead of a missing `.integrations/frozen/backend`.
+    backend_link = workspace / "backend"
+    if failures == 0 and not backend_link.exists():
+        backend_link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            backend_link.symlink_to(root / "backend", target_is_directory=True)
+        except OSError:
+            pass
 
     build_ok = False
     build_output = ""
     if failures == 0:
         try:
-            code, build_output = build_workspace(root, workspace, components, extra_uses, args.tags)
+            code, build_output = build_workspace(root, module_dirs, tags)
             build_ok = code == 0
         except subprocess.TimeoutExpired:
             build_output = f"go build timed out after {BUILD_TIMEOUT}s"
