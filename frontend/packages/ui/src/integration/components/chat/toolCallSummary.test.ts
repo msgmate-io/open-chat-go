@@ -7,6 +7,7 @@ import {
   toolCallDurationMs,
   toolCallStartedAtMs,
   toolCallSummary,
+  toolCallTimelineIndex,
   toolDisplayLabel,
   toolResultPreview,
   toolStatusDotClasses,
@@ -141,7 +142,7 @@ describe("toolStatusDotClasses", () => {
 });
 
 describe("tool call timing (ci#569)", () => {
-  it("reads started_at and duration_ms from number or string payloads", () => {
+  it("reads the timing from number or string payloads", () => {
     expect(toolCallStartedAtMs({ started_at: 1_700_000_000_000 })).toBe(1_700_000_000_000);
     expect(toolCallStartedAtMs({ started_at: "1700000000000" })).toBe(1_700_000_000_000);
     expect(toolCallStartedAtMs({ started_at: 0 })).toBeUndefined();
@@ -157,5 +158,12 @@ describe("tool call timing (ci#569)", () => {
     expect(formatToolDuration(1400)).toBe("1.4s");
     expect(formatToolDuration(63_000)).toBe("1m 03s");
     expect(formatToolDuration(Number.NaN)).toBe("");
+  });
+
+  it("reads the call's position in the turn timeline", () => {
+    expect(toolCallTimelineIndex({ timeline_index: 2 })).toBe(2);
+    expect(toolCallTimelineIndex({ timeline_index: "0" })).toBe(0);
+    expect(toolCallTimelineIndex({ timeline_index: -1 })).toBeUndefined();
+    expect(toolCallTimelineIndex({})).toBeUndefined();
   });
 });
