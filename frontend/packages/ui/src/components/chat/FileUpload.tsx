@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import { Button } from "../button";
 import { DropdownMenuItem } from "../dropdown-menu";
-import { File, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
+import { CircleAlert, File, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 export interface UploadedFileRecord {
@@ -51,6 +51,165 @@ export function isImageMimeType(mimeType?: string): boolean {
   return typeof mimeType === "string" && mimeType.startsWith("image/");
 }
 
+/** Per-message attachment cap so a multi-file drop cannot flood a chat. */
+export const MAX_ATTACHMENT_COUNT = 10;
+
+export const SUPPORTED_UPLOAD_TYPES_LABEL = "images, PDF, text, Word or Excel files";
+
+/** Human-readable byte size (`4.6 MB`), used in the rejection messages. */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export const MAX_UPLOAD_SIZE_LABEL = formatFileSize(MAX_UPLOAD_SIZE);
+
+export type UploadRejectionReason =
+  | "too-large"
+  | "unsupported-type"
+  | "folder"
+  | "too-many-files"
+  | "upload-failed";
+
+export interface UploadRejection {
+  fileName: string;
+  reason: UploadRejectionReason;
+  message: string;
+}
+
+export function uploadRejectionMessage(
+  reason: UploadRejectionReason,
+  fileName: string,
+  fileSize?: number
+): string {
+  const label = fileName?.trim() || "That file";
+  switch (reason) {
+    case "too-large":
+      return `“${label}” is ${
+        typeof fileSize === "number" ? formatFileSize(fileSize) : "too large"
+      } — the maximum size is ${MAX_UPLOAD_SIZE_LABEL}.`;
+    case "unsupported-type":
+      return `“${label}” isn’t a supported file type — attach ${SUPPORTED_UPLOAD_TYPES_LABEL}.`;
+    case "folder":
+      return "Folders can’t be attached — drop or pick the files inside instead.";
+    case "too-many-files":
+      return `You can attach at most ${MAX_ATTACHMENT_COUNT} files to a message.`;
+    case "upload-failed":
+      return `“${label}” couldn’t be uploaded. Please try again.`;
+  }
+}
+
+export function isSupportedUploadType(mimeType?: string): boolean {
+  // Browsers omit the type for some files; the upload endpoint validates those.
+  if (!mimeType) return true;
+  return ALLOWED_UPLOAD_TYPES.includes(mimeType);
+}
+
+/**
+ * Non-alerting single-file validation. Returns the rejection to show in the
+ * composer's inline error surface, or `null` when the file is fine. Keeping the
+ * messages in data (rather than an `alert`) is what lets drops and picker
+ * selections fail loudly *and* stay readable.
+ */
+export function getUploadRejection(file: File): UploadRejection | null {
+  if (file.size > MAX_UPLOAD_SIZE) {
+    return {
+      fileName: file.name,
+      reason: "too-large",
+      message: uploadRejectionMessage("too-large", file.name, file.size),
+    };
+  }
+
+  if (!isSupportedUploadType(file.type)) {
+    return {
+      fileName: file.name,
+      reason: "unsupported-type",
+      message: uploadRejectionMessage("unsupported-type", file.name),
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Split a drop/picker batch into the files that can be uploaded and the
+ * per-file rejections to surface. Validates size and type and enforces the
+ * per-message cap, so an oversized multi-file drop degrades into "these three
+ * were attached, that one was too big" instead of silently uploading a subset.
+ */
+export function partitionUploadBatch(
+  files: File[],
+  { maxFiles = MAX_ATTACHMENT_COUNT, currentCount = 0 }: { maxFiles?: number; currentCount?: number } = {}
+): { accepted: File[]; rejections: UploadRejection[] } {
+  const accepted: File[] = [];
+  const rejections: UploadRejection[] = [];
+  let slots = Math.max(0, maxFiles - currentCount);
+
+  for (const file of files) {
+    const rejection = getUploadRejection(file);
+    if (rejection) {
+      rejections.push(rejection);
+      continue;
+    }
+
+    if (slots <= 0) {
+      rejections.push({
+        fileName: file.name,
+        reason: "too-many-files",
+        message: uploadRejectionMessage("too-many-files", file.name),
+      });
+      continue;
+    }
+
+    slots -= 1;
+    accepted.push(file);
+  }
+
+  return { accepted, rejections };
+}
+
+export interface DroppedItems {
+  files: File[];
+  folders: string[];
+}
+
+/**
+ * Files vs. folders in a drop payload. A dropped folder can never be uploaded,
+ * and browsers surface it as a zero-byte, typeless entry that would otherwise
+ * be POSTed as an empty file, so it is filtered out and reported separately.
+ */
+export function collectDroppedItems(
+  dataTransfer: DataTransfer | null | undefined
+): DroppedItems {
+  const folders: string[] = [];
+  const items = Array.from(dataTransfer?.items ?? []);
+
+  for (const item of items) {
+    if (item.kind !== "file") continue;
+    const entry = (
+      item as DataTransferItem & {
+        webkitGetAsEntry?: () => { isDirectory?: boolean } | null;
+      }
+    ).webkitGetAsEntry?.();
+    if (entry?.isDirectory) {
+      folders.push(item.getAsFile?.()?.name ?? "folder");
+    }
+  }
+
+  const files = filesFromDataTransfer(dataTransfer).filter(
+    (file) => !(file.size === 0 && !file.type && folders.includes(file.name))
+  );
+
+  return { files, folders };
+}
+
+/** Does the drag payload carry any folder (as opposed to only files)? */
+export function hasDirectoryDrag(dataTransfer: DataTransfer | null | undefined): boolean {
+  return collectDroppedItems(dataTransfer).folders.length > 0;
+}
+
 /**
  * Pure helper: does this drag payload carry files (as opposed to a text
  * selection or a link)? Only file drags should open the drop affordance and be
@@ -67,18 +226,21 @@ export function filesFromDataTransfer(dataTransfer: DataTransfer | null | undefi
   return Array.from(dataTransfer.files ?? []);
 }
 
+/**
+ * Single-file check with an `alert` fallback, kept for hosts that render no
+ * inline error surface. New code should prefer `getUploadRejection` /
+ * `partitionUploadBatch`, which return messages instead of interrupting.
+ */
 export function isAllowedUpload(file: File): boolean {
-  if (file.size > MAX_UPLOAD_SIZE) {
-    alert("File too large. Maximum size is 5MB.");
-    return false;
-  }
+  const rejection = getUploadRejection(file);
+  if (!rejection) return true;
 
-  if (file.type && !ALLOWED_UPLOAD_TYPES.includes(file.type)) {
-    alert("File type not allowed.");
-    return false;
-  }
-
-  return true;
+  alert(
+    rejection.reason === "too-large"
+      ? "File too large. Maximum size is 5MB."
+      : "File type not allowed."
+  );
+  return false;
 }
 
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -125,24 +287,58 @@ export async function uploadFileToServer(
   return (await response.json()) as UploadedFileResponse;
 }
 
+export interface FileUploadOptions {
+  onFileUploaded: (record: UploadedFileRecord) => void;
+  reuploadToOpenAI?: boolean;
+  /** Per-message attachment cap; files beyond it are rejected, not uploaded. */
+  maxFiles?: number;
+  /** Attachments already staged, so the cap counts those too. */
+  attachmentCount?: number;
+  /** Inline error surface; without it rejections fall back to `alert`. */
+  onRejected?: (rejections: UploadRejection[]) => void;
+}
+
 export function useFileUpload({
   onFileUploaded,
   reuploadToOpenAI = false,
-}: FileUploadBaseProps) {
+  maxFiles = MAX_ATTACHMENT_COUNT,
+  attachmentCount = 0,
+  onRejected,
+}: FileUploadOptions) {
   const [uploadingCount, setUploadingCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reportRejections = useCallback(
+    (rejections: UploadRejection[]) => {
+      if (rejections.length === 0) return;
+      if (onRejected) {
+        onRejected(rejections);
+        return;
+      }
+      // Legacy hosts (FileAttachButton / FileUpload) render no error surface.
+      alert(rejections.map((rejection) => rejection.message).join("\n"));
+    },
+    [onRejected]
+  );
 
   const uploadFiles = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
-      setUploadingCount((count) => count + files.length);
+
+      const { accepted, rejections } = partitionUploadBatch(files, {
+        maxFiles,
+        currentCount: attachmentCount,
+      });
+      reportRejections(rejections);
+      if (accepted.length === 0) return;
+
+      setUploadingCount((count) => count + accepted.length);
       try {
         // Upload concurrently but keep the caller's order by awaiting each
         // result and reporting as it resolves; a failed file never blocks the
         // others.
         await Promise.all(
-          files.map(async (file) => {
-            if (!isAllowedUpload(file)) return;
+          accepted.map(async (file) => {
             try {
               const uploadedFile = await uploadFileToServer(file, reuploadToOpenAI);
               onFileUploaded({
@@ -153,15 +349,21 @@ export function useFileUpload({
               });
             } catch (error) {
               console.error("File upload error:", error);
-              alert("Failed to upload file. Please try again.");
+              reportRejections([
+                {
+                  fileName: file.name,
+                  reason: "upload-failed",
+                  message: uploadRejectionMessage("upload-failed", file.name),
+                },
+              ]);
             }
           })
         );
       } finally {
-        setUploadingCount((count) => Math.max(0, count - files.length));
+        setUploadingCount((count) => Math.max(0, count - accepted.length));
       }
     },
-    [onFileUploaded, reuploadToOpenAI]
+    [attachmentCount, maxFiles, onFileUploaded, reportRejections, reuploadToOpenAI]
   );
 
   const uploadFile = useCallback((file: File) => uploadFiles([file]), [uploadFiles]);
@@ -198,9 +400,12 @@ export function useFileUpload({
  */
 export function useFileDropzone({
   onFilesDropped,
+  onFoldersDropped,
   disabled = false,
 }: {
   onFilesDropped: (files: File[]) => void | Promise<void>;
+  /** Called with the folder names when the payload carries a folder. */
+  onFoldersDropped?: (folderNames: string[]) => void;
   disabled?: boolean;
 }) {
   const [isDragging, setIsDragging] = useState(false);
@@ -245,13 +450,14 @@ export function useFileDropzone({
     (event: React.DragEvent<HTMLElement>) => {
       if (disabled || !hasFileDrag(event.dataTransfer)) return;
       event.preventDefault();
-      const files = filesFromDataTransfer(event.dataTransfer);
+      const { files, folders } = collectDroppedItems(event.dataTransfer);
       reset();
+      if (folders.length > 0) onFoldersDropped?.(folders);
       if (files.length > 0) {
         void onFilesDropped(files);
       }
     },
-    [disabled, onFilesDropped, reset]
+    [disabled, onFilesDropped, onFoldersDropped, reset]
   );
 
   return {
@@ -271,6 +477,9 @@ export function FileDropOverlay({ visible }: { visible: boolean }) {
     <div className="message-composer-dropzone" role="presentation" aria-hidden="true">
       <Paperclip className="size-5" />
       <span>Drop files to attach</span>
+      <span className="message-composer-dropzone-hint">
+        {SUPPORTED_UPLOAD_TYPES_LABEL} · up to {MAX_UPLOAD_SIZE_LABEL} each
+      </span>
     </div>
   );
 }
@@ -451,6 +660,46 @@ export function UploadedFilesPreview({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Inline error surface for rejected files (too large, unsupported, folder, cap
+ * reached, upload failure). `role="alert"` makes it announce itself, which is
+ * the accessible counterpart of the drag affordance for keyboard and screen
+ * reader users — and the only feedback a mobile user gets, since a WebView has
+ * no native drag source.
+ */
+export function UploadErrorsNotice({
+  errors,
+  onDismiss,
+}: {
+  errors: UploadRejection[];
+  onDismiss: () => void;
+}) {
+  if (errors.length === 0) return null;
+
+  return (
+    <div className="message-composer-errors" role="alert">
+      <CircleAlert className="size-4 shrink-0 text-destructive" />
+      <ul className="message-composer-error-list">
+        {errors.map((error, index) => (
+          <li key={`${error.reason}-${error.fileName}-${index}`} className="message-composer-error-item">
+            {error.message}
+          </li>
+        ))}
+      </ul>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onDismiss}
+        aria-label="Dismiss attachment errors"
+        className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+      >
+        <X className="size-3.5" />
+      </Button>
     </div>
   );
 }
