@@ -82,6 +82,7 @@ export { WebsocketHandler, WebsocketHandlerBase } from "./components/WebsocketHa
 
 // --- chat cache invalidation ---------------------------------------------
 export {
+  normalizeCacheKey,
   isChatListKey,
   isChatStatesKey,
   isActionTasksKey,
