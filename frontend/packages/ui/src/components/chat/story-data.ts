@@ -22,6 +22,8 @@ export const mockBotChat = {
 export const mockChatsListResponse = {
   rows: [mockChat, mockBotChat],
   page: 1,
+  limit: 5,
+  total: 2,
   total_pages: 1,
   sort: "updated_at",
 };

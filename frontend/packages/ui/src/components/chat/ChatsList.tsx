@@ -4,6 +4,7 @@ import { Skeleton } from "../skeleton"
 import { PullToRefresh } from "../../integration/components/PullToRefresh"
 import { getChatTimeBucket } from "../../lib/date"
 import useSWR from 'swr'
+import useSWRInfinite from 'swr/infinite'
 import { DefaultChats } from "./DefaultChats"
 import { NewChatCard } from "./NewChatCard"
 import type React from "react"
@@ -25,13 +26,31 @@ import { cn } from "../../lib/utils"
 import { useCurrentUser } from "../../integration/hooks/use-current-user"
 import { listChatSearchActions } from "../../integration/components/chat/chat-ui/registry"
 import {
-    CHAT_LIST_PAGE_SIZE,
+    CHAT_LIST_FETCH_BATCH_SIZE,
+    CHAT_LIST_INITIAL_BATCHES,
+    batchesForPaintedPages,
+    paintedRowBudget,
     chatStatesRefreshInterval,
+    chatStatesRequestUuids,
     collectAutomatedChatUuids,
     hasMoreChats,
+    mergeChatPages,
 } from "./chat-list-helpers"
+import type { ChatListPage } from "./chat-list-helpers"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
+
+// One row of the chat-list API, as the sidebar consumes it. Typed explicitly so
+// the paged response and the merged rows stay in sync (ci#579).
+type ChatListRow = {
+    uuid: string
+    settings?: { title?: string }
+    latest_message?: { text?: string }
+    latest_message_at?: string
+    tags?: string[]
+    pinned?: boolean
+    partner?: { is_automated?: boolean }
+}
 
 export const ExploreChatsIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" className="icon-md">
@@ -577,19 +596,24 @@ export function ChatsList({
     const hasStateFilter = stateFilter !== null
     const extraFilterCount = (hasSearchFilter ? 1 : 0) + (hasTagFilter ? 1 : 0) + (hasTimeFilter ? 1 : 0) + (hasNonDefaultExcludeTagFilter ? 1 : 0) + (hasStateFilter ? 1 : 0)
 
-    // Fetch-pagination: the sidebar renders one page of chats and grows the
-    // requested limit as the user asks for older chats, so it never loads the
-    // whole history up front (ci#579).
-    const [chatLimit, setChatLimit] = useState(CHAT_LIST_PAGE_SIZE)
+    // Fetch-pagination: the sidebar pulls the history in small incremental
+    // batches, newest first (5 at a time), instead of one growing window. The
+    // batches needed for the painted window are requested on demand, so a long
+    // history is never loaded up front (ci#579).
+    //
+    // Frontend pagination: `paintedPages * CHAT_LIST_PAGE_SIZE` rows are handed
+    // to React. It starts at one page (~20 chats paint immediately) and grows by
+    // a page per "load more", so the DOM never holds the whole history (ci#579).
+    const [paintedPages, setPaintedPages] = useState(1)
 
-    const chatsListUrl = useCallback(() => {
+    const chatsListUrl = useCallback((page: number) => {
         if (!showChats) {
             return null
         }
         const params = new URLSearchParams()
         params.set("chat_types", serializeChatTypes(chatTypeFilters))
-        params.set("page", "1")
-        params.set("limit", String(chatLimit))
+        params.set("page", String(page))
+        params.set("limit", String(CHAT_LIST_FETCH_BATCH_SIZE))
         if (searchQuery.trim()) {
             params.set(SEARCH_QUERY_PARAM, searchQuery.trim())
         }
@@ -609,12 +633,13 @@ export function ChatsList({
             params.set("scope", "all")
         }
         return `/api/v1/chats/list?${params.toString()}`
-    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin, chatLimit])
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin])
 
     // Changing any filter changes the result set, so collapse back to the first
-    // page instead of keeping a stale "load more" depth.
+    // painted page (and the small batches backing it) instead of keeping a stale
+    // "load more" depth.
     useEffect(() => {
-        setChatLimit(CHAT_LIST_PAGE_SIZE)
+        setPaintedPages(1)
     }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, seeAll])
 
     const { data: availableTags, mutate: mutateAvailableTags } = useSWR<{ tags?: string[] }>(
@@ -630,15 +655,64 @@ export function ChatsList({
         return Array.from(set).sort()
     }, [availableTags, tagFilters, excludeTagFilters])
 
-    const { data: chats, isLoading, isValidating, mutate: mutateChats } = useSWR(chatsListUrl, fetcher, {
-        // Keep the previous page visible while a "load more" request grows the
-        // limit, so the list does not flash back to a skeleton (ci#579).
-        keepPreviousData: true,
-        // Keep the list fresh so newly created chats show up without a manual
-        // reload, but pause polling while the tab is hidden.
-        refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 7000),
-        revalidateOnFocus: true,
-    })
+    // Fetch-pagination: one small batch per request, newest first. Only the
+    // newest batch is revalidated on the refresh interval / focus (older ones
+    // are append-only), so a long history is never refetched just to keep the
+    // top rows fresh (ci#579).
+    const wantedBatches = batchesForPaintedPages(paintedPages)
+    const {
+        data: chatPagesData,
+        isLoading,
+        isValidating,
+        size: loadedBatches,
+        setSize: setLoadedBatches,
+        mutate: mutateChats,
+    } = useSWRInfinite<ChatListPage<ChatListRow>>(
+        (pageIndex: number) => chatsListUrl(pageIndex + 1),
+        fetcher,
+        {
+            // The painted window (one page) is filled by the first few batches.
+            initialSize: CHAT_LIST_INITIAL_BATCHES,
+            // Keep the already loaded batches on screen while a "load more"
+            // request is in flight, so the list does not flash back to a
+            // skeleton (ci#579).
+            keepPreviousData: true,
+            revalidateFirstPage: true,
+            // Older batches are append-only; refetching them on every poll would
+            // re-hydrate the whole history pointlessly.
+            revalidateAll: false,
+            // Keep the list fresh so newly created chats show up without a manual
+            // reload, but pause polling while the tab is hidden.
+            refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 7000),
+            revalidateOnFocus: true,
+        }
+    )
+
+    // Grow the fetch depth whenever the painted window grows, so "load more"
+    // pulls the next small batch of older chats instead of a giant page.
+    useEffect(() => {
+        if (loadedBatches < wantedBatches) {
+            void setLoadedBatches(wantedBatches)
+        }
+    }, [loadedBatches, wantedBatches, setLoadedBatches])
+
+    const mergedChatPages = useMemo(() => mergeChatPages(chatPagesData), [chatPagesData])
+
+    const chats = chatPagesData === undefined
+        ? undefined
+        : { rows: mergedChatPages.rows, total: mergedChatPages.total }
+
+    // Frontend pagination: only `paintedPages * CHAT_LIST_PAGE_SIZE` rows are
+    // handed to React, so ~20 chats paint first and older rows are appended a
+    // page at a time. The pinned top-up is always painted (see renderChatItems).
+    const paintedRowLimit = paintedRowBudget(paintedPages)
+
+    // Fetches the next batches of older chats and grows the painted window by one
+    // page. The extra batches do not need a fresh skeleton: `keepPreviousData`
+    // keeps the loaded rows on screen while they land.
+    const loadOlderChats = useCallback(() => {
+        setPaintedPages((current) => current + 1)
+    }, [])
     const { data: defaultBotContact, isLoading: defaultBotLoading, mutate: mutateDefaultBotContact } = useSWR<{ contact_token?: string; name?: string } | null>(
         showChats ? `/api/v1/contacts/default-bot` : null,
         fetcher,
@@ -651,7 +725,9 @@ export function ChatsList({
         if (automatedChatUuids.size === 0) {
             return null
         }
-        return Array.from(automatedChatUuids)
+        // The batch endpoint resolves at most `chatStatesMaxChats` chats, so ask
+        // only for the newest ones instead of silently dropping the tail.
+        return chatStatesRequestUuids(automatedChatUuids)
     }, [automatedChatUuids])
 
     const chatStatesKey = useMemo(
@@ -733,7 +809,10 @@ export function ChatsList({
 
     const actionCount = typeof actionTasksCount?.count === "number" ? actionTasksCount.count : 0
 
-    const FilterMenu = () => (
+    // The filter menus are memoized elements instead of inline components: a new
+    // function identity every render made React unmount and remount the whole
+    // dropdown subtree, which is wasted work on every list/state poll (ci#579).
+    const filterMenu = useMemo(() => (
         <DropdownMenu open={filterMenuOpen} onOpenChange={setFilterMenuOpen}>
             <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative size-7" aria-label="Filter chats">
@@ -762,9 +841,9 @@ export function ChatsList({
                 ))}
             </DropdownMenuContent>
         </DropdownMenu>
-    );
+    ), [filterMenuOpen, chatTypeFilters, handleChatTypeToggle]);
 
-    const TagsMenu = () => (
+    const tagsMenu = useMemo(() => (
         <DropdownMenu open={tagsMenuOpen} onOpenChange={setTagsMenuOpen}>
             <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative size-7" aria-label="Filter by tag">
@@ -821,9 +900,9 @@ export function ChatsList({
                 )}
             </DropdownMenuContent>
         </DropdownMenu>
-    );
+    ), [tagsMenuOpen, hasTagFilter, hasNonDefaultExcludeTagFilter, knownTags, tagFilters, excludeTagFilters, handleTagCycle]);
 
-    const StateMenu = () => (
+    const stateMenu = useMemo(() => (
         <DropdownMenu open={stateMenuOpen} onOpenChange={setStateMenuOpen}>
             <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative size-7" aria-label="Filter by state">
@@ -860,7 +939,7 @@ export function ChatsList({
                 ))}
             </DropdownMenuContent>
         </DropdownMenu>
-    );
+    ), [stateMenuOpen, hasStateFilter, stateFilter]);
 
     const renderDivider = (label: string) => (
         <div className="chat-list-divider" key={label}>
@@ -974,9 +1053,17 @@ export function ChatsList({
         )
 
         // Pinned chats sort above the time-grouped rest so important chats stay
-        // reachable.
+        // reachable. They are always painted: the backend tops the first batch up
+        // with every matching pin, and pinning something should not push it
+        // behind a "load more" step (ci#512/ci#579).
         const pinnedRows = filteredRows.filter((chat: { pinned?: boolean }) => chat.pinned === true)
         const regularRows = filteredRows.filter((chat: { pinned?: boolean }) => chat.pinned !== true)
+
+        // Frontend pagination: only the rows inside the painted window reach
+        // React, so ~20 chats paint first and older rows are appended a page at a
+        // time instead of dumping the whole loaded history into the DOM (ci#579).
+        const visibleRegularRows = regularRows.slice(0, Math.max(paintedRowLimit, 0))
+        const rowsHidden = regularRows.length - visibleRegularRows.length
 
         const items: React.ReactNode[] = []
         if (pinnedRows.length > 0) {
@@ -985,7 +1072,7 @@ export function ChatsList({
         }
 
         let lastDivider: string | null = null
-        for (const chat of regularRows) {
+        for (const chat of visibleRegularRows) {
             const parsed = chat.latest_message_at ? new Date(chat.latest_message_at) : null
             const chatDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : null
             if (chatDate) {
@@ -998,14 +1085,21 @@ export function ChatsList({
             items.push(renderRow(chat))
         }
 
-        // Fetch-pagination footer: offer older chats without loading the whole
-        // history. `total` comes from the list API; the row count includes the
-        // pinned top-up, so it is the exact "have we shown everything" check.
-        if (hasMoreChats({ total: chats.total, rowCount: chats.rows.length, limit: chatLimit })) {
-            // `keepPreviousData` keeps the old page (with its smaller `limit`)
-            // visible while the larger page loads, so a mismatch means a
-            // "load more" request is in flight.
-            const loadingMore = isValidating && (chats.limit ?? chatLimit) < chatLimit
+        // "Load more": offer older chats without loading the whole history.
+        // `total` comes from the list API, so the control stays visible until the
+        // last chat is on screen. When more rows are already fetched than painted
+        // (a batch lands ahead of the window) the same control just paints them,
+        // which keeps the fetch small and the reveal cheap.
+        const hasMore = hasMoreChats({
+            total: chats.total,
+            rowCount: chats.rows.length,
+            limit: loadedBatches * CHAT_LIST_FETCH_BATCH_SIZE,
+        })
+        // Only a pending fetch that we actually asked for shows the in-flight
+        // label; a background poll of the newest batch must not disable the
+        // control (ci#579).
+        const loadingMore = isValidating && rowsHidden === 0 && hasMore && chats.rows.length < paintedRowLimit
+        if (hasMore || rowsHidden > 0) {
             items.push(
                 <div key="chat-list-load-more" className="px-2 py-2">
                     <Button
@@ -1013,7 +1107,7 @@ export function ChatsList({
                         size="sm"
                         className="w-full text-muted-foreground"
                         disabled={loadingMore}
-                        onClick={() => setChatLimit((current) => current + CHAT_LIST_PAGE_SIZE)}
+                        onClick={loadOlderChats}
                     >
                         {loadingMore ? "Loading older chats…" : "Load more"}
                     </Button>
@@ -1086,9 +1180,9 @@ export function ChatsList({
                                         <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
                                     ) : null}
                                 </Button>
-                                <StateMenu />
-                                <TagsMenu />
-                                <FilterMenu />
+                                {stateMenu}
+                                {tagsMenu}
+                                {filterMenu}
                             </div>
                         </div>
                         {searchOpen ? (
