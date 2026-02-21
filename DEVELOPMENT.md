@@ -160,6 +160,37 @@ legacy first-enabled-SSH-server behavior is kept, so existing deployments are
 unaffected. The OpenCode-based coding bots remain the default/backup route and
 are not modified by the native sandbox flow.
 
+### Native coding-agent provider concurrency control
+
+Under full-throttle development (many native agents at once) a shared provider
+key (typically OpenRouter) answers **HTTP 402 "This request would exceed your
+available credits given your current in-flight requests"** — a per-key
+*in-flight* cap, not an account-credit cap (ci#620). The native `msgmate_coder`
+runtime therefore admits every provider request through a **per-key in-flight
+limit**: additional requests queue (up to the queue timeout) and succeed instead
+of 402ing, the current in-flight/queue counts are exposed, requests over the cap
+that *do* get rejected with 402/429 fail over to a configured fallback
+provider/secondary key, and the runtime keeps metrics (in-flight, 402/429 rate,
+queue wait, saturation events) so the development loop can self-throttle.
+
+The default in-flight cap is 3 — the development-loop controller's
+`MAX_CONCURRENT` default (ci#592) — and is bounded by the pooled sandbox bound
+`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL` (ci#602) when that is smaller. The
+per-agent keys (`coder_provider_max_concurrency`,
+`coder_provider_queue_timeout_ms`, `coder_provider_fallback_on_saturation`,
+`coder_provider_fallback_backend`/`_model`/`_endpoint`/`_api_key_env`,
+`coder_provider_fallbacks`) mirror the deployment env
+(`OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY`, `..._QUEUE_TIMEOUT_MS`,
+`..._FALLBACK_ON_SATURATION`, `..._FALLBACKS`). A fallback of a known provider
+with no explicit key env resolves `<PROVIDER_API_KEY>_FALLBACK`, so an operator
+only has to export one extra variable to shed load onto a second key. No key —
+primary or secondary — is ever exposed: the admission identity and every status
+snapshot carry only a truncated hash. `coder_context` reports the in-flight
+count and cap, and the admin-only
+`GET /api/v1/integrations/msgmate_coder/provider/status` route reports the
+per-key metrics for the loop. The full reference lives in the
+`msgmate_coder` integration README.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
