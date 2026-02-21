@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Pin } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { OnlineIndicator } from "./OnlineIndicator";
@@ -117,7 +117,7 @@ const CHAT_STATE_DOT_LABELS: Record<ChatState, string> = {
   needs_confirmation: "User confirmation required",
 };
 
-export function ChatStateDot({
+export const ChatStateDot = memo(function ChatStateDot({
   state,
   tracked = false,
   loading = false,
@@ -156,9 +156,9 @@ export function ChatStateDot({
       )}
     />
   );
-}
+});
 
-export function ChatItemCompact({
+export const ChatItemCompact = memo(function ChatItemCompact({
   chat = null,
   isSelected = false,
   navigateTo = () => {},
@@ -259,4 +259,4 @@ export function ChatItemCompact({
       )}
     </ChatSettings>
   );
-}
+});
