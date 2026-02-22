@@ -20,7 +20,7 @@ describe("parseTurnTimeline", () => {
       timeline: [
         { kind: "thought", text: "a", duration_ms: "820" },
         { text: "" },
-        { kind: "text", text: "narration" },
+        { kind: "unknown-kind", text: "narration" },
         null,
         { kind: "thought", text: "b", duration_ms: "nope" },
       ],
@@ -28,6 +28,22 @@ describe("parseTurnTimeline", () => {
     expect(blocks.map((block) => block.text)).toEqual(["a", "b"]);
     expect(blocks[0].durationMs).toBe(820);
     expect(blocks[1].durationMs).toBeUndefined();
+  });
+
+  it("keeps assistant narration blocks distinct from reasoning (ci#569)", () => {
+    const blocks = parseTurnTimeline({
+      timeline: [
+        { kind: "thought", text: "the test fails on the stale assertion" },
+        { kind: "text", text: "Let me check the migration next." },
+        { kind: "text", text: "  Patching the assertion.  " },
+      ],
+    });
+    expect(blocks.map((block) => block.kind)).toEqual(["thought", "text", "text"]);
+    expect(blocks.map((block) => block.text)).toEqual([
+      "the test fails on the stale assertion",
+      "Let me check the migration next.",
+      "Patching the assertion.",
+    ]);
   });
 
   it("returns nothing for messages without a timeline", () => {

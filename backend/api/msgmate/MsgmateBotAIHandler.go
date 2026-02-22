@@ -923,7 +923,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var isThinking bool
 	const thinkStartTag = "<think>"
 	const thinkEndTag = "</think>"
-	var hadToolCall bool
 	var currentBuffer strings.Builder
 	// The turn timeline (ci#569) records the assistant's reasoning blocks in
 	// order together with how many of them had already been emitted when each
@@ -1442,20 +1441,25 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if !ok {
 				toolCalls = nil
 			} else {
-				if !hadToolCall {
-					hadToolCall = true
-					_, extractedThoughts := extractThinkSections(fullText.String())
-					for _, thought := range extractedThoughts {
-						trimmed := strings.TrimSpace(thought)
-						if trimmed == "" {
-							continue
-						}
-						timeline.addThought(trimmed, thoughtDurations[trimmed])
+				// Every call captures the narration the model emitted before it.
+				// The message body keeps only the text that came after the
+				// *final* call, so a turn that ran several tools would otherwise
+				// render as a bare stack of call rows with no hint of what the
+				// agent was doing or why (ci#569).
+				capturedText, extractedThoughts := extractThinkSections(fullText.String())
+				for _, thought := range extractedThoughts {
+					trimmed := strings.TrimSpace(thought)
+					if trimmed == "" {
+						continue
 					}
-					appendThoughtEntries(extractedThoughts)
-					fullText.Reset()
-					currentBuffer.Reset()
+					timeline.addThought(trimmed, thoughtDurations[trimmed])
 				}
+				appendThoughtEntries(extractedThoughts)
+				if narration := strings.TrimSpace(capturedText); narration != "" {
+					timeline.addText(narration)
+				}
+				fullText.Reset()
+				currentBuffer.Reset()
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
 
 				// A reasoning block that is still streaming when the call is
@@ -1489,12 +1493,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 				// Per-call timing (ci#569): started_at lets the UI run a live
 				// timer while the call is ongoing, duration_ms renders the final
-				// elapsed time once it completed.
-				if toolCall.StartedAtUnixMs > 0 {
-					toolCallRepr["started_at"] = toolCall.StartedAtUnixMs
-				}
-				if toolCall.DurationMs > 0 {
-					toolCallRepr["duration_ms"] = toolCall.DurationMs
+				// elapsed time once it completed. A completed call reports its
+				// duration even when it was zero (a cached call is instant), so
+				// the widget shows "0ms" instead of a fabricated elapsed time.
+				for key, value := range toolCallTimingFields(toolStatus, toolCall.StartedAtUnixMs, toolCall.DurationMs) {
+					toolCallRepr[key] = value
 				}
 
 				if tool, found := NewToolByName(toolCall.ToolName); found {
