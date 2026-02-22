@@ -33,6 +33,35 @@ prompt. The client approves or rejects it and, on approval, executes it with:
 POST /api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute
 ```
 
+## Turn timeline and tool-call widgets
+
+A tool-using agent produces an interleaved stream: it reasons, calls a tool,
+reads the result, narrates what it will do next, calls the next tool, and so on.
+The core records that stream so the transcript reads the way the agent actually
+worked instead of as a bare stack of opaque call rows:
+
+- `meta_data.timeline` holds the ordered **narration blocks** of the turn. A
+  `{"kind": "thought"}` entry is the model's reasoning (a streamed thinking
+  block or an inline reasoning tag); a `{"kind": "text"}` entry is the
+  assistant's user-visible commentary between the calls, which the message body
+  alone does not keep (its text only covers what came after the final call).
+- Every tool call carries `started_at` (unix ms) and `duration_ms`, and
+  `timeline_index` — how many narration blocks had already been emitted when
+  the call was dispatched, which places it in the sequence above.
+
+The chat UI interleaves both back into *thought → commentary → the call it
+produced → next block*, and renders each tool call with a live timer while it
+runs and its recorded duration once it completes. Messages without a timeline
+(or whose calls carry no `timeline_index`) keep the older layout, so nothing
+regresses for a backend that does not report it.
+
+While a turn is still running its narration is rendered as the ordinary message
+body and the client hides the timeline's copy of it, so nothing is shown twice;
+once the turn finished the recorded narration is rendered inline in the
+sequence. A finished turn that dispatched tool calls without emitting any
+reasoning or commentary says so explicitly, instead of leaving the reader to
+wonder why the transcript is a wall of tool calls.
+
 ## Interaction tags
 
 Chats and interactions carry free-form **tags** used for filtering in the chat
