@@ -13,6 +13,16 @@ name: Auto-approve consolidation PRs
 # repository, only after `Run PR CI Tests and Deployments` concluded success,
 # and only one approval is posted.
 #
+# ci#538 follow-up hardening:
+#   * a configured-but-unusable `CONSOLIDATE_APPROVER_TOKEN` is reported as the
+#     admin configuration bug it is (`gh api user` preflight; the API error text
+#     is no longer mistaken for a PR number);
+#   * PR references are validated as numbers before they are used;
+#   * the step is idempotent: a PR that already carries an approving review from
+#     the acting identity is left alone and counts as success, instead of a
+#     duplicate-review failure (GitHub answers `422` when the same reviewer
+#     submits a second review, which happened on every re-run of a green PR).
+#
 # Required admin step (one of):
 #   * Preferred: create a dedicated reviewer identity (GitHub App or a
 #     fine-grained PAT with `pull_requests: write`) and store its token as the
@@ -84,14 +94,41 @@ jobs:
           head_sha="${{ github.event.workflow_run.head_sha }}"
           # PRs whose head is this commit, restricted to consolidation branches
           # targeting main in this repository.
-          mapfile -t numbers < <(
+          #
+          # ci#538: pull the payload into a variable and run jq separately instead
+          # of `gh api --jq`. On an API failure (eg a bad token) `--jq` used to
+          # write the *error* JSON to stdout, which then became the "PR number"
+          # list. Capture the exit status and fail loudly instead.
+          if ! pulls_json="$(
             gh api --paginate \
-              "repos/${{ github.repository }}/commits/${head_sha}/pulls" \
-              --jq '.[] | select(.base.ref == "main")
-                        | select(.head.repo.full_name == "${{ github.repository }}")
-                        | select(.head.ref | startswith("chore/consolidate-"))
-                        | .number'
-          )
+              "repos/${{ github.repository }}/commits/${head_sha}/pulls"
+          )"; then
+            echo "::error::Failed to list the PRs for ${head_sha} (API/credentials)."
+            exit 1
+          fi
+          if ! numbers_raw="$(
+            printf '%s' "$pulls_json" \
+              | jq -r '.[] | select(.base.ref == "main")
+                            | select(.head.repo.full_name == "${{ github.repository }}")
+                            | select(.head.ref | startswith("chore/consolidate-"))
+                            | .number'
+          )"; then
+            echo "::error::Could not parse the PR listing for ${head_sha}."
+            exit 1
+          fi
+
+          numbers=()
+          while IFS= read -r number; do
+            [ -z "$number" ] && continue
+            case "$number" in
+              ''|*[!0-9]*)
+                echo "::error::Unexpected non-numeric PR reference: ${number}"
+                exit 1
+                ;;
+            esac
+            numbers+=("$number")
+          done <<< "$numbers_raw"
+
           if [ "${#numbers[@]}" -eq 0 ]; then
             echo "No consolidation PR found for ${head_sha}; nothing to approve."
             echo "prs=" >> "$GITHUB_OUTPUT"
@@ -116,19 +153,56 @@ jobs:
             echo "::warning::No CONSOLIDATE_APPROVER_TOKEN configured; falling back to github.token. This only works when Actions are allowed to approve PRs."
           fi
 
-          reviewer="$(gh api user --jq '.login' 2>/dev/null || echo '')"
+          # ci#538: preflight the credentials. Without this, a wrong/expired
+          # CONSOLIDATE_APPROVER_TOKEN only surfaces later as a confusing
+          # `gh pr view`/review failure (and, historically, as a bogus PR
+          # reference), which reads like a workflow bug rather than the admin
+          # configuration problem it is.
+          #
+          # The fallback path (`github.token`) is allowed to stay unknown: some
+          # installation tokens cannot resolve `/user`, and the review call
+          # itself is the authoritative check for them.
+          if ! reviewer="$(gh api user --jq '.login' 2>/dev/null)"; then
+            reviewer=""
+          fi
+          if [ -z "$reviewer" ] && [ "$HAS_APPROVER_TOKEN" = "true" ]; then
+            echo "::error::CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401). Re-issue the reviewer identity token: no approval can be posted until then."
+            exit 1
+          fi
           echo "Approving as '${reviewer:-unknown}'."
+
           failures=0
           IFS=',' read -ra numbers <<< "$PRS"
           for number in "${numbers[@]}"; do
+            case "$number" in
+              ''|*[!0-9]*)
+                echo "::error::Unexpected non-numeric PR reference: ${number}"
+                failures=$((failures + 1))
+                continue
+                ;;
+            esac
             echo "::group::PR #${number}"
             author="$(gh pr view "$number" --repo "${{ github.repository }}" --json author --jq '.author.login' 2>/dev/null || echo '')"
-            if [ -n "$reviewer" ] && [ "$author" = "$reviewer" ]; then
+            if [ -n "$reviewer" ] && [ -n "$author" ] && [ "$author" = "$reviewer" ]; then
               echo "::warning::PR #${number} is authored by '${reviewer}'; cannot self-approve, skipping."
               failures=$((failures + 1))
               echo "::endgroup::"
               continue
             fi
+
+            # ci#538: idempotency. GitHub rejects a second review from the same
+            # identity (HTTP 422), so a re-run of an already-approved PR used to
+            # end in a red auto-approve job even though the approval holds.
+            existing_approvers="$(gh pr view "$number" --repo "${{ github.repository }}" \
+              --json reviews \
+              --jq '.reviews[] | select(.state == "APPROVED") | .author.login' \
+              2>/dev/null || echo '')"
+            if [ -n "$reviewer" ] && grep -qxF "$reviewer" <<< "$existing_approvers"; then
+              echo "PR #${number} is already approved by '${reviewer}'; nothing to do."
+              echo "::endgroup::"
+              continue
+            fi
+
             if gh pr review "$number" --repo "${{ github.repository }}" --approve \
                  --body "Auto-approved: the required PR CI run (${RUN_URL}) succeeded and this is a consolidation PR (ci#538)."; then
               echo "Approved PR #${number}."
