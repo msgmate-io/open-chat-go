@@ -15,9 +15,20 @@
 
 import { toolCallTimelineIndex, type ToolCallLike } from "./toolCallSummary";
 
-export type TurnThoughtKind = "thought";
+/**
+ * The two kinds of narration block a turn can carry:
+ *
+ * - `thought` — the model's reasoning (a thinking block / think tag). Collapsed
+ *   into a quiet, dashed block.
+ * - `text` — the assistant's user-visible narration between the calls ("Now
+ *   let me check the migration."). The backend records it in the timeline
+ *   because the message body itself only keeps the text that came after the
+ *   *last* call, so without it a multi-tool turn would read as a bare stack of
+ *   tool rows (ci#569).
+ */
+export type TurnThoughtKind = "thought" | "text";
 
-/** One reasoning block of a turn, as recorded in `meta_data.timeline`. */
+/** One narration block of a turn, as recorded in `meta_data.timeline`. */
 export interface TurnThoughtBlock {
   kind: TurnThoughtKind;
   text: string;
@@ -119,12 +130,14 @@ export function parseTurnTimeline(meta: unknown): TurnThoughtBlock[] {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const record = entry as Record<string, unknown>;
     const kind = typeof record.kind === "string" ? record.kind.trim().toLowerCase() : "";
-    if (kind && kind !== "thought") continue;
+    // Only the two narration kinds are renderable; anything else (an unknown
+    // future kind) is skipped so an older client degrades instead of crashing.
+    if (kind && kind !== "thought" && kind !== "text") continue;
     const text = typeof record.text === "string" ? record.text.trim() : "";
     if (!text) continue;
     const duration = asNumber(record.duration_ms);
     blocks.push({
-      kind: "thought",
+      kind: kind === "text" ? "text" : "thought",
       text,
       durationMs: duration !== undefined && duration >= 0 ? duration : undefined,
       streaming: record.streaming === true,
