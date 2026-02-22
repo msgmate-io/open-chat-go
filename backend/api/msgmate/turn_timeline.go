@@ -20,6 +20,11 @@ const (
 	// timelineKindThought is the meta_data.timeline entry kind the chat UI
 	// renders as a reasoning block.
 	timelineKindThought = "thought"
+	// timelineKindText is a block of assistant *narration* — the user-visible
+	// text the model emitted before a tool call. It is kept in the timeline so
+	// the transcript reads thought → narration → the call it produced, the way
+	// an interactive coding agent reads (ci#569).
+	timelineKindText = "text"
 )
 
 // turnTimeline accumulates the ordered reasoning blocks of one bot turn.
@@ -58,6 +63,32 @@ func (t *turnTimeline) addThought(text string, durationMs int64) bool {
 	return true
 }
 
+// addText records a block of assistant *narration* — the user-visible text the
+// model emitted before it dispatched a tool call.
+//
+// That text is what a reader uses to follow *why* a call was made, and the tool
+// loop would otherwise drop it: the message body keeps only the text that came
+// after the final call, so a turn that ran several tools would render as a bare
+// stack of call rows (ci#569). Consecutive identical blocks are collapsed so a
+// re-sent narration is not rendered twice.
+func (t *turnTimeline) addText(text string) bool {
+	if t == nil || text == "" {
+		return false
+	}
+	if n := len(t.entries); n > 0 {
+		if kind, _ := t.entries[n-1]["kind"].(string); kind == timelineKindText {
+			if existing, _ := t.entries[n-1]["text"].(string); existing == text {
+				return false
+			}
+		}
+	}
+	t.entries = append(t.entries, map[string]interface{}{
+		"kind": timelineKindText,
+		"text": text,
+	})
+	return true
+}
+
 // index returns the number of entries recorded so far, ie the position in the
 // timeline a tool call dispatched right now sits at.
 func (t *turnTimeline) index() int {
@@ -84,10 +115,17 @@ func (t *turnTimeline) snapshot() []interface{} {
 	return entries
 }
 
-// snapshotWithStreaming returns the entries in order plus the reasoning block
-// that is currently still streaming (`inProgress`), flagged as such so the chat
-// UI can render it as it arrives. A block that was already recorded is not
+// snapshotWithStreaming returns the entries in order plus the block that is
+// currently still streaming (`inProgress`), flagged as such so the chat UI can
+// render it as it arrives. A block that was already recorded is not
 // duplicated.
+//
+// Narration blocks are kept: a tool call's `timeline_index` counts *all*
+// entries, so the streamed array must have the same shape as the persisted one
+// or the interleaving would drift. The chat UI renders the narration from the
+// ordinary message body while the turn is still running (the text streams in as
+// the message body) and from the timeline once it finished, so no block is
+// shown twice.
 func (t *turnTimeline) snapshotWithStreaming(inProgress string) []interface{} {
 	if t == nil {
 		return nil
