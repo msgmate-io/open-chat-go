@@ -36,6 +36,38 @@ type ToolCall struct {
 	DurationMs      int64
 }
 
+// IsTerminalToolCallStatus reports whether a tool-call status means the call
+// will not produce any further timing. Only a terminal call reports a recorded
+// duration, so an ongoing call keeps ticking instead of freezing at 0ms.
+func IsTerminalToolCallStatus(status string) bool {
+	switch status {
+	case ToolCallStatusSucceeded, ToolCallStatusFailed, ToolCallStatusPendingConfirmation:
+		return true
+	default:
+		return false
+	}
+}
+
+// toolCallTimingFields builds the per-call timing fields the chat UI renders
+// (ci#569): `started_at` lets the widget tick while the call runs, and
+// `duration_ms` is the recorded execution time once the call finished.
+//
+// A completed call reports its duration even when it was zero — a cached
+// (already executed) call finishes instantly — because the widget must show
+// "0ms" rather than inventing an elapsed time from the start stamp. An ongoing
+// call never reports a duration: its duration field is still zero and would
+// freeze the live timer.
+func toolCallTimingFields(status string, startedAtUnixMs, durationMs int64) map[string]interface{} {
+	fields := map[string]interface{}{}
+	if startedAtUnixMs > 0 {
+		fields["started_at"] = startedAtUnixMs
+	}
+	if durationMs > 0 || (IsTerminalToolCallStatus(status) && startedAtUnixMs > 0) {
+		fields["duration_ms"] = durationMs
+	}
+	return fields
+}
+
 const (
 	ToolCallStatusOngoing             = "ongoing"
 	ToolCallStatusSucceeded           = "succeeded"
