@@ -476,6 +476,39 @@ function TurnNarrationBlockView({ text, streaming }: TurnThoughtBlock) {
   );
 }
 
+// InterruptedNote gives a cancelled/interrupted turn a clear affordance instead
+// of letting it read like a completed reply (ci#643). A turn that was stopped
+// after it had already dispatched a run of tool calls carries the real work on
+// `tool_calls`, so the note says how many calls ran before the stop and points
+// the reader at them; a cancelled turn is never silent about being interrupted.
+function InterruptedNote({
+  toolCallCount,
+  cancelled,
+}: {
+  toolCallCount: number;
+  cancelled: boolean;
+}) {
+  if (!cancelled) {
+    return null;
+  }
+  const label =
+    toolCallCount > 0
+      ? `Interrupted after ${toolCallCount} tool ${toolCallCount === 1 ? "call" : "calls"}`
+      : "Interrupted";
+  return (
+    <p
+      data-testid="turn-interrupted"
+      className="flex items-center gap-1.5 px-0.5 text-xs text-amber-700 dark:text-amber-400"
+    >
+      <span className="inline-block size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+      <span className="font-medium">{label}</span>
+      {toolCallCount > 0 ? (
+        <span className="text-muted-foreground">— the calls below did run before the stop.</span>
+      ) : null}
+    </p>
+  );
+}
+
 // NoReasoningNote is shown when a finished turn dispatched tool calls without
 // emitting any reasoning or narration at all. Rather than leaving the reader to
 // wonder why the transcript is a bare stack of call rows, it says so explicitly
@@ -917,7 +950,12 @@ export function BotMessageItem({
   /** Render the per-message integration extras (default true). */
   renderExtras?: boolean;
 }) {
-  const metaFinished = message?.meta_data?.finished;
+  // A cancelled turn is terminal too: the backend sets `finished` and
+  // `cancelled` together, but treat `cancelled` as authoritative so an
+  // interrupted turn never renders as still-running and never hides the tool
+  // calls it performed (ci#643).
+  const isCancelled = message?.meta_data?.cancelled === true;
+  const metaFinished = Boolean(message?.meta_data?.finished) || isCancelled;
   const attachments = mapAttachments(message);
   const senderMeta = useMemo(() => formatRelativeTime(message.send_at), [message.send_at]);
   const isConfirmableEvent = message.meta_data?.event_type === "confirmable_action_execute";
@@ -1032,7 +1070,9 @@ export function BotMessageItem({
   // The header of the ordered sequence summarises what the turn did without
   // hiding it: the blocks are rendered open, the header is the collapse handle.
   const turnSequenceHeader =
-    toolCalls.length > 0 ? (
+    isCancelled && toolCalls.length > 0 ? (
+      `Interrupted after ${toolCallLabel}`
+    ) : toolCalls.length > 0 ? (
       metaFinished ? (
         <>
           {timelineLabel ? `${timelineLabel} · ` : ""}
@@ -1131,6 +1171,10 @@ export function BotMessageItem({
         />
       )}
 
+      {usesTurnSequence && isCancelled ? (
+        <InterruptedNote toolCallCount={toolCalls.length} cancelled={isCancelled} />
+      ) : null}
+
       {usesTurnSequence ? (
         <TurnSequence
           messageUUID={message.uuid}
@@ -1203,13 +1247,21 @@ export function BotMessageItem({
           {/* A finished turn that ran tools without reporting any reasoning or
               narration says so, instead of leaving a bare stack of call rows
               that reads like the agent did nothing but call tools (ci#569). */}
-          {thinkingSteps.length === 0 && nonEmptyThoughts.length === 0 ? (
+          <InterruptedNote toolCallCount={toolCalls.length} cancelled={isCancelled} />
+          {!isCancelled && thinkingSteps.length === 0 && nonEmptyThoughts.length === 0 ? (
             <NoReasoningNote toolCallCount={toolCalls.length} />
           ) : null}
           <ToolCallsGroup
             messageUUID={message.uuid}
             toolCalls={toolCalls}
-            header={toolCalls.length === 1 ? <>Tool call</> : <>Tool calls ({toolCalls.length}x)</>}
+            defaultOpen={isCancelled}
+            header={
+              isCancelled
+                ? `Interrupted after ${toolCalls.length} tool ${toolCalls.length === 1 ? "call" : "calls"}`
+                : toolCalls.length === 1
+                  ? <>Tool call</>
+                  : <>Tool calls ({toolCalls.length}x)</>
+            }
           />
         </>
       )}
