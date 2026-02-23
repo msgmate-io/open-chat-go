@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -147,6 +148,21 @@ func TestClassifyGenerationFailure(t *testing.T) {
 		{
 			name:       "unrecognised request failure is internal",
 			err:        fmt.Errorf("request failed: unsupported protocol"),
+			wantReason: FailureReasonInternal,
+		},
+		{
+			name:       "turn deadline is a timeout, not internal",
+			err:        context.DeadlineExceeded,
+			wantReason: FailureReasonTimeout,
+		},
+		{
+			name:       "wrapped turn deadline is a timeout",
+			err:        fmt.Errorf("wrapped: %w", context.DeadlineExceeded),
+			wantReason: FailureReasonTimeout,
+		},
+		{
+			name:       "user cancel is not classified as a timeout",
+			err:        context.Canceled,
 			wantReason: FailureReasonInternal,
 		},
 	}
