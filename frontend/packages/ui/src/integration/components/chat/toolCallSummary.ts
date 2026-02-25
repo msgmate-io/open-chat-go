@@ -11,7 +11,14 @@
 // may be an already-decoded object or the JSON string the integration bridge
 // marshals. The helpers below normalize both.
 
-export type ToolCallStatus = "ongoing" | "succeeded" | "failed" | "pending_confirmation";
+export type ToolCallStatus =
+  | "ongoing"
+  | "succeeded"
+  | "failed"
+  | "pending_confirmation"
+  // The call was still running when the turn was stopped/interrupted. It is
+  // terminal (never shown as a live spinner) but distinct from a failure.
+  | "cancelled";
 
 /** The subset of a tool call these helpers need. */
 export interface ToolCallLike {
@@ -42,6 +49,8 @@ export interface ToolCallSummary {
   failed: number;
   pending: number;
   running: number;
+  /** Calls interrupted because the turn was stopped. */
+  cancelled: number;
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
@@ -92,9 +101,19 @@ export function resultRecord(call: ToolCallLike): Record<string, unknown> | null
 // Resolve a tool call's lifecycle status. An explicit status wins; otherwise it
 // is inferred from the error text / result so older messages that only carried
 // a result still render a sensible affordance.
-export function resolveToolCallStatus(call: ToolCallLike): ToolCallStatus {
+//
+// `opts.terminal` marks the *message* as finished/cancelled: a call the backend
+// left at "ongoing" in a stopped turn is really interrupted, so it must render
+// as terminal (amber "interrupted") instead of a call that is still running
+// (ci#668).
+export function resolveToolCallStatus(
+  call: ToolCallLike,
+  opts?: { terminal?: boolean },
+): ToolCallStatus {
+  const terminal = opts?.terminal === true;
   const rawStatus = typeof call?.status === "string" ? call.status.trim().toLowerCase() : "";
-  if (rawStatus === "ongoing") return "ongoing";
+  if (rawStatus === "cancelled" || rawStatus === "interrupted") return "cancelled";
+  if (rawStatus === "ongoing") return terminal ? "cancelled" : "ongoing";
   if (rawStatus === "succeeded") return "succeeded";
   if (rawStatus === "failed") return "failed";
   if (rawStatus === "pending_confirmation") return "pending_confirmation";
@@ -121,11 +140,11 @@ export function resolveToolCallStatus(call: ToolCallLike): ToolCallStatus {
     }
   }
 
-  return "ongoing";
+  return terminal ? "cancelled" : "ongoing";
 }
 
 export function isCompletedToolStatus(status: ToolCallStatus): boolean {
-  return status === "succeeded" || status === "failed";
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 /** Unix milliseconds when the call began, if the backend reported it (ci#569). */
@@ -168,6 +187,7 @@ export function formatToolDuration(ms: number): string {
 export function toolStatusLabel(status: ToolCallStatus): string {
   if (status === "succeeded") return "Succeeded";
   if (status === "failed") return "Failed";
+  if (status === "cancelled") return "Interrupted";
   if (status === "pending_confirmation") return "Needs confirmation";
   return "Ongoing";
 }
@@ -176,6 +196,7 @@ export function toolStatusLabel(status: ToolCallStatus): string {
 export function toolStatusBadgeClasses(status: ToolCallStatus): string {
   if (status === "succeeded") return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
   if (status === "failed") return "bg-rose-500/10 text-rose-700 border-rose-500/30";
+  if (status === "cancelled") return "bg-amber-500/10 text-amber-700 border-amber-500/30";
   if (status === "pending_confirmation") return "bg-amber-500/10 text-amber-700 border-amber-500/30";
   return "bg-sky-500/10 text-sky-700 border-sky-500/30";
 }
@@ -184,6 +205,7 @@ export function toolStatusBadgeClasses(status: ToolCallStatus): string {
 export function toolStatusDotClasses(status: ToolCallStatus): string {
   if (status === "succeeded") return "bg-emerald-500";
   if (status === "failed") return "bg-rose-500";
+  if (status === "cancelled") return "bg-amber-500";
   if (status === "pending_confirmation") return "bg-amber-500";
   return "bg-sky-500 animate-pulse";
 }
@@ -501,12 +523,14 @@ export function summarizeToolCalls(calls: ToolCallLike[]): ToolCallSummary {
   let failed = 0;
   let pending = 0;
   let running = 0;
+  let cancelled = 0;
 
   for (const call of calls) {
     counts[toolCallCategory(call.name)] += 1;
     const status = resolveToolCallStatus(call);
     if (status === "failed") failed += 1;
     else if (status === "pending_confirmation") pending += 1;
+    else if (status === "cancelled") cancelled += 1;
     else if (status === "ongoing") running += 1;
   }
 
@@ -517,5 +541,5 @@ export function summarizeToolCalls(calls: ToolCallLike[]): ToolCallSummary {
   if (counts.workspace) parts.push(plural(counts.workspace, "workspace"));
   if (counts.other) parts.push(plural(counts.other, "action"));
 
-  return { total: calls.length, details: parts.join(" · "), failed, pending, running };
+  return { total: calls.length, details: parts.join(" · "), failed, pending, running, cancelled };
 }
