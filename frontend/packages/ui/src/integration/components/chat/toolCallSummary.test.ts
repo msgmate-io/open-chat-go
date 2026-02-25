@@ -35,6 +35,17 @@ describe("resolveToolCallStatus", () => {
     expect(resolveToolCallStatus({ result: { count: 0 } })).toBe("succeeded");
     expect(resolveToolCallStatus({})).toBe("ongoing");
   });
+
+  it("marks a still-ongoing call in a terminal message as interrupted (ci#668)", () => {
+    // The backend can leave the last call of a cancelled turn at "ongoing".
+    expect(resolveToolCallStatus({ status: "ongoing" }, { terminal: true })).toBe("cancelled");
+    expect(resolveToolCallStatus({}, { terminal: true })).toBe("cancelled");
+    // A recorded terminal status is never downgraded.
+    expect(resolveToolCallStatus({ status: "succeeded" }, { terminal: true })).toBe("succeeded");
+    expect(resolveToolCallStatus({ status: "failed" }, { terminal: true })).toBe("failed");
+    // A live turn keeps an ongoing call ongoing.
+    expect(resolveToolCallStatus({ status: "ongoing" }, { terminal: false })).toBe("ongoing");
+  });
 });
 
 describe("toolCallSummary", () => {
@@ -131,6 +142,17 @@ describe("summarizeToolCalls", () => {
     expect(summary.running).toBe(1);
     expect(summary.failed).toBe(1);
     expect(summary.pending).toBe(1);
+    expect(summary.cancelled).toBe(0);
+  });
+
+  it("counts interrupted calls separately (ci#668)", () => {
+    const summary = summarizeToolCalls([
+      { name: "coder_bash", status: "cancelled" },
+      { name: "coder_read", status: "interrupted" },
+      { name: "coder_edit", status: "succeeded" },
+    ]);
+    expect(summary.cancelled).toBe(2);
+    expect(summary.running).toBe(0);
   });
 });
 
