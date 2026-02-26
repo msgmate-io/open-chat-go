@@ -5,6 +5,7 @@ import (
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/integrations"
+	"backend/nativecoder"
 	"backend/server/util"
 	"backend/workqueue"
 	"crypto/rand"
@@ -29,7 +30,13 @@ var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) (map[string]interface{}, error) {
 	_ = DB
 	_ = user
-	return extiface.ApplySharedConfigDefaults(config), nil
+	withDefaults := extiface.ApplySharedConfigDefaults(config)
+	// Auto-consolidation is a first-class default of the native msgmate_coder
+	// agent (ci#653): an agent that declares itself as a coder agent gets the
+	// `auto_consolidation` block unless it is switched off. Applying the default
+	// here as well as through the integration keeps it working in a core-only
+	// build, and an explicit per-agent value always wins.
+	return nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue()), nil
 }
 
 type BotDTO struct {
