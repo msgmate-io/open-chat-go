@@ -75,6 +75,56 @@ agree:
 Never wait for or poll CI, deployments or approvals from an agent turn; report
 what is pending instead.
 
+#### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
+
+The SQLite database lives on a single ReadWriteOnce volume, so two backend
+processes can briefly share one database file during a rollout (a *restarted*
+old pod can still be terminating while the new one boots). SQLite grants exactly
+one write lock for the whole file, and the outgoing process may hold it for
+longer than the connection's `busy_timeout(10000)`, so a startup write could
+fail with
+
+```
+add-bot-from-config[0]: database is locked (5) (SQLITE_BUSY)
+```
+
+and the process exited (1) - which wiped every in-flight agent turn. The
+condition is transient by construction and the startup pass is an idempotent
+upsert, so it must never be fatal:
+
+- `database.RetryOnBusy` (`backend/database/sqlite_busy.go`) retries an
+  operation while it fails with a transient lock error (`SQLITE_BUSY` /
+  `SQLITE_LOCKED`, recognised through the driver's result code or the
+  "database is locked" message) using exponential backoff, and returns anything
+  else immediately. The default budget (20 attempts, 200ms -> 5s) tolerates well
+  over two minutes of foreign write lock - an overlapping pod only holds it while
+  it terminates. The connection keeps `busy_timeout(10000)` +
+  `journal_mode(WAL)` (`backend/database/db_sqlite_driver_default.go`), which the
+  new pragma test pins.
+- Every startup write in `runServer` goes through `runStartupBootstrapDBStep`
+  (`backend/cmd/bootstrap_busy_retry.go`): `seed-model-configs`, the
+  root/default/extra users, `bootstrap.users`, `add-bot-from-config`, the
+  integration bot configs, and the SSH, sandbox, opencode, git, MCP, kubernetes,
+  integration-hook and default-model-access passes. Only a real error - or an
+  exhausted retry budget, which now names the lock and the action to take - still
+  aborts startup.
+- `util.CreateUser` / `util.CreateUserPwPreHashed` no longer call `log.Fatal` on
+  a write error: they return the error (wrapped, so it unwraps to the driver's
+  lock error) for the retry loop to classify. The `log.Fatal` inside the writer
+  bypassed any retry - that is exactly how the crash-loop happened.
+- `backend/cmd/bootstrap_busy_retry_test.go` and
+  `backend/database/sqlite_busy_test.go` reproduce it: a second process takes
+  `BEGIN IMMEDIATE` on the same file, the booting process starts writing, and the
+  step has to retry and commit exactly one row; a non-lock error still surfaces.
+- Deployment strategy: the SQLite volume is ReadWriteOnce, so the deployment must
+  not roll with overlapping pods (`strategy: Recreate` in the
+  `msgmate-io/open-chat-go-helm-chart` deployment; the live staging Deployment
+  was already patched to it). The retry above is the safety net for a restart and
+  for multi-process setups (workers, ci#648), not a licence to roll concurrently.
+- Still a maintainer/ops item: watch the 1Gi SQLite PVC (it grows with
+  interactions and history) and raise it or add retention when it approaches the
+  limit.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git

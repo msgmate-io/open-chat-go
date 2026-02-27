@@ -84,8 +84,7 @@ func CreateUserPwPreHashed(
 
 	if q.Error != nil {
 		if q.Error.Error() != "record not found" {
-			log.Fatal(q.Error)
-			return fmt.Errorf("Error reading user from db"), nil
+			return fmt.Errorf("error reading user from db: %w", q.Error), nil
 		}
 	} else {
 		log.Println("User already exists")
@@ -104,8 +103,7 @@ func CreateUserPwPreHashed(
 	q = DB.Create(&user)
 
 	if q.Error != nil {
-		log.Fatal(q.Error)
-		return fmt.Errorf("Error writing user to db"), nil
+		return fmt.Errorf("error writing user to db: %w", q.Error), nil
 	}
 
 	return nil, &user
@@ -124,8 +122,7 @@ func CreateUser(
 
 	if q.Error != nil {
 		if q.Error.Error() != "record not found" {
-			log.Fatal(q.Error)
-			return fmt.Errorf("Error reading user from db"), nil
+			return fmt.Errorf("error reading user from db: %w", q.Error), nil
 		}
 	} else {
 		log.Println("User already exists")
@@ -150,8 +147,7 @@ func CreateUser(
 	q = DB.Create(&user)
 
 	if q.Error != nil {
-		log.Fatal(q.Error)
-		return fmt.Errorf("Error writing user to db"), nil
+		return fmt.Errorf("error writing user to db: %w", q.Error), nil
 	}
 
 	return nil, &user
