@@ -264,6 +264,11 @@ const (
 	FailureReasonTransientNetwork = "transient_network_error"
 	FailureReasonTimeout          = "turn_timeout"
 	FailureReasonInternal         = "internal_error"
+	// FailureReasonLeakedCompaction marks a turn whose assistant output was only
+	// a leaked context-compaction transcript (ci#562): the model volunteered its
+	// own bookkeeping instead of an answer, twice in a row, so the turn is
+	// stopped with guidance instead of being persisted with no text.
+	FailureReasonLeakedCompaction = "leaked_compaction_transcript"
 )
 
 // GenerationFailureClassification is the outcome of classifying a failed
@@ -294,6 +299,13 @@ func ClassifyGenerationFailure(err error) GenerationFailureClassification {
 	}
 	if isContextWindowExceededError(err) {
 		return GenerationFailureClassification{Reason: FailureReasonContextWindow}
+	}
+	// A turn whose assistant output was only a leaked context-compaction
+	// transcript has its own reason: it is neither a provider fault nor an
+	// internal error, and the guidance tells the user the work done so far is
+	// kept and how to continue (ci#562).
+	if errors.Is(err, errLeakedCompactionTranscript) {
+		return GenerationFailureClassification{Reason: FailureReasonLeakedCompaction}
 	}
 	summary, attempts := describeProviderFailure(err)
 	if attempts < 1 {
