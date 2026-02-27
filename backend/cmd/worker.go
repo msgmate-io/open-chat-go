@@ -50,6 +50,18 @@ func WorkerCli() *cli.Command {
 				Usage:   "Backend base URL used by async bot tasks",
 				Value:   "http://127.0.0.1:1984",
 			},
+			&cli.BoolFlag{
+				Sources: cli.EnvVars("DB_SKIP_MIGRATIONS"),
+				Name:    "skip-migrations",
+				Usage:   "skip the automatic database migration pass (set on secondary workers so they do not race the primary process)",
+				Value:   false,
+			},
+			&cli.BoolFlag{
+				Sources: cli.EnvVars("WORKER_SCHEDULER"),
+				Name:    "run-scheduler",
+				Usage:   "run the integration scheduler in this process (exactly one process must own it)",
+				Value:   true,
+			},
 		}, GetRedisFlags()...),
 		Action: func(_ context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
@@ -77,10 +89,11 @@ func WorkerCli() *cli.Command {
 			}
 
 			DB := database.SetupDatabase(database.DBConfig{
-				Backend:  c.String("db-backend"),
-				FilePath: c.String("db-path"),
-				Debug:    c.Bool("debug"),
-				ResetDB:  false,
+				Backend:        c.String("db-backend"),
+				FilePath:       c.String("db-path"),
+				Debug:          c.Bool("debug"),
+				ResetDB:        false,
+				SkipMigrations: c.Bool("skip-migrations"),
 			})
 			database.SetGlobalDB(DB)
 			processor := &queue.Processor{
@@ -98,12 +111,16 @@ func WorkerCli() *cli.Command {
 				},
 			)
 
-			integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
-			if err != nil {
-				return err
-			}
-			if integrationScheduler != nil {
-				defer integrationScheduler.Shutdown()
+			if c.Bool("run-scheduler") {
+				integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
+				if err != nil {
+					return err
+				}
+				if integrationScheduler != nil {
+					defer integrationScheduler.Shutdown()
+				}
+			} else {
+				log.Printf("Integration scheduler disabled (run-scheduler=false); another process must own it")
 			}
 
 			log.Printf("Starting asynq worker with concurrency=%d", c.Int("asynq-concurrency"))

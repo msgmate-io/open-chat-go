@@ -19,6 +19,10 @@ type DBConfig struct {
 	FilePath string // for SQLite
 	Debug    bool
 	ResetDB  bool
+	// SkipMigrations disables the automatic schema migration pass. Set it on
+	// secondary processes (e.g. extra workers) so they do not race the primary
+	// server's AutoMigrate with concurrent DDL.
+	SkipMigrations bool
 }
 
 // globalDB is set once the process-wide primary database handle is ready.
@@ -62,6 +66,11 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 	}
 
 	stmt := &gorm.Statement{DB: db}
+	if config.SkipMigrations {
+		log.Printf("Skipping database migrations (SkipMigrations=true)")
+		return db
+	}
+
 	if config.ResetDB {
 		for i, migration := range Migrations {
 			if tableMigration, ok := migration.(TableMigration); ok {

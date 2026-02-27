@@ -52,6 +52,8 @@ Every flag has an environment variable equivalent via `cli.EnvVars`.
 | `--frontend-proxy` | `FRONTEND_PROXY` | — | Proxy the frontend to a dev server (e.g. `http://localhost:5173/`). |
 | `--start-worker` | `START_WORKER` | `true` | Run the embedded Asynq worker. |
 | `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Worker goroutine count. |
+| `--skip-migrations` | `DB_SKIP_MIGRATIONS` | `false` | Skip the automatic schema migration pass (secondary processes). |
+| `--run-scheduler` | `WORKER_SCHEDULER` | `true` | Run the integration scheduler (exactly one process must own it). |
 | `--signup-requires-admin-approval` | `SIGNUP_REQUIRES_ADMIN_APPROVAL` | `false` | Require admin approval for signups. |
 | `--cors-allowed-origins` | `CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origin allowlist. |
 | `--public-base-url` | `PUBLIC_BASE_URL` | — | Canonical public origin advertised to clients. |
@@ -68,6 +70,13 @@ Every flag has an environment variable equivalent via `cli.EnvVars`.
 | `--redis-addr` | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address when no URL is set. |
 | `--redis-password` | `REDIS_PASSWORD` | — | Redis password. |
 | `--redis-db` | `REDIS_DB` | `0` | Redis DB index. |
+
+To run multiple workers against one API: set `START_WORKER=false` on the API,
+point each worker at the API with `OPEN_CHAT_HOST`, pin `REDIS_MODE=external`
+so all processes share one queue, set `DB_SKIP_MIGRATIONS=true` on the workers
+(only the API migrates the schema), and leave the integration scheduler
+(`--run-scheduler`) enabled in exactly one process — asynq v0.26 does not
+leader-elect it.
 
 ## Provider credentials
 

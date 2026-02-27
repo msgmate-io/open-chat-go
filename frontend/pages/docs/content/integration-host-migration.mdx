@@ -38,10 +38,16 @@ interface itself:
 | `host.Web()` (`Fetch/Search/DefaultSearchLimit`) | `backend/webtools` |
 | `host.Tokens()` (`GenerateRaw/MintScoped/PruneMismatched`) | `backend/database` access-token helpers |
 | `host.Tools()` (`DiscoverMCPTools/GetToolInitData`) | `backend/api/msgmate` MCP snapshot, `backend/database` tool-init manager |
+| `host.ConfigWrite()` (`SetValue/DeleteValue/PublicBaseURL`) | `backend/runtimecfg` writes |
+| `host.Users()` (`Create/ByUsername/SetAutomated`) | `backend/server/util.CreateUser` |
 | `integrationinterface.RegisterChatBackend(spec)` | `backend/api/msgmate.RegisterChatBackend` + `backend/chatstate` registration |
 
 `HostVersion` 3 adds `Storage.Global`, `Chat`, `Workspace`, `Web`, `Tokens` and
-`Tools`. External chat backends are declared with
+`Tools`. `HostVersion` 4 adds the platform services the chat-backend integrations
+need: `ConfigWrite()` (the write side of the runtime configuration, including
+`PublicBaseURL()`) and `Users()` (local-account provisioning: `Create`,
+`ByUsername`, `SetAutomated`), replacing direct `backend/runtimecfg` writes and
+`backend/server/util.CreateUser`. External chat backends are declared with
 `integrationinterface.RegisterChatBackend(ChatBackendSpec{...})` from package
 init (no Host required); the core adapter drains the registry after installing
 the Host and wires the declared backend/state-provider/interrupt-handler into
@@ -146,6 +152,7 @@ workspace that uses `backend/` plus every integration module (`full` profile):
 | `email` | 336 → 231 | 4 → 0 | 13 |
 | `notifications` | 336 → 229 | 4 → 0 | 13 |
 | `docker_sandbox` | 706 → 635 | 4 → 0 direct¹ | 2 |
+| `slack` | 349 → 236 | 11 → 0 | 0 |
 | `opencode` | 362 → 253 | 12 → 0 | 13 |
 | `msgmate_coder` | 361 → 245 | 11 → 0 | 13 |
 | `go_client` | 238 → 239 | 0 → 0 | 0 |
@@ -163,7 +170,7 @@ per-integration prebuilds. The test-only column is measured with
 `go list -deps -test` and is informational: it is what the Go-test CI job pays
 when it compiles the integration's tests.
 
-### Still coupled in the compiled artifact (8)
+### Still coupled in the compiled artifact (7)
 
 | integration | `backend/...` | core packages still imported |
 | --- | --- | --- |
@@ -171,15 +178,14 @@ when it compiles the integration's tests.
 | `git` | 13 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `integrationhost`, `runtimecfg`, `server/util`, `webtools`, `workqueue`, `workspacelease` |
 | `matrix` | 11 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `runtimecfg`, `server/util`, `webtools`, `workqueue` |
 | `signal` | 11 | same set as `matrix` |
-| `slack` | 11 | same set as `matrix` |
 | `account_management` | 8 | `api`, `api/user`, `api/websocket`, `database`, `runtimecfg`, `secretstore`, `server/util`, `workqueue` |
 | `internal_automations` | 5 | `api/websocket`, `database`, `runtimecfg`, `server/util`, `workqueue` |
 | `tvault` | 5 | `api/websocket`, `database`, `runtimecfg`, `secretstore`, `server/util` |
 
-These eight fall into exactly three groups, each blocked on one missing stable
+These seven fall into exactly three groups, each blocked on one missing stable
 capability rather than on per-integration work:
 
-1. **Chat-backend / websocket registration** (`matrix`, `signal`, `slack`, `git`,
+1. **Chat-backend / websocket registration** (`matrix`, `signal`, `git`,
    `admin`): they call `msgmate.RegisterChatBackend` / `chatstate` directly,
    plus chat/contact/message tables. The **generic** form of this already exists
    — `integrationinterface.RegisterChatBackend(ChatBackendSpec)` from package
@@ -223,6 +229,12 @@ preview pages) no longer import `backend/server/util.GetDB`. `HostVersion` was
 bumped to `2`; the change is additive and the adapter implements both
 `DB`/`DBAndUser`. Do **not** add integration-specific methods to `Host` — only
 general capabilities like this belong on the surface.
+
+Migrating `slack` (the smallest of the chat-backend group) needed exactly the
+two platform surfaces above - `ConfigWrite` and `Users` - plus the
+`RegisterChatBackend` registry that already existed, so `HostVersion` was bumped
+to `4`. The remaining group-1 integrations (`matrix`, `signal`, `git`, `admin`)
+need the same two surfaces, so they are mechanical follow-ups.
 
 Migrating the coded integrations (`opencode`, `msgmate_coder`) required the
 generic capabilities listed in the surface table above: `Storage.Global` and
