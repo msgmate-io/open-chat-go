@@ -45,6 +45,11 @@ func (host) Web() integrationinterface.Web   { return webAdapter{} }
 func (host) Tokens() integrationinterface.Tokens { return tokensAdapter{} }
 func (host) Tools() integrationinterface.Tools   { return toolsAdapter{} }
 
+// HostVersion 4 platform surfaces: the write side of the runtime configuration
+// and local-account provisioning.
+func (host) ConfigWrite() integrationinterface.ConfigWriter { return configWriter{} }
+func (host) Users() integrationinterface.UsersService       { return usersAdapter{} }
+
 // config adapts the resolved runtime configuration (backend/runtimecfg) to the
 // stable Config surface.
 type config struct{}
