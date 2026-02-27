@@ -36,6 +36,42 @@ Policy:
 - Maintainers may make rare, deliberate exceptions (for example to validate an
   infrastructure change); the risk is theirs and they should say so on the PR.
 
+#### Non-required status checks never block a merge (ci#683)
+
+The `main` ruleset requires exactly one context (`Run PR CI Tests and
+Deployments`). Any *other* status on the head is informational — most notably the
+`private-sandbox-tests` commit status the private sandbox suite sets on the PR
+head from its own repository.
+
+GitHub, however, derives `mergeable_state: blocked` — and therefore the CLIs'
+`gh pr merge` preflight — from **any** non-success commit status on the head,
+required or not. A PR whose only required context was green, which was
+`APPROVED` and `mergeable: true`, was reported as
+
+```
+X Pull request msgmate-io/open-chat-go#700 is not mergeable: the base branch policy prohibits the merge.
+```
+
+while the identical merge through the REST endpoint
+(`PUT /repos/{owner}/{repo}/pulls/{n}/merge`) succeeded immediately (the r25
+consolidation incident). The ruleset is the source of truth, so both paths now
+agree:
+
+- the core auto-consolidation client reads the base branch's ruleset
+  (`GET /repos/{owner}/{repo}/rules/branches/{branch}`) and evaluates exactly the
+  contexts it requires; a red *non-required* check/status is reported as
+  informational, never as "checks are failing", so such a PR stays a ready
+  consolidation candidate (`backend/nativecoder`, `requiredchecks.go`);
+- the typed `github_pr_merge` tool of `msgmate_coder` re-evaluates a
+  "base branch policy prohibits the merge" refusal against the same ruleset and,
+  when every required context is green, the review is APPROVED and the only red
+  statuses are non-required, completes the merge through the REST endpoint and
+  reports `informational_checks`. Any other refusal keeps failing, now naming the
+  resolved required/informational state;
+- the private sandbox suite no longer sets a failing commit status on PR heads
+  (its report link comment and the `main` regression guard are unaffected), so no
+  informational status can gate a merge in the first place.
+
 Never wait for or poll CI, deployments or approvals from an agent turn; report
 what is pending instead.
 
@@ -164,6 +200,37 @@ The capability parity of the native coder against the OpenCode bot suite (per
 bot, per capability, with the explicitly accepted fallbacks) is recorded in
 [`docs/native-coder-parity.md`](../docs/native-coder-parity.md).
 
+### Transient tool failures are retried and budget-exempt (ci#688)
+
+A tool body can fail for purely **environmental** reasons: with 16–24 concurrent
+agents a per-chat auto-sandbox sometimes could not be provisioned
+(`failed to create temporary sandbox: Cloning … error: copy-fd: …`), the host ran
+out of file descriptors / disk, or the sandbox/integration host was momentarily
+unreachable. Each such blip used to be a hard tool failure, so the agent burned
+its failed-tool budget and aborted — and a plan-mode agent then re-cloned and
+retried by itself, which made the exhaustion worse.
+
+The core tool loop therefore classifies tool failures (`api/msgmate/tool_failure_retry.go`):
+
+- a recognised **transient** failure (sandbox provisioning, host resource
+  exhaustion, connection-level blips — the marker list is deliberately limited
+  to infrastructure) is retried with an exponential backoff plus bounded jitter,
+  bounded by the generation context so a user stop is never resurrected;
+- a transient failure that survives the retries is still reported to the model
+  as a failed call, but it does **not** consume the failed-tool budget — the
+  total tool-call cap still bounds the turn, so an agent cannot loop forever.
+  The model-facing result says so explicitly and suggests a short-wait retry;
+- a failure the model can fix (a bad argument, a missing file, a permission
+  error) is never retried and always counts against the budget.
+
+The per-call flags (`retries`, `budget_exempt`) travel in the tool-call metadata
+and the `interaction_complete` payload (`tool_call_transient_failed_count`), so a
+saturated sandbox pool is visible in the transcript instead of only in the
+backend log. Both knobs are configurable per deployment:
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_ATTEMPTS` (default 3, clamped to 1–8) and
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_BASE_DELAY_MS` (default 400 ms,
+exponential up to a 5 s cap).
+
 ### Native coding-agent provider concurrency control
 
 Under full-throttle development (many native agents at once) a shared provider
@@ -260,6 +327,44 @@ Toggle and rollback (three levels, most specific wins):
 consolidation PR targeting `main` is the single place where a batch of ready
 changes is verified as a whole (see "Pull-request CI labels and deployment
 policy" above); feature/bugfix/chore PRs keep the ordinary code-change labels.
+
+### Native coder turns: inline tool calls and leaked compaction transcripts
+
+A provider round can deliver two kinds of output the native coder must never
+persist as a turn's assistant text (ci#428, ci#562):
+
+- an **inline tool call** the provider did not map onto the structured
+  `tool_calls` field — DeepSeek **DSML** control tokens, the Anthropic/XML
+  `<function_calls><invoke name="…">` shape, or the `[[tool_name key="value"]]`
+  bracket placeholder some models fall back to. Detection runs against the
+  *accumulated* stream (markers are split across deltas, so recognising them
+  only once complete would already have leaked the prefix), content is withheld
+  from the client, and the call is reassembled and executed after the stream
+  ends (`parseInlineToolCalls`). A block from which nothing can be recovered
+  fails the turn with `errMalformedInlineToolCall`;
+- a **leaked context-compaction transcript** — the model volunteering its own
+  bookkeeping, an `<analysis>…</analysis>` block followed by a numbered
+  `<summary>…</summary>` block ("Primary Request and Intent", …,
+  "Optional Next Step"). It is model bookkeeping, never an answer, so it is
+  stripped before the round result is returned; the private `tags=coder`
+  benchmark `msgmate_coder_repo_changes_summary` caught exactly that emission
+  as a final reply (the summary file was never written and the reply *was* the
+  blob). Only a message that **opens** with such a tag (optionally after a
+  fence) is treated as a leak — an ordinary answer that merely mentions the tag
+  inside real prose is left untouched.
+
+Either shape counts as "no usable text" for the same single retry the empty
+post-confirmation continuation already got (ci#428): when a round's only output
+was a stripped transcript the loop retries it once instead of finishing on it.
+If the retry produces another transcript the turn fails with
+`errLeakedCompactionTranscript`, classified as its own
+`leaked_compaction_transcript` failure reason so the chat explains it with the
+"the model returned its internal work notes; the work already done is kept —
+send another message" guidance instead of a generic internal error, and no
+empty reply is ever persisted. Recovery lives in
+`backend/api/msgmate/inline_tool_call.go` (parsers) and
+`backend/api/msgmate/compaction_output.go` (compaction detection/stripping),
+with the streaming suppression in `processStreamingResponseReader`.
 
 ### Custom integration profiles
 

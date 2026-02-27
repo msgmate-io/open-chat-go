@@ -59,6 +59,9 @@ type ConsolidationRunResult struct {
 	Merged      bool              `json:"merged,omitempty"`
 	Dispatched  bool              `json:"dispatched,omitempty"`
 	Labels      []string          `json:"labels,omitempty"`
+	// InformationalChecks names red checks/statuses the base-branch ruleset does
+	// not require that the merged consolidation PR carried (ci#683).
+	InformationalChecks []string `json:"informational_checks,omitempty"`
 }
 
 // Run performs one consolidation pass for the given policy and repository.
@@ -153,6 +156,19 @@ func (r ConsolidationRunner) Run(ctx context.Context, policy AutoConsolidationPo
 		// ci#538: request the auto-approval first (idempotent), then merge. Both
 		// only run for a green consolidation PR because require_green gates
 		// ShouldMerge.
+		//
+		// ci#683: a red *non-required* status (the informational
+		// `private-sandbox-tests` commit status) must not be mistaken for a
+		// base-branch-policy veto: the merge is gated on the ruleset's required
+		// contexts, and the informational ones are reported instead.
+		if len(plan.Existing.InformationalChecks) > 0 {
+			r.logf(
+				"auto consolidation: #%d carries %d red non-required status(es) the base ruleset does not require (%s); they are informational and never block the merge (ci#683)",
+				plan.Existing.Number, len(plan.Existing.InformationalChecks),
+				strings.Join(plan.Existing.InformationalChecks, ", "),
+			)
+			result.InformationalChecks = append([]string(nil), plan.Existing.InformationalChecks...)
+		}
 		if err := r.Client.RequestAutoApprove(ctx, plan.Existing.Number); err != nil {
 			return result, fmt.Errorf("request auto approval for #%d: %w", plan.Existing.Number, err)
 		}
@@ -160,7 +176,10 @@ func (r ConsolidationRunner) Run(ctx context.Context, policy AutoConsolidationPo
 		// asynchronously); the merge is retried on the next pass once GitHub
 		// reports the PR mergeable again.
 		if err := r.Client.MergePullRequest(ctx, plan.Existing.Number); err != nil {
-			r.logf("auto consolidation: merge of #%d pending: %v", plan.Existing.Number, err)
+			r.logf(
+				"auto consolidation: merge of #%d pending: %v (every required context is green; a red non-required status such as `private-sandbox-tests` is informational, ci#683)",
+				plan.Existing.Number, err,
+			)
 		} else {
 			result.Merged = true
 		}
@@ -241,6 +260,7 @@ func consolidationBody(plan ConsolidationPlan) string {
 	builder.WriteString("### Verification\n\n")
 	builder.WriteString("The standard label set (`test`, `build`, `e2e`, `test-core-only`, `ai-test-mock`, `ai-test-real`, `sandbox-test`, `deploy`) is applied, so this PR runs the full suite.\n")
 	builder.WriteString("It is merged through the existing auto-approve path (ci#538) once every required check is green; `require_green` never includes a failing, conflicting or draft PR.\n\n")
+	builder.WriteString("The merge is gated on the **required** contexts of the `main` ruleset. A red *non-required* status — typically the informational `private-sandbox-tests` commit status the private suite sets on a PR head — is reported as informational and never blocks the merge (ci#683).\n\n")
 	builder.WriteString("`deploy` and `sandbox-test` are used only on consolidation PRs targeting `main` (DEVELOPMENT.md, \"Pull-request CI labels and deployment policy\").\n")
 	return builder.String()
 }
