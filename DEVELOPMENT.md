@@ -121,6 +121,10 @@ upsert, so it must never be fatal:
   `msgmate-io/open-chat-go-helm-chart` deployment; the live staging Deployment
   was already patched to it). The retry above is the safety net for a restart and
   for multi-process setups (workers, ci#648), not a licence to roll concurrently.
+  The chart change itself is tracked as
+  [open-chat-go-helm-chart#3](https://github.com/msgmate-io/open-chat-go-helm-chart/issues/3)
+  (that repository grants this bot identity no write access and has forking
+  disabled, so the verified patch lives in that issue for a maintainer to land).
 - Still a maintainer/ops item: watch the 1Gi SQLite PVC (it grows with
   interactions and history) and raise it or add retention when it approaches the
   limit.
