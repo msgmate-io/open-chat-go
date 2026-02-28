@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/api/websocket"
 	"backend/database"
+	"backend/nativecoder"
 	"backend/server/util"
 	"bytes"
 	"context"
@@ -447,5 +448,85 @@ func TestCreateChatKeepsChatBackendWithoutModelBindingOverride(t *testing.T) {
 	}
 	if _, ok := config["endpoint"]; ok {
 		t.Fatalf("expected no endpoint injected for chat_backend routing, got %v", config["endpoint"])
+	}
+}
+
+// TestCreateChatSnapshotsToolCallBudget is the ci#709 regression on the chat
+// side: a created chat carries a per-chat tool-call budget snapshot, so the
+// budget it was started with is kept across a re-attach / re-provision and is
+// reported as structured state (the resolved caps and their source) instead of
+// only ever appearing inside an abort error string.
+func TestCreateChatSnapshotsToolCallBudget(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner-budget@example.com", false)
+	botUser := createUserForChatsTest(t, DB, "bot-budget@example.com", false)
+
+	botUser.IsAutomated = true
+	if err := DB.Save(botUser).Error; err != nil {
+		t.Fatalf("failed to mark bot user automated: %v", err)
+	}
+
+	// The bot's caps at creation time: 400 total / 25 failed.
+	defaultConfig := map[string]interface{}{
+		"model":                "qwen3-4b-instruct-2507_vllm",
+		"backend":              "litellm",
+		"tool_call_max_total":  400,
+		"tool_call_max_failed": 25,
+	}
+	defaultConfigJSON, _ := json.Marshal(defaultConfig)
+	runtime := database.BotRuntimeConfig{
+		BotUserId:           botUser.ID,
+		OwnerUserId:         owner.ID,
+		Name:                "bot-runtime-budget",
+		Description:         "runtime",
+		DefaultSharedConfig: defaultConfigJSON,
+		IsActive:            true,
+	}
+	if err := DB.Create(&runtime).Error; err != nil {
+		t.Fatalf("failed to create bot runtime config: %v", err)
+	}
+
+	bodyPayload := map[string]interface{}{
+		"contact_token": botUser.ContactToken,
+		"chat_type":     "conversation",
+	}
+	body, _ := json.Marshal(bodyPayload)
+	req := httptest.NewRequest("POST", "/api/v1/chats/create", bytes.NewReader(body))
+	ctx := context.WithValue(req.Context(), "db", DB)
+	ctx = context.WithValue(ctx, "user", owner)
+	ctx = context.WithValue(ctx, "websocket", websocket.NewWebSocketHandler())
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h := &ChatsHandler{}
+	h.Create(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode create chat response: %v", err)
+	}
+	config, ok := response["config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected config object in response")
+	}
+
+	snapshot, ok := nativecoder.ToolCallBudgetSnapshot(config)
+	if !ok {
+		t.Fatalf("expected a per-chat tool-call budget snapshot, got %#v", config[nativecoder.ToolCallBudgetConfigKey])
+	}
+	if snapshot.MaxTotal != 400 || snapshot.MaxFailed != 25 {
+		t.Fatalf("expected the bot's caps at creation time in the snapshot, got %+v", snapshot)
+	}
+
+	resolved := nativecoder.ResolveToolCallBudget(config, nil)
+	if resolved.MaxTotal != 400 || resolved.MaxFailed != 25 {
+		t.Fatalf("expected the snapshot to make the caps effective, got %+v", resolved)
+	}
+	meta := resolved.Metadata()
+	if meta["snapshot_max_total"] != 400 || meta["snapshot_max_failed"] != 25 {
+		t.Fatalf("expected the snapshot in the structured metadata, got %#v", meta)
 	}
 }

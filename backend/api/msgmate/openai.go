@@ -391,6 +391,18 @@ func streamChatCompletion(
 		if toolCallMaxFailed < 1 {
 			toolCallMaxFailed = DefaultToolCallMaxFailed
 		}
+		// ci#709: the caller resolves the per-chat tool-call budget (snapshot,
+		// chat config, the bot's *current* config, default) and hands it over, so
+		// raising the caps on a bot reaches chats that already exist. A direct
+		// caller without a budget keeps its explicit arguments.
+		if meta.Budget != nil {
+			if meta.Budget.MaxTotal > 0 {
+				toolCallMaxTotal = meta.Budget.MaxTotal
+			}
+			if meta.Budget.MaxFailed > 0 {
+				toolCallMaxFailed = meta.Budget.MaxFailed
+			}
+		}
 
 		currentMessages := messages
 		totalToolCalls := 0
@@ -413,21 +425,41 @@ func streamChatCompletion(
 		var toolCallResult *toolCallResult
 		var err error
 
+		// ci#709: the tool-call budget of this turn, plus a recorder for how the
+		// turn ended. The reader reports the reason and the consumed/remaining
+		// counters as structured state, so a turn that stops after many tool
+		// calls never has to be explained by an error string alone.
+		budget := turnBudgetFromMeta(meta, toolCallMaxTotal, toolCallMaxFailed)
+		recordOutcome := func(reason string) {
+			if meta.Outcome == nil {
+				return
+			}
+			meta.Outcome.Reason = reason
+			meta.Outcome.ToolCalls = totalToolCalls
+			meta.Outcome.FailedToolCalls = failedToolCalls
+			meta.Outcome.TransientFailures = transientToolFailures
+			meta.Outcome.SandboxCapacityFailures = sandboxCapacityFailures
+			meta.Outcome.Budget = budget
+		}
+
 		for {
 			// A stop signal aborts the whole tool loop: once the context is
 			// cancelled neither the provider request nor any further tool body
 			// may run, so the already-dispatched turn cannot keep emitting
 			// results after the user pressed stop.
 			if ctxErr := ctx.Err(); ctxErr != nil {
+				recordOutcome(TurnEndedCancelled)
 				errChan <- ctxErr
 				return
 			}
 			if totalToolCalls >= toolCallMaxTotal {
-				errChan <- fmt.Errorf("exceeded maximum number of tool calls (%d)", toolCallMaxTotal)
+				recordOutcome(TurnEndedToolCallCap)
+				errChan <- newToolCallCapError(toolCallCapErrorKindTotal, toolCallMaxTotal, totalToolCalls, failedToolCalls)
 				return
 			}
 			if failedToolCalls >= toolCallMaxFailed {
-				errChan <- fmt.Errorf("exceeded maximum number of failed tool calls (%d)", toolCallMaxFailed)
+				recordOutcome(TurnEndedFailedToolCallCap)
+				errChan <- newToolCallCapError(toolCallCapErrorKindFailed, toolCallMaxFailed, totalToolCalls, failedToolCalls)
 				return
 			}
 
@@ -443,7 +475,13 @@ func streamChatCompletion(
 					executedToolResults,
 					chunkChan, usageChan, toolChan, errChan,
 					samplingParams,
-					providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts},
+					providerRequestMeta{
+						ChatUUID:             meta.ChatUUID,
+						TrackUsage:           meta.TrackUsage,
+						Attempt:              attempts,
+						ProviderAdmission:    meta.ProviderAdmission,
+						ProviderAdmissionKey: meta.ProviderAdmissionKey,
+					},
 				)
 				if err == nil {
 					break
@@ -514,7 +552,13 @@ func streamChatCompletion(
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
 						samplingParams,
-						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
+						providerRequestMeta{
+							ChatUUID:             meta.ChatUUID,
+							TrackUsage:           meta.TrackUsage,
+							Attempt:              attempts + 1,
+							ProviderAdmission:    meta.ProviderAdmission,
+							ProviderAdmissionKey: meta.ProviderAdmissionKey,
+						},
 					)
 					if err == nil || ctx.Err() != nil || !isContextWindowExceededError(err) {
 						break
@@ -531,6 +575,7 @@ func streamChatCompletion(
 				continue
 			}
 			if err != nil {
+				recordOutcome(TurnEndedProviderError)
 				errChan <- err
 				return
 			}
@@ -543,6 +588,7 @@ func streamChatCompletion(
 			// If we encountered an error, we're done
 			if toolCallResult.err != nil {
 				log.Printf("Error: %v", toolCallResult.err)
+				recordOutcome(TurnEndedNoUsableCall)
 				return
 			}
 
@@ -573,6 +619,7 @@ func streamChatCompletion(
 			// empty message (ci#562).
 			if aiResponseComplete && toolCallResult.compactionOnly &&
 				strings.TrimSpace(toolCallResult.aiResponse) == "" && emptyContinuationRetried {
+				recordOutcome(TurnEndedProviderError)
 				errChan <- errLeakedCompactionTranscript
 				return
 			}
@@ -655,6 +702,7 @@ func streamChatCompletion(
 						}
 					}
 				}
+				recordOutcome(TurnEndedCompleted)
 				return
 			}
 
@@ -709,11 +757,15 @@ func streamChatCompletion(
 			// usable call) would otherwise spin without adding anything to the
 			// transcript: finish instead of re-requesting forever.
 			if len(appended) == 0 {
+				// The loop guard: this round added nothing to the transcript, so
+				// the turn must end - record why so the reader can explain it.
+				recordOutcome(TurnEndedNoUsableCall)
 				return
 			}
 
 			if toolCallResult.stopAfterTool {
 				log.Printf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
+				recordOutcome(TurnEndedConfirmablePause)
 				return
 			}
 
@@ -893,6 +945,18 @@ func processStreamingRequest(
 		RequestBody: requestBody,
 	}
 	runProviderRequestMiddleware(middlewareCtx)
+
+	// Provider admission (ci#620): wait for a per-key in-flight slot instead of
+	// firing the request into the provider's 402/429 in-flight cap. The release
+	// runs when this attempt is done (streamed out or failed), and the effective
+	// cap plus the current in-flight count are logged so the admission decision
+	// is observable.
+	admissionRelease, admissionErr := admitProviderRequest(ctx, meta.ProviderAdmissionKey, meta.ProviderAdmission)
+	if admissionErr != nil {
+		reportProviderRequestResult(middlewareCtx, meta.Attempt, 0, admissionErr, 0, nil, nil)
+		return nil, admissionErr
+	}
+	defer admissionRelease()
 
 	requestStart := time.Now()
 	reportOutcome := func(statusCode int, requestErr error, usage *TokenUsage, response map[string]interface{}) {
