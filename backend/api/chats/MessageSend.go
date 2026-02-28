@@ -314,13 +314,9 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// A newer message into a chat with a live bot reply supersedes the
-		// in-flight turn: EnqueueBotReply cancels it below. Mark the supersession
-		// so the cancelled turn is not surfaced as a user pause ("I paused this
-		// response"); the newer message carries the conversation forward (ci#642).
-		if chatHasLiveBotReply(queueInspector, chatUuid) {
-			chatstate.MarkChatSuperseded(chatUuid)
-		}
+		// A newer message into a chat with a live bot reply no longer cancels the
+		// in-flight turn (ci#656): EnqueueBotReply queues it behind the running
+		// turn, which keeps the work already done and answers every message.
 
 		if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
 			ChatUUID:    chatUuid,
