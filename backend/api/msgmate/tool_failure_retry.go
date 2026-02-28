@@ -49,6 +49,20 @@ const (
 	// OCI_MSGMATE_CODER_ prefix as the other native-coder settings.
 	ToolFailureRetryAttemptsEnvKey  = "OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_ATTEMPTS"
 	ToolFailureRetryBaseDelayEnvKey = "OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_BASE_DELAY_MS"
+
+	// DefaultSandboxCapacityRetryBaseDelay and
+	// DefaultSandboxCapacityRetryMaxDelay bound the wait before re-attempting
+	// a call whose sandbox could not be *scheduled* (ci#691). A scheduler
+	// capacity problem ("0/1 nodes are available: 1 Insufficient cpu") clears
+	// on the order of tens of seconds — when a finished sandbox is reaped or a
+	// peer agent releases its pod — so the millisecond-scale tool backoff of
+	// ci#688 cannot absorb it; a slightly more patient, still bounded wait can.
+	DefaultSandboxCapacityRetryBaseDelay = 5 * time.Second
+	DefaultSandboxCapacityRetryMaxDelay  = 30 * time.Second
+
+	// SandboxCapacityRetryBaseDelayEnvKey is the deployment-level override of
+	// the capacity backoff base (milliseconds).
+	SandboxCapacityRetryBaseDelayEnvKey = "OCI_MSGMATE_CODER_SANDBOX_CAPACITY_RETRY_BASE_DELAY_MS"
 )
 
 // transientToolFailureMarkers are the lower-cased fragments that mark a tool
@@ -94,6 +108,49 @@ var transientToolFailureMarkers = []string{
 	"504 gateway timeout",
 	"429 too many requests",
 	"failed to connect",
+}
+
+// sandboxCapacityFailureMarkers are the lower-cased fragments of a *scheduler
+// capacity* rejection: the Kubernetes scheduler could not place the sandbox pod
+// because the node has no room left, e.g.
+//
+//	sandbox "coder-7b205aa3-…" is not schedulable: Unschedulable:
+//	0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate,
+//	preemption: 0/1 nodes are available: 1 No preemption victims found for
+//	incoming pod.
+//
+// They are a subset of transientToolFailureMarkers: such a failure is
+// environmental and retryable, but unlike a connection blip it is *not* cleared
+// by a sub-second wait — the node only frees capacity when a finished sandbox
+// is reaped or a peer agent releases its pod, which takes tens of seconds. The
+// retry policy therefore gives it a more patient, still bounded backoff
+// (ci#691).
+var sandboxCapacityFailureMarkers = []string{
+	"insufficient cpu",
+	"insufficient memory",
+	"insufficient ephemeral-storage",
+	"insufficient pods",
+	"is not schedulable",
+	"unschedulable",
+	"no preemption victims",
+	"no new claims to deallocate",
+	"nodes are available",
+}
+
+// isSandboxCapacityFailure reports whether a tool error is a scheduler capacity
+// rejection (see sandboxCapacityFailureMarkers) rather than a connection or
+// host-resource blip. A nil error is never a capacity failure.
+func isSandboxCapacityFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range sandboxCapacityFailureMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // isTransientToolFailure reports whether a tool error is an environmental,
@@ -162,11 +219,53 @@ func toolFailureBackoffDelay(attempt int) time.Duration {
 	return delay
 }
 
+// sandboxCapacityRetryBaseDelay resolves the configured capacity backoff base
+// (deployment env override in milliseconds; ci#691).
+func sandboxCapacityRetryBaseDelay() time.Duration {
+	base := DefaultSandboxCapacityRetryBaseDelay
+	if raw := strings.TrimSpace(os.Getenv(SandboxCapacityRetryBaseDelayEnvKey)); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			base = time.Duration(parsed) * time.Millisecond
+		}
+	}
+	if base < 0 {
+		return 0
+	}
+	return base
+}
+
+// sandboxCapacityBackoffDelay is the wait before retry attempt+1 for a
+// scheduler *capacity* rejection (ci#691): a linear ramp from the configured
+// base (5s by default) capped at DefaultSandboxCapacityRetryMaxDelay (30s).
+//
+// It is deliberately much slower than toolFailureBackoffDelay: the node only
+// frees a sandbox's request when a finished sandbox is reaped or a peer agent
+// releases its pod, so hammering the scheduler every few hundred milliseconds
+// would just burn the attempt budget on a condition that cannot have changed.
+func sandboxCapacityBackoffDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > 16 {
+		attempt = 16
+	}
+	delay := sandboxCapacityRetryBaseDelay() * time.Duration(attempt)
+	if delay > DefaultSandboxCapacityRetryMaxDelay {
+		delay = DefaultSandboxCapacityRetryMaxDelay
+	}
+	return delay
+}
+
 // runToolWithTransientRetry executes a tool body, retrying a transient
 // environmental failure with an exponential backoff. It returns the last
 // result, the last error and how many extra attempts were made. The generation
 // context bounds everything: once it is cancelled (the user pressed stop) the
 // retrying stops immediately instead of re-running the tool body.
+//
+// A scheduler *capacity* rejection (an unschedulable sandbox pod, ci#691) is
+// retried with the slower, still bounded capacity backoff instead of the
+// millisecond-scale blip backoff: the condition only clears when the node frees
+// capacity, which takes tens of seconds.
 func runToolWithTransientRetry(ctx context.Context, toolName string, run func() (string, error)) (string, error, int) {
 	attempts := toolFailureRetryAttempts()
 	var (
@@ -182,6 +281,20 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 		if ctx.Err() != nil || attempt >= attempts || !isTransientToolFailure(runErr) {
 			return result, runErr, retries
 		}
+		if isSandboxCapacityFailure(runErr) {
+			delay := sandboxCapacityRetryWait(attempt)
+			log.Printf(
+				"Tool %s could not be scheduled (attempt %d/%d): %v; retrying in %s (ci#691)",
+				toolName, attempt, attempts, runErr, delay,
+			)
+			select {
+			case <-ctx.Done():
+				return result, runErr, retries
+			case <-time.After(delay):
+			}
+			retries++
+			continue
+		}
 		delay := toolFailureRetryWait(attempt)
 		log.Printf(
 			"Tool %s failed transiently (attempt %d/%d): %v; retrying in %s (ci#688)",
@@ -194,6 +307,20 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 		}
 		retries++
 	}
+}
+
+// sandboxCapacityRetryWait is the actual capacity wait before retry attempt+1:
+// the linear ramp of sandboxCapacityBackoffDelay plus a bounded jitter, so the
+// agents that lost the scheduling race do not all retry in lockstep and
+// re-create the burst that saturated the node (ci#691). The jitter is capped at
+// half the delay, so the wait stays within one capacity window.
+func sandboxCapacityRetryWait(attempt int) time.Duration {
+	delay := sandboxCapacityBackoffDelay(attempt)
+	if delay <= 0 {
+		return 0
+	}
+	jitter := time.Duration(rand.Int64N(int64(delay/2) + 1))
+	return delay + jitter
 }
 
 // toolFailureRetryWait is the actual wait before retry attempt+1: the
