@@ -3533,6 +3533,28 @@ jobs:
             done
           done
 
+      - name: Reuse the PR-built image (skip the production rebuild)
+        id: built_image
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          SHORT_SHA="${HEAD_SHA:0:12}"
+          IMAGE_URL="ghcr.io/${IMAGE_REPO}:pr-${PR_NUMBER}-${SHORT_SHA}"
+          # The PR CI already builds this image for tests; a squash merge has the
+          # same tree, so deploy it instead of rebuilding the full production image.
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+          if docker manifest inspect "$IMAGE_URL" >/dev/null 2>&1; then
+            echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+            echo "Reusing PR-built image: $IMAGE_URL"
+          else
+            echo "image_url=" >> "$GITHUB_OUTPUT"
+            echo "No PR-built image at $IMAGE_URL; the deploy will build it."
+          fi
+
       - name: Dispatch deployment workflow in CI repository
         run: |
           set -euo pipefail
@@ -3541,6 +3563,7 @@ jobs:
               --arg ref "$CI_REF" \
               --arg deploymentName "${{ needs.resolve-merged-deployment.outputs.deployment_name }}" \
               --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg imageUrl "${{ steps.built_image.outputs.image_url }}" \
               --arg sourceRepository "${{ github.repository }}" \
               --arg botUser "$BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
@@ -3549,6 +3572,7 @@ jobs:
                 inputs: {
                   DEPLOYMENT_NAME: $deploymentName,
                   TARGET_REF: $targetRef,
+                  BUILT_IMAGE_URL: $imageUrl,
                   SOURCE_REPOSITORY: $sourceRepository,
                   SOURCE_PR_NUMBER: "",
                   BOT_USER: $botUser,
