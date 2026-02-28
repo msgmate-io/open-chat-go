@@ -477,6 +477,32 @@ empty reply is ever persisted. Recovery lives in
 `backend/api/msgmate/compaction_output.go` (compaction detection/stripping),
 with the streaming suppression in `processStreamingResponseReader`.
 
+### Native coder turns: repetition loops (ci#670)
+
+A third degenerate emission is an **unbounded repetition loop**: the model
+re-emits the same short line or phrase (`</invoke>`, `...`, `Ok.`, `Write.`, a
+degenerate Anthropic/XML inline call) thousands of times. Nothing upstream of
+the reader stops it, so a single turn used to persist 150–255 KB of identical
+junk into the chat, pollute the next turn's context and burn the whole
+completion budget before the turn was cancelled — feeding the bogus "I paused
+this response" noise of ci#642/#643.
+
+`detectRepetitionLoop` (`backend/api/msgmate/repetition_guard.go`) watches a
+bounded tail (8 KiB, so the per-delta cost stays constant however long the
+response grows) for a unit of at most 240 bytes repeated at least 12 times in a
+row over at least 300 characters. The thresholds are deliberately conservative:
+a bulleted list, a table, a code fence, a short ASCII rule or an answer that
+merely repeats a phrase a few times is never mistaken for a loop.
+
+When the guard trips, `processStreamingResponseReader` stops reading the
+provider stream, truncates the repeated run and appends the one-line note
+`[stopped: repeated output detected]`, then finishes the turn normally through
+the ordinary streaming path (so the truncated snapshot is what gets persisted).
+Text emitted before the loop is kept. The round result carries
+`repetitionLoop`, and the provider request record reports
+`failure_reason=repetition_loop` so the degeneracy is visible in usage
+tracking/metrics without parsing the assistant text.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
