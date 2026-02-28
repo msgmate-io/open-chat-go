@@ -269,6 +269,11 @@ const (
 	// own bookkeeping instead of an answer, twice in a row, so the turn is
 	// stopped with guidance instead of being persisted with no text.
 	FailureReasonLeakedCompaction = "leaked_compaction_transcript"
+	// FailureReasonRepetitionLoop marks a round whose stream collapsed into an
+	// unbounded repetition loop and was cut off early (ci#670). It is recorded
+	// on the provider request for metrics; the turn itself finishes normally
+	// with a short answer carrying the "stopped: repeated output detected" note.
+	FailureReasonRepetitionLoop = "repetition_loop"
 )
 
 // GenerationFailureClassification is the outcome of classifying a failed
