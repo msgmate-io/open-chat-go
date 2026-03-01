@@ -4,6 +4,7 @@ import (
 	"backend/api/chats"
 	"backend/chatstate"
 	"backend/database"
+	"backend/nativecoder"
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
@@ -32,6 +33,14 @@ import (
 //	GET  /api/v1/agents/interactions/{chat_uuid}
 //	POST /api/v1/agents/interactions/{chat_uuid}/continue
 //	POST /api/v1/agents/interactions/{chat_uuid}/stop
+//
+// `autonomous: true` is promoted into the interaction's own
+// `coder_interaction: autonomous` mode (ci#506), which is the contract the
+// native coder integration reads to lift the per-action confirmation gate: a
+// dispatched headless agent therefore runs unattended instead of parking on
+// "Waiting for your confirmation to run `coder_bash`". `approve_confirmations`
+// is reported in the interaction view as a no-park interaction without changing
+// the chat's mode, because there a confirming user stands in for the agent.
 //
 // The acting user is the session principal, except when the caller is an
 // automated bot (a coding/lead agent), in which case its owner is the acting
@@ -118,9 +127,25 @@ type AgentInteractionView struct {
 	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
 	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
 	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
+	// Autonomous / AutonomousSource report the resolved no-confirm policy
+	// (ci#506): whether the interaction runs without parking on a per-action
+	// confirmation, and which config key decided it (`coder_interaction`,
+	// `agent_dispatch.autonomous`, `agent_dispatch.approve_confirmations`). A
+	// watching lead agent can therefore tell that a managed agent cannot stall
+	// on a confirmation nobody would approve.
+	Autonomous       bool   `json:"autonomous,omitempty"`
+	AutonomousSource string `json:"autonomous_source,omitempty"`
 	// LastAgentText is a short snippet of the agent's most recent reply, so a
 	// listing shows what each agent produced (plan/PR/status) at a glance.
 	LastAgentText string `json:"last_agent_text,omitempty"`
+	// Stalled reports that the interaction never started - nothing is queued or
+	// running for the chat and its newest message is still an unanswered prompt
+	// (ci#609) - so a managing agent sees "frozen" as an explicit state with a
+	// reason (and the interaction URL) instead of an ambiguous idle.
+	Stalled               bool   `json:"stalled,omitempty"`
+	StallReason           string `json:"stall_reason,omitempty"`
+	StallAgeSeconds       int    `json:"stall_age_seconds,omitempty"`
+	StallThresholdSeconds int    `json:"stall_threshold_seconds,omitempty"`
 }
 
 // AgentTranscriptMessage is one entry in a managed interaction's recent
@@ -504,12 +529,23 @@ func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *d
 		view.IsActive = status.IsActive
 		view.LatestMessageUUID = status.LatestMessageUUID
 		view.LatestMessageFinished = status.LatestMessageFinished
+		// ci#609: surface a stalled (never-started) interaction explicitly, so a
+		// watching/lead agent can tell a silent freeze from healthy idle work and
+		// see the reason instead of guessing.
+		view.Stalled = status.Stalled
+		view.StallReason = status.StallReason
+		view.StallAgeSeconds = status.StallAgeSeconds
+		view.StallThresholdSeconds = status.StallThresholdSeconds
 	} else {
 		view.State = "idle"
 	}
 	if config := sharedConfigForChat(DB, chat); config != nil {
 		if dispatch, ok := config["agent_dispatch"].(map[string]interface{}); ok {
 			view.AutoContinue, _ = dispatch["auto_continue"].(bool)
+		}
+		if policy := nativecoder.ResolveAutonomousPolicy(config); policy.Enabled {
+			view.Autonomous = true
+			view.AutonomousSource = policy.Source
 		}
 	}
 	if status := chats.AutoContinueStatusForChat(DB, chat); status.Enabled {

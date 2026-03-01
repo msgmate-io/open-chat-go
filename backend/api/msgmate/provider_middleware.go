@@ -104,6 +104,10 @@ type providerRequestMeta struct {
 	// reader can report them as structured state instead of only an error
 	// string (ci#709). Optional.
 	Outcome *TurnOutcome
+	// Context is the resolved context budget of the turn (ci#680): the
+	// character budget of the outgoing conversation plus the per-tool output
+	// budgets. A zero value falls back to the compiled-in defaults.
+	Context ContextBudget
 }
 
 // runProviderRequestMiddleware invokes all registered middlewares in the
