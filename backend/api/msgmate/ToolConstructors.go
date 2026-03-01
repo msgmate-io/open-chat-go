@@ -15,6 +15,10 @@ func init() {
 		callbackFunction.Execute(initData, input)
 		return nil
 	}
+	// ci#680: back the `coder_context` tool with the core's per-chat context
+	// usage report (the tools package cannot import the msgmate package it is
+	// embedded in).
+	tooldefs.ContextUsageLookup = contextUsageLookup
 }
 
 func NewWeatherTool() Tool {
@@ -59,6 +63,11 @@ func NewWebFetchTool() Tool {
 
 func NewWebSearchTool() Tool {
 	return NewToolFromDefinition(tooldefs.WebSearchToolDef)
+}
+
+// NewCoderContextTool is the ci#680 context/token usage report tool.
+func NewCoderContextTool() Tool {
+	return NewToolFromDefinition(tooldefs.CoderContextToolDef)
 }
 
 func NewToolInitTestToolPassThrough() Tool {

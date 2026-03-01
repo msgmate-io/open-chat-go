@@ -57,6 +57,29 @@ var (
 func init() {
 	registerBuiltinTools()
 	EnsureExternalToolsRegistered()
+	// ci#680: `coder_context` reports the per-chat context/token budget. It is
+	// registered only when no external integration already owns the name (the
+	// coding integration may ship its own `coder_context`), so the core can
+	// never panic on a duplicate constructor and never silently replace the
+	// integration's tool.
+	registerToolConstructorIfFree("coder_context", nil, NewCoderContextTool)
+}
+
+// registerToolConstructorIfFree registers a builtin constructor only when the
+// tool name is still unowned (neither a builtin nor an external integration
+// tool). It reports whether the constructor was registered.
+func registerToolConstructorIfFree(name string, aliases []string, constructor ToolConstructor) bool {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, exists := toolConstructors[name]; exists {
+		return false
+	}
+	if _, exists := toolAliases[name]; exists {
+		return false
+	}
+	registerToolConstructorLocked(name, aliases, constructor)
+	refreshAllToolsLocked()
+	return true
 }
 
 func registerToolConstructor(name string, aliases []string, constructor ToolConstructor) {
@@ -101,6 +124,18 @@ func registerExternalToolsLocked() {
 			continue
 		}
 		if _, seen := externalToolDefs[name]; seen {
+			continue
+		}
+		// A name already owned by a builtin constructor is never re-registered
+		// from the external registry: registerToolConstructorLocked panics on a
+		// duplicate, and an integration declaring a name the core already
+		// implements (eg the ci#680 `coder_context`) must not crash every turn.
+		if _, taken := toolConstructors[name]; taken {
+			externalToolDefs[name] = struct{}{}
+			continue
+		}
+		if _, taken := toolAliases[name]; taken {
+			externalToolDefs[name] = struct{}{}
 			continue
 		}
 		def := tooldefs.ToolDefinition{
