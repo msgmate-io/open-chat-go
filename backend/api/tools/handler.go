@@ -3,11 +3,11 @@ package tools
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/logging"
 	"backend/queue"
 	"backend/server/util"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
@@ -119,7 +119,7 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(toolInitData) == 0 {
-		log.Printf("[ToolExecution] No init data found for tool %s in chat %s", toolName, chatUuid)
+		logging.Debugf("[ToolExecution] No init data found for tool %s in chat %s", toolName, chatUuid)
 	}
 
 	// Get the tool instance
@@ -137,7 +137,7 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 	toolInfo := toolInstance.ConstructTool().(map[string]interface{})
 
 	// Execute the tool
-	log.Printf("[ToolExecution] Bot user %s executing tool %s in chat %s", user.Name, toolName, chatUuid)
+	logging.Debugf("[ToolExecution] Bot user %s executing tool %s in chat %s", user.Name, toolName, chatUuid)
 
 	var toolResult string
 	var executionError error
@@ -171,10 +171,10 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 
 	if executionError != nil {
 		response.Error = executionError.Error()
-		log.Printf("[ToolExecution] Tool %s execution failed: %v", toolName, executionError)
+		logging.Errorf("[ToolExecution] Tool %s execution failed: %v", toolName, executionError)
 	} else {
 		response.Result = toolResult
-		log.Printf("[ToolExecution] Tool %s executed successfully", toolName)
+		logging.Debugf("[ToolExecution] Tool %s executed successfully", toolName)
 	}
 
 	// Send response
@@ -423,7 +423,7 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 	toolInitManager := database.NewToolInitDataManager(DB)
 	err = toolInitManager.StoreToolInitDataForChat(&chat, request.ToolName, request.InitData)
 	if err != nil {
-		log.Printf("[ToolInitData] Failed to store init data for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
+		logging.Errorf("[ToolInitData] Failed to store init data for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
 		http.Error(w, "Failed to store tool init data", http.StatusInternalServerError)
 		return
 	}
@@ -437,12 +437,12 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 		}
 		err = toolInitManager.SetExpiration(chat.ID, request.ToolName, expiresAt)
 		if err != nil {
-			log.Printf("[ToolInitData] Failed to set expiration for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
+			logging.Errorf("[ToolInitData] Failed to set expiration for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
 			// Don't fail the request for this
 		}
 	}
 
-	log.Printf("[ToolInitData] Stored init data for tool %s in chat %s", request.ToolName, chatUuid)
+	logging.Debugf("[ToolInitData] Stored init data for tool %s in chat %s", request.ToolName, chatUuid)
 
 	// Send response
 	w.Header().Set("Content-Type", "application/json")
@@ -456,7 +456,7 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 func convertMapToJSON(data map[string]interface{}) string {
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("[ToolExecution] Error converting map to JSON: %v", err)
+		logging.Errorf("[ToolExecution] Error converting map to JSON: %v", err)
 		return "{}"
 	}
 	return string(jsonBytes)
