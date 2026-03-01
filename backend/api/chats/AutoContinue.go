@@ -534,11 +534,7 @@ func chatHasLiveBotReply(inspector *asynq.Inspector, chatUUID string) bool {
 	if inspector == nil || chatUUID == "" {
 		return false
 	}
-	task, err := inspector.GetTaskInfo(workqueue.QueueDefault, workqueue.BotReplyTaskID(chatUUID))
-	if err != nil || task == nil {
-		return false
-	}
-	return isQueueStateActive(strings.ToLower(strings.TrimSpace(task.State.String())))
+	return workqueue.BotReplyIsActive(inspector, chatUUID)
 }
 
 // StopAutoContinueForChat clears the loop for a chat authoritatively: a
