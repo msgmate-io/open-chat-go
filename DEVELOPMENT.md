@@ -169,6 +169,56 @@ Regression tests: `backend/api/msgmate/turn_final_text_test.go`,
 `backend/nativecoder/toolbudget_test.go` and the snapshot assertion in
 `backend/api/chats/create_test.go`.
 
+### A native interaction that cannot start is reported, never a silent idle (ci#609)
+
+When the sandbox node was saturated, a dispatched native `msgmate_coder`
+interaction could stay `state=idle` with `newest_agent_msg=none` **forever**: no
+bot message, no `Unschedulable: … Insufficient cpu` provisioning error, nothing
+the operator or the external auto-continue dispatcher could act on. The loop just
+printed `[loop] state=idle continuations=0 newest_agent_msg=none finished=false`
+until it gave up, and the dispatched work looked frozen and lost.
+
+The core now detects that condition from durable state and reports it
+(`backend/api/chats/interaction_stall.go`). An interaction is **stalled** when
+
+- it is an interaction chat;
+- **nothing is live** for it - no `bot:reply` task active/pending/scheduled/retry
+  (including a reply queued behind a live turn, ci#656), and no external chat
+  backend reporting a running generation;
+- its newest message is still the prompt (the agent never produced a turn after
+  it) and does not wait on the user (no pending confirmation - a parked
+  confirmation is a decision, never a stall);
+- and that prompt has rested longer than the stall window.
+
+`ResolveInteractionStatus` then annotates the deterministic status with
+`stalled`, `stall_reason` (`stall_no_first_turn`), `stall_age_seconds` and
+`stall_threshold_seconds`, and the trusted agent-dispatch view
+(`GET /api/v1/agents/interactions…`) carries the same fields - so the external
+dispatcher loop can turn an idle-timeout into a failure naming the interaction
+URL instead of stopping silently, and a lead agent can tell a silent freeze from
+healthy idle work.
+
+Reading `GET /api/v1/chats/{chat_uuid}/status` (the endpoint the loop polls)
+also **posts one visible, persisted bot error** for a stalled chat: `finished` +
+`error` metadata with `failure_reason=stall_no_first_turn` and an
+`interaction_stall` detail block. The message states the observed age, the
+resolved window and what to do (re-dispatch, or continue once capacity is free),
+and it makes the interaction resolve as `failed` instead of `idle`. The report is
+idempotent (a `interaction_stall_report` marker on the message), so polling the
+status cannot spam the transcript.
+
+The stall window is resolved with the ci#620 precedence **deployment env →
+per-agent shared config → dispatch metadata → default**:
+
+- `OCI_INTERACTION_STALL_AFTER_SECONDS` (deployment-wide; `0` disables the
+  guard);
+- `interaction_stall_after_seconds` in the agent's shared config (or in its
+  `agent_dispatch` block);
+- default `10m`, matching the window the external dispatcher loop observes
+  before it gives up.
+
+Regression tests: `backend/api/chats/interaction_stall_test.go`.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git
@@ -560,6 +610,55 @@ Text emitted before the loop is kept. The round result carries
 `repetitionLoop`, and the provider request record reports
 `failure_reason=repetition_loop` so the degeneracy is visible in usage
 tracking/metrics without parsing the assistant text.
+
+### Context overflow: tool outputs are budgeted (ci#680)
+
+A native agent used to fail mid-task with `exceeded maximum context` after a few
+exploratory tool calls. Tool results were appended to the conversation verbatim,
+and a single `coder_list` of the monorepo returns ~380 entries while a whole-file
+`coder_read` or a `coder_bash` dump is tens of KB, so a handful of them blew the
+provider window and the turn died instead of continuing. Three guards now keep a
+turn inside the window (`backend/api/msgmate/context_budget.go`):
+
+1. **Per-tool output budget.** Every result is hard-truncated at its own limit
+   before it enters the transcript, with an explicit marker that names the tool,
+   reports the original size and tells the model how to fetch the missing part
+   (`coder_read`: `offset`/`limit`, `coder_list`: `depth`/entry cap, `coder_grep`:
+   `include`/`paths`, or redirect to a file and read ranges). The compiled-in
+   per-tool budgets are tight for the tools that are cheap to re-issue and
+   expensive in context (`coder_list`/`coder_glob` 4 KB, `coder_grep` 6 KB,
+   `coder_bash`/`coder_git` 8 KB, `coder_read` the 12 KB default). They are
+   configurable per chat/bot with the shared-config key `tool_result_max_chars`
+   (either an integer fallback or a `{tool: limit, default: limit}` object) and
+   deployment-wide with `OCI_MSGMATE_CODER_TOOL_RESULT_MAX_CHARS`, which clamps
+   every per-tool limit.
+2. **Conversation budget guard.** Before every request the history is measured
+   against the chat's character budget (`context_budget_chars`, deployment
+   override `OCI_MSGMATE_CODER_CONTEXT_BUDGET_CHARS`, default 120 000 chars ≈ 30k
+   tokens). Above it, older tool results and intermediate narration are replaced
+   by a short eviction marker — oldest first, so the newest rounds survive longest
+   — a huge non-newest user message is truncated, and as a last resort whole old
+   messages are dropped. Leading system messages (an injected compaction summary),
+   every user message and the newest turn are never touched, and the
+   tool-call/tool-result pairing is repaired afterwards so the request stays valid.
+   The guard only ever shrinks a history that already exceeds the budget, so it is
+   a no-op on the normal path. The existing provider-driven trim-and-retry
+   (ci#394 gap 7) still backs it up for a window smaller than the budget assumes.
+3. **A usage report.** The last request of every round is measured and recorded:
+   characters used vs. the budget, a conservative token estimate, the message and
+   tool-result counts, the largest tool result, how many results were truncated,
+   evicted or dropped, and the effective per-tool limits. It travels as
+   `context_budget` message metadata and is returned by the `coder_context` tool
+   (backed by the coding integration's own name when it ships one), so an agent
+   can self-throttle before the window is exhausted (ci#654). Above 60 % of the
+   budget a one-line self-throttling notice is merged into the leading system
+   message (replaced each round, never stacked).
+
+Regression tests: `backend/api/msgmate/context_budget_test.go` (a turn with four
+40 KB tool results stays under the budget and completes; the truncation marker
+and the eviction markers are explicit; the guard is idempotent and keeps the
+pairing), `backend/api/msgmate/coder_context_tool_test.go` and
+`backend/api/msgmate/tools/coder_context_tool_test.go`.
 
 ### Custom integration profiles
 
