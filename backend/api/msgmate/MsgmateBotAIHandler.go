@@ -1607,6 +1607,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					// the thought the agent produced right before it (ci#569).
 					"timeline_index": timeline.index(),
 				}
+				// ci#723: carry the model's optional reason for the call on
+				// the call row itself, so the chat shows *why* the agent ran
+				// a tool instead of only that it did.
+				if callReason := ExtractToolCallReason(toolCall.ToolInput); callReason != "" {
+					toolCallRepr["call_reason"] = callReason
+				}
 				if strings.TrimSpace(toolCall.Error) != "" {
 					toolCallRepr["error"] = toolCall.Error
 				}
@@ -1682,12 +1688,19 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 
 				totalTime := time.Since(startTime)
-				partialMeta := partialTimeline(map[string]interface{}{
-					"total_time":       totalTime.Round(time.Millisecond).String(),
-					"tool_call":        toolCall.ToolName,
-					"tool_call_status": toolStatus,
-					"partial_phase":    "tool_call",
-				})
+				progressMeta := map[string]interface{}{
+					"total_time":        totalTime.Round(time.Millisecond).String(),
+					"tool_call":         toolCall.ToolName,
+					"tool_call_status":  toolStatus,
+					"tool_calls_so_far": len(allToolCalls),
+					"partial_phase":     "tool_call",
+				}
+				// ci#723: the live progress frame repeats the call's reason so
+				// the streaming view is as narrated as the finished turn.
+				if callReason := ExtractToolCallReason(toolCall.ToolInput); callReason != "" {
+					progressMeta["tool_call_reason"] = callReason
+				}
+				partialMeta := partialTimeline(progressMeta)
 				if strings.TrimSpace(toolCall.Error) != "" {
 					partialMeta["tool_call_error"] = toolCall.Error
 				}
