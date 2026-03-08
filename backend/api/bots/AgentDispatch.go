@@ -94,16 +94,25 @@ type AgentDispatchRequest struct {
 	// AutoContinueMax / AutoContinueDelaySeconds attach the in-product
 	// auto-continuation loop with an explicit budget and quiet period at dispatch
 	// time (ci#537/#540). Zero means "use the loop defaults".
-	AutoContinueMax          int                    `json:"auto_continue_max,omitempty"`
-	AutoContinueDelaySeconds int                    `json:"auto_continue_delay_seconds,omitempty"`
-	CompletionMarker         string                 `json:"completion_marker,omitempty"`
-	HumanMarker              string                 `json:"human_marker,omitempty"`
-	Workspace                string                 `json:"workspace,omitempty"`
-	Sandbox                  string                 `json:"sandbox,omitempty"`
-	ConfigOverrides          map[string]interface{} `json:"config_overrides,omitempty"`
-	ToolInit                 map[string]interface{} `json:"tool_init,omitempty"`
-	RequireConfirmation      *bool                  `json:"require_confirmation,omitempty"`
-	AutoShare                bool                   `json:"auto_share,omitempty"`
+	AutoContinueMax          int    `json:"auto_continue_max,omitempty"`
+	AutoContinueDelaySeconds int    `json:"auto_continue_delay_seconds,omitempty"`
+	CompletionMarker         string `json:"completion_marker,omitempty"`
+	HumanMarker              string `json:"human_marker,omitempty"`
+	// DedupeKey is a stable dispatch identity (eg "lead:open-chat-go-ci"). When a
+	// live interaction already carries it as a tag, the dispatch does not start a
+	// second agent: the existing interaction is returned with
+	// `deduplicated: true` so the caller steers that one via `continue`/`stop`
+	// instead of burning a second full agent (ci#625).
+	DedupeKey string `json:"dedupe_key,omitempty"`
+	// Force starts a new interaction even when DedupeKey matches a live one,
+	// for the rare case a duplicate is explicitly wanted.
+	Force               bool                   `json:"force,omitempty"`
+	Workspace           string                 `json:"workspace,omitempty"`
+	Sandbox             string                 `json:"sandbox,omitempty"`
+	ConfigOverrides     map[string]interface{} `json:"config_overrides,omitempty"`
+	ToolInit            map[string]interface{} `json:"tool_init,omitempty"`
+	RequireConfirmation *bool                  `json:"require_confirmation,omitempty"`
+	AutoShare           bool                   `json:"auto_share,omitempty"`
 }
 
 // AgentInteractionView is the stable, agent-facing view of a managed interaction.
@@ -210,6 +219,37 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ci#625: a deduped dispatch (eg the development lead is dispatched under the
+	// stable tag `lead:open-chat-go-ci`) never starts a second agent while one is
+	// still live. Ad-hoc lead dispatches used to run concurrently and duplicate
+	// work/consolidation, burning a full agent each.
+	dispatchTags := database.NormalizeChatTags(req.Tags)
+	dedupeKey := dedupeKeyTag(req.DedupeKey)
+	if dedupeKey != "" {
+		dispatchTags = database.NormalizeChatTags(append([]string(dispatchTags), dedupeKey))
+	}
+	if dedupeKey != "" && !req.Force {
+		if existing, ok := liveInteractionForDedupeKey(DB, queueInspector, sessionUser, actingUser, dedupeKey); ok {
+			view := agentInteractionView(DB, queueInspector, actingUser, existing)
+			respondAgentJSON(w, http.StatusOK, map[string]interface{}{
+				"success":                true,
+				"deduplicated":           true,
+				"dedupe_key":             dedupeKey,
+				"chat_uuid":              view.ChatUUID,
+				"bot":                    view.Bot,
+				"bot_uuid":               view.BotUUID,
+				"acting_user_uuid":       view.ActingUserUUID,
+				"acting_user_username":   view.ActingUserUsername,
+				"tags":                   view.Tags,
+				"state":                  view.State,
+				"is_active":              view.IsActive,
+				"auto_continue":          view.AutoContinue,
+				"shared_interaction_url": "",
+			})
+			return
+		}
+	}
+
 	overrides := req.ConfigOverrides
 	if overrides == nil {
 		overrides = map[string]interface{}{}
@@ -227,7 +267,7 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 
 	createReq := CreateBotInteractionRequest{
 		Message:         req.Message,
-		Tags:            req.Tags,
+		Tags:            dispatchTags,
 		ConfigOverrides: overrides,
 		ToolInit:        req.ToolInit,
 		AutoShare:       req.AutoShare,
@@ -249,7 +289,7 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		BotUUID:            runtime.UUID,
 		ActingUserUUID:     actingUser.UUID,
 		ActingUserUsername: actingUser.Username,
-		Tags:               database.NormalizeChatTags(req.Tags),
+		Tags:               database.NormalizeChatTags(dispatchTags),
 		AutoContinue:       req.AutoContinue,
 	}
 	if loaded, loadErr := findManageableInteraction(DB, sessionUser, actingUser, response.ChatUUID); loadErr == nil {
@@ -258,6 +298,8 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 
 	respondAgentJSON(w, http.StatusOK, map[string]interface{}{
 		"success":                true,
+		"deduplicated":           false,
+		"dedupe_key":             dedupeKey,
 		"requires_confirmation":  response.RequiresConfirmation,
 		"chat_uuid":              response.ChatUUID,
 		"bot":                    view.Bot,
@@ -639,6 +681,55 @@ func findManageableInteraction(DB *gorm.DB, caller, actingUser *database.User, c
 		return database.Chat{}, gorm.ErrRecordNotFound
 	}
 	return chat, nil
+}
+
+// dedupeKeyTag normalizes a dispatch dedupe key into the chat tag it is stored
+// as. The `lead:` prefix keeps lead identities stable and greppable in lists,
+// and an empty key means "no dedupe" (the plain dispatch behaviour).
+func dedupeKeyTag(key string) string {
+	value := strings.ToLower(strings.TrimSpace(key))
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "lead:") {
+		return value
+	}
+	return "lead:" + strings.ReplaceAll(value, " ", "-")
+}
+
+// liveInteractionForDedupeKey returns the caller's existing live interaction
+// carrying the dedupe tag, if any. "Live" means the same state the agent views
+// report as active (queued/running work or an in-product auto-continue loop);
+// idle/finished/failed interactions are ignored so a new turn may start.
+func liveInteractionForDedupeKey(
+	DB *gorm.DB,
+	inspector *asynq.Inspector,
+	caller *database.User,
+	actingUser *database.User,
+	dedupeKey string,
+) (database.Chat, bool) {
+	if dedupeKey == "" {
+		return database.Chat{}, false
+	}
+	var rows []database.Chat
+	if err := DB.Preload("User1").Preload("User2").Preload("LatestMessage").
+		Where("(user1_id = ? OR user2_id = ?)", actingUser.ID, actingUser.ID).
+		Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%").
+		Where("CAST(tags AS TEXT) LIKE ?", "%\""+dedupeKey+"\"%").
+		Order("updated_at desc").
+		Find(&rows).Error; err != nil {
+		return database.Chat{}, false
+	}
+	for _, chat := range rows {
+		if !callerMayManageInteraction(DB, caller, actingUser, chat) {
+			continue
+		}
+		view := agentInteractionView(DB, inspector, actingUser, chat)
+		if view.IsActive || view.State == string(chatstate.StateNeedsConfirmation) {
+			return chat, true
+		}
+	}
+	return database.Chat{}, false
 }
 
 // callerMayManageInteraction reports whether the session caller may read or
