@@ -19,6 +19,21 @@ import (
 	"gorm.io/gorm"
 )
 
+// botReplyTurnBudget resolves how long the current turn may still run: the
+// remaining task deadline when asynq set one, otherwise the configured bot reply
+// turn timeout. It is the basis of the bot session lifetime so the two can never
+// drift apart again (ci#729).
+func botReplyTurnBudget(ctx context.Context) time.Duration {
+	if ctx != nil {
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline); remaining > 0 {
+				return remaining
+			}
+		}
+	}
+	return workqueue.BotReplyTimeout()
+}
+
 // @doc:open-chat-hal-agent-logic
 // Open-Chat HAL agent logic runs as the `bot:reply` async task. It validates
 // the bot/sender/message context, creates a short-lived bot session, rebuilds
@@ -56,16 +71,22 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
 	}
 
+	// The session must outlive the whole turn, not just a fixed 15 minutes:
+	// derive its lifetime from the turn budget and keep renewing it while the
+	// turn runs (ci#729).
 	token := uuid.NewString()
+	sessionTTL := database.SessionTTL(botReplyTurnBudget(ctx))
 	session := database.Session{
 		UserId: botUser.ID,
 		Token:  token,
-		Expiry: time.Now().Add(15 * time.Minute),
+		Expiry: time.Now().Add(sessionTTL),
 	}
 	if err := deps.DB.Create(&session).Error; err != nil {
 		return fmt.Errorf("%w: failed to create bot session", asynq.SkipRetry)
 	}
 	defer deps.DB.Where("token = ?", token).Delete(&database.Session{})
+	stopSessionRefresh := database.StartSessionRefresh(deps.DB, token, sessionTTL)
+	defer stopSessionRefresh()
 
 	host := deps.BackendHost
 	if host == "" {
