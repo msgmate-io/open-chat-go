@@ -3,10 +3,10 @@ package msgmate
 import (
 	"backend/api/chats"
 	"backend/api/contacts"
+	"backend/logging"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"reflect"
 	"strings"
@@ -82,28 +82,28 @@ func (l *LocalInteractionClient) RetrieveDefaultBot() (*contacts.ListedContact, 
 
 // CreateInteraction creates a new interaction with the default bot
 func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface{}, firstMessage string) (map[string]interface{}, error) {
-	log.Printf("=== LocalInteractionClient.CreateInteraction START ===")
-	log.Printf("First message: %s", firstMessage)
-	log.Printf("ToolInit: %+v", toolInit)
+	logging.Debugf("=== LocalInteractionClient.CreateInteraction START ===")
+	logging.Debugf("First message: %s", firstMessage)
+	logging.Debugf("ToolInit: %+v", toolInit)
 
 	// Find the default bot
 	defaultBot, err := l.RetrieveDefaultBot()
 	if err != nil {
-		log.Printf("Failed to retrieve default bot: %v", err)
+		logging.Errorf("Failed to retrieve default bot: %v", err)
 		return nil, err
 	}
-	log.Printf("Found default bot: %+v", defaultBot)
+	logging.Debugf("Found default bot: %+v", defaultBot)
 
 	// Debug: Print the botConfig and toolInit to identify problematic fields
-	log.Printf("botConfig keys: %v", getMapKeys(l.botConfig))
-	log.Printf("toolInit keys: %v", getMapKeys(toolInit))
+	logging.Debugf("botConfig keys: %v", getMapKeys(l.botConfig))
+	logging.Debugf("toolInit keys: %v", getMapKeys(toolInit))
 
 	// Prepare the shared config with bot config and tool init
 	sharedConfig := map[string]interface{}{}
 	for k, v := range l.botConfig {
 		// Skip function values or other non-serializable types
 		if isNonSerializable(v) {
-			log.Printf("Skipping non-serializable value in botConfig for key: %s (type: %T)", k, v)
+			logging.Debugf("Skipping non-serializable value in botConfig for key: %s (type: %T)", k, v)
 			continue
 		}
 		sharedConfig[k] = v
@@ -112,12 +112,12 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 	// Clean the toolInit map to remove any non-serializable values
 	cleanedToolInit := cleanMap(toolInit)
 	sharedConfig["tool_init"] = cleanedToolInit
-	log.Printf("Cleaned toolInit: %+v", cleanedToolInit)
+	logging.Debugf("Cleaned toolInit: %+v", cleanedToolInit)
 
 	// Validate config is JSON-serializable before sending
 	_, err = json.Marshal(sharedConfig)
 	if err != nil {
-		log.Printf("Failed to marshal shared config: %v", err)
+		logging.Errorf("Failed to marshal shared config: %v", err)
 		return nil, fmt.Errorf("failed to marshal shared config: %w", err)
 	}
 
@@ -128,54 +128,54 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 	// Try to parse as JSON content array
 	var contentArray []map[string]interface{}
 	if err := json.Unmarshal([]byte(firstMessage), &contentArray); err == nil && len(contentArray) > 0 {
-		log.Printf("Detected JSON content array with %d items", len(contentArray))
+		logging.Debugf("Detected JSON content array with %d items", len(contentArray))
 
 		// Check if this looks like a content array (has type field)
 		if _, hasType := contentArray[0]["type"]; hasType {
-			log.Printf("Confirmed content array format, processing attachments")
+			logging.Debugf("Confirmed content array format, processing attachments")
 
 			// Extract text content
 			var textParts []string
 			var attachments []chats.FileAttachment
 
 			for i, item := range contentArray {
-				log.Printf("Processing content item %d: %+v", i, item)
+				logging.Debugf("Processing content item %d: %+v", i, item)
 
 				if itemType, ok := item["type"].(string); ok {
 					switch itemType {
 					case "text":
 						if text, ok := item["text"].(string); ok {
 							textParts = append(textParts, text)
-							log.Printf("Added text content: %s", text)
+							logging.Debugf("Added text content: %s", text)
 						}
 					case "file":
 						// For Signal integration, the file_id in content array is the OpenAI file ID
 						// But we need to find the original internal file ID for chat creation
 						if openaiFileID, ok := item["file_id"].(string); ok {
-							log.Printf("Found OpenAI file ID in content: %s", openaiFileID)
+							logging.Debugf("Found OpenAI file ID in content: %s", openaiFileID)
 
 							// Try to find the original internal file ID from the toolInit
 							// The scheduler should have stored the mapping in toolInit
 							if toolInit != nil {
 								if fileMapping, ok := toolInit["file_mapping"].(map[string]interface{}); ok {
-									log.Printf("Found file_mapping: %+v", fileMapping)
+									logging.Debugf("Found file_mapping: %+v", fileMapping)
 									if internalFileID, ok := fileMapping[openaiFileID].(string); ok {
-										log.Printf("Found internal file ID mapping: %s -> %s", openaiFileID, internalFileID)
+										logging.Debugf("Found internal file ID mapping: %s -> %s", openaiFileID, internalFileID)
 										attachment := chats.FileAttachment{
 											FileID: internalFileID,
 										}
 										attachments = append(attachments, attachment)
-										log.Printf("Added file attachment with internal ID: %s", internalFileID)
+										logging.Debugf("Added file attachment with internal ID: %s", internalFileID)
 									} else {
-										log.Printf("No internal file ID mapping found for OpenAI file ID: %s", openaiFileID)
-										log.Printf("Available mappings: %+v", fileMapping)
+										logging.Debugf("No internal file ID mapping found for OpenAI file ID: %s", openaiFileID)
+										logging.Debugf("Available mappings: %+v", fileMapping)
 									}
 								} else {
-									log.Printf("No file_mapping found in toolInit")
-									log.Printf("ToolInit keys: %v", getMapKeys(toolInit))
+									logging.Debugf("No file_mapping found in toolInit")
+									logging.Debugf("ToolInit keys: %v", getMapKeys(toolInit))
 								}
 							} else {
-								log.Printf("toolInit is nil, cannot look up file mapping")
+								logging.Debugf("toolInit is nil, cannot look up file mapping")
 							}
 						}
 					}
@@ -184,36 +184,36 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 
 			// Combine text parts
 			firstMessageToSend = strings.Join(textParts, " ")
-			log.Printf("Combined text content: %s", firstMessageToSend)
+			logging.Debugf("Combined text content: %s", firstMessageToSend)
 
 			// Set attachments if any
 			if len(attachments) > 0 {
 				firstMessageAttachments = &attachments
-				log.Printf("Set %d attachments for separate message: %+v", len(attachments), attachments)
+				logging.Debugf("Set %d attachments for separate message: %+v", len(attachments), attachments)
 			} else {
-				log.Printf("No attachments found in content array")
+				logging.Debugf("No attachments found in content array")
 			}
 		} else {
-			log.Printf("JSON array doesn't have type field, treating as regular message")
+			logging.Debugf("JSON array doesn't have type field, treating as regular message")
 		}
 	} else {
-		log.Printf("First message is not a JSON content array: %s", firstMessage)
+		logging.Debugf("First message is not a JSON content array: %s", firstMessage)
 	}
 
 	// Create the chat with the first message (and attachments if any)
 	var attachments []chats.FileAttachment
 	if firstMessageAttachments != nil && len(*firstMessageAttachments) > 0 {
 		attachments = *firstMessageAttachments
-		log.Printf("Including %d attachments in chat creation: %+v", len(attachments), attachments)
+		logging.Debugf("Including %d attachments in chat creation: %+v", len(attachments), attachments)
 	} else {
-		log.Printf("No attachments to include in chat creation")
+		logging.Debugf("No attachments to include in chat creation")
 	}
 
-	log.Printf("About to call CreateChatWithAttachments with:")
-	log.Printf("  ContactToken: %s", defaultBot.ContactToken)
-	log.Printf("  FirstMessage: %s", firstMessageToSend)
-	log.Printf("  Attachments: %+v", attachments)
-	log.Printf("  ChatType: interaction")
+	logging.Debugf("About to call CreateChatWithAttachments with:")
+	logging.Debugf("  ContactToken: %s", defaultBot.ContactToken)
+	logging.Debugf("  FirstMessage: %s", firstMessageToSend)
+	logging.Debugf("  Attachments: %+v", attachments)
+	logging.Debugf("  ChatType: interaction")
 
 	clientAttachments := make([]client.FileAttachment, 0, len(attachments))
 	for _, attachment := range attachments {
@@ -234,11 +234,11 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 		"interaction",
 	)
 	if err != nil {
-		log.Printf("Failed to create chat: %v", err)
+		logging.Errorf("Failed to create chat: %v", err)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
-	log.Printf("Successfully created chat with UUID: %s", chat.UUID)
+	logging.Debugf("Successfully created chat with UUID: %s", chat.UUID)
 
 	// Return the chat response as the interaction
 	chatResponse := map[string]interface{}{
@@ -248,7 +248,7 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 		"partner":   chat.Partner,
 	}
 
-	log.Printf("=== LocalInteractionClient.CreateInteraction END ===")
+	logging.Debugf("=== LocalInteractionClient.CreateInteraction END ===")
 	return chatResponse, nil
 }
 
@@ -280,7 +280,7 @@ func cleanMap(m map[string]interface{}) map[string]interface{} {
 		} else if !isNonSerializable(v) {
 			result[k] = v
 		} else {
-			log.Printf("Skipping non-serializable value in map for key: %s (type: %T)", k, v)
+			logging.Debugf("Skipping non-serializable value in map for key: %s (type: %T)", k, v)
 		}
 	}
 	return result

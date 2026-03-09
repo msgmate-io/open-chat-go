@@ -3,6 +3,7 @@ package main
 import (
 	"backend/cmd"
 	"backend/integrations"
+	"backend/logging"
 	"backend/runtimecfg"
 	"backend/secretstore"
 	"bytes"
@@ -942,6 +943,13 @@ func main() {
 
 	if err := applyOpenChatConfigBootstrap(os.Args); err != nil {
 		log.Fatal(err)
+	}
+
+	// Install the leveled logger before any command starts so LOG_LEVEL /
+	// LOG_FORMAT apply to startup logs as well.
+	if err := logging.ConfigureFromEnv(); err != nil {
+		log.Printf("Warning: %v (falling back to LOG_LEVEL=info)", err)
+		_ = logging.Configure(logging.Options{Level: "info"})
 	}
 
 	rootCmd := &ufcli.Command{
