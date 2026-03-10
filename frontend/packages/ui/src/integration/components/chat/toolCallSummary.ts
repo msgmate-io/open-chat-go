@@ -227,8 +227,18 @@ export function toolCallCategory(name: string | undefined): ToolCallCategory {
     case "glob":
     case "grep":
     case "search":
+    case "codesearch":
     case "webfetch":
     case "websearch":
+    // Parity surface (docs/native-coder-parity.md §3.1, ci#605 B6): context
+    // compaction, todo lists, sub-agents and the environment probe are all
+    // exploration-ish reads, so they count as "reads" in the collapsed group.
+    case "context":
+    case "compact":
+    case "todo_read":
+    case "todo_write":
+    case "env":
+    case "task":
       return "read";
     case "select_workspace":
     case "workspace":
@@ -251,6 +261,19 @@ export function toolDisplayLabel(name: string | undefined): string {
     case "grep":
     case "search":
       return "Search";
+    case "codesearch":
+      return "Code search";
+    case "context":
+      return "Context";
+    case "compact":
+      return "Compact";
+    case "todo_read":
+    case "todo_write":
+      return "Todo";
+    case "env":
+      return "Environment";
+    case "task":
+      return "Sub-agent";
     case "webfetch":
       return "Fetch";
     case "websearch":
@@ -374,6 +397,38 @@ export function toolCallSummary(call: ToolCallLike): string {
       return str(args.url);
     case "websearch":
       return str(args.query);
+    case "codesearch": {
+      const pattern = str(args.pattern) || str(args.query) || str(args.symbol);
+      if (!pattern) return "";
+      let summary = `"${pattern}"`;
+      const kind = str(args.kind) || str(args.mode);
+      if (kind) summary += ` (${kind})`;
+      if (path && path !== ".") summary += ` under ${path}`;
+      return summary;
+    }
+    case "context":
+      // Usage report (no args) or an explicit query against the transcript.
+      return str(args.query) || str(args.pattern) || "context usage";
+    case "compact": {
+      const focus = str(args.focus) || str(args.summary);
+      return focus ? `compact: ${focus}` : "compact history";
+    }
+    case "todo_read":
+      return "todo list";
+    case "todo_write": {
+      const todos = args.todos;
+      if (Array.isArray(todos)) return plural(todos.length, "todo");
+      return str(args.task) || "todo list";
+    }
+    case "env":
+      return str(args.name) || str(args.var) || "environment";
+    case "task": {
+      const prompt = str(args.prompt) || str(args.description) || str(args.task);
+      const agent = str(args.agent) || str(args.agent_type);
+      const label = prompt.length > 70 ? `${prompt.slice(0, 69)}…` : prompt;
+      if (agent && label) return `${agent}: ${label}`;
+      return label || agent || "sub-agent";
+    }
     case "ask": {
       const questions = args.questions;
       if (Array.isArray(questions) && questions.length > 0) {
@@ -457,6 +512,42 @@ export function toolResultPreview(call: ToolCallLike): string {
       const status = num(record?.status);
       if (status === undefined) break;
       return `${status}`;
+    }
+    // Parity surface (ci#605 B6): a compact outcome for the tools that are
+    // declared in docs/native-coder-parity.md §3.1 but had no row summary yet.
+    case "codesearch": {
+      const count = num(record?.count) ?? num(record?.matches);
+      if (count === undefined) break;
+      return count === 0 ? "no matches" : `${plural(count, "match", "matches")}${truncated}`;
+    }
+    case "context": {
+      const tokens = num(record?.tokens_used) ?? num(record?.total_tokens);
+      const budget = num(record?.token_budget) ?? num(record?.budget);
+      if (tokens !== undefined && budget !== undefined) {
+        return `${tokens}/${budget} tokens`;
+      }
+      if (tokens !== undefined) return `${tokens} tokens`;
+      const remaining = num(record?.tokens_remaining);
+      if (remaining !== undefined) return `${remaining} tokens left`;
+      break;
+    }
+    case "compact": {
+      const tokens = num(record?.tokens_saved) ?? num(record?.compacted_tokens);
+      if (tokens !== undefined) return `${tokens} tokens`;
+      const messages = num(record?.messages_compacted) ?? num(record?.compacted);
+      if (messages !== undefined) return plural(messages, "message");
+      break;
+    }
+    case "todo_read":
+    case "todo_write": {
+      const count = num(record?.count);
+      if (count === undefined) break;
+      return count === 0 ? "empty" : plural(count, "todo");
+    }
+    case "task": {
+      const status = str(record?.status);
+      if (status) return status;
+      break;
     }
     case "websearch": {
       const count = num(record?.count);
