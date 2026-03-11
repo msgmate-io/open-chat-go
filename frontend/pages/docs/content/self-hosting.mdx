@@ -78,6 +78,101 @@ so all processes share one queue, set `DB_SKIP_MIGRATIONS=true` on the workers
 (`--run-scheduler`) enabled in exactly one process — asynq v0.26 does not
 leader-elect it.
 
+## Horizontal scaling
+
+Scaling out means running more `open-chat worker` processes against the same
+Redis queue. The API tier does **not** scale out this way: websocket
+subscribers and the active-generation registry are per-process, so a second API
+pod cannot fan out events to a client connected to the first one. Scale the
+worker tier, keep the API at one pod.
+
+Concurrency correctness for N workers:
+
+- **Shared queue.** All workers and the API must point at the same Redis:
+  `REDIS_MODE=external` (or an explicit `REDIS_URL`). `auto` may silently start
+  an embedded per-process Redis when the external one is unreachable, and with
+  separate embedded instances every worker would see an empty queue.
+- **One migrator.** Workers run with `DB_SKIP_MIGRATIONS=true`; concurrent
+  `AutoMigrate` passes are a DDL race.
+- **One scheduler.** `--run-scheduler` / `WORKER_SCHEDULER` in exactly one
+  process (the API, or a single designated worker). Duplicate ticks are only
+  best-effort suppressed by the stable task key, not by leader election.
+- **Per-chat dedupe.** Reply work is already idempotent per chat: the asynq
+  task key is derived from the chat UUID (`BotReplyTaskID`), so a duplicate
+  enqueue is rejected while the first task is pending or active, and a second
+  worker cannot process the same reply concurrently. Per-task results are also
+  persisted (`TaskResult`) for post-hoc inspection.
+- **Database.** Several workers may share a single-writer database
+  (`DB_BACKEND=sqlite` on one ReadWriteOnce volume is fine, the workers only
+  read/write rows), but the API pod must not be rolled while a second API pod
+  shares that file — hence one API pod per deployment.
+
+### Autoscaling on queue depth
+
+Queue depth is observable directly in Redis, so no exporter is needed. asynq
+prefixes every queue key with `asynq:{<queue>}:`; the default queue is
+`default`, and pending tasks are a Redis list:
+
+```
+asynq:{default}:pending    # list  — LLEN == pending tasks
+asynq:{default}:active     # list  — tasks currently being processed
+```
+
+KEDA `ScaledObject` targeting the worker Deployment (KEDA owns the scaling; the
+Helm chart only renders the CRs, it never installs the operator):
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: backend-worker
+spec:
+  scaleTargetRef:
+    name: backend-worker        # the worker Deployment, app: backend-worker
+  minReplicaCount: 1            # never 0: a cold start would delay the first reply
+  maxReplicaCount: 8
+  pollingInterval: 15
+  cooldownPeriod: 300
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          # an in-flight reply holds a goroutine for minutes (asynq.Timeout 5m)
+          stabilizationWindowSeconds: 300
+  triggers:
+    - type: redis
+      metadata:
+        address: redis-service:6379      # or the external Redis, with a TriggerAuthentication
+        listName: "asynq:{default}:pending"
+        listLength: "10"                 # == ASYNQ_CONCURRENCY: pending tasks per pod
+        activationListLength: "1"
+```
+
+Calibrate `listLength` to the per-worker concurrency (`ASYNQ_CONCURRENCY`,
+default `10`) so that `ceil(pending / listLength)` replicas match the work
+available. The pending list is the only signal: active tasks (already being
+processed) and the `retry`/`scheduled` sets are excluded, so retries alone do
+not grow the fleet.
+
+Sizing guidance: a reply is provider-bound, not CPU-bound, so keep the CPU
+request low (`250m`) to pack pods and set `maxReplicaCount` from the node pool
+(`≈ floor(node_cpu / request)`), not from the queue alone. An HPA on queue depth
+would need a separate depth exporter plus prometheus-adapter; the Redis scaler
+above is the supported path.
+
+### Deploying with the Helm chart
+
+The packaged chart (`msgmate-io/open-chat-go-helm-chart`, `backend/`) exposes
+this as an additive `workers:` block: `workers.enabled` (default `false`, so a
+default render is unchanged), `workers.replicas`, `workers.command`,
+`workers.asynqConcurrency` → `ASYNQ_CONCURRENCY`, `workers.runScheduler` →
+`WORKER_SCHEDULER` (use `true` on at most one worker), plus `resources`,
+`nodeSelector`/`tolerations` and `autoscaling`. When `workers.enabled` is set
+the chart forces `START_WORKER=false` on the API pods so the embedded worker and
+the worker tier never drain the same queue, and points each worker at the API
+Service via `OPEN_CHAT_HOST`. The worker pods intentionally mount no SQLite
+volume and run no config-seed init container.
+
 ## Provider credentials
 
 Model providers read their API keys from the environment, for example:
