@@ -1478,7 +1478,11 @@ func createBotInteraction(
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
 	}
 
-	tags := database.NormalizeChatTags(req.Tags)
+	// ci#650: a native coder interaction additionally carries a per-bot and a
+	// per-repo tag (mirroring the opencode integration's single tag), so coder
+	// chats can be grouped per bot/repo and filtered by `tags=repo:<owner/name>`.
+	// Non-coder bots keep exactly the tags their caller asked for.
+	tags := database.NormalizeChatTags(nativecoder.DefaultInteractionTags(effectiveConfig, botDisplayName(runtime), req.Tags))
 	var chat database.Chat
 	var message database.Message
 	var share database.SharedChatInstance
