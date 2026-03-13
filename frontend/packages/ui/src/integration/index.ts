@@ -154,6 +154,8 @@ export * from "./lib/tool-init-registry";
 export * from "./lib/tool-init";
 export * from "./lib/confirmable-actions";
 export * from "./lib/chat-state";
+export * from "./lib/pinned-integrations";
+export * from "./lib/use-pinned-integration-pages";
 
 export * from "./lib/open-chat-run";
 export * from "./lib/terminal-zoom";
