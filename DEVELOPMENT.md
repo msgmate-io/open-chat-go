@@ -532,6 +532,67 @@ in-flight count and cap, and the admin-only
 per-key metrics for the loop. The full reference lives in the
 `msgmate_coder` integration README.
 
+### Sandbox-pool memory budget: measure first, then bound (ci#662)
+
+The pooled sandbox levers above are all *counts* (agents per pool, provider
+in-flight); the resource that actually runs out first is memory. ci#662 closes
+that gap in two steps, in this order — **measure, record, then bound** — because
+a guessed per-sandbox request that is too large throttles the pool while one that
+is too small only moves the failure into the kernel OOM killer.
+
+**1. Measurement.** `development/scripts/sandbox-memory-inventory.sh` is a
+read-only `kubectl` inventory of the sandbox namespace. It reports the totals and
+the largest per-sandbox CPU/memory request and limit, the pod count split by age
+bucket (`live`, `idle` above `IDLE_TTL_SECONDS` = 2700s, `orphan` above
+`ORPHAN_TTL_SECONDS` = 86400s, matching the reaper), running vs stopped, every
+node's capacity/allocatable and the memory already requested on it, the
+resulting `sandboxes_that_fit` and `effective_agents_per_pool` on the **smallest**
+allocatable node (the pool may land on any node of the group, so sizing against
+the average still hits `Insufficient memory` on the small one), and a best-effort
+`kubectl top nodes/pods` reading when a metrics server exists (its absence is
+reported, never fatal). The output is greppable `sandbox_memory key=value` lines,
+is appended to `GITHUB_STEP_SUMMARY`, and ends with the exact deployment env the
+numbers imply:
+
+```text
+sandbox_memory replay_env OCI_MSGMATE_CODER_SANDBOX_MEMORY_REQUEST=2Gi \
+  OCI_MSGMATE_CODER_SANDBOX_MEMORY_LIMIT=8Gi \
+  OCI_MSGMATE_CODER_NODE_ALLOCATABLE_MEMORY=16Gi \
+  OCI_MSGMATE_CODER_SANDBOX_MEMORY_RESERVE=1638Mi
+```
+
+It mutates nothing; an empty or unmeasured namespace prints `source=unmeasured`
+and the bound stays off.
+
+**2. The bound.** `backend/api/msgmate/sandbox_memory_budget.go` resolves a
+fail-open budget from those numbers: per-sandbox request/limit, node allocatable
+and reserve (env wins over the per-agent `coder_sandbox_*` keys, then the
+materialised default — the same precedence lesson as ci#620), `MaxAgentsByMemory`
+= `(allocatable − reserve) / request` with **one sandbox of headroom left out** so
+the pool can still admit a new chat while every current agent runs, and
+`EffectiveAgentsPerPool` = the minimum of the configured ci#602 pool bound, the
+ci#620 provider cap and that memory bound. The reserve defaults to 10% of
+allocatable. With no measurement, nothing is bound: a deployment that has not
+measured must not be bricked by a guess. The resolved budget (bytes, sources and
+the resulting bound) is exposed on the admin-only
+`GET /api/v1/admin/provider-admission` response as `sandbox_memory_budget`, next
+to the provider admission state.
+
+**3. The recorded numbers.** The measurement was replayed for the current
+deployment: with a per-sandbox request of `2Gi` and a `16Gi` node, `~7` sandboxes
+fit and the effective agents-per-pool is `6`, i.e. **below** the configured
+`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL=8` of ci#602 — eight pooled agents could
+not all be scheduled on one 16Gi node at `2Gi` each. The ci#529 delta already
+prepares the right-sizing lever (a `512Mi` sandbox request/limit instead of
+`2Gi`), which the same script reports as `~28` that fit; that config change stays
+a deployment decision in the ci repo, not a code edit here. The arithmetic is
+pinned cluster-free by `development/scripts/tests/test_sandbox_memory_inventory.sh`
+(a stub `kubectl` feeding 4 pods × `2Gi`/`8Gi` on a `16Gi` node asserts
+`total_request=8Gi`, `total_limit=32Gi`, `live=2 idle=1 orphan=1 stopped=1`,
+`sandboxes_that_fit=7`, `effective_agents_per_pool=6`, plus the `unmeasured`
+path and the summary append), so a regression in the numbers fails a test rather
+than a production scheduler.
+
 ### Native coding-agent auto-consolidation (default ON)
 
 A native `msgmate_coder` agent consolidates its **own ready pull requests by
