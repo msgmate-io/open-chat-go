@@ -1,11 +1,26 @@
 import type { ComponentType } from "react";
 
+/**
+ * Documentation visibility.
+ *
+ * - `public` (default): rendered for every visitor.
+ * - `authenticated`: only rendered for signed-in users. Anonymous visitors get
+ *   the "sign in to view these docs" notice.
+ * - `integration`: documentation of a private integration. It is only rendered
+ *   for signed-in users with access to that integration; everyone else gets the
+ *   "you don't have access to this integration's docs" notice.
+ */
+export type DocVisibility = "public" | "authenticated" | "integration";
+
 export type DocMetadata = {
   title: string;
   path: string;
   description?: string;
   order?: number;
   adminOnly?: boolean;
+  visibility?: DocVisibility;
+  /** Integration name a `visibility: "integration"` page documents. */
+  integration?: string;
   section?: string;
   parent?: string;
   sourceUrl?: string;
@@ -26,6 +41,16 @@ const parseBoolean = (value: unknown, fallback = false) => {
     const normalized = value.trim().toLowerCase();
     if (normalized === "true") return true;
     if (normalized === "false") return false;
+  }
+  return fallback;
+};
+
+const parseVisibility = (value: unknown, fallback: DocVisibility = "public"): DocVisibility => {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "public" || normalized === "authenticated" || normalized === "integration") {
+      return normalized;
+    }
   }
   return fallback;
 };
@@ -71,6 +96,8 @@ export const docs = Object.entries(docModules)
       description: metadata.description?.trim(),
       order: parseOrder(metadata.order),
       adminOnly: parseBoolean(metadata.adminOnly, false),
+      visibility: parseVisibility(metadata.visibility),
+      integration: metadata.integration?.trim() || undefined,
       section: metadata.section?.trim() || "General",
       parent: metadata.parent?.trim(),
       sourceUrl: metadata.sourceUrl?.trim() || getSourceUrl(filePath),
