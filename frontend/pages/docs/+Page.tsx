@@ -129,28 +129,30 @@ export default function Page() {
     <DocsLayout activeDocPath={activeDocPath} onSelect={selectDoc}>
       {activeDoc ? (
         <article className="docs-content">
-          <header className="docs-article-header">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <Text type={TextTypes.Heading4} tag="h1" className="docs-h1">
-                  {activeDoc.title}
-                </Text>
-                {activeDoc.description ? (
-                  <Text type={TextTypes.Body5} tag="p" color="muted" className="docs-p">
-                    {activeDoc.description}
+          {gateReason === "none" ? (
+            <header className="docs-article-header">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Text type={TextTypes.Heading4} tag="h1" className="docs-h1">
+                    {activeDoc.title}
                   </Text>
+                  {activeDoc.description ? (
+                    <Text type={TextTypes.Body5} tag="p" color="muted" className="docs-p">
+                      {activeDoc.description}
+                    </Text>
+                  ) : null}
+                </div>
+                {activeDoc.sourceUrl ? (
+                  <Button asChild variant="outline" size="sm">
+                    <a href={activeDoc.sourceUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink className="mr-2 size-4" />
+                      MDX Source
+                    </a>
+                  </Button>
                 ) : null}
               </div>
-              {activeDoc.sourceUrl && gateReason === "none" ? (
-                <Button asChild variant="outline" size="sm">
-                  <a href={activeDoc.sourceUrl} target="_blank" rel="noreferrer">
-                    <ExternalLink className="mr-2 size-4" />
-                    MDX Source
-                  </a>
-                </Button>
-              ) : null}
-            </div>
-          </header>
+            </header>
+          ) : null}
           {gateReason === "none" ? (
             <ActiveDoc components={mdxComponents} />
           ) : (
