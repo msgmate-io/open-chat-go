@@ -362,7 +362,7 @@ func normalizeToolInputSchema(schema map[string]interface{}) map[string]interfac
 	if _, ok := schema["type"].(string); !ok {
 		schema["type"] = "object"
 	}
-	if _, ok := schema["properties"].(map[string]interface{}); !ok {
+	if properties, ok := schema["properties"].(map[string]interface{}); !ok || properties == nil {
 		schema["properties"] = map[string]interface{}{}
 	}
 	switch required := schema["required"].(type) {
