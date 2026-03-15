@@ -85,8 +85,8 @@ func withToolCallReasonProperty(schema map[string]interface{}) map[string]interf
 	if schema == nil {
 		return schema
 	}
-	properties, ok := schema["properties"].(map[string]interface{})
-	if !ok {
+	properties, _ := schema["properties"].(map[string]interface{})
+	if properties == nil {
 		properties = map[string]interface{}{}
 	}
 	if _, exists := properties["reason"]; exists {
