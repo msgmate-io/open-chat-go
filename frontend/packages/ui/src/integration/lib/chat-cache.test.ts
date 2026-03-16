@@ -94,7 +94,7 @@ describe("action-task cache keys and optimistic updates (ci#726)", () => {
     // `mutate` passes the same updater every matched key, so the shape decides.
     expect(patchActionTasksFeed({ count: 4 }, "task-1")).toEqual({ count: 3 });
     expect(patchActionTasksFeed({ count: 2, rows: [{ task_key: "task-1" }] }, "task-1")).toEqual({
-      count: 0,
+      count: 1,
       rows: [],
     });
     expect(patchActionTasksFeed(undefined, "task-1")).toBeUndefined();
