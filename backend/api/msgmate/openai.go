@@ -46,6 +46,11 @@ type ToolCall struct {
 	// Such a call is budget-exempt like any transient failure, and it is
 	// reported separately so a saturated node is visible in the transcript.
 	SandboxCapacity bool
+	// Reason is the optional human-readable "why this call" text the model
+	// attached to the call (ci#723). It is surfaced on the call row so a
+	// multi-tool coder turn reads as a narrated session instead of a bare
+	// stack of call rows.
+	Reason string
 }
 
 // IsTerminalToolCallStatus reports whether a tool-call status means the call
@@ -767,6 +772,11 @@ func streamChatCompletion(
 					"error":     call.error,
 					"timestamp": time.Now().Format(time.RFC3339),
 				}
+				// ci#723: carry the model's optional reason for the call into
+				// the turn's completion payload.
+				if call.reason != "" {
+					details["call_reason"] = call.reason
+				}
 				if call.retries > 0 {
 					details["retries"] = call.retries
 				}
@@ -834,6 +844,8 @@ type executedToolCall struct {
 	result    string
 	status    string
 	error     string
+	// reason is the model's optional "why this call" text (ci#723).
+	reason string
 	// budgetExempt marks a failed call that must not consume the agent's
 	// failed-tool budget: a transient environmental failure (sandbox
 	// provisioning under load, host resource exhaustion, a connection blip
@@ -1482,6 +1494,10 @@ func processParsedToolCall(
 		return
 	}
 
+	// ci#723: the model may attach a short human-readable reason to the call;
+	// carry it through on every emission of this call.
+	callReason := ExtractToolCallReason(toolInput)
+
 	fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", name)
 	fmt.Printf("Tool ID: %s\n", id)
 	fmt.Printf("Arguments: %s\n", arguments)
@@ -1508,6 +1524,7 @@ func processParsedToolCall(
 			arguments: arguments,
 			result:    cachedResult,
 			status:    ToolCallStatusSucceeded,
+			reason:    callReason,
 		})
 
 		toolChan <- ToolCall{
@@ -1517,6 +1534,7 @@ func processParsedToolCall(
 			Result:    cachedResult,
 			Status:    ToolCallStatusSucceeded,
 			Error:     "",
+			Reason:    callReason,
 			// A cache hit is also a completed call: report a zero-length
 			// duration so the UI can render its timing row (ci#569).
 			StartedAtUnixMs: time.Now().UnixMilli(),
@@ -1537,6 +1555,7 @@ func processParsedToolCall(
 		Result:          "",
 		Status:          ToolCallStatusOngoing,
 		StartedAtUnixMs: startedAtUnixMs,
+		Reason:          callReason,
 	}
 
 	var toolResult string
@@ -1636,6 +1655,7 @@ func processParsedToolCall(
 		Retries:         toolRetries,
 		BudgetExempt:    toolBudgetExempt,
 		SandboxCapacity: toolSandboxCapacity,
+		Reason:          callReason,
 	}
 	result.status = status
 	result.error = toolErr
@@ -1649,6 +1669,7 @@ func processParsedToolCall(
 		budgetExempt:    toolBudgetExempt,
 		retries:         toolRetries,
 		sandboxCapacity: toolSandboxCapacity,
+		reason:          callReason,
 	})
 	// Cache only successful results. Caching failures would make an identical
 	// retry (after the underlying state changed) replay the stale error instead
