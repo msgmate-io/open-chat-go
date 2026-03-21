@@ -85,6 +85,26 @@ func BotReplyIsActive(inspector *asynq.Inspector, chatUUID string) bool {
 	return len(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)) > 0
 }
 
+// BotReplyHasWork reports whether a reply is queued or running for the chat.
+// Unlike BotReplyIsActive it also counts pending, scheduled and retry tasks, so
+// liveness checks (dispatch dedupe, stall detection) do not mistake a reply
+// waiting for a worker for an idle chat.
+func BotReplyHasWork(inspector *asynq.Inspector, chatUUID string) bool {
+	if inspector == nil || chatUUID == "" {
+		return false
+	}
+	if len(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)) > 0 {
+		return true
+	}
+	if len(botReplyTasks(inspector, inspector.ListPendingTasks, chatUUID)) > 0 {
+		return true
+	}
+	if len(botReplyTasks(inspector, inspector.ListScheduledTasks, chatUUID)) > 0 {
+		return true
+	}
+	return len(botReplyTasks(inspector, inspector.ListRetryTasks, chatUUID)) > 0
+}
+
 // CancelBotReplyTask stops the in-flight bot reply and removes every queued
 // reply for the chat, including replies queued behind a live turn.
 func CancelBotReplyTask(inspector *asynq.Inspector, chatUUID string) {
@@ -110,11 +130,16 @@ func EnqueueBotReply(client *asynq.Client, inspector *asynq.Inspector, payload B
 		return nil, fmt.Errorf("asynq client is required")
 	}
 
-	// Always use a per-message task ID: asynq archives a finished/cancelled task
-	// under its ID and a re-enqueue with the same ID fails with "task already
-	// exists", which silently blocked every continuation of a finished turn.
-	taskID := botReplyTaskID(payload.ChatUUID, payload.MessageUUID)
-	if BotReplyIsActive(inspector, payload.ChatUUID) {
+	// With no live turn, replace any queued reply under the stable per-chat task
+	// ID. While a turn is live, queue behind it under a per-message ID so a
+	// message sent into a running chat is answered instead of disappearing
+	// (ci#656). Reusing the base ID when idle also means a finished/cancelled
+	// task of the same chat cannot block the next reply: CancelBotReplyTask
+	// removes it above before the enqueue.
+	active := BotReplyIsActive(inspector, payload.ChatUUID)
+	taskID := BotReplyTaskID(payload.ChatUUID)
+	if active {
+		taskID = botReplyTaskID(payload.ChatUUID, payload.MessageUUID)
 		_ = inspector.DeleteTask(QueueDefault, taskID)
 	} else {
 		CancelBotReplyTask(inspector, payload.ChatUUID)
