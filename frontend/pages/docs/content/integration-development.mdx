@@ -250,3 +250,77 @@ The core server and the public `frontend` are licensed `AGPL-3.0-or-later`; the
 brand assets under `frontend/assets/` are explicitly excluded (all rights
 reserved). Integrations live in their own repositories and carry their own
 license. See the repository `NOTICE`/`COPYRIGHT` files and `frontend/NOTICE`.
+
+## Private integration documentation pages
+
+Every **private** integration (the ones shipped through the private `default` /
+`full` profiles) publishes its own compact documentation page set. The pages,
+their assets and any configuration examples live **inside the integration
+repository** and are declared through the standard `FrontendDocs` mechanism, so
+nothing about a private integration ever reaches this public repository or the
+public core docs.
+
+Keep a page set small and stable — three pages are enough and age well:
+
+| Page | `Section` | `Order` | Contents |
+| --- | --- | --- | --- |
+| Overview | `Overview` | 1 | what the integration does, prerequisites, how access is granted |
+| Configuration | `Configuration` | 2 | runtime env vars / secrets and `open-chat.json` examples |
+| Operations | `Guides` | 3 | day-two tasks, troubleshooting, limits |
+
+### Page set layout
+
+Documentation pages are written exactly like the integration's other frontend
+pages (`frontend/pages/<route>/+Page.tsx`, Vike, `@open-chat-go/ui`), and are
+prerendered into the integration's own embedded assets:
+
+```
+frontend/pages/docs/overview/+Page.tsx
+frontend/pages/docs/configuration/+Page.tsx
+frontend/pages/docs/operations/+Page.tsx
+frontend_assets/docs/overview/index.html   # produced by `openchat-integrations export`
+frontend_assets/docs/configuration/index.html
+frontend_assets/docs/operations/index.html
+```
+
+Register them in the integration's `integration.frontend.json`:
+
+```json
+{
+  "pages": [
+    { "source": "integrations/<name>/docs/overview", "asset": "docs/overview/index.html" },
+    { "source": "integrations/<name>/docs/configuration", "asset": "docs/configuration/index.html" },
+    { "source": "integrations/<name>/docs/operations", "asset": "docs/operations/index.html" }
+  ]
+}
+```
+
+and in the Go definition (`FrontendDocs` requires `FrontendAssets`):
+
+```go
+FrontendDocs: []integrationinterface.FrontendDoc{
+    {Route: "/integrations/<name>/docs/overview", Title: "Overview", Description: "What the integration does and how to enable it.", AssetPath: "docs/overview/index.html", Section: "Overview", Order: 1},
+    {Route: "/integrations/<name>/docs/configuration", Title: "Configuration", Description: "Runtime env vars and open-chat.json examples.", AssetPath: "docs/configuration/index.html", Section: "Configuration", Order: 2},
+    {Route: "/integrations/<name>/docs/operations", Title: "Operations", Description: "Day-two tasks and troubleshooting.", AssetPath: "docs/operations/index.html", Section: "Guides", Order: 3},
+},
+```
+
+Routes must stay under `/integrations/<name>` (`Root: true` opts out, on purpose),
+`Title`/`Description`/`Section` are trimmed metadata, and `Order` drives the
+navigation order. The backend serves the pages, lists them in the integration
+overview as `frontend_routes` entries with `kind: "doc"`, and counts them in the
+`/integrations` overview (`frontend_doc_count`).
+
+### Configuration examples
+
+When the integration can be configured through Open-Chat's own configuration,
+its `Configuration` page should carry short, copy-pasteable `open-chat.json`
+examples (`integrations.<name>...`) alongside the matching runtime env vars.
+Document the shape of the values only:
+
+- never embed real secrets, tokens, hostnames or credentials — use
+  placeholders such as `<token>`, `https://git.example.com`;
+- keep examples minimal (one example per capability), and state the env var the
+  value maps to; and
+- mark admin-only pages with `AdminOnly` on the definition rather than hiding
+  the route, so the navigation stays honest.
