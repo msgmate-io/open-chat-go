@@ -36,6 +36,11 @@ type InteractionStatusResponse struct {
 	StallReason           string `json:"stall_reason,omitempty"`
 	StallAgeSeconds       int    `json:"stall_age_seconds,omitempty"`
 	StallThresholdSeconds int    `json:"stall_threshold_seconds,omitempty"`
+	// QueuedReplies is how many user messages are queued behind the chat's live
+	// turn (ci#656). They are persisted and visible, and each one is answered
+	// once the live turn completes, so the transcript can render them as
+	// pending instead of them looking lost.
+	QueuedReplies int `json:"queued_replies,omitempty"`
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
@@ -171,6 +176,11 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		Source:   "none",
 	}
 	response = populateAutoContinueStatus(DB, chat, response)
+
+	// ci#656: report how many replies are queued behind the live turn so the UI
+	// can render those persisted messages as pending rather than lost. Resolved
+	// once here and carried through every early return below.
+	response.QueuedReplies = workqueue.BotReplyQueuedCount(inspector, chat.UUID)
 
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
