@@ -72,10 +72,9 @@ export function normalizeIntegrationPath(path: unknown): string | null {
   if (hashIndex >= 0) {
     value = value.slice(0, hashIndex);
   }
-  value = value.replace(/\/{2,}/g, "/");
-  if (value.length > 1) {
-    value = value.replace(/\/+$/, "");
-  }
+  // Normalize duplicate and trailing slashes without a backtracking regex on
+  // an uncontrolled path (CodeQL polynomial-regex finding).
+  value = `/${value.split("/").filter(Boolean).join("/")}`;
   if (!value.startsWith(`${INTEGRATIONS_ROOT}/`)) {
     return null;
   }
