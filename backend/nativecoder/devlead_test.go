@@ -344,8 +344,8 @@ func TestResolveLeadInteraction(t *testing.T) {
 }
 
 // TestNormalizeRepoDevLead covers the repo normalization as the development
-// lead depends on it; the canonical implementation lives in tags.go and is
-// covered by TestNormalizeRepo in tags_test.go.
+// lead depends on it; the canonical implementation lives in repo.go and is
+// covered by TestNormalizeRepo in repo_test.go (ci#730).
 func TestNormalizeRepoDevLead(t *testing.T) {
 	if got := NormalizeRepo("  Msgmate-IO/Open-Chat-Go.git "); got != "msgmate-io/open-chat-go" {
 		t.Fatalf("NormalizeRepo = %q", got)
