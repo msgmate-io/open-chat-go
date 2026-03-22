@@ -63,7 +63,7 @@ import {
   ProviderRetryEventWidget,
   resolveProviderRetryEvent,
 } from "./ProviderRetryEventWidget";
-import { revalidateChatData } from "../../lib/chat-cache";
+import { optimisticResolveActionTask, revalidateChatData } from "../../lib/chat-cache";
 import { latestPendingConfirmableActionId } from "../../lib/confirmable-actions";
 import { isQueuePendingMessage, resolveStatusIndicator } from "../../lib/status-indicator";
 import { MoreHorizontal } from "lucide-react";
@@ -1292,6 +1292,10 @@ export function BotMessageItem({
               executionBlockedReason={executionBlockedReason}
               autoExpand={action.action_id === lastPendingActionId}
               onExecuted={() => {
+                // Drop the task from the action-task feeds optimistically (the
+                // sidebar badge and the action-task view) so a confirmed action
+                // disappears immediately instead of after the next poll (ci#726).
+                void optimisticResolveActionTask(chatUUID, message.uuid);
                 void revalidateChatData(chatUUID);
               }}
             />
