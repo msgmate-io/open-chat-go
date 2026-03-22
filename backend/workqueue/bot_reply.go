@@ -105,6 +105,85 @@ func BotReplyHasWork(inspector *asynq.Inspector, chatUUID string) bool {
 	return len(botReplyTasks(inspector, inspector.ListRetryTasks, chatUUID)) > 0
 }
 
+// BotReplyDeliveryMode selects how a message sent into a chat that is already
+// running a turn is delivered (ci#656).
+type BotReplyDeliveryMode string
+
+const (
+	// BotReplyDeliveryQueued appends the reply behind the live turn: the work
+	// already done is preserved and the message is answered once the turn
+	// completes. It is the default for a message into a running chat.
+	BotReplyDeliveryQueued BotReplyDeliveryMode = "queued"
+	// BotReplyDeliveryInterrupt stops the live turn now and answers the message
+	// immediately. The partial progress of the stopped turn (files, commits) is
+	// already persisted, so nothing is lost.
+	BotReplyDeliveryInterrupt BotReplyDeliveryMode = "interrupt"
+)
+
+// ParseBotReplyDeliveryMode normalises a client-supplied delivery mode. An
+// empty value means the default (queued). It reports false for an unknown mode
+// so callers reject it instead of silently guessing.
+func ParseBotReplyDeliveryMode(raw string) (BotReplyDeliveryMode, bool) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", string(BotReplyDeliveryQueued), "queue", "task-stack", "task_stack":
+		return BotReplyDeliveryQueued, true
+	case string(BotReplyDeliveryInterrupt), "immediate", "send_now", "send-now", "now":
+		return BotReplyDeliveryInterrupt, true
+	default:
+		return "", false
+	}
+}
+
+// BotReplyEnqueueDecision names how a new reply interacts with the reply tasks
+// a chat already has. It is a pure function of the requested delivery mode and
+// whether a turn is live, so the queue behaviour is testable without a queue.
+type BotReplyEnqueueDecision string
+
+const (
+	// BotReplyDecisionReplace drops the queued-but-unstarted replies: nothing
+	// is running, the newest message wins.
+	BotReplyDecisionReplace BotReplyEnqueueDecision = "replace"
+	// BotReplyDecisionQueueBehind keeps the live turn and appends the reply
+	// behind it.
+	BotReplyDecisionQueueBehind BotReplyEnqueueDecision = "queue-behind"
+	// BotReplyDecisionInterruptTurn stops the live turn and starts the new one.
+	BotReplyDecisionInterruptTurn BotReplyEnqueueDecision = "interrupt-turn"
+)
+
+// DecideBotReplyEnqueue maps a delivery mode and the live-turn state to the
+// enqueue decision (ci#656).
+func DecideBotReplyEnqueue(mode BotReplyDeliveryMode, turnLive bool) BotReplyEnqueueDecision {
+	if mode == BotReplyDeliveryInterrupt {
+		return BotReplyDecisionInterruptTurn
+	}
+	if turnLive {
+		return BotReplyDecisionQueueBehind
+	}
+	return BotReplyDecisionReplace
+}
+
+// BotReplyQueuedCount reports how many replies are queued behind the chat's
+// live turn, ie how many messages the transcript should render as pending
+// (ci#656). A turn that is not live cannot have anything queued behind it, so
+// the count is 0 then: a single pending reply is just the next turn waiting for
+// a worker, not a message that was sent into a running chat.
+func BotReplyQueuedCount(inspector *asynq.Inspector, chatUUID string) int {
+	if inspector == nil || chatUUID == "" {
+		return 0
+	}
+	if !BotReplyIsActive(inspector, chatUUID) {
+		return 0
+	}
+	base := BotReplyTaskID(chatUUID)
+	count := 0
+	for _, task := range botReplyTasks(inspector, inspector.ListPendingTasks, chatUUID) {
+		if task.ID != base {
+			count++
+		}
+	}
+	return count
+}
+
 // CancelBotReplyTask stops the in-flight bot reply and removes every queued
 // reply for the chat, including replies queued behind a live turn.
 func CancelBotReplyTask(inspector *asynq.Inspector, chatUUID string) {
@@ -121,27 +200,55 @@ func CancelBotReplyTask(inspector *asynq.Inspector, chatUUID string) {
 	}
 }
 
-// EnqueueBotReply schedules a bot reply. A live turn is never cancelled: the
-// reply is queued behind it under a unique task ID so a message sent into a
-// running chat is answered instead of disappearing (ci#656). When no turn is
-// live, any queued reply for the chat is replaced by the new one.
+// EnqueueBotReply schedules a bot reply with the default delivery mode: a live
+// turn is never cancelled, the reply is queued behind it (ci#656).
 func EnqueueBotReply(client *asynq.Client, inspector *asynq.Inspector, payload BotReplyPayload, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	return EnqueueBotReplyWithDelivery(client, inspector, payload, BotReplyDeliveryQueued, opts...)
+}
+
+// EnqueueBotReplyWithDelivery schedules a bot reply honouring an explicit
+// delivery mode (ci#656).
+//
+//   - queued (default): a live turn keeps running and the reply is queued
+//     behind it under a unique task ID, so a message sent into a running chat
+//     is answered instead of disappearing. When no turn is live, any queued
+//     reply for the chat is replaced by the new one.
+//   - interrupt: every reply task of the chat (live turn included) is cancelled
+//     and the new reply takes the base task ID, so it starts immediately. Work
+//     the stopped turn already persisted (files, commits) is untouched.
+func EnqueueBotReplyWithDelivery(client *asynq.Client, inspector *asynq.Inspector, payload BotReplyPayload, mode BotReplyDeliveryMode, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	return enqueueBotReplyWithDelivery(client, inspector, payload, mode, BotReplyIsActive(inspector, payload.ChatUUID), opts...)
+}
+
+// enqueueBotReplyWithDelivery is the liveness-injected core of
+// EnqueueBotReplyWithDelivery. turnLive is passed in so the queue behaviour is
+// testable without a running worker: a task waiting in the queue is *pending*,
+// not *active*, so a unit test cannot otherwise reach the queue-behind case.
+func enqueueBotReplyWithDelivery(client *asynq.Client, inspector *asynq.Inspector, payload BotReplyPayload, mode BotReplyDeliveryMode, turnLive bool, opts ...asynq.Option) (*asynq.TaskInfo, error) {
 	if client == nil {
 		return nil, fmt.Errorf("asynq client is required")
 	}
 
-	// With no live turn, replace any queued reply under the stable per-chat task
-	// ID. While a turn is live, queue behind it under a per-message ID so a
-	// message sent into a running chat is answered instead of disappearing
-	// (ci#656). Reusing the base ID when idle also means a finished/cancelled
-	// task of the same chat cannot block the next reply: CancelBotReplyTask
-	// removes it above before the enqueue.
-	active := BotReplyIsActive(inspector, payload.ChatUUID)
+	// Idle and interrupt replies take the stable per-chat task ID (the same key
+	// the API tests and the dispatch dedupe expect) after every reply task of
+	// the chat has been cleared. Only a reply queued behind a live turn needs a
+	// per-message ID, because the live turn keeps the base ID: asynq archives a
+	// finished/cancelled task under its ID and a re-enqueue with the same ID
+	// fails with "task already exists", which would silently block a queued
+	// reply.
 	taskID := BotReplyTaskID(payload.ChatUUID)
-	if active {
+	switch DecideBotReplyEnqueue(mode, turnLive) {
+	case BotReplyDecisionQueueBehind:
+		// The live turn keeps running: append the reply behind it under its own
+		// per-message task ID instead of clobbering the base ID.
 		taskID = botReplyTaskID(payload.ChatUUID, payload.MessageUUID)
-		_ = inspector.DeleteTask(QueueDefault, taskID)
-	} else {
+		if inspector != nil {
+			_ = inspector.DeleteTask(QueueDefault, taskID)
+		}
+	default:
+		// interrupt (stop the live turn now) and replace (nothing is running,
+		// the newest message wins) both clear every reply task of the chat,
+		// which frees the base ID for the new reply.
 		CancelBotReplyTask(inspector, payload.ChatUUID)
 	}
 
