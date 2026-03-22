@@ -16,6 +16,20 @@ func newTestIssuer(t *testing.T) *TokenIssuer {
 	return issuer
 }
 
+// tamperLastCharacter always changes the final character of token. Using a
+// fixed replacement is not enough: when the signature already ends in '0' the
+// tampered token is byte-identical and verifies successfully.
+func tamperLastCharacter(token string) string {
+	if token == "" {
+		return "0"
+	}
+	replacement := byte('0')
+	if token[len(token)-1] == '0' {
+		replacement = '1'
+	}
+	return token[:len(token)-1] + string(replacement)
+}
+
 func TestAttachTokenRoundTrip(t *testing.T) {
 	issuer := newTestIssuer(t)
 
@@ -57,7 +71,7 @@ func TestAttachTokenRejectsReplayAndTampering(t *testing.T) {
 		"other owner":    {"sbx-1", "sess-1", "admin-2", token},
 		"garbage":        {"sbx-1", "sess-1", "admin-1", "nope"},
 		"empty":          {"sbx-1", "sess-1", "admin-1", ""},
-		"flipped last":   {"sbx-1", "sess-1", "admin-1", token[:len(token)-1] + "0"},
+		"flipped last":   {"sbx-1", "sess-1", "admin-1", tamperLastCharacter(token)},
 		"wrong sig type": {"sbx-1", "sess-1", "admin-1", strings.Replace(token, ".", ".zz", 1)},
 	}
 	for name, c := range cases {
