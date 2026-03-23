@@ -1520,6 +1520,10 @@ func processParsedToolCall(
 		framedResult := FrameDuplicateToolCallResult(name, cachedResult)
 
 		result.usedTool = true
+		// Mark the round as a replay so later stages (and the pending
+		// no-progress guard, ci#728 item 4) can tell a cached repeat from a
+		// fresh execution without re-deriving it from the frame text.
+		result.duplicateToolCall = true
 		result.id = id
 		result.toolName = name
 		result.arguments = arguments

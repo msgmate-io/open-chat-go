@@ -140,4 +140,12 @@ func TestReplayedToolCallRoundCarriesDuplicateFrame(t *testing.T) {
 	if !strings.Contains(second.calls[0].result, "duplicate tool call") {
 		t.Fatalf("the transcript version must carry the frame, got %q", second.calls[0].result)
 	}
+	// A later stage (no-progress guard, ci#728 item 4) must be able to tell a
+	// replay from a fresh execution without parsing the frame text.
+	if !second.duplicateToolCall {
+		t.Fatal("the replay round must be flagged as a duplicate tool call")
+	}
+	if first.duplicateToolCall {
+		t.Fatal("a fresh round must not be flagged as a duplicate tool call")
+	}
 }
