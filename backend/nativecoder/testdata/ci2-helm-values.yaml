@@ -1,0 +1,78 @@
+# Generated from backend/nativecoder (ci#658) - do not hand-edit.
+# Delta from development/helm/backend/values.msgmate-io-ci.yaml (msgmate-io-ci); see
+# DEVELOPMENT.md (section "Second CI deployment: ci2") for the recorded delta
+# and the provisioning checklist.
+# Secret-free: credentialRef is a runtime secret-store reference.
+deployment:
+    name: msgmate-io-ci2
+    publicBaseURL: https://ci2.msgmate.io
+ingress:
+    host: ci2.msgmate.io
+    tlsHosts:
+        - ci2.msgmate.io
+        - ci.msgmate.io
+recoveryAgent:
+    enabled: true
+    role: admin
+    credentialRef: ci-recovery-ssh
+    monitors:
+        - ci.msgmate.io
+    triggers:
+        - pre_deploy
+        - monitoring_crash
+        - manual
+    tools:
+        - coder_bash
+        - coder_read
+        - coder_list
+        - chat_send_message
+        - ssh_exec_command_run_short
+        - service_restart
+    maxRecoveryAttempts: 2
+    probes:
+        - id: health_http
+          capability: monitor
+          tool: ssh_exec_command_run_short
+          command: curl -sS -o /dev/null -w '%{http_code}' https://ci.msgmate.io/api/v1/metrics/health
+          mutating: false
+          requiresConfirmation: false
+        - id: service_status
+          capability: monitor
+          tool: ssh_exec_command_run_short
+          command: systemctl is-active open-chat
+          mutating: false
+          requiresConfirmation: false
+        - id: logs_tail
+          capability: diagnose
+          tool: ssh_exec_command_run_short
+          command: journalctl -u open-chat --since '-10min' --no-pager | tail -n 200
+          mutating: false
+          requiresConfirmation: false
+        - id: disk_and_memory
+          capability: diagnose
+          tool: ssh_exec_command_run_short
+          command: df -h / /var/lib/open-chat; free -m
+          mutating: false
+          requiresConfirmation: false
+        - id: service_restart
+          capability: recover
+          tool: service_restart
+          command: restart the open-chat service on ci.msgmate.io
+          mutating: true
+          requiresConfirmation: true
+        - id: incident_report
+          capability: report
+          tool: chat_send_message
+          command: post the incident summary (trigger, verbatim errors, remedy, verification) to the owning chat
+          mutating: false
+          requiresConfirmation: false
+watchdog:
+    schedule: '*/5 * * * *'
+    host: ci.msgmate.io
+    healthPath: /api/v1/metrics/health
+    dispatchTrigger: monitoring_crash
+    dispatchRole: admin
+    monitors:
+        - ci.msgmate.io
+coder:
+    fullCoderEnabled: false
