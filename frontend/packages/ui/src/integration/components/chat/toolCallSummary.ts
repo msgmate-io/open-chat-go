@@ -230,7 +230,7 @@ export function toolCallCategory(name: string | undefined): ToolCallCategory {
     case "codesearch":
     case "webfetch":
     case "websearch":
-    // Parity surface (docs/native-coder-parity.md §3.1, ci#605 B6): context
+    // Parity surface (ci#605 B6): context
     // compaction, todo lists, sub-agents and the environment probe are all
     // exploration-ish reads, so they count as "reads" in the collapsed group.
     case "context":
@@ -514,7 +514,6 @@ export function toolResultPreview(call: ToolCallLike): string {
       return `${status}`;
     }
     // Parity surface (ci#605 B6): a compact outcome for the tools that are
-    // declared in docs/native-coder-parity.md §3.1 but had no row summary yet.
     case "codesearch": {
       const count = num(record?.count) ?? num(record?.matches);
       if (count === undefined) break;
