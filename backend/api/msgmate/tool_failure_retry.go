@@ -3,9 +3,6 @@ package msgmate
 import (
 	"context"
 	"log"
-	"math/rand/v2"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -33,14 +30,17 @@ import (
 
 const (
 	// DefaultToolFailureRetryAttempts is how many times a transient tool
-	// failure is attempted in total (the first attempt included). Three
+	// failure is attempted in total (the first attempt included). Five
 	// attempts absorb the bursty provisioning failures reported in ci#688
-	// without delaying a genuinely broken tool.
-	DefaultToolFailureRetryAttempts = 3
+	// (and the ci#703 incident, where three attempts aborted the turn while
+	// the sandbox pool was still saturated) without delaying a genuinely
+	// broken tool for long. Per-agent override:
+	// tool_failure_retry_max / DefaultToolFailureRetryAttempts.
+	DefaultToolFailureRetryAttempts = 5
 	// DefaultToolFailureRetryBaseDelay is the backoff before the second
 	// attempt; it doubles per attempt and is capped by
 	// DefaultToolFailureRetryMaxDelay.
-	DefaultToolFailureRetryBaseDelay = 400 * time.Millisecond
+	DefaultToolFailureRetryBaseDelay = 500 * time.Millisecond
 	// DefaultToolFailureRetryMaxDelay caps a single backoff wait.
 	DefaultToolFailureRetryMaxDelay = 5 * time.Second
 
@@ -169,91 +169,53 @@ func isTransientToolFailure(err error) bool {
 	return false
 }
 
-// toolFailureRetryAttempts resolves the configured attempt count (deployment
-// env override, clamped to [1, 8]).
+// toolFailureRetryAttempts resolves the configured attempt count (default ->
+// deployment env override -> clamp), ignoring any agent config.
+//
+// Deprecated: the effective policy of a turn is
+// toolFailureRetryOptionsFromConfig / resolveToolFailureRetryOptions; this
+// helper remains for callers without a config map (ci#703).
 func toolFailureRetryAttempts() int {
-	attempts := DefaultToolFailureRetryAttempts
-	if raw := strings.TrimSpace(os.Getenv(ToolFailureRetryAttemptsEnvKey)); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			attempts = parsed
-		}
-	}
-	if attempts < 1 {
-		return 1
-	}
-	if attempts > 8 {
-		return 8
-	}
-	return attempts
+	return toolFailureRetryOptionsFromConfig(nil).MaxAttempts
 }
 
 // toolFailureRetryBaseDelay resolves the configured backoff base (deployment
-// env override in milliseconds).
+// env override in milliseconds), ignoring any agent config.
+//
+// Deprecated: see toolFailureRetryAttempts.
 func toolFailureRetryBaseDelay() time.Duration {
-	base := DefaultToolFailureRetryBaseDelay
-	if raw := strings.TrimSpace(os.Getenv(ToolFailureRetryBaseDelayEnvKey)); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			base = time.Duration(parsed) * time.Millisecond
-		}
-	}
-	if base < 0 {
-		return 0
-	}
-	return base
+	return toolFailureRetryOptionsFromConfig(nil).BaseDelay
 }
 
 // toolFailureBackoffDelay is the wait before attempt+1 (attempt is 1-based, so
-// the first retry waits base, then 2*base, ...) capped by
-// DefaultToolFailureRetryMaxDelay.
+// the first retry waits base, then 2*base, ...) capped by the configured
+// maximum.
+//
+// Deprecated: policy-aware callers use toolFailureBackoffDelayWithOptions.
 func toolFailureBackoffDelay(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	if attempt > 16 {
-		attempt = 16
-	}
-	delay := toolFailureRetryBaseDelay() * time.Duration(1<<(attempt-1))
-	if delay > DefaultToolFailureRetryMaxDelay {
-		delay = DefaultToolFailureRetryMaxDelay
-	}
-	return delay
+	return toolFailureBackoffDelayWithOptions(attempt, toolFailureRetryOptionsFromConfig(nil))
 }
 
 // sandboxCapacityRetryBaseDelay resolves the configured capacity backoff base
-// (deployment env override in milliseconds; ci#691).
+// (deployment env override in milliseconds; ci#691), ignoring any agent config.
+//
+// Deprecated: see toolFailureRetryAttempts.
 func sandboxCapacityRetryBaseDelay() time.Duration {
-	base := DefaultSandboxCapacityRetryBaseDelay
-	if raw := strings.TrimSpace(os.Getenv(SandboxCapacityRetryBaseDelayEnvKey)); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-			base = time.Duration(parsed) * time.Millisecond
-		}
-	}
-	if base < 0 {
-		return 0
-	}
-	return base
+	return toolFailureRetryOptionsFromConfig(nil).CapacityBaseDelay
 }
 
 // sandboxCapacityBackoffDelay is the wait before retry attempt+1 for a
 // scheduler *capacity* rejection (ci#691): a linear ramp from the configured
-// base (5s by default) capped at DefaultSandboxCapacityRetryMaxDelay (30s).
+// base (5s by default) capped by the configured maximum (30s by default).
 //
 // It is deliberately much slower than toolFailureBackoffDelay: the node only
 // frees a sandbox's request when a finished sandbox is reaped or a peer agent
 // releases its pod, so hammering the scheduler every few hundred milliseconds
 // would just burn the attempt budget on a condition that cannot have changed.
+//
+// Deprecated: policy-aware callers use sandboxCapacityBackoffDelayWithOptions.
 func sandboxCapacityBackoffDelay(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	if attempt > 16 {
-		attempt = 16
-	}
-	delay := sandboxCapacityRetryBaseDelay() * time.Duration(attempt)
-	if delay > DefaultSandboxCapacityRetryMaxDelay {
-		delay = DefaultSandboxCapacityRetryMaxDelay
-	}
-	return delay
+	return sandboxCapacityBackoffDelayWithOptions(attempt, toolFailureRetryOptionsFromConfig(nil))
 }
 
 // runToolWithTransientRetry executes a tool body, retrying a transient
@@ -267,7 +229,12 @@ func sandboxCapacityBackoffDelay(attempt int) time.Duration {
 // millisecond-scale blip backoff: the condition only clears when the node frees
 // capacity, which takes tens of seconds.
 func runToolWithTransientRetry(ctx context.Context, toolName string, run func() (string, error)) (string, error, int) {
-	attempts := toolFailureRetryAttempts()
+	// ci#703: the retry policy of this turn (attempts + both backoff curves) is
+	// resolved from the deployment env and the agent's own config and carried on
+	// the generation context; it falls back to the env/defaults when no policy
+	// was attached.
+	opts := resolveToolFailureRetryOptions(ctx)
+	attempts := opts.MaxAttempts
 	var (
 		result  string
 		runErr  error
@@ -282,7 +249,7 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 			return result, runErr, retries
 		}
 		if isSandboxCapacityFailure(runErr) {
-			delay := sandboxCapacityRetryWait(attempt)
+			delay := sandboxCapacityRetryWaitWithOptions(attempt, opts)
 			log.Printf(
 				"Tool %s could not be scheduled (attempt %d/%d): %v; retrying in %s (ci#691)",
 				toolName, attempt, attempts, runErr, delay,
@@ -295,7 +262,7 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 			retries++
 			continue
 		}
-		delay := toolFailureRetryWait(attempt)
+		delay := toolFailureRetryWaitWithOptions(attempt, opts)
 		log.Printf(
 			"Tool %s failed transiently (attempt %d/%d): %v; retrying in %s (ci#688)",
 			toolName, attempt, attempts, runErr, delay,
@@ -314,13 +281,9 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 // agents that lost the scheduling race do not all retry in lockstep and
 // re-create the burst that saturated the node (ci#691). The jitter is capped at
 // half the delay, so the wait stays within one capacity window.
+// Deprecated: policy-aware callers use sandboxCapacityRetryWaitWithOptions.
 func sandboxCapacityRetryWait(attempt int) time.Duration {
-	delay := sandboxCapacityBackoffDelay(attempt)
-	if delay <= 0 {
-		return 0
-	}
-	jitter := time.Duration(rand.Int64N(int64(delay/2) + 1))
-	return delay + jitter
+	return sandboxCapacityRetryWaitWithOptions(attempt, toolFailureRetryOptionsFromConfig(nil))
 }
 
 // toolFailureRetryWait is the actual wait before retry attempt+1: the
@@ -328,13 +291,9 @@ func sandboxCapacityRetryWait(attempt int) time.Duration {
 // agents of a saturated sandbox pool do not re-provision in lockstep and
 // re-create the very burst that caused the failure (ci#688). The jitter is
 // bounded to a quarter of the delay, so the wait stays predictable.
+// Deprecated: policy-aware callers use toolFailureRetryWaitWithOptions.
 func toolFailureRetryWait(attempt int) time.Duration {
-	delay := toolFailureBackoffDelay(attempt)
-	if delay <= 0 {
-		return 0
-	}
-	jitter := time.Duration(rand.Int64N(int64(delay/4) + 1))
-	return delay + jitter
+	return toolFailureRetryWaitWithOptions(attempt, toolFailureRetryOptionsFromConfig(nil))
 }
 
 // toolCallFailureAccounting splits one round's executed calls into the failures
