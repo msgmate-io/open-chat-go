@@ -29,6 +29,7 @@ import {
   cn,
 } from "@open-chat-go/ui";
 import { fetcher } from "../../lib/utils";
+import { trimTrailingSlashes } from "../../lib/pinned-integrations";
 
 type IntegrationModelFieldOverview = {
   name: string;
@@ -150,7 +151,8 @@ function normalizeRepoUrl(repo?: string): string | null {
   if (!repo) {
     return null;
   }
-  const trimmed = repo.trim().replace(/\.git$/i, "").replace(/\/+$/, "");
+  // ci#737: linear trailing-slash trim instead of a backtracking regex quantifier.
+  const trimmed = trimTrailingSlashes(repo.trim().replace(/\.git$/i, ""));
   return trimmed || null;
 }
 
