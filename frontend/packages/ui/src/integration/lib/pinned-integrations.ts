@@ -86,6 +86,61 @@ export function normalizeIntegrationPath(path: unknown): string | null {
   return value;
 }
 
+/**
+ * Drops the query string and the hash from an untrusted path, keeping only the
+ * route (`"/integrations/k8s/pods?ns=default#top"` -> `"/integrations/k8s/pods"`).
+ *
+ * Cut at the earliest `"?"`/`"#"` in a single scan; no regex is involved so a
+ * path made of many repeated separators cannot make this super-linear
+ * (CodeQL js/polynomial-redos, ci#737).
+ */
+export function stripPathQueryAndHash(path: string): string {
+  if (typeof path !== "string" || !path) {
+    return "";
+  }
+  let end = path.length;
+  const queryIndex = path.indexOf("?");
+  if (queryIndex >= 0 && queryIndex < end) {
+    end = queryIndex;
+  }
+  const hashIndex = path.indexOf("#");
+  if (hashIndex >= 0 && hashIndex < end) {
+    end = hashIndex;
+  }
+  return end === path.length ? path : path.slice(0, end);
+}
+
+/**
+ * Linear-time trailing-slash trim: `"/a/b///"` -> `"/a/b"`, `"///"` -> `""`.
+ *
+ * Replaces `value.replace(/\/+$/, "")`, whose backtracking quantifier is
+ * super-linear on long runs of `"/"` (CodeQL js/polynomial-redos, ci#737).
+ */
+export function trimTrailingSlashes(path: string): string {
+  if (typeof path !== "string" || !path) {
+    return "";
+  }
+  let end = path.length;
+  while (end > 0 && path.charCodeAt(end - 1) === 47 /* "/" */) {
+    end -= 1;
+  }
+  return end === path.length ? path : path.slice(0, end);
+}
+
+/**
+ * Comparison key for a sidebar route / page path: query string and hash are
+ * dropped and trailing slashes trimmed, so `"/integrations/k8s/pods/"` and
+ * `"/integrations/k8s/pods?ns=default"` both collapse to
+ * `"/integrations/k8s/pods"`. Accepts raw (possibly non-string) input and
+ * returns `""` for anything unusable. Always linear in the input length.
+ */
+export function normalizePathname(path: unknown): string {
+  if (typeof path !== "string" || !path) {
+    return "";
+  }
+  return trimTrailingSlashes(stripPathQueryAndHash(path));
+}
+
 /** Splits `/integrations/kubernetes/clusters` into `{ integration, rest }`. */
 export function parseIntegrationPath(
   path: string,
