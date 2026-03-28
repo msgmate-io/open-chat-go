@@ -736,6 +736,7 @@ Contract and behaviour:
   candidate was chosen and why, which were ignored and why), the
   `<!-- oci-ci-failure-fix -->` dedupe marker, and the **never-poll-CI** rule —
   the agent pushes the fix and stops, the lead reacts to the next relayed event.
+
 ### CI-failure relay is quiet and lead-driven (ci#734)
 
 A failed CI run is no longer turned into an `issue-plan-bot` fix-plan session
