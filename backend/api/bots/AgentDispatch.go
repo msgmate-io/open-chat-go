@@ -391,7 +391,12 @@ func (h *BotsHandler) AgentGet(w http.ResponseWriter, r *http.Request) {
 	}
 	inspector, _ := util.GetAsynqInspector(r)
 
-	chat, err := findManageableInteraction(DB, sessionUser, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
+	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
+		http.Error(w, "Interaction not found", http.StatusNotFound)
+		return
+	}
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
@@ -441,7 +446,12 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chat, err := findManageableInteraction(DB, sessionUser, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
+	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
+		http.Error(w, "Interaction not found", http.StatusNotFound)
+		return
+	}
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
@@ -512,7 +522,12 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chat, err := findManageableInteraction(DB, sessionUser, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
+	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
+		http.Error(w, "Interaction not found", http.StatusNotFound)
+		return
+	}
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
