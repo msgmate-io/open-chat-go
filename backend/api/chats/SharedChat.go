@@ -136,8 +136,8 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUUID := r.PathValue("chat_uuid")
-	if chatUUID == "" {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
+	if chatUUIDErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -208,8 +208,8 @@ func (h *ChatsHandler) Unpublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUUID := r.PathValue("chat_uuid")
-	if chatUUID == "" {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
+	if chatUUIDErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
