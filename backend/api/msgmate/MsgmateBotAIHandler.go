@@ -473,6 +473,12 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		}
 	}
 
+	// ci#703: resolve the infrastructure-retry policy of this turn (attempts and
+	// both backoff curves) from the deployment env and this agent's config and
+	// carry it on the generation context, so the tool loop of the turn retries
+	// with the agent's own policy instead of a process-wide default.
+	ctx = withToolFailureRetryOptions(ctx, toolFailureRetryOptionsFromConfig(configMap))
+
 	// Stream chat completion
 	chunks, usage, toolCalls, errs := streamChatCompletion(
 		ctx,
