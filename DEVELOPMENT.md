@@ -773,7 +773,9 @@ consolidation PRs:
   manually with `DRY_RUN=true` and the `pr_number` / `pr_branch` / `pr_sha`
   inputs: the `ci-failure-relay-dry-run` job prints the message and comment body
   it would send and makes **no** API call, and the test/deploy pipeline is
-  skipped for that dispatch.
+  skipped for that dispatch. Because a dry-run resolves no interaction, its
+  comment body names the lead but reports the interaction as `resolved at
+  runtime` instead of inventing a UUID.
 
 ### One live development lead per repo: dispatch dedupe keys (ci#625)
 

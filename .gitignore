@@ -57,6 +57,9 @@ open-chat.json
 .ci-sandbox-*-cookies*
 .sandbox-workspace/
 
+# Local coding-agent workspace notes (never part of a change).
+.scratch/
+
 # Integration manager (manifest-driven sources + generated Go workspace)
 .integrations/
 integrations.local.yaml
