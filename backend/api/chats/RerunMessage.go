@@ -52,9 +52,9 @@ func (h *ChatsHandler) RerunMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUUID := r.PathValue("chat_uuid")
+	chatUUID, chatUUIDErr := parseChatUUID(r)
 	messageUUID := r.PathValue("message_uuid")
-	if chatUUID == "" || messageUUID == "" {
+	if chatUUIDErr != nil || messageUUID == "" {
 		http.Error(w, "Invalid chat/message UUID", http.StatusBadRequest)
 		return
 	}

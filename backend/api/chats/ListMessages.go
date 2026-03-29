@@ -89,8 +89,8 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
-	if chatUuid == "" {
+	chatUuid, err := parseChatUUID(r)
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
