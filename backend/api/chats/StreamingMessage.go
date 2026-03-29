@@ -44,8 +44,8 @@ func (h *ChatsHandler) GetStreamingMessage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid")
-	if chatUuid == "" {
+	chatUuid, chatUuidErr := parseChatUUID(r)
+	if chatUuidErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
