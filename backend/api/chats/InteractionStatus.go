@@ -70,8 +70,8 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	chatUUID := strings.TrimSpace(r.PathValue("chat_uuid"))
-	if chatUUID == "" {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
+	if chatUUIDErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
