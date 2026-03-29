@@ -2,6 +2,7 @@ import { ChatBase } from "./chat/ChatBase";
 import { navigate } from "vike/client/router";
 import { usePageContext } from "vike-react/usePageContext";
 import type { ReactNode } from "react";
+import { normalizePathname } from "../lib/pinned-integrations";
 
 type IntegrationPageShellProps = {
   children: ReactNode;
@@ -32,7 +33,8 @@ function deriveIntegrationName(pathname: string): string | null {
 // the desktop overview grid and forcing the user through an in-place toggle.
 // Deeper routes (a specific settings page) stay in content mode.
 function isIntegrationOverviewPath(pathname: string): boolean {
-  const path = pathname.split("?")[0].split("#")[0].replace(/\/+$/, "");
+  // ci#737: linear-time normalization (was `.replace(/\/+$/, "")`).
+  const path = normalizePathname(pathname);
   return /^\/integrations(?:\/[^/]+)?$/.test(path);
 }
 
