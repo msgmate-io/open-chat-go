@@ -1511,18 +1511,30 @@ func processParsedToolCall(
 		// trap the model in a failure loop instead of letting it recover.
 		logging.Warnf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
 
+		// ci#728: a replayed result must be visibly a replay. Returning the
+		// cached payload verbatim let the model believe the call had just run
+		// again, so it re-issued the identical call until the turn was killed
+		// (ci#569: 110 tool calls, 18 identical `coder_read`). The transcript
+		// version carries an explicit duplicate-call frame; the replayed
+		// payload itself is preserved verbatim inside it.
+		framedResult := FrameDuplicateToolCallResult(name, cachedResult)
+
 		result.usedTool = true
+		// Mark the round as a replay so later stages (and the pending
+		// no-progress guard, ci#728 item 4) can tell a cached repeat from a
+		// fresh execution without re-deriving it from the frame text.
+		result.duplicateToolCall = true
 		result.id = id
 		result.toolName = name
 		result.arguments = arguments
-		result.result = cachedResult
+		result.result = framedResult
 		result.status = ToolCallStatusSucceeded
 		result.error = ""
 		result.calls = append(result.calls, executedToolCall{
 			id:        id,
 			name:      name,
 			arguments: arguments,
-			result:    cachedResult,
+			result:    framedResult,
 			status:    ToolCallStatusSucceeded,
 			reason:    callReason,
 		})
@@ -1531,10 +1543,12 @@ func processParsedToolCall(
 			ToolName:  name,
 			ToolInput: toolInput,
 			Id:        id,
-			Result:    cachedResult,
-			Status:    ToolCallStatusSucceeded,
-			Error:     "",
-			Reason:    callReason,
+			// The UI row keeps the plain cached payload: the duplicate-call
+			// frame is a model instruction, not user-facing output.
+			Result: cachedResult,
+			Status: ToolCallStatusSucceeded,
+			Error:  "",
+			Reason: callReason,
 			// A cache hit is also a completed call: report a zero-length
 			// duration so the UI can render its timing row (ci#569).
 			StartedAtUnixMs: time.Now().UnixMilli(),

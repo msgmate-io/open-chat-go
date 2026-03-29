@@ -736,6 +736,47 @@ Contract and behaviour:
   candidate was chosen and why, which were ignored and why), the
   `<!-- oci-ci-failure-fix -->` dedupe marker, and the **never-poll-CI** rule —
   the agent pushes the fix and stops, the lead reacts to the next relayed event.
+
+### CI-failure relay is quiet and lead-driven (ci#734)
+
+A failed CI run is no longer turned into an `issue-plan-bot` fix-plan session
+with a `plan_auto_implement` planner+implementer pair. The `ci-failure-planner`
+job in `.github/workflows/run-pr-ci-tests-and-deployments.yaml` (job id/name
+kept, so the required status check still reports) now relays the failure
+directly to the open-chat-go **development lead** agent, and only for
+consolidation PRs:
+
+- Trigger scope: same-repo `pull_request` to `main` whose head branch starts
+  with `chore/consolidate-`. Feature, bugfix and docs PRs get **no** comment and
+  **no** interaction at all.
+- The payload building and relay live in `development/scripts/ci_failure_relay.py`
+  (unit-tested by `development/scripts/test_ci_failure_relay.py`, run by the
+  `pin-freshness-gate` job), not inline in the workflow.
+- The lead interaction is resolved from `OPEN_CHAT_LEAD_CHAT_UUID` when
+  configured, else the interaction of `OPEN_CHAT_LEAD_BOT` (default
+  `msgmate-coder-development-lead`), preferring `is_active` and falling back to
+  the most recent one; `POST /api/v1/agents/interactions/{uuid}/continue` with
+  `resume_auto_continue: true` delivers the message. If no lead interaction
+  exists, `/api/v1/agents/dispatch` starts one with a stable per-(repo, PR, head
+  SHA) `dedupe_key`.
+- **One** PR comment only: it names the lead and the run URL and pins a
+  per-(PR, head SHA) marker, so a duplicate run for the same head relays
+  nothing. Attempts are bounded by `CI_FIX_MAX_ATTEMPTS`; when the cap is
+  reached the job posts a `limit reached` comment and adds the
+  `ci-fix-blocked` label instead of relaying again.
+- The lead message carries repo, PR number/branch/SHA, run URL and the failing
+  jobs, states that no fix-plan session was created, and repeats the
+  **never-poll-CI** rule: fix, push, stop — the lead reacts to the next relayed
+  event. No secret value is ever printed; `--dry-run` (or `DRY_RUN`) does
+  everything except call the APIs.
+- To inspect the routing without touching a live lead, dispatch the workflow
+  manually with `DRY_RUN=true` and the `pr_number` / `pr_branch` / `pr_sha`
+  inputs: the `ci-failure-relay-dry-run` job prints the message and comment body
+  it would send and makes **no** API call, and the test/deploy pipeline is
+  skipped for that dispatch. Because a dry-run resolves no interaction, its
+  comment body names the lead but reports the interaction as `resolved at
+  runtime` instead of inventing a UUID.
+
 ### One live development lead per repo: dispatch dedupe keys (ci#625)
 
 The native tooling that replaces opencode is driven by a **development lead**
@@ -902,6 +943,36 @@ Regression tests: `backend/api/msgmate/context_budget_test.go` (a turn with four
 and the eviction markers are explicit; the guard is idempotent and keeps the
 pairing), `backend/api/msgmate/coder_context_tool_test.go` and
 `backend/api/msgmate/tools/coder_context_tool_test.go`.
+
+### Native coder turns: repeated identical tool calls (ci#569, ci#728)
+
+An exact repeat of a call that already *succeeded* in the same turn is not
+dispatched again: `executeToolCall` keys a per-turn cache
+(`executedToolResults`) by the content signature `name:arguments` and replays the
+cached payload. Failures are deliberately **not** cached — the state may change
+between two identical calls (a coding workspace becomes selected after the first
+`coder_read` failed), and replaying a stale error would trap the model in a
+failure loop instead of letting it recover.
+
+Replaying the payload verbatim was itself a trap (ci#569: a turn burned 110 tool
+calls, 18 of them an identical `coder_read`): the model could not tell a replayed
+result from a fresh one, so it re-issued the identical call until the turn was
+stopped. A replay is now **visibly a replay** (`duplicate_tool_call.go`,
+`FrameDuplicateToolCallResult`): the transcript version opens with
+`[duplicate tool call] <tool> was already executed in this turn with exactly these
+arguments.`, keeps the replayed payload verbatim (the model may still need its
+content), and closes with the instruction that the call was not executed again —
+`Do NOT re-issue it: act on the result you already have, or change the arguments.`
+plus a tool-specific alternative (`coder_read`: `offset`/`limit`, `coder_list`:
+`depth`, `coder_grep`: `path`/`include`, `coder_bash`: redirect to a file and read
+ranges, …). The instruction comes last so it is the final thing the model reads,
+and the UI tool-call row keeps the plain cached payload — the frame is a model
+instruction, not user-facing output.
+
+Regression tests: `backend/api/msgmate/duplicate_tool_call_test.go` (the frame is
+explicit and ordered, empty/unknown tools degrade gracefully, and a re-issued
+identical call is not dispatched again while its transcript version carries the
+frame).
 
 ### Custom integration profiles
 
