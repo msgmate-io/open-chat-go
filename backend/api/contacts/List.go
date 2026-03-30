@@ -235,8 +235,8 @@ func (h *ContactsHander) GetContactByChatUUID(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	chatUUID := r.PathValue("chat_uuid")
-	if chatUUID == "" {
+	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
 		http.Error(w, "Chat UUID is required", http.StatusBadRequest)
 		return
 	}
