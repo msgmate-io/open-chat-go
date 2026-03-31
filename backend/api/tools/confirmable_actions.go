@@ -208,10 +208,10 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	chatUUID := r.PathValue("chat_uuid")
+	chatUUID, chatUUIDErr := util.ParsePathUUID(r, "chat_uuid")
 	messageUUID := r.PathValue("message_uuid")
 	actionID := r.PathValue("action_id")
-	if chatUUID == "" || messageUUID == "" || actionID == "" {
+	if chatUUIDErr != nil || messageUUID == "" || actionID == "" {
 		http.Error(w, "Invalid confirmable action path", http.StatusBadRequest)
 		return
 	}
@@ -432,10 +432,10 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	chatUUID := r.PathValue("chat_uuid")
+	chatUUID, chatUUIDErr := util.ParsePathUUID(r, "chat_uuid")
 	messageUUID := r.PathValue("message_uuid")
 	actionID := r.PathValue("action_id")
-	if chatUUID == "" || messageUUID == "" || actionID == "" {
+	if chatUUIDErr != nil || messageUUID == "" || actionID == "" {
 		http.Error(w, "Invalid confirmable action path", http.StatusBadRequest)
 		return
 	}
