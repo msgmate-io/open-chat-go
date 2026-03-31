@@ -70,8 +70,8 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid")
-	if chatUuid == "" {
+	chatUuid, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -202,8 +202,8 @@ func (h *ToolsHandler) EnqueueTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid")
-	if chatUuid == "" {
+	chatUuid, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -283,8 +283,8 @@ func (h *ToolsHandler) GetAvailableTools(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid")
-	if chatUuid == "" {
+	chatUuid, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -353,8 +353,8 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid")
-	if chatUuid == "" {
+	chatUuid, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
