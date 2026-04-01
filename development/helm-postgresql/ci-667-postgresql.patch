@@ -1,0 +1,188 @@
+diff --git a/backend/templates/backend.yaml b/backend/templates/backend.yaml
+index 2aadf1d..15b4132 100644
+--- a/backend/templates/backend.yaml
++++ b/backend/templates/backend.yaml
+@@ -1,4 +1,9 @@
+ {{- $configFile := .Values.backend.configFile | default dict }}
++{{- $pg := .Values.postgresql | default dict }}
++{{- $pgMode := $pg.mode | default "off" }}
++{{- if not (has $pgMode (list "off" "internal" "external")) }}
++{{- fail (printf "postgresql.mode must be one of off|internal|external (got %q)" $pgMode) }}
++{{- end }}
+ {{- $configSecret := $configFile.existingSecret | default "" }}
+ {{- if and $configFile.enabled (not $configSecret) }}
+ {{- if not .Values.backend.sqlite.persistence.enabled }}
+@@ -24,7 +29,7 @@ data:
+   {{ $key }}: {{ $value | toString | b64enc | quote }}
+ {{- end }}
+ {{- if not (hasKey .Values.backend.env "DB_BACKEND") }}
+-  DB_BACKEND: {{ "sqlite" | b64enc | quote }}
++  DB_BACKEND: {{ (ternary "postgres" "sqlite" (ne $pgMode "off")) | b64enc | quote }}
+ {{- end }}
+ {{- if .Values.backend.sandboxBackend }}
+   OCI_DOCKER_SANDBOX_BACKEND: {{ .Values.backend.sandboxBackend | toString | b64enc | quote }}
+@@ -36,7 +41,8 @@ data:
+   OCI_DOCKER_SANDBOX_KUBECONFIG: {{ .Values.backend.sandboxKubeconfig | toString | b64enc | quote }}
+ {{- end }}
+ {{- if not (hasKey .Values.backend.env "DB_PATH") }}
+-  {{- if .Values.backend.sqlite.persistence.enabled }}
++  {{- if ne $pgMode "off" }}
++  {{- else if .Values.backend.sqlite.persistence.enabled }}
+   DB_PATH: {{ printf "%s/%s" .Values.backend.sqlite.persistence.mountPath .Values.backend.sqlite.persistence.fileName | b64enc | quote }}
+   {{- else }}
+   DB_PATH: {{ .Values.backend.sqlite.path | toString | b64enc | quote }}
+@@ -108,23 +114,35 @@ spec:
+           imagePullPolicy: {{ .Values.backend.imagePullPolicy }}
+           ports:
+             - containerPort: {{ .Values.backend.service.port }}
+-          {{- if $configSecret }}
+-          # Config comes from an existing Secret managed out-of-band (e.g. by
+-          # the kubernetes integration deployment-host flow), decoupling the
+-          # config content from the Helm release.
+           env:
++            {{- if and (eq $pgMode "internal") (not (hasKey .Values.backend.env "DB_PATH")) }}
++            # DSN published by the CloudNativePG app Secret; no secret in values.
++            - name: DB_PATH
++              valueFrom:
++                secretKeyRef:
++                  name: {{ ($pg.internal).existingSecret | default (printf "%s-app" ($pg.internal).name) | quote }}
++                  key: {{ ($pg.internal).dsnKey | default "uri" | quote }}
++            {{- end }}
++            {{- if $configSecret }}
++            # Config comes from an existing Secret managed out-of-band (e.g. by
++            # the kubernetes integration deployment-host flow), decoupling the
++            # config content from the Helm release.
+             - name: OPEN_CHAT_CONFIG
+               value: {{ ($configFile.existingSecretMountPath | default "/backend/config/open-chat-config.yaml") | quote }}
+-          {{- else if $configFile.enabled }}
+-          # Explicit env wins over envFrom: load the config from the managed
+-          # file instead of the inline seed value in backend-env.
+-          env:
++            {{- else if $configFile.enabled }}
++            # Explicit env wins over envFrom: load the config from the managed
++            # file instead of the inline seed value in backend-env.
+             - name: OPEN_CHAT_CONFIG
+               value: {{ $configFile.path | quote }}
+-          {{- end }}
++            {{- end }}
+           envFrom:
+             - secretRef:
+                 name: backend-env
++            {{- if and (eq $pgMode "external") ($pg.external).existingSecret }}
++            # DSN for the external server, owned out-of-band; never in values.
++            - secretRef:
++                name: {{ $pg.external.existingSecret | quote }}
++            {{- end }}
+           {{- if or .Values.backend.sqlite.persistence.enabled $configSecret }}
+           volumeMounts:
+             {{- if .Values.backend.sqlite.persistence.enabled }}
+diff --git a/backend/templates/postgresql.yaml b/backend/templates/postgresql.yaml
+new file mode 100644
+index 0000000..35e15fc
+--- /dev/null
++++ b/backend/templates/postgresql.yaml
+@@ -0,0 +1,28 @@
++{{- $pg := .Values.postgresql | default dict }}
++{{- if eq ($pg.mode | default "off") "internal" }}
++{{- $i := $pg.internal | default dict }}
++# Managed PostgreSQL for the backend, reconciled by the CloudNativePG operator
++# (https://github.com/cloudnative-pg/charts). The backend reads the connection
++# URI from the app Secret, so no credential is ever rendered here (ci#667).
++apiVersion: postgresql.cnpg.io/v1
++kind: Cluster
++metadata:
++  name: {{ $i.name | default "backend-postgres" }}
++  namespace: {{ .Values.rootNamespace }}
++spec:
++  instances: {{ $i.instances | default 1 }}
++  imageName: {{ $i.imageName | quote }}
++  storage:
++    size: {{ $i.storage | default "5Gi" }}
++    {{- with $i.storageClassName }}
++    storageClass: {{ . }}
++    {{- end }}
++  bootstrap:
++    initdb:
++      database: {{ $i.database | default "openchat" }}
++      owner: {{ $i.owner | default "openchat" }}
++      {{- with $i.existingSecret }}
++      secret:
++        name: {{ . }}
++      {{- end }}
++{{- end }}
+diff --git a/backend/values.postgresql-external.example.yaml b/backend/values.postgresql-external.example.yaml
+new file mode 100644
+index 0000000..a51698d
+--- /dev/null
++++ b/backend/values.postgresql-external.example.yaml
+@@ -0,0 +1,11 @@
++# ci#667: existing/managed PostgreSQL reached through a Secret that carries the
++# connection URI under postgresql.external.dsnKey.
++postgresql:
++  mode: external
++  external:
++    existingSecret: backend-postgres-dsn
++    dsnKey: DB_PATH
++backend:
++  sqlite:
++    persistence:
++      enabled: false
+diff --git a/backend/values.postgresql-internal.example.yaml b/backend/values.postgresql-internal.example.yaml
+new file mode 100644
+index 0000000..331e058
+--- /dev/null
++++ b/backend/values.postgresql-internal.example.yaml
+@@ -0,0 +1,13 @@
++# ci#667: PostgreSQL managed in-cluster by the CloudNativePG operator.
++# Prerequisite: the operator CRDs must be installed (see the chart docs).
++postgresql:
++  mode: internal
++  internal:
++    instances: 1
++    storage: 5Gi
++    database: openchat
++    owner: openchat
++backend:
++  sqlite:
++    persistence:
++      enabled: false
+diff --git a/backend/values.yaml b/backend/values.yaml
+index 95580f9..fb0c138 100644
+--- a/backend/values.yaml
++++ b/backend/values.yaml
+@@ -25,7 +25,8 @@ backend:
+   env:
+     HOST: ""
+     PORT: "1984"
+-    DB_BACKEND: sqlite
++    # DB_BACKEND is derived from `postgresql.mode` (sqlite when off); set it here
++    # explicitly only to override that (see the postgresql block below).
+     DEBUG: "false"
+     START_BOT: "false"
+     ROOT_CREDENTIALS: "admin:random"
+@@ -81,3 +82,25 @@ ingress:
+   certManager: false
+   host: ""
+   extraAnnotations: {}
++
++postgresql:
++  # off (SQLite, default) | internal (Cluster managed by the CloudNativePG
++  # operator) | external (bring your own server through an existing Secret).
++  mode: off
++  internal:
++    name: backend-postgres
++    instances: 1
++    imageName: ghcr.io/cloudnative-pg/postgresql:16.4
++    database: openchat
++    owner: openchat
++    storage: 5Gi
++    # storageClassName: ""
++    # Secret with the app credentials; empty = generated by CloudNativePG.
++    existingSecret: ""
++    # Key of the app Secret holding the connection URI (CNPG publishes `uri`).
++    dsnKey: uri
++  external:
++    # Secret holding the connection URI under dsnKey; never a plaintext
++    # password in a values file.
++    existingSecret: ""
++    dsnKey: DB_PATH
