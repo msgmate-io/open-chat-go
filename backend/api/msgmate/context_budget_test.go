@@ -598,6 +598,60 @@ func TestCompactMessagesToContextBudgetNeverDropsTheNewestToolRound(t *testing.T
 	}
 }
 
+// TestCompactMessagesToContextBudgetReservesTheNotice covers the ci#822 r46
+// root cause: the notice is merged into the leading system message *after* the
+// guard ran, so the guard must reserve its length up front. A list that fits
+// the raw budget but not the raw budget minus the reserve has to be compacted,
+// and the compacted list plus the injected notice must still fit.
+func TestCompactMessagesToContextBudgetReservesTheNotice(t *testing.T) {
+	messages := []map[string]interface{}{
+		{"role": "system", "content": "You are a coding agent."},
+	}
+	for round := 0; round < 3; round++ {
+		id := fmt.Sprintf("call-%d", round)
+		messages = append(messages,
+			map[string]interface{}{
+				"role":    "assistant",
+				"content": "reading",
+				"tool_calls": []map[string]interface{}{{
+					"type":     "function",
+					"id":       id,
+					"function": map[string]interface{}{"name": "coder_read", "arguments": `{"path":"a.go"}`},
+				}},
+			},
+			map[string]interface{}{"role": "tool", "tool_call_id": id, "content": strings.Repeat("a", 20000)},
+		)
+	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": "continue"})
+
+	// A budget that the list fits exactly, but not once the notice is reserved:
+	// this is the ci#822 r46 window (59889 of 60000 chars, sent at 60190).
+	budget := messagesCharCount(messages) + 100
+	if _, _, changed := compactMessagesToContextBudget(messages, budget); changed {
+		t.Fatal("without a reserve the fitting list must not be rewritten")
+	}
+
+	compacted, stats, changed := compactMessagesToContextBudgetReserving(messages, budget, contextBudgetNoticeReserveChars)
+	if !changed {
+		t.Fatalf("the reserve must force a compaction, got %#v", stats)
+	}
+	if after := messagesCharCount(compacted); after > budget-contextBudgetNoticeReserveChars {
+		t.Fatalf("the compacted list plus the notice reserve must fit the budget, got %d + %d > %d", after, contextBudgetNoticeReserveChars, budget)
+	}
+
+	// The outgoing request: compaction (with reserve) then notice injection must
+	// stay within the budget the guard exists to enforce.
+	final := injectContextBudgetNotice(compacted, ContextUsageReport{
+		BudgetChars: budget,
+		UsedChars:   messagesCharCount(compacted),
+		UsedPercent: 90,
+		Limits:      ResolveToolResultLimits(nil),
+	})
+	if got := messagesCharCount(final); got > budget {
+		t.Fatalf("the request with the notice carried %d chars, over the %d-char budget", got, budget)
+	}
+}
+
 // TestInjectContextBudgetNoticeIsThresholdedAndIdempotent covers the
 // self-throttling notice: absent below the threshold, merged into the leading
 // system message above it, and replaced (never stacked) on the next round.
