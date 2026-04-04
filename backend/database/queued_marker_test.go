@@ -208,3 +208,45 @@ func TestClearMessageQueuedForChatDrainsEveryMarkedMessageOfTheChat(t *testing.T
 		t.Fatalf("expected a nil chat to drain nothing, got cleared=%v err=%v", cleared, err)
 	}
 }
+
+// The chat-wide drain runs on every send that supersedes a queued reply, so it
+// prefilters on the metadata key instead of loading every message of the chat.
+// The prefilter must not lose a marker that sits next to unrelated keys, and it
+// must not touch a message whose metadata does not carry the key at all.
+func TestClearMessageQueuedForChatFindsMarkersNextToOtherMetadata(t *testing.T) {
+	DB := openMarkerTestDB(t)
+
+	queued := createMarkerTestMessage(t, DB, 0, `{"finished":true,"reasoning":"kept"}`)
+	// The key is present with a non-"queued" value: it is not pending, but the
+	// marker must still be drained (any value of the key is stale).
+	stale := createMarkerTestMessage(t, DB, queued.ChatId, `{"queue_state":"running"}`)
+	// No queue_state at all: the prefilter must skip it entirely.
+	untouched := createMarkerTestMessage(t, DB, queued.ChatId, `{"note":"keep"}`)
+	// A message whose metadata merely *mentions* the key inside a value must
+	// not be treated as marked.
+	mention := createMarkerTestMessage(t, DB, queued.ChatId, `{"note":"queue_state"}`)
+
+	if _, err := SetMessageQueued(DB, queued); err != nil {
+		t.Fatalf("SetMessageQueued failed: %v", err)
+	}
+
+	cleared, err := ClearMessageQueuedForChat(DB, queued.ChatId)
+	if err != nil {
+		t.Fatalf("ClearMessageQueuedForChat failed: %v", err)
+	}
+	if cleared != 2 {
+		t.Fatalf("expected the queued and the stale marker to be drained, got %d", cleared)
+	}
+	if IsMessageQueued(loadMarkerTestMessage(t, DB, queued.UUID)) {
+		t.Fatalf("expected %s to be drained", queued.UUID)
+	}
+	if _, ok := messageMeta(loadMarkerTestMessage(t, DB, stale.UUID))[QueueStateMetaKey]; ok {
+		t.Fatalf("expected the stale marker to be removed")
+	}
+	if note, _ := messageMeta(loadMarkerTestMessage(t, DB, untouched.UUID))["note"].(string); note != "keep" {
+		t.Fatalf("expected the unmarked message to be untouched")
+	}
+	if note, _ := messageMeta(loadMarkerTestMessage(t, DB, mention.UUID))["note"].(string); note != "queue_state" {
+		t.Fatalf("expected a message that only mentions the key to be untouched")
+	}
+}
