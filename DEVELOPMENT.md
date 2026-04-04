@@ -432,6 +432,22 @@ legacy first-enabled-SSH-server behavior is kept, so existing deployments are
 unaffected. The OpenCode-based coding bots remain the default/backup route and
 are not modified by the native sandbox flow.
 
+The **repository** the per-chat sandbox clones is resolved per interaction, so a
+git trigger or dispatch for another repository does not run against the bot's
+default checkout. `tool_init.coder_select_workspace.git_repo` is the single
+source of truth; at interaction creation the core binds it from, in precedence
+order:
+
+1. a repository the caller pinned itself (`tool_init.coder_select_workspace` or
+   a `repo`/`repository`/`github_repo`/`git_repo` key in `config_overrides`) —
+   authoritative, never re-bound;
+2. an explicit `repo:<owner/name>` tag on the dispatch;
+3. the effective shared config's repo key (the bot/trigger default).
+
+A bare `owner/name` slug is expanded to its GitHub remote. Bots that do not set
+`auto_sandbox: true` (fixed/pinned workspaces, non-coder bots) and interactions
+without a usable repository value are left exactly as configured.
+
 ### Transient tool failures are retried and budget-exempt (ci#688)
 
 A tool body can fail for purely **environmental** reasons: with 16–24 concurrent
