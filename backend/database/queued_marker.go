@@ -112,8 +112,17 @@ func ClearMessageQueuedForChat(DB *gorm.DB, chatID uint) (int64, error) {
 	if DB == nil || chatID == 0 {
 		return 0, nil
 	}
+	// This runs on every send that supersedes a queued reply (the "replace"
+	// path, ie every message sent while no turn is live), so it must not load
+	// the whole chat: a long transcript would make every send O(messages).
+	// The LIKE prefilter selects the rows whose metadata carries the key at
+	// all; the value is then judged authoritatively by ClearMarkerFromMeta.
+	// MetaData is jsonb (postgres) / text (sqlite); CAST AS TEXT is valid on
+	// both, and a NULL metadata column simply does not match.
 	var messages []Message
-	if err := DB.Where("chat_id = ?", chatID).Find(&messages).Error; err != nil {
+	if err := DB.Where("chat_id = ?", chatID).
+		Where(`CAST(meta_data AS TEXT) LIKE ?`, "%"+`"`+QueueStateMetaKey+`"`+"%").
+		Find(&messages).Error; err != nil {
 		return 0, err
 	}
 	var cleared int64
