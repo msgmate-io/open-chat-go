@@ -457,6 +457,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /agents/interactions/{chat_uuid}", botsHandler.AgentGet)
 	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/continue", botsHandler.AgentContinue)
 	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/stop", botsHandler.AgentStop)
+	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/tags", botsHandler.AgentRetag)
 	v1PrivateApis.HandleFunc("POST /models", modelsHandler.Create)
 	v1PrivateApis.HandleFunc("PATCH /models/{model_uuid}", modelsHandler.Patch)
 	v1PrivateApis.HandleFunc("DELETE /models/{model_uuid}", modelsHandler.Delete)
