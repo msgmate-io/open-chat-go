@@ -34,10 +34,10 @@ func TestCoderScheduleTaskIDCarriesChatAndNonce(t *testing.T) {
 func TestCancelCoderTurnRefusesForeignTaskIDs(t *testing.T) {
 	runner := coderScheduleRunner{}
 	for _, foreign := range []string{
-		"bot-reply:chat-1",                      // the chat-wide reply task of a live turn
-		"coder-schedule:chat-2:abc",             // another chat's scheduled turn
-		"coder-schedule:chat-1x:abc",            // a chat uuid that merely starts alike
-		"asynq:{default}:t:bot-reply:chat-1",    // a raw asynq task key
+		"bot-reply:chat-1",                        // the chat-wide reply task of a live turn
+		"coder-schedule:chat-2:abc",               // another chat's scheduled turn
+		"coder-schedule:chat-1x:abc",              // a chat uuid that merely starts alike
+		"asynq:{default}:t:bot-reply:chat-1",      // a raw asynq task key
 		strings.Repeat("coder-schedule:", 1) + "", // empty id after the prefix
 	} {
 		cancelled, err := runner.CancelCoderTurn("chat-1", foreign)
