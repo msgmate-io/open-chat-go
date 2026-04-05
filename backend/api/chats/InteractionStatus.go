@@ -28,6 +28,12 @@ type InteractionStatusResponse struct {
 	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
 	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
 	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
+	// AutoContinueIncompleteRetries reports how many consecutive turns ended
+	// incompletely and were retried, and the budget they are bounded by
+	// (ci#724). A run that keeps ending without a summary stops with the
+	// incomplete_retries_exhausted stop reason.
+	AutoContinueIncompleteRetries    int `json:"auto_continue_incomplete_retries,omitempty"`
+	AutoContinueMaxIncompleteRetries int `json:"auto_continue_max_incomplete_retries,omitempty"`
 	// Stalled reports that the interaction never started: nothing is queued or
 	// running for the chat and the newest message is still an unanswered prompt
 	// (ci#609). StallReason names the cause, StallAgeSeconds how long the prompt
