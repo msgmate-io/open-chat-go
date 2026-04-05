@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"open-chat-go/backend/database"
+	"backend/database"
 )
 
 // TestTurnEndedIncompleteRetryable guards the ci#724 classifier: only a turn
