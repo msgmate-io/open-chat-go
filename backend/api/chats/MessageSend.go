@@ -378,10 +378,11 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			} else if marked {
 				log.Printf("ci#656: message %s queued behind the live turn of chat %s", message.UUID, chatUuid)
 			}
-		} else if drained, drainErr := database.ClearMessageQueuedForChat(DB, chat.ID); drainErr != nil {
-			log.Printf("ci#656: failed to drain the queued markers of chat %s: %v", chatUuid, drainErr)
-		} else if drained > 0 {
-			log.Printf("ci#656: drained %d superseded queued marker(s) of chat %s", drained, chatUuid)
+		} else {
+			// An interrupt or a replace cancels every queued reply of the
+			// chat, so the messages those replies belonged to will never be
+			// consumed and must stop rendering as pending.
+			ClearQueuedMarkersForChat(DB, chat.ID, chatUuid)
 		}
 	} else {
 		// For human receivers, continue to publish websocket updates immediately.
@@ -635,6 +636,11 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)
 			if inspectorErr == nil {
 				workqueue.CancelBotReplyTask(queueInspector, chatUuid)
+				// ci#656: the cancellation also drops the replies that were
+				// queued behind the live turn, so the messages those replies
+				// belonged to will never be consumed and must stop rendering
+				// as pending.
+				ClearQueuedMarkersForChat(DB, chat.ID, chatUuid)
 			} else if !handled {
 				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 				return
