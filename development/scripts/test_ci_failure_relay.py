@@ -341,3 +341,37 @@ def _boom(_chat_uuid, _message):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class FailureLogsTests(unittest.TestCase):
+    """ci#606: the relayed payload carries the documented `failure_logs`."""
+
+    BASE = {"repo": "msgmate-io/open-chat-go", "pr_number": 822,
+            "pr_branch": "chore/consolidate-2026-10-19-r46",
+            "pr_sha": "eb5d256a70da0fb8504c7c7c6d36df7260f7fc36", "run_url": "https://run"}
+
+    def payload(self, **over):
+        event = dict(self.BASE)
+        event.update(over)
+        return relay.build_ci_failure_payload(event, 1, 3)
+
+    def test_collects_named_job_excerpts(self):
+        payload = self.payload(failed_jobs=[
+            {"name": "Run PR CI Go Tests (3/4)", "failure_logs": "FAIL ./backend/api"},
+            {"name": "E2E Tests", "logs": "timeout"},
+        ])
+        self.assertIn("Run PR CI Go Tests (3/4): FAIL ./backend/api", payload["failure_logs"])
+        self.assertIn("E2E Tests: timeout", payload["failure_logs"])
+
+    def test_explicit_event_logs_win_and_are_truncated(self):
+        payload = self.payload(failure_logs="x" * 5000, failed_jobs=[{"name": "Go Tests"}])
+        self.assertEqual(len(payload["failure_logs"]), relay.MAX_FAILURE_LOGS)
+        self.assertEqual(payload["failure_logs"], "x" * relay.MAX_FAILURE_LOGS)
+
+    def test_absent_logs_stay_empty_but_present(self):
+        payload = self.payload(failed_jobs=[{"name": "Go Tests"}])
+        self.assertEqual(payload["failure_logs"], "")
+
+    def test_payload_never_carries_a_token(self):
+        payload = self.payload(failure_logs="line\nTOKEN=supersecret")
+        self.assertNotIn("ghp_", json.dumps(payload))

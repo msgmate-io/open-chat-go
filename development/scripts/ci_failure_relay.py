@@ -48,12 +48,36 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
+MAX_FAILURE_LOGS = 4000
+
+
+def collect_failure_logs(event: dict, limit: int = MAX_FAILURE_LOGS) -> str:
+    """The failed-step excerpt the ci#608 contract lists as `failure_logs`.
+
+    The relayed payload used to omit it entirely, so the lead saw only job
+    names and had no error line to triage on (ci#606 payload parity). Only the
+    excerpt the collect step already gathered is forwarded - never a full log
+    dump - and an explicit `failure_logs` on the event always wins.
+    """
+    explicit = (event.get("failure_logs") or "").strip()
+    if explicit:
+        return explicit[:limit]
+    parts = []
+    for job in (event.get("failed_jobs") or []):
+        text = (job.get("failure_logs") or job.get("logs") or job.get("error") or "").strip()
+        if not text:
+            continue
+        parts.append("{}: {}".format(job.get("name") or "job", text))
+    return "\n".join(parts)[:limit]
+
+
 def build_ci_failure_payload(event: dict, attempt: int, max_attempts: int,
                              now=None) -> dict:
     """The ci#607 `ci_failure` contract (`backend/nativecoder/devlead.go`).
 
     Only the documented fields are emitted (plus the relay's own attempt
     counter), so the lead's `CIFailureEvent` parses it without surprises.
+    `failure_logs` carries the collected failed-step excerpt (ci#606).
     """
     return {
         "schema_version": 1,
@@ -65,6 +89,7 @@ def build_ci_failure_payload(event: dict, attempt: int, max_attempts: int,
         "sha": event.get("pr_sha") or "",
         "run_url": event.get("run_url") or "",
         "failing_jobs": [str(job.get("name", "")) for job in (event.get("failed_jobs") or [])],
+        "failure_logs": collect_failure_logs(event),
         "severity": event.get("severity") or "error",
         "occurred_at": (now or _utcnow()).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "attempt": int(attempt),
