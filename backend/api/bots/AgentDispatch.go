@@ -33,6 +33,7 @@ import (
 //	GET  /api/v1/agents/interactions/{chat_uuid}
 //	POST /api/v1/agents/interactions/{chat_uuid}/continue
 //	POST /api/v1/agents/interactions/{chat_uuid}/stop
+//	POST /api/v1/agents/interactions/{chat_uuid}/tags
 //
 // `autonomous: true` is promoted into the interaction's own
 // `coder_interaction: autonomous` mode (ci#506), which is the contract the
@@ -60,6 +61,12 @@ import (
 // declared scope tags match an interaction's tags may manage that interaction
 // even when it neither participates in nor dispatched it. The key is opt-in:
 // absent it the gate above is unchanged (least privilege).
+//
+// `tags` re-tags / re-scopes a managed interaction (ci#540, point 3): the caller
+// may replace the tag set or edit it incrementally, behind the same per-caller
+// management gate. A caller that reaches the interaction *only* through its
+// declared scope tags may itself only touch tags inside that scope, so a scoped
+// bot cannot re-scope an interaction out of (or into) another team's tag scope.
 
 // resolveActingUser maps a session principal to the user an agent-management call
 // acts for. A human session acts for itself; an automated (bot) session acts for
@@ -563,6 +570,138 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 		"chat_uuid":               chat.UUID,
 		"cancelled_confirmations": cancelled,
 	})
+}
+
+// AgentRetag replaces or edits the tags of a managed interaction, re-scoping it
+// in the tag-scope model (ci#540, point 3: "re-tag/re-scope"). The body is
+// either `{"tags": [...]}` (full replacement) or `{"add": [...], "remove":
+// [...]}` (incremental edit); mixing the two forms is rejected.
+//
+// Write permission follows the same per-caller gate as read/continue/stop: a
+// human manages its own interactions, an automated caller only those it
+// participates in or dispatched, plus those its declared `agent_scope_tags`
+// cover. A caller that reaches the interaction *only* through its declared
+// scope tags may additionally only add/remove tags inside that scope (403
+// otherwise), so a scoped bot cannot pull an interaction into another team's
+// scope nor strip tags outside the scope it was granted through.
+func (h *BotsHandler) AgentRetag(w http.ResponseWriter, r *http.Request) {
+	DB, sessionUser, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+	actingUser, err := resolveActingUser(DB, sessionUser)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Tags   *[]string `json:"tags,omitempty"`
+		Add    []string  `json:"add,omitempty"`
+		Remove []string  `json:"remove,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.Tags != nil && (len(req.Add) > 0 || len(req.Remove) > 0) {
+		http.Error(w, "use either tags or add/remove", http.StatusBadRequest)
+		return
+	}
+	if req.Tags == nil && len(req.Add) == 0 && len(req.Remove) == 0 {
+		http.Error(w, "no tag change requested", http.StatusBadRequest)
+		return
+	}
+
+	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
+	if err != nil {
+		http.Error(w, "Interaction not found", http.StatusNotFound)
+		return
+	}
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
+	if err != nil {
+		http.Error(w, "Interaction not found", http.StatusNotFound)
+		return
+	}
+
+	add := []string(database.NormalizeChatTags(req.Add))
+	remove := []string(database.NormalizeChatTags(req.Remove))
+	if req.Tags != nil {
+		add, remove = nil, nil
+	}
+
+	// A caller that only reaches this interaction through its declared scope
+	// tags may not write tags outside that scope.
+	var scopeTags []string
+	if sessionUser != nil && sessionUser.IsAutomated {
+		participant := automatedParticipant(chat)
+		if (participant == nil || participant.ID != sessionUser.ID) && !chatDispatchedBy(DB, chat, sessionUser.UUID) {
+			declared := callerDeclaredScopeTags(DB, sessionUser)
+			if scopeTagsMatchInteraction(declared, chat.Tags) {
+				scopeTags = declared
+			}
+		}
+	}
+
+	previous := []string(database.NormalizeChatTags([]string(chat.Tags)))
+	base := previous
+	requested := append(append([]string{}, add...), remove...)
+	if req.Tags != nil {
+		base = []string(database.NormalizeChatTags(*req.Tags))
+		requested = base
+	}
+	for _, tag := range requested {
+		if scopeTags != nil && !scopeTagsMatchInteraction(scopeTags, database.StringSliceJSON([]string{tag})) {
+			http.Error(w, "tag outside caller scope", http.StatusForbidden)
+			return
+		}
+	}
+
+	next := applyTagEdits(base, add, remove)
+	if err := DB.Model(&chat).Update("tags", next).Error; err != nil {
+		http.Error(w, "Failed to update interaction tags", http.StatusInternalServerError)
+		return
+	}
+	chat.Tags = next
+
+	inspector, _ := util.GetAsynqInspector(r)
+	respondAgentJSON(w, http.StatusOK, map[string]interface{}{
+		"success":       true,
+		"chat_uuid":     chat.UUID,
+		"tags":          []string(next),
+		"previous_tags": previous,
+		"row":           agentInteractionView(DB, inspector, actingUser, chat),
+	})
+}
+
+// applyTagEdits returns base with the remove tags dropped and the add tags
+// appended, normalized and deduplicated while preserving the given order.
+func applyTagEdits(base, add, remove []string) database.StringSliceJSON {
+	dropped := map[string]struct{}{}
+	for _, tag := range remove {
+		dropped[tag] = struct{}{}
+	}
+	out := make([]string, 0, len(base)+len(add))
+	seen := map[string]struct{}{}
+	for _, tag := range base {
+		if _, ok := dropped[tag]; ok {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	for _, tag := range add {
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return database.NormalizeChatTags(out)
 }
 
 // agentInteractionView renders the stable agent-facing view of a chat.
