@@ -542,6 +542,11 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 		}
 		if inspector, inspectorErr := util.GetAsynqInspector(r); inspectorErr == nil {
 			workqueue.CancelBotReplyTask(inspector, chat.UUID)
+			// ci#656: stopping the interaction drops every queued reply of the
+			// chat, including the ones queued behind the live turn. The messages
+			// those replies belonged to will never be consumed and must stop
+			// rendering as pending.
+			chats.ClearQueuedMarkersForChat(DB, chat.ID, chat.UUID)
 		}
 		if count, cancelErr := chats.CancelPendingConfirmableActionsForChat(DB, chat.ID, actingUser.UUID); cancelErr == nil {
 			cancelled = count
