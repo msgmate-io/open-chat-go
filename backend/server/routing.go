@@ -435,6 +435,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/rerun", chatsHandler.RerunMessage)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/approve", chatsHandler.ApproveInteractionConfirmation)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/reject", chatsHandler.RejectInteractionConfirmation)
+	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/rerun", chatsHandler.RerunInteractionConfirmation)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/runtime-selector/resolve", chatsHandler.ResolveRuntimeSelector)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", toolsHandler.ExecuteConfirmableAction)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/reject", toolsHandler.RejectConfirmableAction)
