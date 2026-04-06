@@ -421,6 +421,12 @@ func streamChatCompletion(
 		// scheduler rejected for node capacity (ci#691), so a saturated node
 		// is visible in the completion payload on its own.
 		sandboxCapacityFailures := 0
+		// ci#724: budgetExemptToolCalls counts the calls of this turn that
+		// were bookkeeping rather than work (`coder_schedule`) and therefore
+		// did not consume the total tool-call budget. They are reported
+		// separately so a turn that re-armed its own next pulse is readable
+		// from the outcome.
+		budgetExemptToolCalls := 0
 		// ci#680: the context budget of this turn (the caller resolves it from
 		// the chat config and the deployment env) and the running count of tool
 		// results this turn's per-tool output budget cut.
@@ -450,6 +456,9 @@ func streamChatCompletion(
 			meta.Outcome.FailedToolCalls = failedToolCalls
 			meta.Outcome.TransientFailures = transientToolFailures
 			meta.Outcome.SandboxCapacityFailures = sandboxCapacityFailures
+			// ci#724: calls of a bookkeeping tool (`coder_schedule`) are
+			// deliberately not charged to the total tool-call budget.
+			meta.Outcome.BudgetExemptCalls = budgetExemptToolCalls
 			meta.Outcome.Budget = budget
 			// ci#680: the context/token usage of the last request the turn sent
 			// travels with the outcome, so the chat metadata and the
@@ -737,6 +746,11 @@ func streamChatCompletion(
 							// ci#691: of those, the ones the scheduler rejected
 							// for node capacity, so a saturated node is visible.
 							completionData["tool_call_sandbox_capacity_failed_count"] = sandboxCapacityFailures
+							// ci#724: calls that were bookkeeping rather than
+							// work (`coder_schedule`) do not consume the
+							// total tool-call budget; report them separately
+							// so a self-re-arming turn is readable.
+							completionData["tool_call_budget_exempt_count"] = budgetExemptToolCalls
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
@@ -783,6 +797,13 @@ func streamChatCompletion(
 				if call.budgetExempt {
 					details["budget_exempt"] = true
 				}
+				// ci#724: a bookkeeping call (`coder_schedule`) is
+				// reported but not charged to the total tool-call
+				// budget, so the transcript shows why the turn survived
+				// past the cap it would otherwise have reached.
+				if call.turnBudgetExempt {
+					details["turn_budget_exempt"] = true
+				}
 				// ci#691: a call that could not be scheduled because the node
 				// ran out of capacity is reported separately, so the chat
 				// shows "the node is out of CPU/memory" instead of a generic
@@ -793,7 +814,12 @@ func streamChatCompletion(
 				toolCallDetails = append(toolCallDetails, details)
 				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
 			}
-			totalToolCalls += len(appended)
+			// ci#724: charge only the calls that actually did work; a
+			// bookkeeping call (see above) never shortens the turn that
+			// scheduled it.
+			roundCounted, roundBudgetExempt := toolCallBudgetAccounting(appended)
+			totalToolCalls += roundCounted
+			budgetExemptToolCalls += roundBudgetExempt
 			// ci#688: only failures the model can act on consume the
 			// failed-tool budget; a transient environmental failure that
 			// survived its retries is counted separately, so one bursty
@@ -853,6 +879,12 @@ type executedToolCall struct {
 	// still reported to the model as a failed call, and the total tool-call cap
 	// keeps the turn bounded.
 	budgetExempt bool
+	// turnBudgetExempt marks a call that must not consume the turn's *total*
+	// tool-call budget either (ci#724): `coder_schedule` only re-arms a later
+	// turn, it does no work, so scheduling the next pulse must not shorten the
+	// turn the agent is currently running. The failed-tool budget is not
+	// affected — a schedule that cannot be enqueued is a real failure.
+	turnBudgetExempt bool
 	// retries is how many extra attempts the call needed after a transient
 	// failure (0 for the common case).
 	retries int
@@ -1537,6 +1569,11 @@ func processParsedToolCall(
 			result:    framedResult,
 			status:    ToolCallStatusSucceeded,
 			reason:    callReason,
+			// ci#724: a cached duplicate of a bookkeeping call
+			// (`coder_schedule`) stays budget-exempt, otherwise the
+			// duplicate-call cache would silently reintroduce the charge
+			// the exemption exists to avoid.
+			turnBudgetExempt: toolCallBudgetExempt(name),
 		})
 
 		toolChan <- ToolCall{
@@ -1674,16 +1711,17 @@ func processParsedToolCall(
 	result.status = status
 	result.error = toolErr
 	result.calls = append(result.calls, executedToolCall{
-		id:              id,
-		name:            name,
-		arguments:       arguments,
-		result:          toolResult,
-		status:          status,
-		error:           toolErr,
-		budgetExempt:    toolBudgetExempt,
-		retries:         toolRetries,
-		sandboxCapacity: toolSandboxCapacity,
-		reason:          callReason,
+		id:               id,
+		name:             name,
+		arguments:        arguments,
+		result:           toolResult,
+		status:           status,
+		error:            toolErr,
+		budgetExempt:     toolBudgetExempt,
+		turnBudgetExempt: toolCallBudgetExempt(name),
+		retries:          toolRetries,
+		sandboxCapacity:  toolSandboxCapacity,
+		reason:           callReason,
 	})
 	// Cache only successful results. Caching failures would make an identical
 	// retry (after the underlying state changed) replay the stale error instead
