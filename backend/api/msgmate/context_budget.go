@@ -249,18 +249,82 @@ func truncateToolResultForTool(result, toolName string, limits ToolResultLimits)
 	if name == "" {
 		name = "tool"
 	}
-	notice := fmt.Sprintf(
-		"\n\n[tool output truncated: %s returned %d chars, only the first %d are in the context "+
-			"(per-tool output budget). Re-issue the call with narrower arguments to see the rest "+
-			"(coder_read: offset/limit, coder_list: depth/limit, coder_grep: include/paths), or "+
-			"redirect the output to a file and read the ranges you need.]",
-		name, len(result), limit,
-	)
-	maxContentLen := limit - len(notice)
-	if maxContentLen < 0 {
-		maxContentLen = 0
+	// ci#731 (T2/F2): a head-only cut ends the output mid-stream and drops the
+	// tail of a `coder_bash` batch - exactly where the trailing commands of a
+	// `commands: [...]` batch live (2 of 5 reference batches lost trailing
+	// commands entirely). Keep a head slice AND a tail slice, and name the
+	// omitted middle (chars plus the coder_bash command results that fell into
+	// it) so the conclusion of the batch survives the cut.
+	const markerReserve = 380
+	contentBudget := limit - markerReserve
+	if contentBudget < 0 {
+		contentBudget = 0
 	}
-	return headOfString(result, maxContentLen) + notice, true
+	headChars := contentBudget * 3 / 5
+	tailChars := contentBudget - headChars
+	head := headOfString(result, headChars)
+	tail := ""
+	if tailChars > 0 && len(result) > len(head) {
+		available := len(result) - len(head)
+		if tailChars > available {
+			tailChars = available
+		}
+		tail = result[len(result)-tailChars:]
+	}
+	middle := result[len(head) : len(result)-len(tail)]
+	notice := fmt.Sprintf(
+		"\n\n[tool output truncated: %s returned %d chars; %d were omitted from the middle (per-tool budget "+
+			"%d)%s. Re-issue with narrower arguments - coder_read offset/limit, coder_list depth/limit, "+
+			"coder_grep include/paths - or redirect the output to a file and read the ranges you need.]",
+		name, len(result), len(middle), limit, omittedCommandNote(middle),
+	)
+	out := head + notice + tail
+	if excess := len(out) - limit; excess > 0 {
+		if excess >= len(tail) {
+			excess -= len(tail)
+			tail = ""
+		} else {
+			tail = tail[excess:]
+			excess = 0
+		}
+		if excess > 0 {
+			if excess >= len(head) {
+				head = ""
+			} else {
+				head = head[:len(head)-excess]
+			}
+		}
+		out = head + notice + tail
+		// A budget too small to hold the marker itself: keep the leading part of
+		// the marker (it still names the tool and the original size) rather than
+		// blowing the budget the guard exists to enforce.
+		if excess = len(out) - limit; excess > 0 {
+			out = headOfString(notice, len(notice)-excess)
+		}
+	}
+	return out, true
+}
+
+// omittedCommandNote names the coder_bash command results that fell into the
+// middle slice of a truncated batch result (ci#731). It is a cheap,
+// envelope-agnostic count: every per-command result of a `commands: [...]`
+// batch carries an `exit_code` key, so counting that key in the dropped middle
+// is enough to tell the agent how many commands vanished instead of leaving it
+// to guess why the batch ends early. It returns "" when nothing was dropped.
+func omittedCommandNote(middle string) string {
+	dropped := 0
+	for rest := middle; ; {
+		idx := strings.Index(rest, `"exit_code"`)
+		if idx < 0 {
+			break
+		}
+		dropped++
+		rest = rest[idx+len(`"exit_code"`):]
+	}
+	if dropped == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%d command result(s) dropped)", dropped)
 }
 
 // ContextBudget is the context budget of one chat turn: the character budget of
@@ -322,6 +386,24 @@ type ContextCompactionStats struct {
 	EvictedUserMessages int `json:"evicted_user_messages"`
 	// DroppedMessages counts the whole old messages removed as a last resort.
 	DroppedMessages int `json:"dropped_messages"`
+}
+
+// mergeContextCompactionStats folds a second compaction pass into the first, so
+// a round that had to be squeezed twice (ci#822 r46: once with the notice
+// reserved, once for real) still reports the totals of the whole round.
+func mergeContextCompactionStats(first ContextCompactionStats, second ContextCompactionStats) ContextCompactionStats {
+	merged := first
+	if second.MessagesBefore > 0 {
+		merged.MessagesBefore = second.MessagesBefore
+	}
+	merged.MessagesAfter = second.MessagesAfter
+	merged.TotalCharsBefore = second.TotalCharsBefore
+	merged.TotalCharsAfter = second.TotalCharsAfter
+	merged.EvictedToolResults += second.EvictedToolResults
+	merged.EvictedNarration += second.EvictedNarration
+	merged.EvictedUserMessages += second.EvictedUserMessages
+	merged.DroppedMessages += second.DroppedMessages
+	return merged
 }
 
 // ContextUsageReport is the token/usage report of one outgoing request
@@ -505,19 +587,40 @@ func contextUsageLookup(chatUUID string) (map[string]interface{}, bool) {
 // It returns the message list, what it did and whether anything changed; when
 // nothing changed the original slice is returned.
 func compactMessagesToContextBudget(messages []map[string]interface{}, budgetChars int) ([]map[string]interface{}, ContextCompactionStats, bool) {
+	return compactMessagesToContextBudgetReserving(messages, budgetChars, 0)
+}
+
+// compactMessagesToContextBudgetReserving is compactMessagesToContextBudget with
+// headroom reserved for text that is appended to the request *after* the guard
+// ran.
+//
+// The self-throttling notice is merged into the leading system message, which
+// the guard never rewrites (both passes skip it), so text added there can no
+// longer be compensated by a later compaction. ci#822 r46: a round whose
+// pre-notice total measured as fitting (59889 of 60000 chars) was sent at 60190
+// chars once the notice was merged in. Reserving the notice's length before the
+// compaction is what keeps every outgoing request under the budget.
+func compactMessagesToContextBudgetReserving(messages []map[string]interface{}, budgetChars int, reserveChars int) ([]map[string]interface{}, ContextCompactionStats, bool) {
 	stats := ContextCompactionStats{
 		MessagesBefore:   len(messages),
 		MessagesAfter:    len(messages),
 		TotalCharsBefore: messagesCharCount(messages),
 	}
 	stats.TotalCharsAfter = stats.TotalCharsBefore
-	if budgetChars <= 0 || stats.TotalCharsBefore <= budgetChars {
+	effectiveBudget := budgetChars
+	if reserveChars > 0 {
+		effectiveBudget = budgetChars - reserveChars
+		if effectiveBudget < 0 {
+			effectiveBudget = 0
+		}
+	}
+	if effectiveBudget <= 0 || stats.TotalCharsBefore <= effectiveBudget {
 		return messages, stats, false
 	}
 
-	target := budgetChars * contextBudgetTargetRatioPercent / 100
+	target := effectiveBudget * contextBudgetTargetRatioPercent / 100
 	if target < 1 {
-		target = budgetChars
+		target = effectiveBudget
 	}
 
 	out := make([]map[string]interface{}, len(messages))
@@ -670,6 +773,45 @@ func contextBudgetNotice(report ContextUsageReport) string {
 		report.UsedChars, report.BudgetChars, report.EstimatedTokens, report.UsedPercent,
 		report.TruncatedToolResults, report.EvictedToolResults,
 	)
+}
+
+// contextBudgetNoticeReserveChars is the headroom reserved in the compaction
+// budget for the self-throttling notice (plus the blank line separating it from
+// the system prompt), so merging the notice in cannot push a request over the
+// budget the guard exists to enforce (ci#822 r46).
+const contextBudgetNoticeReserveChars = 400
+
+// contextBudgetNoticeFor returns the notice a given message list would get, or
+// "" when it stays below the threshold. It is the exact text
+// injectContextBudgetNotice merges in, so the compaction can reserve its length
+// before the guard runs.
+func contextBudgetNoticeFor(messages []map[string]interface{}, report ContextUsageReport) string {
+	if report.BudgetChars <= 0 || report.UsedPercent < contextBudgetNoticeThresholdPercent {
+		return ""
+	}
+	if existing := leadingSystemNoticeText(messages); existing != "" {
+		return existing
+	}
+	return contextBudgetNotice(report)
+}
+
+// leadingSystemNoticeText returns the budget notice already merged into the
+// leading system message, or "" when there is none.
+func leadingSystemNoticeText(messages []map[string]interface{}) string {
+	for _, message := range messages {
+		if roleOf(message) != "system" {
+			continue
+		}
+		content, _ := message["content"].(string)
+		for _, paragraph := range strings.Split(content, "\n\n") {
+			trimmed := strings.TrimSpace(paragraph)
+			if strings.HasPrefix(trimmed, "[context budget:") {
+				return trimmed
+			}
+		}
+		return ""
+	}
+	return ""
 }
 
 // injectContextBudgetNotice merges the self-throttling notice into the leading

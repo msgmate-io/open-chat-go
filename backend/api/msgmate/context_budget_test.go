@@ -223,6 +223,51 @@ func TestAppendExecutedToolCallsTruncatesLargeResultsExplicitly(t *testing.T) {
 	}
 }
 
+// TestTruncateToolResultKeepsTailAndCountsOmittedCommands pins the ci#731
+// (T2/F2) fix: a `coder_bash` batch that exceeds its budget keeps a head AND a
+// tail slice, and the marker names how many per-command results were dropped
+// from the middle, so the conclusion of the batch survives the cut.
+func TestTruncateToolResultKeepsTailAndCountsOmittedCommands(t *testing.T) {
+	limits := ToolResultLimits{
+		Default: 4000,
+		PerTool: map[string]int{"coder_bash": 4000},
+		Source:  ToolResultLimitSourceConfig,
+	}
+	batch := func(n int) string {
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(fmt.Sprintf(
+				`{"index":%d,"exit_code":0,"stdout":"%s"}`, i, strings.Repeat(fmt.Sprintf("cmd-%d ", i), 200)))
+		}
+		b.WriteString(`],"tail_sentinel":"BATCH-DONE"}`)
+		return b.String()
+	}
+
+	result := batch(20)
+	truncated, ok := truncateToolResultForTool(result, "coder_bash", limits)
+	if !ok {
+		t.Fatal("expected a 20-command batch to be truncated")
+	}
+	if len(truncated) > 4000 {
+		t.Fatalf("the truncated result must respect its budget, got %d chars", len(truncated))
+	}
+	if !strings.HasSuffix(strings.TrimRight(truncated, "\n"), `"tail_sentinel":"BATCH-DONE"}`) {
+		t.Fatalf("the tail of the batch must survive the cut, got %q", truncated[len(truncated)-120:])
+	}
+	if !strings.Contains(truncated, "were omitted from the middle") ||
+		!strings.Contains(truncated, "command result(s) dropped") {
+		t.Fatalf("the marker must name the omitted middle and the dropped commands, got %q", truncated)
+	}
+	// A result that fits its budget is untouched.
+	if plain, truncated := truncateToolResultForTool(`{"results":[]}`, "coder_bash", limits); truncated || plain != `{"results":[]}` {
+		t.Fatalf("a small result must be untouched, got %q (truncated=%t)", plain, truncated)
+	}
+}
+
 // TestResolveToolResultLimitsAppliesConfigAndEnvOverrides pins the
 // configurability the ticket asks for: per-tool limits from the chat config, a
 // deployment-wide env override that clamps them, and the compiled-in defaults
@@ -550,6 +595,60 @@ func TestCompactMessagesToContextBudgetNeverDropsTheNewestToolRound(t *testing.T
 		if strings.Contains(strings.ToLower(content), "re-issue the call with narrower arguments") {
 			t.Fatalf("the eviction marker must not ask for a re-issue of the same call, got %q", content)
 		}
+	}
+}
+
+// TestCompactMessagesToContextBudgetReservesTheNotice covers the ci#822 r46
+// root cause: the notice is merged into the leading system message *after* the
+// guard ran, so the guard must reserve its length up front. A list that fits
+// the raw budget but not the raw budget minus the reserve has to be compacted,
+// and the compacted list plus the injected notice must still fit.
+func TestCompactMessagesToContextBudgetReservesTheNotice(t *testing.T) {
+	messages := []map[string]interface{}{
+		{"role": "system", "content": "You are a coding agent."},
+	}
+	for round := 0; round < 3; round++ {
+		id := fmt.Sprintf("call-%d", round)
+		messages = append(messages,
+			map[string]interface{}{
+				"role":    "assistant",
+				"content": "reading",
+				"tool_calls": []map[string]interface{}{{
+					"type":     "function",
+					"id":       id,
+					"function": map[string]interface{}{"name": "coder_read", "arguments": `{"path":"a.go"}`},
+				}},
+			},
+			map[string]interface{}{"role": "tool", "tool_call_id": id, "content": strings.Repeat("a", 20000)},
+		)
+	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": "continue"})
+
+	// A budget that the list fits exactly, but not once the notice is reserved:
+	// this is the ci#822 r46 window (59889 of 60000 chars, sent at 60190).
+	budget := messagesCharCount(messages) + 100
+	if _, _, changed := compactMessagesToContextBudget(messages, budget); changed {
+		t.Fatal("without a reserve the fitting list must not be rewritten")
+	}
+
+	compacted, stats, changed := compactMessagesToContextBudgetReserving(messages, budget, contextBudgetNoticeReserveChars)
+	if !changed {
+		t.Fatalf("the reserve must force a compaction, got %#v", stats)
+	}
+	if after := messagesCharCount(compacted); after > budget-contextBudgetNoticeReserveChars {
+		t.Fatalf("the compacted list plus the notice reserve must fit the budget, got %d + %d > %d", after, contextBudgetNoticeReserveChars, budget)
+	}
+
+	// The outgoing request: compaction (with reserve) then notice injection must
+	// stay within the budget the guard exists to enforce.
+	final := injectContextBudgetNotice(compacted, ContextUsageReport{
+		BudgetChars: budget,
+		UsedChars:   messagesCharCount(compacted),
+		UsedPercent: 90,
+		Limits:      ResolveToolResultLimits(nil),
+	})
+	if got := messagesCharCount(final); got > budget {
+		t.Fatalf("the request with the notice carried %d chars, over the %d-char budget", got, budget)
 	}
 }
 
