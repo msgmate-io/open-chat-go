@@ -108,10 +108,17 @@ type ToolCallBudgetUsage struct {
 	ExhaustedFailed  bool `json:"exhausted_failed"`
 	TransientFailed  int  `json:"transient_failed,omitempty"`
 	SandboxCapacityF int  `json:"sandbox_capacity_failed,omitempty"`
+	// BudgetExemptTotal counts the calls that were bookkeeping rather than work
+	// (`coder_schedule`, ci#724) and therefore did not consume the total
+	// budget. It is reported so a self-re-arming turn is readable from the
+	// usage metadata instead of only from the completion payload.
+	BudgetExemptTotal int `json:"budget_exempt_total,omitempty"`
 }
 
 // Usage reports how much of the budget a turn consumed and how much is left.
-func (b ToolCallBudget) Usage(consumedTotal, consumedFailed, transientFailed, sandboxCapacityFailed int) ToolCallBudgetUsage {
+// budgetExemptTotal counts the bookkeeping calls (`coder_schedule`, ci#724) that
+// were deliberately not charged to the total budget.
+func (b ToolCallBudget) Usage(consumedTotal, consumedFailed, transientFailed, sandboxCapacityFailed, budgetExemptTotal int) ToolCallBudgetUsage {
 	remainingTotal := b.MaxTotal - consumedTotal
 	if remainingTotal < 0 {
 		remainingTotal = 0
@@ -121,14 +128,15 @@ func (b ToolCallBudget) Usage(consumedTotal, consumedFailed, transientFailed, sa
 		remainingFailed = 0
 	}
 	return ToolCallBudgetUsage{
-		ConsumedTotal:    consumedTotal,
-		RemainingTotal:   remainingTotal,
-		ConsumedFailed:   consumedFailed,
-		RemainingFailed:  remainingFailed,
-		ExhaustedTotal:   consumedTotal >= b.MaxTotal,
-		ExhaustedFailed:  consumedFailed >= b.MaxFailed,
-		TransientFailed:  transientFailed,
-		SandboxCapacityF: sandboxCapacityFailed,
+		ConsumedTotal:     consumedTotal,
+		RemainingTotal:    remainingTotal,
+		ConsumedFailed:    consumedFailed,
+		RemainingFailed:   remainingFailed,
+		ExhaustedTotal:    consumedTotal >= b.MaxTotal,
+		ExhaustedFailed:   consumedFailed >= b.MaxFailed,
+		TransientFailed:   transientFailed,
+		SandboxCapacityF:  sandboxCapacityFailed,
+		BudgetExemptTotal: budgetExemptTotal,
 	}
 }
 
@@ -143,6 +151,7 @@ func (u ToolCallBudgetUsage) Metadata() map[string]interface{} {
 		"exhausted_failed": u.ExhaustedFailed,
 		"transient_failed": u.TransientFailed,
 		"sandbox_capacity": u.SandboxCapacityF,
+		"budget_exempt":    u.BudgetExemptTotal,
 		"max_total":        u.ConsumedTotal + u.RemainingTotal,
 		"max_failed":       u.ConsumedFailed + u.RemainingFailed,
 	}
