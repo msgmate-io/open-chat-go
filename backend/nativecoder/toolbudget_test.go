@@ -127,7 +127,7 @@ func TestResolveToolCallBudgetKeepsDeclaredChatBudget(t *testing.T) {
 // consumed/remaining counters.
 func TestToolCallBudgetUsageReportsConsumedAndRemaining(t *testing.T) {
 	budget := ToolCallBudget{MaxTotal: 10, MaxFailed: 2, Source: ToolCallBudgetSourceChatSnapshot}
-	usage := budget.Usage(9, 1, 3, 1)
+	usage := budget.Usage(9, 1, 3, 1, 2)
 
 	if usage.ConsumedTotal != 9 || usage.RemainingTotal != 1 {
 		t.Fatalf("unexpected total counters: %+v", usage)
@@ -141,6 +141,11 @@ func TestToolCallBudgetUsageReportsConsumedAndRemaining(t *testing.T) {
 	if usage.TransientFailed != 3 || usage.SandboxCapacityF != 1 {
 		t.Fatalf("expected the budget-exempt counters, got %+v", usage)
 	}
+	// ci#724: the bookkeeping calls of a self-re-arming turn are reported
+	// separately from the charged ones.
+	if usage.BudgetExemptTotal != 2 {
+		t.Fatalf("expected the budget-exempt call count, got %+v", usage)
+	}
 
 	meta := usage.Metadata()
 	if meta["consumed_total"] != 9 || meta["remaining_total"] != 1 {
@@ -149,8 +154,11 @@ func TestToolCallBudgetUsageReportsConsumedAndRemaining(t *testing.T) {
 	if meta["max_total"] != 10 || meta["max_failed"] != 2 {
 		t.Fatalf("expected the caps in the usage metadata, got %#v", meta)
 	}
+	if meta["budget_exempt"] != 2 {
+		t.Fatalf("expected the budget-exempt count in the usage metadata, got %#v", meta)
+	}
 
-	exhausted := budget.Usage(10, 2, 0, 0)
+	exhausted := budget.Usage(10, 2, 0, 0, 0)
 	if !exhausted.ExhaustedTotal || !exhausted.ExhaustedFailed {
 		t.Fatalf("expected the exhausted flags, got %+v", exhausted)
 	}
@@ -158,7 +166,7 @@ func TestToolCallBudgetUsageReportsConsumedAndRemaining(t *testing.T) {
 		t.Fatalf("expected zero remaining, got %+v", exhausted)
 	}
 
-	over := budget.Usage(14, 5, 0, 0)
+	over := budget.Usage(14, 5, 0, 0, 0)
 	if over.RemainingTotal != 0 || over.RemainingFailed != 0 {
 		t.Fatalf("remaining must never go negative, got %+v", over)
 	}
