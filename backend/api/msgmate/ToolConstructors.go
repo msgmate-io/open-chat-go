@@ -19,6 +19,10 @@ func init() {
 	// usage report (the tools package cannot import the msgmate package it is
 	// embedded in).
 	tooldefs.ContextUsageLookup = contextUsageLookup
+	// ci#724: back the `coder_schedule` tool with the core's in-turn scheduler,
+	// so a lead agent can start a later turn on its own chat without a GitHub
+	// workflow or a CronJob.
+	tooldefs.CoderScheduleRunnerProvider = coderScheduleToolRunner
 }
 
 func NewWeatherTool() Tool {
@@ -68,6 +72,12 @@ func NewWebSearchTool() Tool {
 // NewCoderContextTool is the ci#680 context/token usage report tool.
 func NewCoderContextTool() Tool {
 	return NewToolFromDefinition(tooldefs.CoderContextToolDef)
+}
+
+// NewCoderScheduleTool is the ci#724 self-scheduling tool: it lets a lead agent
+// queue a later turn of its own chat instead of relying on an external CronJob.
+func NewCoderScheduleTool() Tool {
+	return NewToolFromDefinition(tooldefs.CoderScheduleToolDef)
 }
 
 func NewToolInitTestToolPassThrough() Tool {
