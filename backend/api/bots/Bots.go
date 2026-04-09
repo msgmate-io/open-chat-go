@@ -1473,6 +1473,17 @@ func createBotInteraction(
 	// structured state. The bot's default shared config stays the live source,
 	// so a later cap raise still reaches this interaction.
 	effectiveConfig = nativecoder.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
+	// ci#413: a native coder interaction provisions its disposable per-chat
+	// sandbox from tool_init.coder_select_workspace.git_repo, so the sandbox must
+	// clone the repository this interaction was dispatched for instead of the
+	// bot-wide default checkout. An explicit `repo:<...>` tag wins, otherwise the
+	// effective config's repo key (bot/trigger default); a repository the caller
+	// pinned itself in tool_init/config_overrides is never touched. It is a no-op
+	// for bots that do not switch auto_sandbox on, so fixed workspaces and
+	// non-coder bots keep exactly the config they were created with.
+	if repo := nativecoder.AutoSandboxRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides); repo != "" {
+		effectiveConfig = nativecoder.WithAutoSandboxRepo(effectiveConfig, repo)
+	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}

@@ -63,6 +63,10 @@ func init() {
 	// never panic on a duplicate constructor and never silently replace the
 	// integration's tool.
 	registerToolConstructorIfFree("coder_context", nil, NewCoderContextTool)
+	// ci#724: `coder_schedule` lets a lead agent queue a later turn of its own
+	// chat, so an autonomous loop needs no external CronJob. Same free-name
+	// rule: an integration shipping its own `coder_schedule` keeps ownership.
+	registerToolConstructorIfFree("coder_schedule", nil, NewCoderScheduleTool)
 }
 
 // registerToolConstructorIfFree registers a builtin constructor only when the
