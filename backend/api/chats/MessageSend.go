@@ -349,6 +349,12 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// ci#656: the decision is taken before the enqueue so the transcript can
+		// be told that this message's reply waits behind the live turn. Without
+		// it the message is delivered but invisible as pending, because the
+		// server never writes the marker the transcript reads.
+		decision := workqueue.DecideBotReplyEnqueue(deliveryMode, workqueue.BotReplyIsActive(queueInspector, chatUuid))
+
 		if _, enqueueErr := workqueue.EnqueueBotReplyWithDelivery(queueClient, queueInspector, workqueue.BotReplyPayload{
 			ChatUUID:    chatUuid,
 			MessageUUID: message.UUID,
@@ -356,6 +362,27 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		}, deliveryMode); enqueueErr != nil {
 			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
 			return
+		}
+
+		// ci#656: keep the persisted markers in step with the queue. An
+		// interrupt or a replace cancels every queued reply of the chat, so the
+		// messages those replies belonged to will never be consumed and must
+		// stop rendering as pending; only a reply that was actually queued
+		// behind the live turn carries the marker.
+		if decision == workqueue.BotReplyDecisionQueueBehind {
+			// Persist the marker on the message that was just created and carry
+			// it into the response metadata, so the sender's optimistic row and
+			// a later transcript load agree.
+			if marked, markErr := database.SetMessageQueued(DB, &message); markErr != nil {
+				log.Printf("ci#656: failed to mark message %s as queued for chat %s: %v", message.UUID, chatUuid, markErr)
+			} else if marked {
+				log.Printf("ci#656: message %s queued behind the live turn of chat %s", message.UUID, chatUuid)
+			}
+		} else {
+			// An interrupt or a replace cancels every queued reply of the
+			// chat, so the messages those replies belonged to will never be
+			// consumed and must stop rendering as pending.
+			ClearQueuedMarkersForChat(DB, chat.ID, chatUuid)
 		}
 	} else {
 		// For human receivers, continue to publish websocket updates immediately.
@@ -609,6 +636,11 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)
 			if inspectorErr == nil {
 				workqueue.CancelBotReplyTask(queueInspector, chatUuid)
+				// ci#656: the cancellation also drops the replies that were
+				// queued behind the live turn, so the messages those replies
+				// belonged to will never be consumed and must stop rendering
+				// as pending.
+				ClearQueuedMarkersForChat(DB, chat.ID, chatUuid)
 			} else if !handled {
 				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 				return

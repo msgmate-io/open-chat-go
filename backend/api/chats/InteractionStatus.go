@@ -28,6 +28,12 @@ type InteractionStatusResponse struct {
 	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
 	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
 	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
+	// AutoContinueIncompleteRetries reports how many consecutive turns ended
+	// incompletely and were retried, and the budget they are bounded by
+	// (ci#724). A run that keeps ending without a summary stops with the
+	// incomplete_retries_exhausted stop reason.
+	AutoContinueIncompleteRetries    int `json:"auto_continue_incomplete_retries,omitempty"`
+	AutoContinueMaxIncompleteRetries int `json:"auto_continue_max_incomplete_retries,omitempty"`
 	// Stalled reports that the interaction never started: nothing is queued or
 	// running for the chat and the newest message is still an unanswered prompt
 	// (ci#609). StallReason names the cause, StallAgeSeconds how long the prompt
@@ -324,7 +330,15 @@ func hasPendingConfirmationInRecentMessages(DB *gorm.DB, chatID uint) bool {
 }
 
 func messageHasPendingConfirmation(message database.Message) bool {
-	return len(pendingActionsForMessage(message)) > 0
+	// ci#735: a rejected interaction confirmation stays on the stack (so it can
+	// be re-run), but it is not a pending confirmation any more - the user has
+	// already decided, they merely kept the option to void that decision.
+	for _, action := range pendingActionsForMessage(message) {
+		if !action.Rejected {
+			return true
+		}
+	}
+	return false
 }
 
 // pendingActionsForMessage extracts every user-facing pending action carried by
@@ -398,12 +412,33 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 			// Interaction confirmation gate: the bot created the chat but waits
 			// for the user to approve the deferred interaction.
 			if confirmation, ok := meta[interactionConfirmationMetaKey].(map[string]interface{}); ok {
-				if status, _ := confirmation["status"].(string); status == InteractionConfirmationPending {
-					actions = append(actions, ActionTaskAction{
-						Kind:        ActionTaskKindInteractionConfirmation,
-						Title:       actionTaskFirstNonEmpty(actionTaskStringField(confirmation, "title"), "Interaction confirmation"),
-						Description: actionTaskStringField(confirmation, "description"),
-					})
+				status, _ := confirmation["status"].(string)
+				action := ActionTaskAction{
+					Kind:        ActionTaskKindInteractionConfirmation,
+					Title:       actionTaskFirstNonEmpty(actionTaskStringField(confirmation, "title"), "Interaction confirmation"),
+					Description: actionTaskStringField(confirmation, "description"),
+				}
+				// ci#735: a rejected gate is a terminal-looking error state, but
+				// the user can void the rejection and re-dispatch the
+				// interaction. Expose that as an explicit re-run affordance
+				// instead of the raw "rejected" error.
+				if status == InteractionConfirmationRejected {
+					action.Rejected = true
+					action.Rerunnable = true
+					action.ActionId = ActionTaskActionRerunInteractionConfirmation
+					action.ConfirmLabel = "Re-run interaction"
+					action.RerunOf = actionTaskStringField(confirmation, "rerun_of")
+					action.RerunCount = actionTaskIntField(confirmation, "rerun_count")
+				}
+				// ci#735: a re-run gate carries the re-run bookkeeping into the
+				// task so the UI can show that this confirmation re-opens a
+				// previously rejected interaction.
+				if rerunOf := actionTaskStringField(confirmation, "rerun_of"); rerunOf != "" {
+					action.RerunOf = rerunOf
+					action.RerunCount = actionTaskIntField(confirmation, "rerun_count")
+				}
+				if status == InteractionConfirmationPending || status == InteractionConfirmationRejected {
+					actions = append(actions, action)
 				}
 			}
 			// Runtime-selector proposals: a selector bot asks the user which
