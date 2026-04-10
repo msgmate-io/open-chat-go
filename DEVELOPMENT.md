@@ -353,6 +353,13 @@ legacy first-enabled-SSH-server behavior is kept, so existing deployments are
 unaffected. The OpenCode-based coding bots remain the default/backup route and
 are not modified by the native sandbox flow.
 
+The checkout a per-chat sandbox lands on is selectable from the dispatch too:
+an explicit `repo:<owner/name>` and `branch:<name>` tag pin what it clones and
+checks out (unless the caller pinned it in
+`tool_init.coder_select_workspace.git_repo`/`git_branch`, which stays
+authoritative), so a re-run for a pull request resumes that PR's branch instead
+of the bot's default.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
