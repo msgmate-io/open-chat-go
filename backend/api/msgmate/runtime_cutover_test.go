@@ -204,14 +204,31 @@ func TestNormalizeRuntimeSelectorPayloadChoicesIdempotentWhenRetired(t *testing.
 	}
 	normalizeRuntimeSelectorPayloadChoices(payload)
 	first, _ := payload["choices"].([]interface{})
-	if len(first) != 1 {
-		t.Fatalf("expected only the native runtime to survive, got %d: %v", len(first), first)
+	if len(first) != 2 {
+		t.Fatalf("expected the opencode alias and the native choice to survive as native (2), got %d: %v", len(first), first)
 	}
 	for _, raw := range first {
 		bot, _ := raw.(map[string]interface{})["bot"].(string)
 		if !IsNativeRuntimeBot(bot) {
 			t.Fatalf("retirement kept a non-native choice %v", bot)
 		}
+	}
+	// The unknown non-native runtime must be gone, while the opencode alias has
+	// been rewritten (its legacy name preserved for audit) rather than dropped.
+	var sawAliasedOpencode bool
+	for _, raw := range first {
+		choice, _ := raw.(map[string]interface{})
+		if legacy := actionStringField(choice, "legacy_bot"); legacy != "" {
+			if legacy == "opencode" {
+				sawAliasedOpencode = true
+			}
+			if legacy == "some-other-runtime" {
+				t.Fatalf("retirement kept the unknown non-native runtime: %v", first)
+			}
+		}
+	}
+	if !sawAliasedOpencode {
+		t.Fatalf("retirement dropped the aliased opencode choice instead of flipping it: %v", first)
 	}
 
 	normalizeRuntimeSelectorPayloadChoices(payload)
