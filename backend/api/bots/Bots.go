@@ -1484,6 +1484,15 @@ func createBotInteraction(
 	if repo := nativecoder.AutoSandboxRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides); repo != "" {
 		effectiveConfig = nativecoder.WithAutoSandboxRepo(effectiveConfig, repo)
 	}
+	// ci#413 follow-up: the same dispatch can name the branch the per-chat
+	// sandbox should check out (`branch:<name>` tag), eg the branch of an open
+	// pull request, so a re-run for that PR resumes the right checkout instead of
+	// the bot default (usually `main`). A branch the caller pinned in tool_init is
+	// never touched, and the value keeps its case (git branches are
+	// case-sensitive; only the `refs/heads/` prefix is stripped).
+	if branch := nativecoder.AutoSandboxBranchForInteraction(req.Tags, req.ToolInit); branch != "" {
+		effectiveConfig = nativecoder.WithAutoSandboxBranch(effectiveConfig, branch)
+	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
