@@ -2213,6 +2213,14 @@ jobs:
         run: |
           set -uo pipefail
           set +e
+          # The reconciler lives in the checkout above. Fail closed *and loudly*
+          # if it is missing: the original "can't open file" was invisible behind
+          # `continue-on-error`, which is how the missing checkout went unnoticed.
+          if [ ! -f development/scripts/pr_ci_superseded_reconcile.py ]; then
+            echo "::error::pr_ci_superseded_reconcile.py is missing from the checkout; the gate stays red."
+            echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           python3 development/scripts/pr_ci_superseded_reconcile.py \
             --repo "${{ github.repository }}" \
             --pr "${{ github.event.pull_request.number }}" \
