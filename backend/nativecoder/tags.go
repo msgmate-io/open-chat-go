@@ -18,6 +18,10 @@ const (
 	CoderInteractionTag = "msgmate-coder"
 	// RepoTagPrefix labels the repository a coder interaction works on.
 	RepoTagPrefix = "repo:"
+	// BranchTagPrefix labels the branch a coder interaction works on (ci#413
+	// follow-up: the same dispatch tag that pins the auto_sandbox repository
+	// also pins the checkout's branch).
+	BranchTagPrefix = "branch:"
 	// BotTagPrefix labels the bot a coder interaction was dispatched to.
 	BotTagPrefix = "bot:"
 	// DefaultBotTagSlug is used as the per-bot tag value when the bot carries no
