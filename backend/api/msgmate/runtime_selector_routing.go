@@ -118,6 +118,10 @@ func normalizeRuntimeSelectorPayloadChoices(payload map[string]interface{}) {
 	}
 
 	ordered := append(nativeChoices, fallbackChoices...)
+	// Once the opencode suite is retired (NATIVE_CODER_CUTOVER=retired) a stale
+	// selector payload must not route a chat back onto a bot that is no longer
+	// running, so non-native choices are dropped before they are offered.
+	ordered = filterRetiredRuntimeChoices(ordered)
 	for _, rawChoice := range ordered {
 		if choice, ok := rawChoice.(map[string]interface{}); ok {
 			delete(choice, "recommended")
@@ -133,7 +137,9 @@ func normalizeRuntimeSelectorPayloadChoices(payload map[string]interface{}) {
 	// native runtime is offered.
 	for _, rawChoice := range fallbackChoices {
 		if choice, ok := rawChoice.(map[string]interface{}); ok {
-			choice["fallback"] = true
+			if !IsNativeRuntimeBot(actionStringField(choice, "bot")) && RuntimeCutoverOffersLegacyFallback() {
+				choice["fallback"] = true
+			}
 		}
 	}
 	payload["choices"] = ordered
