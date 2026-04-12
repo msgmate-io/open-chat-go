@@ -64,6 +64,40 @@ consolidation automation. With neither, the run warns and leaves the human
 approval in place. All of this is only wired for consolidation PRs — feature,
 bugfix, chore and docs PRs still need a human approval and merge.
 
+#### A cancelled (superseded) CI run is not a failed gate (ci#659)
+
+The workflow's concurrency group is keyed by PR number *and* head SHA with
+`cancel-in-progress: true`, and a later job cancels superseded runs of the same
+branch. A burst of `labeled`/`unlabeled` events therefore cancels the in-flight
+run for the *identical* commit, while the `always()`-gated
+`PR Test Merge Requirement` job still executes inside that cancelled run with
+every `needs.*.result == 'cancelled'` - which reported the required check as
+failed for a commit whose tests never ran (run 39245536652 on #835).
+
+Blanket-passing the cancelled case would make an untested tree look mergeable, so
+the cancellation is reconciled instead (`development/scripts/pr_ci_superseded_reconcile.py`,
+unit-tested by `development/scripts/test_pr_ci_superseded_reconcile.py` in the
+Pin Freshness Gate job): a cancelled gate is accepted only when the commit no
+longer needs gating (PR closed, or a newer commit is the live PR head) or when a
+*replacement* run for the exact same commit reached the same gate job with a real
+verdict, whose conclusion is adopted. No replacement, a replacement still queued
+after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 1500s, repo variable
+`PR_CI_SUPERSEDED_WAIT_SECONDS`), an unknown/cancelled gate job or an API error
+all fail closed, so the gate never turns green on an untested commit.
+
+Because a run of this workflow is close to the 100-item jobs page, the run and
+job listings are read page by page (`api_pages`): a single-page read could miss
+the gate job, mistake the run for one that never gated the commit and adopt the
+verdict of an older run for the same SHA.
+
+The reconciler runs from the workspace, so the `PR Test Merge Requirement` job
+starts with a shallow `actions/checkout` of the pull request's head commit. The
+step is `continue-on-error: true` (the gate step decides), which is why the
+reconciler also checks for its own file and emits an `::error::` annotation with
+`accepted=false` instead of dying quietly: the very first version of this fix
+shipped without the checkout and therefore never engaged (run 39261844509 on
+#844). `WorkflowWiringTests` pins the checkout-before-reconciler ordering.
+
 #### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
 
 The SQLite database lives on a single ReadWriteOnce volume, so two backend
