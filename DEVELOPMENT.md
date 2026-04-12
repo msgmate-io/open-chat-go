@@ -36,6 +36,16 @@ Policy:
 - Maintainers may make rare, deliberate exceptions (for example to validate an
   infrastructure change); the risk is theirs and they should say so on the PR.
 
+Provider-side sandbox failures are classified, not guessed: the sandbox benchmark
+workflow sources `development/scripts/sandbox_provider_failure.sh` to tell a
+provider credential/balance error (HTTP 401/402, never retried) and a provider
+that cannot be reached (HTTP 429/5xx or a connection-level error, transient
+provider infrastructure) apart from a real coder-sandbox regression, so the
+summary names the cause once instead of leaving one identical failure row per
+test. The classifier is pinned by
+`development/scripts/tests/test_sandbox_provider_failure.sh`, which runs in the
+Pin Freshness Gate.
+
 #### Autonomous approval and merge of green consolidation PRs
 
 A consolidation PR is always authored by the automation identity, which cannot
