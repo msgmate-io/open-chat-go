@@ -96,18 +96,50 @@ func TestRuntimeSelectorChoiceBotName(t *testing.T) {
 // TestLegacyRuntimeBotAliasesTargetNativeRuntimes guards the alias map itself:
 // every target must be a native msgmate-coder runtime, so a typo'd constant
 // (ci#621 shipped `NativeRuntimeRevwBot`, which only failed in the frozen
-// workspace build) is caught by the ordinary package test run.
+// workspace build) is caught by the ordinary package test run. The map is
+// derived from the ci#584 rollout registry, so a flipped/retired family cannot
+// leave a stale alias behind.
 func TestLegacyRuntimeBotAliasesTargetNativeRuntimes(t *testing.T) {
-	if len(legacyRuntimeBotAliases) == 0 {
+	aliases := legacyRuntimeBotAliases()
+	if len(aliases) == 0 {
 		t.Fatal("legacyRuntimeBotAliases is empty")
 	}
-	for legacy, native := range legacyRuntimeBotAliases {
+	for legacy, native := range aliases {
 		if !IsNativeRuntimeBot(native) {
 			t.Errorf("alias %q maps to %q, which is not a native runtime", legacy, native)
 		}
 		if built, ok := NativeRuntimeBotAlias(legacy); !ok || built != native {
 			t.Errorf("NativeRuntimeBotAlias(%q) = (%q, %v), want (%q, true)", legacy, built, ok, native)
 		}
+	}
+}
+
+// TestNativeRuntimeBotsInRotationFollowsTheRollout guards ci#584: which native
+// runtimes the chooser may offer is a function of how far the staged rollout has
+// progressed, so a family that is still on the legacy runtime during its
+// rollback window is not offered and a flipped one is.
+func TestNativeRuntimeBotsInRotationFollowsTheRollout(t *testing.T) {
+	if got := NativeRuntimeBotsInRotation(""); len(got) != 0 {
+		t.Fatalf("expected no native runtime before the rollout starts, got %v", got)
+	}
+	first := NativeRuntimeBotsInRotation("plan")
+	if len(first) != 1 || first[0] != NativeRuntimePlanBot {
+		t.Fatalf("expected only the plan runtime after flipping plan, got %v", first)
+	}
+	all := NativeRuntimeBotsInRotation("lead")
+	for _, want := range []string{NativeRuntimePlanBot, NativeRuntimeReplBot, NativeRuntimeReviewBot, NativeRuntimeLeadBot} {
+		found := false
+		for _, got := range all {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected %q in the fully flipped rotation %v", want, all)
+		}
+	}
+	if len(all) != 4 {
+		t.Fatalf("expected 4 distinct runtimes once fully flipped, got %v", all)
 	}
 }
 
