@@ -39,7 +39,7 @@ Policy:
 Provider-side sandbox failures are classified, not guessed: the sandbox benchmark
 workflow sources `development/scripts/sandbox_provider_failure.sh` to tell a
 provider credential/balance error (HTTP 401/402, never retried) and a provider
-that cannot be reached (HTTP 429/5xx or a connection-level error, transient
+that cannot be reached (HTTP 408/429/5xx or a connection-level error, transient
 provider infrastructure) apart from a real coder-sandbox regression, so the
 summary names the cause once instead of leaving one identical failure row per
 test. The classifier is pinned by
