@@ -90,6 +90,14 @@ new_case
 printf '{"text":"Post \\"https://api.openai.com\\": proxyconnect tcp: i/o timeout"}\n' > "$case_dir/a.last_bot.json"
 assert_class unreachable "a proxy/i-o timeout is transient"
 
+new_case
+printf '{"text":"It ended on an internal error (request failed: net/http: TLS handshake timeout). The work already done is kept."}\n' > "$case_dir/a.last_bot.json"
+assert_class unreachable "the mixed-case Go TLS handshake timeout text is transient"
+
+new_case
+printf '{"text":"It ended on an internal error (request failed: unexpected EOF). The work already done is kept."}\n' > "$case_dir/a.last_bot.json"
+assert_class unreachable "the mixed-case Go unexpected EOF text is transient"
+
 # --- unclassified: the test verdict stands ---------------------------------
 new_case
 printf '{"text":"I could not finish: HTTP 503 service unavailable"}\n' > "$case_dir/a.last_bot.json"
