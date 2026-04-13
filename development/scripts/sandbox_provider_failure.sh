@@ -20,7 +20,10 @@
 # whether a provider error is retryable
 # (`backend/api/msgmate/provider_retry.go`) and the bot text it returns to the
 # user when the provider is unreachable
-# (`backend/api/msgmate/MsgmateBotAIHandler.go`).
+# (`backend/api/msgmate/MsgmateBotAIHandler.go`). The Go comparison lowercases
+# the error first (`strings.ToLower`), so the matching here is case-insensitive
+# as well: the real texts are "net/http: TLS handshake timeout" and io's
+# "unexpected EOF", both of which the backend retries.
 
 # A drained balance or a bad key: never retry, always infrastructure.
 sandbox_provider_account_pattern='HTTP (401|402)|positive balance|insufficient_quota|invalid_api_key'
@@ -47,10 +50,12 @@ sandbox_provider_failure_class() {
     [ -f "$file" ] || continue
     files=$(( files + 1 ))
     # Account wins over unreachable: a drained balance is sometimes surfaced as
-    # a 429, which must not be retried as a transient outage.
-    if grep -qE "$sandbox_provider_account_pattern" "$file"; then
+    # a 429, which must not be retried as a transient outage. Both matchings are
+    # case-insensitive because the backend lowercases the provider error before
+    # comparing it against the same markers.
+    if grep -qiE "$sandbox_provider_account_pattern" "$file"; then
       account_hits=$(( account_hits + 1 ))
-    elif grep -qE "$sandbox_provider_unreachable_pattern" "$file"; then
+    elif grep -qiE "$sandbox_provider_unreachable_pattern" "$file"; then
       unreachable_hits=$(( unreachable_hits + 1 ))
     fi
   done
