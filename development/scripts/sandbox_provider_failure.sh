@@ -10,7 +10,7 @@
 #                retry can never fix it (ci#740).
 #   unreachable  every recorded bot reply could not reach the AI provider, or was
 #                rejected by it with a retryable rate-limit/server error
-#                (HTTP 429/5xx, connection-level failures). Retrying burns
+#                (HTTP 408/429/5xx, connection-level failures). Retrying burns
 #                another full sandbox run per test, so this is reported as
 #                transient provider infrastructure instead (ci#740 follow-up).
 #   (empty)      not a pure provider failure: at least one reply is missing or
@@ -27,7 +27,7 @@ sandbox_provider_account_pattern='HTTP (401|402)|positive balance|insufficient_q
 
 # An outage, a rate limit or a connection-level failure: transient provider
 # infrastructure, not something the coder can influence.
-sandbox_provider_unreachable_pattern='HTTP (429|500|502|503|504)'
+sandbox_provider_unreachable_pattern='HTTP (408|429|500|502|503|504)'
 sandbox_provider_unreachable_pattern+='|rate limit|too many requests'
 sandbox_provider_unreachable_pattern+='|cannot reach|can'"'"'t reach|could not reach'
 sandbox_provider_unreachable_pattern+='|temporary network problem'
