@@ -12,6 +12,10 @@ import { buildMessageGroups } from "../../lib/message-groups";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher, cn } from "../../lib/utils";
 import { revalidateChatData } from "../../lib/chat-cache";
+import {
+    buildSendMessageBody,
+    type BotReplyDeliveryMode,
+} from "../../lib/delivery-mode";
 import { useBreakpoint } from "../utils";
 import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
@@ -192,32 +196,29 @@ export function MessagesScroll({
 
     const onSendMessage = async (
         payload?: ChatUISendPayload | Array<{ file_id: string; display_name?: string }>,
+        deliveryMode?: BotReplyDeliveryMode,
     ) => {
+        // ci#656: normalise into an explicit shape (the union is narrowed here,
+        // once) and let the shared helper decide which fields go on the wire.
         const normalized = Array.isArray(payload)
-            ? { text, attachments: payload }
+            ? { text, attachments: payload, toolInit: undefined }
             : {
                   text: payload?.text ?? text,
-                  tool_init: payload?.tool_init,
+                  toolInit: payload?.tool_init,
                   attachments: payload?.attachments,
               };
-        const messageText = (normalized.text || "").trim();
-        const attachments = normalized.attachments;
-        if (!messageText && (!attachments || attachments.length === 0)) return;
+
+        const messageData = buildSendMessageBody({
+            text: normalized.text?.trim(),
+            attachments: normalized.attachments,
+            toolInit: normalized.toolInit,
+            deliveryMode,
+        });
+
+        if (!messageData.text && !messageData.attachments) return;
 
         setIsSendingMessage(true);
         try {
-            const messageData: any = {
-                text: messageText
-            };
-
-            if (attachments && attachments.length > 0) {
-                messageData.attachments = attachments;
-            }
-
-            if (normalized.tool_init && Object.keys(normalized.tool_init).length > 0) {
-                messageData.tool_init = normalized.tool_init;
-            }
-
             const response = await fetch(`/api/v1/chats/${chatUUID}/messages/send`, {
                 method: 'POST',
                 headers: {
@@ -468,6 +469,7 @@ export function MessagesScroll({
                             isBotResponding={isBotResponding}
                             stopBotResponse={onStopBotResponse}
                             onSendMessage={onSendMessage}
+                            onSendNow={() => onSendMessage(undefined, "interrupt")}
                             ref={inputRef}
                             botConfig={chat?.config}
                             footerMenuItems={

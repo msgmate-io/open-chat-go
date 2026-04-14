@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { ConfirmableAction } from "../ConfirmableActionWidget";
+import type { BotReplyDeliveryMode } from "../../../lib/delivery-mode";
 
 export interface ChatUIAttachment {
   file_id: string;
@@ -12,6 +13,11 @@ export interface ChatUISendPayload {
   /** Controlled additions to the chat's shared config during creation. */
   shared_config?: Record<string, unknown>;
   attachments?: ChatUIAttachment[];
+  /**
+   * ci#656: `queued` (default, wait behind the running reply) or `interrupt`
+   * (send immediately, cancelling the running reply).
+   */
+  delivery_mode?: BotReplyDeliveryMode;
 }
 
 export interface ChatUIContact {
