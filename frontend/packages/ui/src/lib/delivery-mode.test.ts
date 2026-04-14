@@ -5,7 +5,7 @@ import {
   SEND_NOW_LABEL,
   buildSendMessageBody,
   isBotReplyDeliveryMode,
-  resolveQueuedReplyHint,
+  queuedReplyHintLabel,
   shouldOfferSendNow,
 } from "./delivery-mode";
 
@@ -46,7 +46,7 @@ describe("buildSendMessageBody", () => {
       attachments,
       toolInit: { web: true },
     });
-    expect(body).toEqual({ text: "hi", attachments, toolInit: { web: true } });
+    expect(body).toEqual({ text: "hi", attachments, tool_init: { web: true } });
   });
 
   it("only sets delivery_mode for a valid mode", () => {
@@ -81,26 +81,13 @@ describe("shouldOfferSendNow", () => {
   });
 });
 
-describe("resolveQueuedReplyHint", () => {
-  it("labels a message carrying the server's queued marker", () => {
-    expect(
-      resolveQueuedReplyHint({ meta_data: { queue_state: "queued" } }),
-    ).toBe(QUEUED_REPLY_HINT_LABEL);
+describe("queuedReplyHintLabel", () => {
+  it("labels a message the transcript treats as pending", () => {
+    expect(queuedReplyHintLabel(true)).toBe(QUEUED_REPLY_HINT_LABEL);
   });
 
-  it("labels the synthetic queued_<chatUUID> placeholder", () => {
-    expect(resolveQueuedReplyHint({ uuid: "queued_abc-123" })).toBe(
-      QUEUED_REPLY_HINT_LABEL,
-    );
-  });
-
-  it("stays quiet for delivered, missing or differently-marked messages", () => {
-    expect(
-      resolveQueuedReplyHint({ meta_data: { queue_state: "running" } }),
-    ).toBeNull();
-    expect(resolveQueuedReplyHint({ meta_data: {} })).toBeNull();
-    expect(resolveQueuedReplyHint({ uuid: "real-message-uuid" })).toBeNull();
-    expect(resolveQueuedReplyHint(null)).toBeNull();
+  it("stays quiet for delivered messages", () => {
+    expect(queuedReplyHintLabel(false)).toBeNull();
   });
 });
 
