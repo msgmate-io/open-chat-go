@@ -66,6 +66,7 @@ import {
 import { optimisticResolveActionTask, revalidateChatData } from "../../lib/chat-cache";
 import { latestPendingConfirmableActionId } from "../../lib/confirmable-actions";
 import { isQueuePendingMessage, resolveStatusIndicator } from "../../lib/status-indicator";
+import { queuedReplyHintLabel } from "../../../lib/delivery-mode";
 import { MoreHorizontal } from "lucide-react";
 
 export { PendingMessageItem, ShinyText };
@@ -880,6 +881,8 @@ export function UserMessageItem({
       event_type?: string;
       event_phase?: string;
       confirmable_action_execution?: Record<string, unknown>;
+      /** ci#656: server marker for a message parked behind a live turn. */
+      queue_state?: string;
     };
   };
   chat: { partner?: { is_bot?: boolean; name?: string } };
@@ -892,6 +895,10 @@ export function UserMessageItem({
   const senderMeta = useMemo(() => formatRelativeTime(message.send_at), [message.send_at]);
   const isConfirmableEvent = message.meta_data?.event_type === "confirmable_action_execute";
   const providerRetryEvent = resolveProviderRetryEvent(message.meta_data as Record<string, unknown> | undefined);
+  // ci#656: a message sent into a chat whose bot turn is still running is
+  // persisted immediately but consumed later. Label it so the sender knows it
+  // was accepted and is waiting, instead of looking ignored.
+  const queuedHint = queuedReplyHintLabel(isQueuePendingMessage(message));
 
   return (
     <UserMessageShell
@@ -900,6 +907,16 @@ export function UserMessageItem({
       senderMeta={senderMeta}
       avatarLabel={senderLabel}
       avatarVariant={avatarVariant}
+      footer={
+        queuedHint ? (
+          <div
+            className="text-muted-foreground mt-1 text-xs"
+            data-testid="queued-reply-hint"
+          >
+            {queuedHint}
+          </div>
+        ) : undefined
+      }
     >
       {providerRetryEvent ? (
         <ProviderRetryEventWidget event={providerRetryEvent} />
