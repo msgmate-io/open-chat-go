@@ -866,8 +866,9 @@ func streamChatCompletion(
 			}
 			// ci#724: charge only the calls that actually did work; a
 			// bookkeeping call (see above) never shortens the turn that
-			// scheduled it.
-			roundCounted, roundBudgetExempt := toolCallBudgetAccounting(appended)
+			// scheduled it. The exemption is capped per turn so that it
+			// can never make the turn unbounded.
+			roundCounted, roundBudgetExempt := toolCallBudgetAccounting(appended, budgetExemptToolCalls)
 			totalToolCalls += roundCounted
 			budgetExemptToolCalls += roundBudgetExempt
 			// ci#688: only failures the model can act on consume the
