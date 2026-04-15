@@ -10,19 +10,28 @@ var budgetExemptToolNames = map[string]bool{
 	"coder_schedule": true,
 }
 
-// toolCallBudgetExempt reports whether a call of that tool name is exempt from
-// the turn's total tool-call budget.
+// toolCallBudgetExemptLimit caps how many calls of a single turn may escape the
+// total tool-call budget as bookkeeping. Exempting a tool must never mean
+// "unbounded": a turn that loops on scheduling eventually pays for it like any
+// other work, so the turn still terminates on the same cap as before ci#724.
+const toolCallBudgetExemptLimit = 24
+
+// toolCallBudgetExempt reports whether a call of that tool name is eligible for
+// the turn's total tool-call budget exemption.
 func toolCallBudgetExempt(name string) bool {
 	return budgetExemptToolNames[name]
 }
 
 // toolCallBudgetAccounting splits one round's executed calls into the calls that
-// consume the turn's total tool-call budget and the budget-exempt ones. Keeping
-// it a pure function makes the exemption rule unit-testable without a provider
-// (the toolCallFailureAccounting pattern of ci#688).
-func toolCallBudgetAccounting(calls []executedToolCall) (counted, exempt int) {
+// consume the turn's total tool-call budget and the budget-exempt ones.
+// alreadyExempt is how many calls of this turn were exempted before this round;
+// once the turn reaches toolCallBudgetExemptLimit the remaining bookkeeping calls
+// are charged like ordinary work, which keeps the turn bounded. Keeping it a
+// pure function makes the rule unit-testable without a provider (the
+// toolCallFailureAccounting pattern of ci#688).
+func toolCallBudgetAccounting(calls []executedToolCall, alreadyExempt int) (counted, exempt int) {
 	for _, call := range calls {
-		if call.turnBudgetExempt {
+		if call.turnBudgetExempt && alreadyExempt+exempt < toolCallBudgetExemptLimit {
 			exempt++
 			continue
 		}
