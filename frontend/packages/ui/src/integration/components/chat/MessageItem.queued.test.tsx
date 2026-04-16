@@ -1,17 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { UserMessageItem } from "./MessageItem";
 import { QUEUED_REPLY_HINT_LABEL } from "../../../lib/delivery-mode";
+import { UserMessageItem } from "./MessageItem";
 
 const chat = { partner: { name: "Bot", is_bot: true } };
 
 function render(message: Record<string, unknown>) {
   return renderToStaticMarkup(
-    <UserMessageItem
-      message={message as never}
-      chat={chat as never}
-      selfIsSender
-    />,
+    <UserMessageItem message={message as never} chat={chat as never} selfIsSender />,
   );
 }
 
