@@ -1038,8 +1038,25 @@ export function BotMessageItem({
   };
 
   if (selfIsSender) {
+    // ci#656: a message whose reply is parked behind the chat's live turn
+    // carries the server's `queue_state` marker. Render it as pending instead
+    // of letting it look lost while the running turn finishes. The predicate is
+    // the transcript's existing isQueuePendingMessage; the shared helper only
+    // names the text, so the two cannot drift apart.
+    const queuedReplyHint = queuedReplyHintLabel(isQueuePendingMessage(message));
     return (
-      <UserMessageShell key={message.uuid} senderLabel="You" align="end">
+      <UserMessageShell
+        key={message.uuid}
+        senderLabel="You"
+        align="end"
+        footer={
+          queuedReplyHint ? (
+            <div className="mt-1 text-xs text-muted-foreground" data-testid="queued-reply-hint">
+              {queuedReplyHint}
+            </div>
+          ) : null
+        }
+      >
         {isConfirmableEvent ? <ConfirmableEventIndicator message={message} /> : <MessageMarkdown>{normalizedMessageText}</MessageMarkdown>}
         <FileAttachmentsList attachments={attachments} />
         <ToolInitViewer message={message as { meta_data?: Record<string, unknown> }} />
