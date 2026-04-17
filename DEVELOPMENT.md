@@ -159,6 +159,20 @@ unit test cannot otherwise reach the queue-behind branch).
 
 Regression tests: `backend/workqueue/bot_reply_test.go`.
 
+Frontend wiring lives in `frontend/packages/ui/src/lib/delivery-mode.ts` (pure
+helpers: `buildSendMessageBody`, `isBotReplyDeliveryMode`, `shouldOfferSendNow`,
+`queuedReplyHintLabel`; unit tests in `delivery-mode.test.ts`). The composer
+shows **Send now** next to Stop while a turn is live and the composer has
+content; it sends the draft with `delivery_mode: "interrupt"`. A plain send
+omits the field entirely, so the request body is unchanged from before ci#656
+and the server default (`queued`) still applies. A message whose reply is
+parked behind the live turn renders a pending note under its bubble - the
+predicate stays the transcript's existing `isQueuePendingMessage`
+(`integration/lib/status-indicator.ts`) and the helper only names the label, so
+the two cannot drift apart. Deriving that state from the message's own
+persisted marker keeps the render correct after a reload, where an in-memory
+"was this queued?" flag would be gone.
+
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
 
 When the sandbox node was saturated, a dispatched native `msgmate_coder`

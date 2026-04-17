@@ -15,7 +15,7 @@ import { revalidateChatData } from "../../lib/chat-cache";
 import {
     buildSendMessageBody,
     type BotReplyDeliveryMode,
-} from "../../lib/delivery-mode";
+} from "../../../lib/delivery-mode";
 import { useBreakpoint } from "../utils";
 import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
@@ -200,19 +200,22 @@ export function MessagesScroll({
     ) => {
         // ci#656: normalise into an explicit shape (the union is narrowed here,
         // once) and let the shared helper decide which fields go on the wire.
+        // The explicit `deliveryMode` argument wins; a chat UI extension may
+        // still carry one inside its `ChatUISendPayload`.
         const normalized = Array.isArray(payload)
-            ? { text, attachments: payload, toolInit: undefined }
+            ? { text, attachments: payload, toolInit: undefined, deliveryMode: undefined }
             : {
                   text: payload?.text ?? text,
                   toolInit: payload?.tool_init,
                   attachments: payload?.attachments,
+                  deliveryMode: payload?.delivery_mode,
               };
 
         const messageData = buildSendMessageBody({
             text: normalized.text?.trim(),
             attachments: normalized.attachments,
             toolInit: normalized.toolInit,
-            deliveryMode,
+            deliveryMode: deliveryMode ?? normalized.deliveryMode,
         });
 
         if (!messageData.text && !messageData.attachments) return;
@@ -469,7 +472,6 @@ export function MessagesScroll({
                             isBotResponding={isBotResponding}
                             stopBotResponse={onStopBotResponse}
                             onSendMessage={onSendMessage}
-                            onSendNow={() => onSendMessage(undefined, "interrupt")}
                             ref={inputRef}
                             botConfig={chat?.config}
                             footerMenuItems={
