@@ -268,8 +268,10 @@ func TestSelfMessageSchedulerDropsSupersededFire(t *testing.T) {
 	older := SelfMessageSchedule{BotUserID: 7, ChatUUID: "chat-1", Prompt: "older", Cron: "*/20 * * * *"}
 	olderID, _ := scheduler.Schedule(older)
 	newer := older
+	newer.Prompt = "newer"
 	newer.Cron = "*/5 * * * *"
-	if _, err := scheduler.Schedule(newer); err != nil {
+	newerID, err := scheduler.Schedule(newer)
+	if err != nil {
 		t.Fatalf("second schedule: %v", err)
 	}
 	before := len(*fires)
@@ -288,15 +290,16 @@ func TestSelfMessageSchedulerDropsSupersededFire(t *testing.T) {
 	if !ok {
 		t.Fatal("expected an active schedule")
 	}
-	id, _ := scheduler.Schedule(active)
-	applied, err := scheduler.Fire(active.Key(), id)
-	if err != nil || !applied {
+	if active.Prompt != "newer" {
+		t.Fatalf("active schedule = %+v, want the newest", active)
+	}
+	if _, applied, err := scheduler.Fire(active.Key(), newerID); err != nil || !applied {
 		t.Fatalf("active fire: applied=%v err=%v, want applied", applied, err)
 	}
-	if len(*fires) != before+2 {
+	if len(*fires) != before+1 {
 		t.Fatalf("the active schedule did not reschedule: %v", *fires)
 	}
-	if next, _ := scheduler.NextRun(active.Key()); !next.Equal(now.Add(5*time.Minute)) {
+	if next, _ := scheduler.NextRun(active.Key()); !next.Equal(now.Add(5 * time.Minute)) {
 		t.Fatalf("next run = %s, want %s", next, now.Add(5*time.Minute))
 	}
 }
