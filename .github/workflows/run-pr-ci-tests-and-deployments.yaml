@@ -2449,6 +2449,15 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
 
+      # ci#740: unit-test the sandbox provider-failure classifier so the
+      # "account failure (never retry)" vs "provider unreachable (transient
+      # infrastructure)" decision the sandbox benchmark workflow relies on
+      # cannot silently regress.
+      - name: Sandbox provider failure classifier unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_provider_failure.sh
+
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
