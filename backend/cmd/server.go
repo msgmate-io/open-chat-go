@@ -1192,6 +1192,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 				Queues: map[string]int{
 					queue.QueueDefault: 1,
 				},
+				ErrorHandler: queue.BotReplyTerminalDrain(DB),
 			},
 		)
 
