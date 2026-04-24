@@ -4,6 +4,7 @@ import (
 	"context"
 
 	wsapi "backend/api/websocket"
+	"backend/queue/drain"
 	"backend/queue/tasks"
 	"backend/workqueue"
 
@@ -34,6 +35,13 @@ func (p *Processor) NewServeMux() *asynq.ServeMux {
 		return tasks.HandleIntegrationSchedule(ctx, task, deps)
 	})
 	return mux
+}
+
+// BotReplyTerminalDrain exposes the terminal bot reply drain (ci#656) for the
+// worker's asynq.Config, so a reply task asynq retires instead of running stops
+// leaving its message rendering as queued.
+func BotReplyTerminalDrain(DB *gorm.DB) asynq.ErrorHandler {
+	return drain.BotReplyTerminalDrain(DB)
 }
 
 func (p *Processor) deps() tasks.Deps {
