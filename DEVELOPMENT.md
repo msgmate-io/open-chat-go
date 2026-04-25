@@ -692,3 +692,58 @@ profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
 rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
 `backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
 forward makes `retired` unreachable no matter what the vault says.
+
+## Native agent dispatch - retiring the workflow-only dispatch route (ci#757)
+
+The `trigger-open-chat-coding-interaction.yaml` workflow in the private
+`msgmate-io/open-chat-go-ci` repository is the *legacy* way for a lead agent to
+start another coding agent: it shells out through `coder_bash`
+(`gh workflow run`) and relies on GitHub to deliver the trigger. It stays
+supported as the reproducible, auditable fallback, but it is **deprecated as the
+primary route** for the development lead.
+
+The native route is the in-server agent-dispatch surface documented in
+`backend/api/bots/AgentDispatch.go`, exposed to the native coder (and through the
+hive-mind integration) as the `hive_mind_agent_*` tool family. It mirrors the
+workflow inputs (task message, repo/issue tags, `autonomous`,
+`approve_confirmations`, auto-continue + completion/human markers,
+workspace/sandbox) and adds the continue/stop lifecycle, so a lead agent starts,
+observes, steers and stops peers without a GitHub round-trip and without a
+second, structurally different trigger path to keep in sync:
+
+- `hive_mind_agent_dispatch` - start a named bot with a task, tags, autonomous
+  and auto-continue options; returns the `chat_uuid` to watch.
+- `hive_mind_agent_list` / `hive_mind_agent_get` - list the in-flight and
+  finished interactions and read one transcript.
+- `hive_mind_agent_continue` / `hive_mind_agent_stop` - nudge or stop a peer.
+- `hive_mind_observe_list` / `hive_mind_observe_get` - snapshot what other
+  interactions produced (a plan, a PR, a blocker).
+- `hive_mind_state_get` / `hive_mind_state_set` - durable state that survives a
+  reaped sandbox.
+- `hive_mind_influence` - queue an intervention on an observed interaction.
+
+### Recalling old chat context
+
+Past development chats stay searchable through the interaction-history tools
+(`mcp:open-chat-opencode-mcp:openchat_list_interactions`,
+`openchat_get_interaction`, `openchat_search_interactions`,
+`openchat_search_interaction_messages`), so "what did we already try on this
+issue?" is answerable from inside a dev-agent chat instead of by scrolling the
+server UI.
+
+### Enabling the tools selectively
+
+The families are opt-in per bot/chat through the shared-config `tools` key. An
+**empty** `tools: []` means "not configured": the key is dropped so the
+compiled-in defaults apply (ci#617). To narrow a chat deliberately, list a
+non-empty array. Enable the `hive_mind_*` tools (plus the `mcp:` interaction
+history tools) for lead/dev-agent chats; a leaf worker agent that only
+implements one issue does not need the dispatch family.
+
+### Migration order
+
+1. Enable and verify the native tools for the lead/dev-agent chats on
+   ci.msgmate.io (a dispatch -> observe -> continue/stop round-trip).
+2. Keep both routes until the native route is verified live.
+3. Then retire the workflow from the lead's prompt/config in one consolidation
+   PR and record the version that flipped it, so the change is revertible.
