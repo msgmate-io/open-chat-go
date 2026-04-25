@@ -32,6 +32,11 @@ type providerAdmissionResponse struct {
 	// that won (env:/agent:/pool:/default).
 	EffectiveMaxConcurrency int    `json:"effective_max_concurrency"`
 	EffectiveSource         string `json:"effective_source"`
+	// EffectiveLimitingSource is the single bound that decided
+	// EffectiveMaxConcurrency (`env:KEY`, `agent:KEY`, `pool:KEY` or "default"),
+	// so an operator can see at a glance which lever actually has to move when a
+	// request comes back saturated (ci#620 follow-up).
+	EffectiveLimitingSource string `json:"effective_limiting_source"`
 	EffectiveQueueTimeoutMS int64  `json:"effective_queue_timeout_ms"`
 	// Limiters is the state of every admission key used since process start
 	// (effective cap, in-flight count, queue depth, counters).
@@ -66,6 +71,7 @@ func GetProviderAdmissionStatus(w http.ResponseWriter, r *http.Request) {
 		DefaultMaxConcurrency:   msgmate.DefaultProviderMaxConcurrency,
 		EffectiveMaxConcurrency: effective.MaxConcurrency,
 		EffectiveSource:         effective.Source,
+		EffectiveLimitingSource: effective.LimitingSource(),
 		EffectiveQueueTimeoutMS: effective.QueueTimeout.Milliseconds(),
 		Limiters:                msgmate.ProviderAdmissionStatus(),
 		// ci#662: the memory budget is resolved without a per-agent config here
