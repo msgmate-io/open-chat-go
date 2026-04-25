@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -189,7 +190,131 @@ func TestProcessStreamingResponseReaderKeepsOrdinaryAnswer(t *testing.T) {
 	}
 }
 
-// TestRepetitionLoopResponseCarriesFailureReason checks the metrics hook a
+// TestDetectDegenerateTailFlagsMutatedLineLoop covers the second degeneracy
+// shape of ci#670: a stream that loops one line shape while mutating an embedded
+// detail. The byte-periodic detector cannot see it, but the rolling-window line
+// repetition ratio must, while still leaving ordinary prose and decoration
+// alone.
+func TestDetectDegenerateTailFlagsMutatedLineLoop(t *testing.T) {
+	var mutated strings.Builder
+	for i := 0; i < 4000; i++ {
+		fmt.Fprintf(&mutated, "Writing chunk %d of the output file now.\n", i)
+	}
+	looped := []struct {
+		name string
+		text string
+	}{
+		{"mutated_counter", mutated.String()},
+		{"mutated_counter_plus_prefix", "I inspected the repository and found the bug.\n\n" + mutated.String()},
+		{"mutated_words", strings.Repeat("Still working on the same task step.\n", 1) +
+			strings.Repeat("Waiting for the background job to finish the work.\n", 40)},
+	}
+	for _, tc := range looped {
+		if _, ok := detectDegenerateTail(tc.text); !ok {
+			t.Fatalf("%s: expected the degenerate tail to be detected", tc.name)
+		}
+	}
+
+	clean := []struct {
+		name string
+		text string
+	}{
+		{"empty", ""},
+		{"prose", "The repository uses Go modules for the backend and pnpm for the frontend.\n" +
+			"Tests are split per package, and the PR CI label set drives which suites run.\n" +
+			"Deployments only happen on consolidation PRs targeting the main branch.\n"},
+		{
+			"numbered_steps",
+			"1. read the file\n2. apply the fix\n3. run the tests\n4. open the PR\n" +
+				"5. wait for CI to report\n6. merge after review\n",
+		},
+		{
+			"markdown_table",
+			"| issue | state |\n| --- | --- |\n" +
+				strings.Repeat("| ci#670 | open |\n", 40),
+		},
+		{"ascii_rules", strings.Repeat("+--------+--------+\n", 40) + strings.Repeat("=================\n", 40)},
+		{"bullet_list", strings.Repeat("- a different bullet point each time here\n", 6)},
+	}
+	for _, tc := range clean {
+		if _, ok := detectDegenerateTail(tc.text); ok {
+			t.Fatalf("%s: ordinary output must not be flagged as a degenerate tail", tc.name)
+		}
+	}
+}
+
+// TestApplyRepetitionLoopGuardBoundsKeptPrefix guards the size contract: even a
+// turn that narrated a lot before degenerating keeps at most
+// repetitionGuardMaxKeptBytes bytes ahead of the note, so the persisted blob is
+// always bounded (ci#670).
+func TestApplyRepetitionLoopGuardBoundsKeptPrefix(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 4000; i++ {
+		fmt.Fprintf(&b, "line %d of the long narration before the loop starts\n", i)
+	}
+	b.WriteString(strings.Repeat("Ok.\n", 5000))
+
+	got, looped := applyRepetitionLoopGuard(b.String())
+	if !looped {
+		t.Fatal("expected the guard to fire")
+	}
+	if len(got) > repetitionGuardMaxKeptBytes+len(repetitionLoopNote)+8 {
+		t.Fatalf("kept prefix is not bounded: %d bytes", len(got))
+	}
+	if !strings.Contains(got, "stopped: repeated output detected") {
+		t.Fatalf("expected the note, got %q", got[max(0, len(got)-80):])
+	}
+}
+
+// TestProcessStreamingResponseReaderStopsMutatedLineLoop is the ci#670
+// regression test for the near-duplicate shape: a stream that loops one line
+// shape with a mutated counter must be cut off early instead of persisting the
+// whole repeated blob, and the persisted text must stay bounded.
+func TestProcessStreamingResponseReaderStopsMutatedLineLoop(t *testing.T) {
+	const repeats = 20000
+	prefix := "I inspected the repository and found the bug.\n\n"
+	var stream strings.Builder
+	for i := 0; i < repeats; i++ {
+		fmt.Fprintf(&stream, "Writing chunk %d of the output file now.\n", i)
+	}
+	sse := repetitionTestSSE(prefix+stream.String(), 1)
+
+	chunkChan := make(chan string, 64)
+	usageChan := make(chan *TokenUsage, 2)
+	toolChan := make(chan ToolCall, 8)
+
+	result, err := processStreamingResponseReader(
+		context.Background(),
+		bufio.NewReader(strings.NewReader(sse)),
+		map[string]Tool{},
+		map[string]string{},
+		chunkChan,
+		usageChan,
+		toolChan,
+	)
+	if err != nil {
+		t.Fatalf("a degenerating stream must be cut off without failing the turn, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil result")
+	}
+	if !result.repetitionLoop {
+		t.Fatal("expected the round to be flagged as a repetition loop")
+	}
+	if len(result.aiResponse) > 1024 {
+		t.Fatalf("the persisted text must stay bounded, got %d bytes", len(result.aiResponse))
+	}
+	if !strings.Contains(result.aiResponse, "stopped: repeated output detected") {
+		t.Fatalf("expected the note, got %q", result.aiResponse)
+	}
+	if strings.Count(result.aiResponse, "Writing chunk") > repetitionRatioMinRepeats {
+		t.Fatalf("the repeated run must be truncated, got %d repeats", strings.Count(result.aiResponse, "Writing chunk"))
+	}
+	if result.usedTool {
+		t.Fatal("a degenerating stream must not report a tool call")
+	}
+}
+
 // repetition loop reports: the response record built in processStreamingRequest
 // carries failure_reason=repetition_loop.
 func TestRepetitionLoopResponseCarriesFailureReason(t *testing.T) {

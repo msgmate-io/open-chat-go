@@ -1893,10 +1893,14 @@ func processStreamingResponseReader(
 			// here instead of being persisted verbatim: it used to write
 			// 150–255 KB of the same line into the chat before the turn was
 			// cancelled, polluting the next turn's context and burning the
-			// completion budget on nothing (ci#670). The one-line note is
-			// streamed so the persisted message (built from the streamed
-			// text) ends with a clear statement of why it stops.
-			if _, looping := detectRepetitionLoop(accumulated); looping {
+			// completion budget on nothing (ci#670). detectDegenerateTail
+			// covers both degeneracy shapes — a byte-identical unit repeated
+			// back to back and a single line shape looped with a mutated
+			// detail — so the runaway tail is stopped as soon as it forms.
+			// The one-line note is streamed so the persisted message (built
+			// from the streamed text) ends with a clear statement of why it
+			// stops.
+			if _, looping := detectDegenerateTail(accumulated); looping {
 				repetitionLoopDetected = true
 				chunkChan <- repetitionLoopNote
 				break
