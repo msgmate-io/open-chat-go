@@ -197,9 +197,11 @@ func extractProviderErrorDetail(code int, body string) (string, string) {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		// Not JSON: show a truncated version of the raw body.
+		// Not JSON: show a truncated version of the raw body. The cut stops on a
+		// UTF-8 rune boundary (ci#680): providers echo request content in error
+		// bodies, so a mid-rune cut would surface invalid UTF-8 to the user.
 		if len(trimmed) > 300 {
-			trimmed = trimmed[:300] + "…"
+			trimmed = headOfString(trimmed, 300) + "…"
 		}
 		return summary, trimmed
 	}
@@ -229,7 +231,9 @@ func extractProviderErrorDetail(code int, body string) (string, string) {
 		}
 	}
 	if len(providerMessage) > 300 {
-		providerMessage = providerMessage[:300] + "…"
+		// headOfString: same rune-boundary rule as above - provider messages
+		// quote the request content.
+		providerMessage = headOfString(providerMessage, 300) + "…"
 	}
 	if providerMessage != "" {
 		summary = fmt.Sprintf("%s (%s)", summary, providerMessage)
