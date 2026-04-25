@@ -353,7 +353,11 @@ func isTransientNetworkError(err error) bool {
 func TruncateFailureDetail(detail string) string {
 	detail = strings.TrimSpace(detail)
 	if len(detail) > 300 {
-		detail = detail[:300] + "…"
+		// headOfString keeps the cut on a UTF-8 rune boundary: provider errors
+		// echo request content (which is where a large tool dump ends up), and
+		// a torn rune would put invalid UTF-8 into the user-facing message
+		// instead of trimming it (ci#680).
+		detail = headOfString(detail, 300) + "…"
 	}
 	return detail
 }
