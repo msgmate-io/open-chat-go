@@ -3,7 +3,6 @@ package bots
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,8 @@ import (
 	"backend/nativecoder"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // This file wires the native coder's auto-consolidation default (ci#653) into
@@ -79,7 +80,7 @@ func runAutoConsolidation(db *gorm.DB, chat database.Chat) {
 
 	client, err := nativecoder.ConsolidationClientFactory(repo)
 	if err != nil {
-		log.Printf("auto consolidation: client for %s failed: %v", repo, err)
+		logging.Errorf("auto consolidation: client for %s failed: %v", repo, err)
 		return
 	}
 	if client == nil {
@@ -92,13 +93,13 @@ func runAutoConsolidation(db *gorm.DB, chat database.Chat) {
 	defer cancel()
 	result, runErr := runner.Run(ctx, policy, repo)
 	if runErr != nil {
-		log.Printf("auto consolidation: pass for %s failed: %v", repo, runErr)
+		logging.Errorf("auto consolidation: pass for %s failed: %v", repo, runErr)
 		return
 	}
 	if !result.Ran {
 		return
 	}
-	log.Printf(
+	logging.Debugf(
 		"auto consolidation: repo=%s pr=%d created=%v merged=%v: %s",
 		repo, result.PullRequest, result.Created, result.Merged, result.Plan.Reason,
 	)

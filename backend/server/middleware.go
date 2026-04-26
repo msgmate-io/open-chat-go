@@ -11,12 +11,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"gorm.io/gorm"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"backend/logging"
 )
 
 type Middleware func(http.Handler) http.Handler
@@ -81,10 +82,10 @@ func Logging(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
-		log.Println(wrapped.statusCode, r.Method, r.URL.Path, time.Since(start))
+		logging.Infof("%v %v %v %v", wrapped.statusCode, r.Method, r.URL.Path, time.Since(start))
 
 		if jsonData := r.Context().Value("json"); jsonData != nil {
-			log.Printf("JSON Body: %v", jsonData)
+			logging.Debugf("JSON Body: %v", jsonData)
 		}
 	})
 }
@@ -417,7 +418,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		session, found, err := resolveValidSessionFromRequest(DB, r)
 		if err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
-			log.Println(err)
+			logging.Debugf("%v", err)
 			return
 		}
 		if !found {

@@ -15,7 +15,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -32,6 +31,8 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // generateRandomPassword generates a secure random password with:
@@ -928,12 +929,12 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	defer redisRuntime.Cleanup()
 	if redisRuntime.Mode == queue.RedisModeEmbedded {
 		if redisRuntime.FallbackReason != nil {
-			log.Printf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
+			logging.Errorf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
 		} else {
-			log.Printf("Started embedded redis at %s", redisRuntime.Address)
+			logging.Infof("Started embedded redis at %s", redisRuntime.Address)
 		}
 	} else {
-		log.Printf("Using external redis at %s", redisRuntime.Address)
+		logging.Infof("Using external redis at %s", redisRuntime.Address)
 	}
 
 	queueClient := asynq.NewClient(redisRuntime.ConnOpt)
@@ -1158,7 +1159,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	}); err != nil {
 		return err
 	}
-	log.Printf(
+	logging.Debugf(
 		"Synced default bot provider-key model access bot=%s assigned=%d unassigned=%d skipped_unmanaged=%d skipped_invalid=%d",
 		botUser.Name,
 		providerSyncResult.Assigned,
@@ -1204,7 +1205,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		if workerErr := workerServer.Start(processor.NewServeMux()); workerErr != nil {
 			return fmt.Errorf("embedded asynq worker failed to start: %w", workerErr)
 		}
-		log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
+		logging.Infof("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 	}
 
 	if c.Bool("run-scheduler") {
@@ -1216,7 +1217,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			defer integrationScheduler.Shutdown()
 		}
 	} else {
-		log.Printf("Integration scheduler disabled (run-scheduler=false); another process must own it")
+		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
 
 	serverErrCh := make(chan error, 1)
@@ -1241,13 +1242,13 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			return err
 		}
 	case <-signalCtx.Done():
-		log.Printf("Shutting down server (signal: %v)", signalCtx.Err())
+		logging.Infof("Shutting down server (signal: %v)", signalCtx.Err())
 		forceSigCh := make(chan os.Signal, 1)
 		signal.Notify(forceSigCh, os.Interrupt)
 		defer signal.Stop(forceSigCh)
 		go func() {
 			<-forceSigCh
-			log.Printf("Received additional interrupt; forcing immediate exit")
+			logging.Debugf("Received additional interrupt; forcing immediate exit")
 			os.Exit(130)
 		}()
 		ch.Shutdown()
