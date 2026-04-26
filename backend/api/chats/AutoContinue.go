@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -13,6 +12,8 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // This file implements the native in-product auto-continuation loop (ci#537):
@@ -489,7 +490,7 @@ func maybeAutoContinueInteraction(ctx context.Context, db *gorm.DB, client *asyn
 	}
 
 	if err := scheduleAutoContinuePrompt(ctx, db, client, inspector, chat, receiver, decision); err != nil {
-		log.Printf("auto-continue scheduling failed for chat %s: %v", chat.UUID, err)
+		logging.Errorf("auto-continue scheduling failed for chat %s: %v", chat.UUID, err)
 		return false
 	}
 	return true
@@ -804,7 +805,7 @@ func recordAutoContinueStop(db *gorm.DB, chat database.Chat, state autoContinueS
 	state.PendingSourceMessageID = 0
 	state.StopReason = reason
 	if err := saveAutoContinueState(db, chat.ID, state); err != nil {
-		log.Printf("auto-continue: failed to record stop reason %q for chat %s: %v", reason, chat.UUID, err)
+		logging.Errorf("auto-continue: failed to record stop reason %q for chat %s: %v", reason, chat.UUID, err)
 	}
 }
 

@@ -9,13 +9,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 
 	"backend/database"
 	"backend/workqueue"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // BotReplyFailure describes one failed attempt of a `bot:reply` task, together
@@ -96,7 +97,7 @@ func BotReplyTerminalDrain(DB *gorm.DB) asynq.ErrorHandler {
 
 		var payload workqueue.BotReplyPayload
 		if jsonErr := json.Unmarshal(task.Payload(), &payload); jsonErr != nil {
-			log.Printf("ci#656: could not decode the payload of a retired bot reply: %v", jsonErr)
+			logging.Errorf("ci#656: could not decode the payload of a retired bot reply: %v", jsonErr)
 			return
 		}
 		if payload.MessageUUID == "" {
@@ -106,7 +107,7 @@ func BotReplyTerminalDrain(DB *gorm.DB) asynq.ErrorHandler {
 		var message database.Message
 		if findErr := DB.Where("uuid = ?", payload.MessageUUID).First(&message).Error; findErr != nil {
 			if !errors.Is(findErr, gorm.ErrRecordNotFound) {
-				log.Printf("ci#656: could not load message %s to drop its queued marker: %v", payload.MessageUUID, findErr)
+				logging.Errorf("ci#656: could not load message %s to drop its queued marker: %v", payload.MessageUUID, findErr)
 			}
 			return
 		}
@@ -116,11 +117,11 @@ func BotReplyTerminalDrain(DB *gorm.DB) asynq.ErrorHandler {
 
 		cleared, clearErr := database.ClearMessageQueued(DB, &message)
 		if clearErr != nil {
-			log.Printf("ci#656: could not drop the queued marker on message %s: %v", payload.MessageUUID, clearErr)
+			logging.Errorf("ci#656: could not drop the queued marker on message %s: %v", payload.MessageUUID, clearErr)
 			return
 		}
 		if cleared {
-			log.Printf("ci#656: message %s is no longer queued: its reply was retired without being consumed (%v)", payload.MessageUUID, err)
+			logging.Debugf("ci#656: message %s is no longer queued: its reply was retired without being consumed (%v)", payload.MessageUUID, err)
 		}
 	})
 }

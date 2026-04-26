@@ -5,7 +5,6 @@ import (
 	"backend/database"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +14,8 @@ import (
 	integrationinterface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 type UserLogin struct {
@@ -139,7 +140,7 @@ func publishAuthEvent(r *http.Request, DB *gorm.DB, userID uint, identifier, met
 	}
 	for _, sink := range sinks {
 		if err := sink.Sink(r.Context(), event); err != nil {
-			log.Printf("integration %q auth event sink error: %v", sink.IntegrationName, err)
+			logging.Errorf("integration %q auth event sink error: %v", sink.IntegrationName, err)
 		}
 	}
 }

@@ -3,9 +3,10 @@ package nativecoder
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"backend/logging"
 )
 
 // This file implements the auto-consolidation runner (ci#653): it turns a
@@ -221,7 +222,7 @@ func (r ConsolidationRunner) logf(format string, args ...interface{}) {
 		r.Logf(format, args...)
 		return
 	}
-	log.Printf(format, args...)
+	logging.Debugf(format, args...)
 }
 
 // consolidationTitle renders the consolidation PR title for a plan.
