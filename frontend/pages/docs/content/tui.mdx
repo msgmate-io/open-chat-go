@@ -83,9 +83,11 @@ session works from the terminal too.
 
 Some deployments forward this TUI into a chat's coding sandbox, so a freshly
 provisioned sandbox opens an authenticated TUI attached to the chat
-(`OPENCHAT_SERVER_URL`, `OPENCHAT_CHAT_UUID`, `OPENCHAT_ACCESS_TOKEN`). Install
-the `open-chat-tui` binary in the sandbox image or via the workspace
-`setup_commands`. The integration that provides the forwarding — including how
-the short-lived, audience-bound (`coder-tui`) access token is minted — is
-documented in its own integration docs, which require an account with access;
-open them from the `/integrations` overview.
+(`OPENCHAT_SERVER_URL`, `OPENCHAT_CHAT_UUID`, `OPENCHAT_ACCESS_TOKEN`). Because
+the TUI ships inside the `open-chat` binary as the `tui` integration, the
+sandbox only needs `open-chat` itself on `PATH` — put it in the sandbox image,
+or install it through the workspace `setup_commands` — and the forwarded
+session just runs `open-chat tui`. The integration that provides the forwarding —
+including how the short-lived, audience-bound (`coder-tui`) access token is
+minted — is documented in its own integration docs, which require an account
+with access; open them from the `/integrations` overview.
