@@ -2,13 +2,14 @@ package msgmate
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"backend/logging"
 )
 
 // Context budgeting (ci#680).
@@ -701,7 +702,7 @@ func compactMessagesToContextBudgetReserving(messages []map[string]interface{}, 
 	if stats.MessagesAfter == stats.MessagesBefore && stats.TotalCharsAfter == stats.TotalCharsBefore {
 		return messages, stats, false
 	}
-	log.Printf(
+	logging.Debugf(
 		"Context budget guard (ci#680): %d -> %d chars, %d -> %d messages (evicted tool results=%d narration=%d user=%d dropped=%d)",
 		stats.TotalCharsBefore, stats.TotalCharsAfter, stats.MessagesBefore, stats.MessagesAfter,
 		stats.EvictedToolResults, stats.EvictedNarration, stats.EvictedUserMessages, stats.DroppedMessages,

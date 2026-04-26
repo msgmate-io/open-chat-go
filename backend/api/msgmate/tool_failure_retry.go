@@ -2,9 +2,10 @@ package msgmate
 
 import (
 	"context"
-	"log"
 	"strings"
 	"time"
+
+	"backend/logging"
 )
 
 // This file owns the transient *tool* failure policy of the core tool loop
@@ -295,7 +296,7 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 		}
 		if isSandboxCapacityFailure(runErr) {
 			delay := sandboxCapacityRetryWaitWithOptions(attempt, opts)
-			log.Printf(
+			logging.Debugf(
 				"Tool %s could not be scheduled (attempt %d/%d): %v; retrying in %s (ci#691)",
 				toolName, attempt, attempts, runErr, delay,
 			)
@@ -308,7 +309,7 @@ func runToolWithTransientRetry(ctx context.Context, toolName string, run func() 
 			continue
 		}
 		delay := toolFailureRetryWaitWithOptions(attempt, opts)
-		log.Printf(
+		logging.Debugf(
 			"Tool %s failed transiently (attempt %d/%d): %v; retrying in %s (ci#688)",
 			toolName, attempt, attempts, runErr, delay,
 		)

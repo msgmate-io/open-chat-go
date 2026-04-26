@@ -4,13 +4,14 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 type ListedChat struct {
@@ -79,7 +80,7 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 	if chat.SharedConfig != nil {
 		// The ConfigData is already JSON, just unmarshal it
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
-			log.Printf("Error unmarshaling config data: %v", err)
+			logging.Errorf("Error unmarshaling config data: %v", err)
 		}
 	}
 
@@ -289,7 +290,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Error != nil {
 		// A single corrupt message row must never blank the whole chat list.
 		// Retry without the latest-message preload so the list still renders.
-		log.Printf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
+		logging.Errorf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
 		chats = nil
 		q = query.Scopes(database.Paginate(&chats, &pagination, query)).
 			Preload("User1").
@@ -324,7 +325,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Find(&pinnedChats).Error
 		if pinnedErr != nil {
 			// Never let the pinned top-up break the primary list.
-			log.Printf("Failed to load pinned chats for user %d: %v", user.ID, pinnedErr)
+			logging.Errorf("Failed to load pinned chats for user %d: %v", user.ID, pinnedErr)
 		} else if len(pinnedChats) > 0 {
 			seen := make(map[uint]bool, len(chats))
 			for _, chat := range chats {
