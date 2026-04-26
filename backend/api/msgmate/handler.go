@@ -5,9 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sync"
 	"time"
+
+	"backend/logging"
 )
 
 // FunctionType represents the type of function
@@ -62,7 +63,7 @@ func GetGlobalMsgmateHandler() *MsgmateHandler {
 				functions: make(map[string]*DynamicFunction),
 			},
 		}
-		log.Println("Global MsgmateHandler initialized")
+		logging.Info("Global MsgmateHandler initialized")
 	})
 	return globalHandler
 }
@@ -126,7 +127,7 @@ func (h *MsgmateHandler) RegisterFunction(
 	}
 
 	h.registry.functions[id] = dynamicFunc
-	log.Printf("Registered function: %s (%s) - %s", id, name, description)
+	logging.Infof("Registered function: %s (%s) - %s", id, name, description)
 
 	return nil
 }
@@ -212,7 +213,7 @@ func (h *MsgmateHandler) UpdateFunction(
 	function.Metadata.Tags = tags
 	function.Metadata.UpdatedAt = time.Now()
 
-	log.Printf("Updated function: %s (%s)", id, name)
+	logging.Debugf("Updated function: %s (%s)", id, name)
 	return nil
 }
 
@@ -226,7 +227,7 @@ func (h *MsgmateHandler) DeleteFunction(id string) error {
 	}
 
 	delete(h.registry.functions, id)
-	log.Printf("Deleted function: %s", id)
+	logging.Debugf("Deleted function: %s", id)
 	return nil
 }
 
@@ -286,7 +287,7 @@ func (h *MsgmateHandler) ImportFunctions(data []byte) error {
 		return fmt.Errorf("failed to unmarshal functions: %w", err)
 	}
 
-	log.Printf("Importing %d function metadata records", len(functions))
+	logging.Debugf("Importing %d function metadata records", len(functions))
 	// Note: This only imports metadata, not the actual execute functions
 	// Execute functions would need to be registered separately
 
