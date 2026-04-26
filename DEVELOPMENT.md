@@ -47,6 +47,19 @@ test. The classifier is pinned by
 `development/scripts/tests/test_sandbox_provider_failure.sh`, which runs in the
 Pin Freshness Gate.
 
+The PR-CI progress comments follow the same rule. Every job that upserts the
+`<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
+`repository`/`PR number` pair: pass it through step `env` with the event context
+as fallback (`github.repository` / `github.event.pull_request.number`) and let
+`development/scripts/upsert_pr_ci_progress_comment.sh` own the marker lookup plus
+the create-or-update call. An empty target must log a `::warning::` and skip with
+exit 0 before the first HTTP call — never interpolate a raw
+`needs.*.outputs.*` expression into an `api.github.com` URL, which collapses to
+`repos//issues//comments` and fails the step with `curl: (22) ... 404` (ci#745).
+`development/scripts/test_pr_ci_progress_comment_target.py` and the hermetic
+`development/scripts/tests/test_upsert_pr_ci_progress_comment.sh` pin both halves
+in the Pin Freshness Gate.
+
 #### Autonomous approval and merge of green consolidation PRs
 
 A consolidation PR is always authored by the automation identity, which cannot
