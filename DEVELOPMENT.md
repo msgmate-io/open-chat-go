@@ -150,6 +150,26 @@ upsert, so it must never be fatal:
   `backend/database/sqlite_busy_test.go` reproduce it: a second process takes
   `BEGIN IMMEDIATE` on the same file, the booting process starts writing, and the
   step has to retry and commit exactly one row; a non-lock error still surfaces.
+- The busy retry alone does not stop both pods from running the *same* seed at the
+  same time, which duplicates work and can still collide on unique keys.
+  `database.RunBootstrapSeedOnce` (`backend/database/bootstrap_seed.go`) adds the
+  missing half: exactly one process applies a given seed, the others follow it and
+  then continue. A `bootstrap_seeds` row is claimed with an atomic
+  `INSERT ... ON CONFLICT DO NOTHING`, so only one writer wins even across
+  processes sharing one file; a fingerprint of the seed payload is stored with the
+  claim, so an unchanged payload is applied once and never again while a changed
+  payload (a rollout with new bootstrap config) is re-applied. Claims of a pod that
+  died mid-seed expire after `BootstrapSeedClaimTTL` (5m) and are stolen, so a
+  crashed pod cannot wedge the bootstrap. Every access - including the guard table
+  migration and the completion marker - goes through `RetryOnBusy`. The guard
+  table is created with a plain `CREATE TABLE IF NOT EXISTS` instead of
+  `AutoMigrate`: concurrent `AutoMigrate` calls lose their check-then-create race
+  ("table `bootstrap_seeds` already exists"), which is exactly the overlap the
+  guard has to survive. `bootstrap.users` and `add-bot-from-config` in `runServer`
+  run through `runStartupBootstrapSeedOnce` on top of the retry loop;
+  `backend/cmd/bootstrap_seed_test.go` pins the single-writer behaviour (two pods,
+  one row), the re-apply on changed payload, the lock-overlap survival and the
+  fingerprint stability.
 - Deployment strategy: the SQLite volume is ReadWriteOnce, so the deployment must
   not roll with overlapping pods (`strategy: Recreate` in the
   `msgmate-io/open-chat-go-helm-chart` deployment; the live staging Deployment
