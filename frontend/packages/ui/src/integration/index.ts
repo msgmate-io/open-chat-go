@@ -72,6 +72,17 @@ export {
 } from "./components/chat/turnTimeline";
 export { ProviderRetryEventWidget, resolveProviderRetryEvent, type ProviderRetryEvent } from "./components/chat/ProviderRetryEventWidget";
 export { InteractionChatInfo } from "./components/chat/InteractionChatInfo";
+export {
+  ChatDetailsPanel,
+  ToolDetailsDialog,
+  CHAT_DETAILS_TABS,
+  normalizeToolName,
+  toolSlug,
+  toolTitle,
+  type ChatDetailsTabId,
+  type ChatToolRow,
+  type ChatMCPServerRow,
+} from "./components/chat/ChatDetailsPanel";
 export { MessageInputOptionsMenuItems } from "./components/chat/MessageInputOptionsButton";
 export {
   usePartialMessageStore,
