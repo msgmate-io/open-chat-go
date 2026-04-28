@@ -1054,7 +1054,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	}
 
 	userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
-	if err := runStartupBootstrapDBStep(ctx, "bootstrap.users", func() error {
+	if err := runStartupBootstrapSeedOnce(ctx, DB, "bootstrap.users", userSpecs, func() error {
 		return applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug"))
 	}); err != nil {
 		return err
@@ -1062,7 +1062,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 
 	botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
 	botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
-	if err := runStartupBootstrapDBStep(ctx, "add-bot-from-config", func() error {
+	if err := runStartupBootstrapSeedOnce(ctx, DB, "add-bot-from-config", botSpecs, func() error {
 		return applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug"))
 	}); err != nil {
 		return err
