@@ -2480,6 +2480,18 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_progress_comment_target.py -v
 
+      # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
+      # Deployment of the CI deployment with probe_timeout_too_low,
+      # probe_budget_too_short, startup_probe_missing and
+      # redis_cpu_request_missing - an unbudgeted, unschedulable redis takes the
+      # queue/state endpoint down and leaves fresh interactions dead on arrival.
+      # Pin the read-only contract checker, the emitted strategic-merge patch and
+      # the checked-in patch artifact so they cannot drift apart.
+      - name: Redis probe budget contract unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
+
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
