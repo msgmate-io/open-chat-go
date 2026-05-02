@@ -2303,7 +2303,12 @@ jobs:
 
           case "${{ needs.run-pr-ci-ai-mock-tests.result }}" in
             success) ;;
-            skipped) ;;
+            skipped)
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'ai-test-mock'; then
+                echo "::error::PR CI mocked AI process tests did not run for this commit."
+                exit 1
+              fi
+              ;;
             failure)
               echo "::error::PR CI mocked AI process tests failed."
               exit 1
@@ -2314,12 +2319,8 @@ jobs:
             *)
               echo "::error::PR CI mocked AI process tests ended with unexpected result: ${{ needs.run-pr-ci-ai-mock-tests.result }}"
               exit 1
-               ;;
-           esac
-           if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
-             echo "::error::Tests were not executed despite the test label."
-             exit 1
-           fi
+              ;;
+          esac
 
           case "${{ needs.run-pr-ci-e2e-tests.result }}" in
             success) ;;
@@ -2479,6 +2480,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_progress_comment_target.py -v
+
+      # Pin the mocked-AI merge-gate case so a `skipped` run that was
+      # requested by the `ai-test-mock` label can never satisfy the merge
+      # requirement, and so the dead copy of the go-tests guard cannot come
+      # back.
+      - name: PR CI mocked-AI merge gate unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_ai_mock_gate.py -v
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup
