@@ -50,6 +50,10 @@ type ChatListRow = {
     tags?: string[]
     pinned?: boolean
     partner?: { is_automated?: boolean }
+    // state is the server-resolved interaction state shipped with the list row
+    // (ci#761). It drives the initial badge and the server-side state filter;
+    // the /chats/states poll still overlays the live value.
+    state?: string
 }
 
 export const ExploreChatsIcon = () => (
@@ -629,18 +633,24 @@ export function ChatsList({
         if (timeTo) {
             params.set(TIME_TO_QUERY_PARAM, timeTo)
         }
+        // The state filter is applied server-side (ci#761): it is part of the
+        // SWR key, so selecting a state refetches instead of filtering the rows
+        // that happen to be loaded already. Pinned chats stay subject to it.
+        if (stateFilter) {
+            params.set(STATE_QUERY_PARAM, stateFilter)
+        }
         if (seeAll && isAdmin) {
             params.set("scope", "all")
         }
         return `/api/v1/chats/list?${params.toString()}`
-    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin])
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, stateFilter, timeFrom, timeTo, showChats, seeAll, isAdmin])
 
     // Changing any filter changes the result set, so collapse back to the first
     // painted page (and the small batches backing it) instead of keeping a stale
     // "load more" depth.
     useEffect(() => {
         setPaintedPages(1)
-    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, seeAll])
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, stateFilter, timeFrom, timeTo, seeAll])
 
     const { data: availableTags, mutate: mutateAvailableTags } = useSWR<{ tags?: string[] }>(
         showChats ? `/api/v1/chats/tags` : null,
@@ -1006,11 +1016,9 @@ export function ChatsList({
             }
         )
 
-        // The state filter is resolved client-side from the batch states map;
-        // chats without a resolved state count as idle.
-        const filteredRows = stateFilter
-            ? rows.filter((chat: { uuid: string }) => (chatStateByUuid[chat.uuid] ?? "idle") === stateFilter)
-            : rows
+        // The state filter is applied server-side (ci#761), so the rows already
+        // match the selected state; no render-time state filtering happens here.
+        const filteredRows = rows
 
         if (filteredRows.length === 0) {
             return (
@@ -1038,13 +1046,14 @@ export function ChatsList({
             latest_message_at?: string
             tags?: string[]
             pinned?: boolean
+            state?: string
         }) => (
             <ChatItemCompact
                 chat={chat}
                 key={`chat_${chat.uuid}`}
                 isSelected={chat.uuid === chatUUID}
                 navigateTo={navigateWithFilter}
-                state={chatStateByUuid[chat.uuid]}
+                state={chatStateByUuid[chat.uuid] ?? chat.state}
                 stateTracked={automatedChatUuids.has(chat.uuid)}
                 stateLoading={chatStatesLoading}
                 tags={chat.tags}
