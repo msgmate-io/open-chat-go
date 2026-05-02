@@ -130,3 +130,21 @@ fi
 
 echo
 echo "Integration module CI passed for $WORKSPACE_PATH"
+
+# --- ci#423: integration decoupling report ---------------------------------
+# An integration is *decoupled* once its shipped artifact stops importing
+# backend/... (see development/scripts/check_integration_decoupling.py and the
+# ci#345 design). The migration is incremental, so this is a report by default;
+# set REQUIRE_DECOUPLED=true for an integration whose go.mod cleanup is done to
+# make remaining coupling fail the build.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+guard="$repo_root/development/scripts/check_integration_decoupling.py"
+decoupling_target="${INTEGRATION_SRC:-${WORKSPACE_PATH:-}}"
+if [ -f "$guard" ] && [ -n "$decoupling_target" ] && [ -f "$decoupling_target/go.mod" ]; then
+  if ! python3 "$guard" --module-dir "$decoupling_target"; then
+    if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
+      echo "error: integration is still coupled to backend/... (ci#423)" >&2
+      exit 1
+    fi
+  fi
+fi
