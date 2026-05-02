@@ -27,7 +27,8 @@
 #   2. replace the materialized integration checkout with the pull-request
 #      checkout (so the PR head is what gets compiled, not the pinned ref);
 #   3. gofmt check, `go vet ./...`, `go build ./...` and (optionally)
-#      `go test ./...` in the integration module.
+#      `go test ./...` in the integration module;
+#   4. report whether the module is still coupled to `backend/...` (ci#423).
 #
 # The module is built in ordinary module mode (`GOWORK=off`): the integration
 # `go.mod` relative replacements are the mechanism, exactly as a consumer builds
@@ -39,6 +40,9 @@
 #   WORKSPACE_PATH       workspace-relative path the integration is built at (required)
 #   INTEGRATION_PROFILE  manifest profile to materialize (default: core-only)
 #   RUN_TESTS            "true"/"false" - run `go test ./...` (default: true)
+#   REQUIRE_DECOUPLED    "true"/"false" - fail when the module still imports
+#                        backend/... in its shipped packages (default: false,
+#                        report only while the ci#423 migration is incremental)
 #   FROZEN               "true"/"false" - use the pinned lock (default: true)
 #   GO_TEST_TIMEOUT      per-package test timeout (default: 10m)
 set -euo pipefail
@@ -139,7 +143,8 @@ GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
 if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
   # Measure the materialized workspace: that layout has the relative `replace`
   # targets next to it, so `go list -deps` resolves exactly like the build above.
-  if ! python3 "$GUARD" --module-dir "$WORKSPACE_PATH"; then
+  # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
+  if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
     if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
       echo "::error::integration is still coupled to backend/... (ci#423)" >&2
       exit 1
