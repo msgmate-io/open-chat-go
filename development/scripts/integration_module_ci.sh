@@ -128,23 +128,27 @@ else
   echo "--- go test ./... skipped (RUN_TESTS=false)"
 fi
 
-echo
-echo "Integration module CI passed for $WORKSPACE_PATH"
-
 # --- ci#423: integration decoupling report ---------------------------------
 # An integration is *decoupled* once its shipped artifact stops importing
 # backend/... (see development/scripts/check_integration_decoupling.py and the
 # ci#345 design). The migration is incremental, so this is a report by default;
-# set REQUIRE_DECOUPLED=true for an integration whose go.mod cleanup is done to
-# make remaining coupling fail the build.
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-guard="$repo_root/development/scripts/check_integration_decoupling.py"
-decoupling_target="${INTEGRATION_SRC:-${WORKSPACE_PATH:-}}"
-if [ -f "$guard" ] && [ -n "$decoupling_target" ] && [ -f "$decoupling_target/go.mod" ]; then
-  if ! python3 "$guard" --module-dir "$decoupling_target"; then
+# REQUIRE_DECOUPLED=true turns remaining coupling into a failure and is meant for
+# an integration whose go.mod cleanup has already landed.
+step "Integration decoupling report (ci#423)"
+GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
+if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
+  # Measure the materialized workspace: that layout has the relative `replace`
+  # targets next to it, so `go list -deps` resolves exactly like the build above.
+  if ! python3 "$GUARD" --module-dir "$WORKSPACE_PATH"; then
     if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
-      echo "error: integration is still coupled to backend/... (ci#423)" >&2
+      echo "::error::integration is still coupled to backend/... (ci#423)" >&2
       exit 1
     fi
+    echo "note: coupling is reported, not enforced (set REQUIRE_DECOUPLED=true to enforce)"
   fi
+else
+  echo "skipped: guard script or python3 unavailable"
 fi
+
+echo
+echo "Integration module CI passed for $WORKSPACE_PATH"
