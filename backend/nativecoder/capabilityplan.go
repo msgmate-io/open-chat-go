@@ -197,7 +197,7 @@ var capabilityScenarios = []CapabilityScenario{
 			"the reported git output is the verbatim command output",
 			"the reply contains the marker nonce",
 		},
-		Tracks: []int{390, 514, 630},
+		Tracks: []int{390, 394, 514, 630},
 	},
 	{
 		ID:              "search_semantics_paths",
@@ -262,7 +262,7 @@ var capabilityScenarios = []CapabilityScenario{
 			"the branch and commit hash are reported and real (verifiable with coder_git)",
 			"the reply contains the marker nonce",
 		},
-		Tracks: []int{390, 506, 532, 548, 587},
+		Tracks: []int{390, 394, 506, 532, 548, 587},
 	},
 	{
 		ID:              "auto_continue_incomplete_turn",
@@ -284,7 +284,7 @@ var capabilityScenarios = []CapabilityScenario{
 			"the final turn carries a real summary (never an empty final text)",
 			"the reply contains the marker nonce",
 		},
-		Tracks: []int{390, 709, 724, 642},
+		Tracks: []int{390, 394, 709, 724, 642},
 	},
 	{
 		ID:              "typed_github_pr_flow",
@@ -342,7 +342,7 @@ var capabilityScenarios = []CapabilityScenario{
 			"large tool results are truncated/budgeted before they are fed back to the model",
 			"the reply contains the marker nonce",
 		},
-		Tracks: []int{390, 680, 630},
+		Tracks: []int{390, 394, 680, 630},
 	},
 	{
 		ID:              "tool_budget_cap_summary",
@@ -380,7 +380,7 @@ var capabilityScenarios = []CapabilityScenario{
 			"the parent summarized the sub-agent result instead of re-running the whole investigation",
 			"the reply contains the marker nonce",
 		},
-		Tracks: []int{390, 514},
+		Tracks: []int{390, 394, 514},
 	},
 	{
 		ID:              "shell_modes_background_stream",
@@ -400,7 +400,7 @@ var capabilityScenarios = []CapabilityScenario{
 			"an interactive command received stdin",
 			"the reply contains the marker nonce",
 		},
-		Tracks: []int{390, 630},
+		Tracks: []int{390, 394, 630},
 	},
 	{
 		ID:         "hive_mind_dispatch_observe",

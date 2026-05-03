@@ -793,3 +793,33 @@ profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
 rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
 `backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
 forward makes `retired` unreachable no matter what the vault says.
+
+### Native coder / opencode capability parity (ci#394)
+
+The second half of the replacement goal is *capability*: flipping the fleet is
+pointless while the native `msgmate_coder` agent still misses parts of the
+opencode surface it replaces. `backend/nativecoder/opencodeparity.go` keeps that
+gap list as data - the nine gaps of ci#394 with their sequencing phase
+(`now`/`next`/`later`), status (`open`/`partial`/`closed`), the coder tool that
+closes the gap, the opencode capability it replaces, the tracker tickets and a
+one-line note about the current shortfall:
+
+- `ValidateOpenCodeParityPlan` fails on a malformed registry (duplicate or
+  unknown ids, unknown phase/status, a tool claimed by two gaps, or a `closed`
+  gap naming a tool the coder does not ship), and the unit tests call it for the
+  shipped registry.
+- `RetirementParityBlockers` is the capability gate: while any blocking gap is
+  open it returns one line per gap, and `RetirementReadiness` composes it with
+  the mechanical `RetirementBlockers` above, so "can we drop opencode?" is a
+  single call. Both must be empty.
+- `ParityRetentionEntries` turns the open gaps into the `RetainedParity` reason
+  the migration state requires, so a family still on opencode because of a gap
+  is a recorded exception instead of a silent default.
+- `RenderOpenCodeParityMarkdown` and `OpenCodeParityJSON` render the same data
+  for the private runbook and for run evidence; closing a gap in prose without
+  closing it in the registry no longer matches what the gate reports.
+
+Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
+allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
+image and structured reads, session compaction, and only then the large pieces
+(sub-agents, code search/LSP, per-workspace MCP).
