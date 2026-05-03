@@ -2222,7 +2222,7 @@ jobs:
           needs.run-pr-ci-sandbox-tests-after-deploy.result == 'cancelled'
         env:
           GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
-          PR_CI_SUPERSEDED_WAIT_SECONDS: ${{ vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '1500' }}
+          PR_CI_SUPERSEDED_WAIT_SECONDS: ${{ vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '3600' }}
           # ci#659: a cancelled run holds the `pr-ci-<PR>-<SHA>` concurrency
           # group for as long as this `always()`-gated job waits, so a
           # replacement run for the SAME commit can be starved by us (observed
