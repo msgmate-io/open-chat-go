@@ -60,6 +60,22 @@ API = "https://api.github.com"
 # still pending after 1500s") and reported the required check as failed for a
 # commit whose replacement gate job then concluded success. One hour covers the
 # slowest observed PR CI run with margin.
+#
+# Known residual, by design: this is still a deadline, so it is a cliff, not a
+# fix of the class. An expiry leaves the gate red for a commit whose replacement
+# may pass minutes later; the deadline is kept because it is what stops the gate
+# job hanging forever when a replacement is queued behind a starving runner.
+# What the fix buys is legibility: exit 3 prints `budget-expired:` plus a
+# `::warning::`, so "we gave up waiting" is distinguishable from "the replacement
+# really concluded non-green" (exit 1).
+#
+# Operational backstop for bumping it: if `budget-expired:` ever shows up on a
+# PR CI run whose replacement gate job concludes `success` afterwards, the budget
+# is again shorter than a real run - raise it, or finally replace the deadline
+# with a replacement-driven liveness/heartbeat wait. No test can assert this,
+# because "budget > actual run duration" is environmental, not a property of the
+# code: the tests only pin that the constant is named, singular and shared with
+# the workflow fallback.
 DEFAULT_WAIT_SECONDS = 3600
 
 _SLEEP = time.sleep
