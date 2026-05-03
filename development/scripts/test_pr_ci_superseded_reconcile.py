@@ -346,6 +346,23 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", step)
         self.assertIn("accepted=false", step)
 
+    def test_default_wait_budget_covers_a_whole_replacement_run(self):
+        """ci#659 follow-up: the budget must outlast a full replacement run.
+
+        Run 39370413734 (PR #879, commit 886d6e26) needed 2550s from creation to
+        its gate verdict, so the previous 1500s default expired first and the
+        cancelled run's gate stayed red for a commit whose replacement gate job
+        then concluded success (run 39370411496). Keep the script default and the
+        workflow's `PR_CI_SUPERSEDED_WAIT_SECONDS` default in sync, and keep both
+        above the slowest observed run so the reconciliation is never decided by
+        the budget instead of by the replacement verdict.
+        """
+        self.assertGreaterEqual(mod.DEFAULT_WAIT_SECONDS, 3000)
+        self.assertIn(
+            "vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '%d'" % mod.DEFAULT_WAIT_SECONDS,
+            self.gate,
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
