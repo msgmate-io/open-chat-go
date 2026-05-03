@@ -106,6 +106,15 @@ to remove, only reachable through the budget instead of the reconciliation
 logic. The default is now one hour, pinned to the workflow default by
 `WorkflowWiringTests`.
 
+A longer default is still a threshold, so the expiry path is made
+self-identifying rather than silently shifting the cliff: exit code 3 (budget
+expired before any replacement could testify) prints a `budget-expired:` summary
+line *and* a `::warning::` annotation naming the budget. That keeps a latent-red
+gate from a budget expiry distinguishable in the logs from a replacement run that
+really concluded non-green (exit 1) — the two look identical on the check
+rollup, and the warning tells the maintainer to raise
+`PR_CI_SUPERSEDED_WAIT_SECONDS` instead of debugging the reconciliation.
+
 Because a run of this workflow is close to the 100-item jobs page, the run and
 job listings are read page by page (`api_pages`): a single-page read could miss
 the gate job, mistake the run for one that never gated the commit and adopt the
