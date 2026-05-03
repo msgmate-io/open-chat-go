@@ -32,6 +32,15 @@ WORKFLOW_FILE = "run-pr-ci-tests-and-deployments.yaml"
 GATE_JOB_NAME = "PR Test Merge Requirement"
 API = "https://api.github.com"
 
+# ci#659 follow-up: the wait budget must outlast a *whole* replacement run, not
+# just the gap to its gate job. Run 39370413734 (PR #879, commit 886d6e26) needed
+# 2550s from creation to its gate verdict, so the previous 1500s default expired
+# ~12 minutes early: run 39370411496 timed out ("replacement run 39370413734
+# still pending after 1500s") and reported the required check as failed for a
+# commit whose replacement gate job then concluded success. One hour covers the
+# slowest observed PR CI run with margin.
+DEFAULT_WAIT_SECONDS = 3600
+
 _SLEEP = time.sleep
 _MONOTONIC = time.monotonic
 
@@ -191,7 +200,7 @@ def main(argv=None):
     parser.add_argument(
         "--wait-seconds",
         type=int,
-        default=int(os.environ.get("PR_CI_SUPERSEDED_WAIT_SECONDS") or 1500),
+        default=int(os.environ.get("PR_CI_SUPERSEDED_WAIT_SECONDS") or DEFAULT_WAIT_SECONDS),
     )
     args = parser.parse_args(argv)
 
