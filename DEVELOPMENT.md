@@ -254,6 +254,57 @@ Regression tests: `backend/queue/drain/bot_reply_test.go` (terminal
 classification, plus the drain, the retryable no-op and the isolation cases
 against sqlite).
 
+#### Chat-state filters are applied server-side, before pagination (ci#761)
+
+The sidebar's state filter (`idle`, `active`, `finished`, `failed`,
+`needs_confirmation`) used to run at render time over the chats that happened to
+be loaded, so an active interaction older than the first page looked like it did
+not exist: the UI showed "no active chats" while the server had several.
+
+`GET /api/v1/chats/list` now takes a `state` query parameter (comma-separated
+and/or repeated, case- and space-tolerant; an unknown value is **rejected with
+400** through `parseChatStateFilter` / `ErrInvalidChatStateFilter`). A chat's
+state is not a SQL predicate - it depends on live queue activity, pending user
+confirmations and the newest message - so a request carrying `state` does not use
+the SQL-paginated path at all: `listChatsFilteredByState`
+(`backend/api/chats/ChatStateFilter.go`) resolves the state of the newest
+`ChatStateFilterScanLimit` (1000) chats matching every *other* filter with
+`ResolveChatStates`, paginates only the matching subset itself and reports
+`total` / `total_pages` for that subset, so one bounded request still finds an
+old active chat without pressing "load more".
+
+Semantics that must not drift:
+
+- `ResolveChatStates` is the same resolver `GET /api/v1/chats/states` and the
+  single-chat interaction status use, so the server-side filter and the badge the
+  UI polls can never disagree. A chat whose state cannot be resolved counts as
+  `idle`, so the `idle` filter surfaces it.
+- Pinned chats stay subject to the filter: a matching pin is prepended to the
+  first page and deduplicated by id (like the ci#512 top-up), a non-matching pin
+  (pinned + `finished` while filtering `active`) stays hidden.
+- The asynq inspector is optional in this path: without it, chats whose state
+  depends on the live queue resolve to `idle` instead of failing the whole list.
+- A request **without** `state` keeps the previous code path exactly. It now also
+  carries the resolved state per row (`ListedChat.state`), which is what the
+  sidebar badges from until the `/chats/states` poll overlays the live value.
+
+Frontend (`frontend/packages/ui/src/components/chat/ChatsList.tsx`,
+`chat-list-helpers.ts`): `state` is part of the `useSWRInfinite` key through the
+pure `buildChatListUrl` helper (kept out of the component so the "the selected
+state must be part of the key" behaviour is testable without a browser),
+`stateFilter` is in the dependency list of the effect that resets the painted
+pages, the render-time state filter over loaded rows is gone and the row badge
+falls back to the server-resolved `chat.state`. A request without a selected
+state emits no `state` parameter at all, so the default request keeps its exact
+previous shape.
+
+Regression tests: `backend/api/chats/ChatStateFilter_test.go` (parsing,
+validation, matcher), `backend/api/chats/ChatStateFilterList_test.go` (handler
+level: each supported state, totals/pagination across pages, invalid state, pins,
+and the state filter combined with the sibling filters and search) and the
+"chat list state filter is part of the request key (ci#761)" block in
+`frontend/packages/ui/src/components/chat/chat-list.test.tsx`.
+
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
 
 When the sandbox node was saturated, a dispatched native `msgmate_coder`
