@@ -297,7 +297,11 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 	}
 
 	token := api.GenerateToken()
-	// TODO: make sure sessions expire!
+	// The browser session is a 24h token (expiry above). The auth middleware
+	// rejects it once expired (resolveValidSessionFromRequest) and the
+	// database session sweeper removes the row an hour later
+	// (database.StartSessionSweeper, ci#729 follow-up), so nothing accumulates
+	// here.
 	session := database.Session{
 		Token:  token,
 		Data:   []byte{},
