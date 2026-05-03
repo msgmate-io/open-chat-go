@@ -477,8 +477,9 @@ class WorkflowWiringTests(unittest.TestCase):
         default = self.gate.split("PR_CI_SUPERSEDED_YIELD_SECONDS:")[1].splitlines()[0]
         self.assertIn("'60'", default)
         # Yielding is only reachable while the wait loop is still running, so the
-        # grace window must stay well inside the wait budget.
-        self.assertLess(60, 1500)
+        # grace window must stay well inside the wait budget - whichever budget
+        # the wait job is actually given (ci#659 budget bump included).
+        self.assertLess(60, mod.DEFAULT_WAIT_SECONDS)
 
     def test_gate_stays_red_on_a_yielded_run(self):
         # Exit code 5 (yielded) is non-zero, so the shell maps it to
@@ -486,6 +487,23 @@ class WorkflowWiringTests(unittest.TestCase):
         # replacement run's gate owns the verdict from then on.
         self.assertIn("if [ \"${reconcile_status}\" -eq 0 ]; then", self.gate)
         self.assertIn("accepted=false", self.gate)
+
+    def test_default_wait_budget_covers_a_whole_replacement_run(self):
+        """ci#659 follow-up: the budget must outlast a full replacement run.
+
+        Run 39370413734 (PR #879, commit 886d6e26) needed 2550s from creation to
+        its gate verdict, so the previous 1500s default expired first and the
+        cancelled run's gate stayed red for a commit whose replacement gate job
+        then concluded success (run 39370411496). Keep the script default and the
+        workflow's `PR_CI_SUPERSEDED_WAIT_SECONDS` default in sync, and keep both
+        above the slowest observed run so the reconciliation is never decided by
+        the budget instead of by the replacement verdict.
+        """
+        self.assertGreaterEqual(mod.DEFAULT_WAIT_SECONDS, 3000)
+        self.assertIn(
+            "vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '%d'" % mod.DEFAULT_WAIT_SECONDS,
+            self.gate,
+        )
 
 
 if __name__ == "__main__":
