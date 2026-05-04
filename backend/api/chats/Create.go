@@ -8,13 +8,14 @@ import (
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // applySharedConfigDefaults merges the compiled-in integrations' shared-config
@@ -165,7 +166,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 //	@Failure      500  {string}  string	"Internal server error - failed to marshal attachment metadata" Example("Failed to marshal attachment metadata")
 //	@Router       /api/v1/chats/create [post]
 func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	log.Printf("=== ChatsHandler.Create START ===")
+	logging.Debugf("=== ChatsHandler.Create START ===")
 
 	DB, user, err := util.GetDBAndUser(r)
 
@@ -186,13 +187,13 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Received CreateChat data:")
-	log.Printf("  ContactToken: %s", data.ContactToken)
-	log.Printf("  FirstMessage: %s", data.FirstMessage)
-	log.Printf("  Attachments: %+v", data.Attachments)
-	log.Printf("  ChatType: %s", data.ChatType)
-	log.Printf("  AutoShare: %v", data.AutoShare)
-	log.Printf("  SharedConfig keys: %d", len(data.SharedConfig))
+	logging.Debugf("Received CreateChat data:")
+	logging.Debugf("  ContactToken: %s", data.ContactToken)
+	logging.Debugf("  FirstMessage: %s", data.FirstMessage)
+	logging.Debugf("  Attachments: %+v", data.Attachments)
+	logging.Debugf("  ChatType: %s", data.ChatType)
+	logging.Debugf("  AutoShare: %v", data.AutoShare)
+	logging.Debugf("  SharedConfig keys: %d", len(data.SharedConfig))
 
 	// Security check: Only allow known public chat types for non-admin users.
 	// Admins may use custom chat types.
@@ -242,7 +243,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// Prepare metadata for attachments if any
 		var metaData []byte
 		if len(data.Attachments) > 0 {
-			log.Printf("Processing %d attachments for first message", len(data.Attachments))
+			logging.Debugf("Processing %d attachments for first message", len(data.Attachments))
 			// Validate ownership, share with the receiver and enrich with the
 			// uploaded file's mime type / name / size so the bot reply pipeline
 			// can process (eg vision) attachments.
@@ -262,11 +263,11 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 			metaData, err = json.Marshal(metaDataMap)
 			if err != nil {
-				log.Printf("Failed to marshal attachment metadata: %v", err)
+				logging.Errorf("Failed to marshal attachment metadata: %v", err)
 				http.Error(w, "Failed to marshal attachment metadata", http.StatusInternalServerError)
 				return
 			}
-			log.Printf("Created metadata for attachments: %s", string(metaData))
+			logging.Infof("Created metadata for attachments: %s", string(metaData))
 		}
 
 		message := database.Message{
@@ -308,14 +309,14 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			queueClient, clientErr := util.GetAsynqClient(r)
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)
 			if clientErr != nil || inspectorErr != nil {
-				log.Printf("Failed to access async queue for initial bot reply: clientErr=%v inspectorErr=%v", clientErr, inspectorErr)
+				logging.Errorf("Failed to access async queue for initial bot reply: clientErr=%v inspectorErr=%v", clientErr, inspectorErr)
 			} else {
 				if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
 					ChatUUID:    chat.UUID,
 					MessageUUID: createdMessage.UUID,
 					BotUserID:   otherUser.ID,
 				}); enqueueErr != nil {
-					log.Printf("Failed to enqueue initial bot reply for chat %s: %v", chat.UUID, enqueueErr)
+					logging.Errorf("Failed to enqueue initial bot reply for chat %s: %v", chat.UUID, enqueueErr)
 				}
 			}
 		} else {
@@ -323,7 +324,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			var wsAttachments *[]FileAttachment
 			if len(data.Attachments) > 0 {
 				wsAttachments = &data.Attachments
-				log.Printf("Sending websocket message with %d attachments", len(data.Attachments))
+				logging.Debugf("Sending websocket message with %d attachments", len(data.Attachments))
 			}
 
 			SendWebsocketMessage(ch, otherUser.UUID, chat.UUID, *user, SendMessage{
@@ -348,7 +349,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("=== ChatsHandler.Create END ===")
+	logging.Debugf("=== ChatsHandler.Create END ===")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(listedChat)
 
