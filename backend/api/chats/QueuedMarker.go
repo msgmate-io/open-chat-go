@@ -1,11 +1,11 @@
 package chats
 
 import (
-	"log"
-
 	"backend/database"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // ClearQueuedMarkersForChat drains the ci#656 queued markers of a chat.
@@ -26,10 +26,10 @@ import (
 func ClearQueuedMarkersForChat(DB *gorm.DB, chatID uint, chatUUID string) {
 	drained, err := database.ClearMessageQueuedForChat(DB, chatID)
 	if err != nil {
-		log.Printf("ci#656: failed to drain the queued markers of chat %s: %v", chatUUID, err)
+		logging.Errorf("ci#656: failed to drain the queued markers of chat %s: %v", chatUUID, err)
 		return
 	}
 	if drained > 0 {
-		log.Printf("ci#656: drained %d superseded queued marker(s) of chat %s", drained, chatUUID)
+		logging.Debugf("ci#656: drained %d superseded queued marker(s) of chat %s", drained, chatUUID)
 	}
 }
