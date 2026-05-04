@@ -270,7 +270,10 @@ func truncateToolResultForTool(result, toolName string, limits ToolResultLimits)
 		if tailChars > available {
 			tailChars = available
 		}
-		tail = result[len(result)-tailChars:]
+		// Rune-safe: a byte slice starting mid-rune would put a continuation
+		// byte at the head of the kept tail and make the tool message invalid
+		// UTF-8 for the provider (ci#680).
+		tail = tailOfString(result, tailChars)
 	}
 	middle := result[len(head) : len(result)-len(tail)]
 	notice := fmt.Sprintf(
@@ -285,7 +288,11 @@ func truncateToolResultForTool(result, toolName string, limits ToolResultLimits)
 			excess -= len(tail)
 			tail = ""
 		} else {
-			tail = tail[excess:]
+			// Drop the leading `excess` bytes of the retained tail without
+			// splitting a UTF-8 rune: an elided tool message with a torn rune
+			// is rejected by the provider, which is the very failure ci#680 is
+			// about (the request must survive the cut).
+			tail = tailOfString(tail, len(tail)-excess)
 			excess = 0
 		}
 		if excess > 0 {
@@ -1084,4 +1091,21 @@ func headOfString(s string, maxChars int) string {
 		cut--
 	}
 	return s[:cut]
+}
+
+// tailOfString returns the last maxChars bytes of s, never starting a UTF-8
+// rune mid-sequence: the kept tail of an elided tool output must stay valid
+// UTF-8 or the provider rejects the tool message (ci#680).
+func tailOfString(s string, maxChars int) string {
+	if maxChars <= 0 {
+		return ""
+	}
+	if len(s) <= maxChars {
+		return s
+	}
+	start := len(s) - maxChars
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
