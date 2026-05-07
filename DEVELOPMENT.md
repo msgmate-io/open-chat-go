@@ -109,6 +109,24 @@ reconciler also checks for its own file and emits an `::error::` annotation with
 shipped without the checkout and therefore never engaged (run 39261844509 on
 #844). `WorkflowWiringTests` pins the checkout-before-reconciler ordering.
 
+The same payload-versus-live distinction applies to *every* job, not just the gate
+(ci#659 follow-up). `gh pr create -l ...`, and the default `test` label that
+`no_labels_guidance` attaches in a second API call, both land after the event was
+emitted, so an `opened` payload is label-free. The entry job
+(`run-pr-ci-tests-and-deployments`) used to gate *itself* on that payload and was
+therefore skipped while the always()-gated `PR Test Merge Requirement` read the
+live list and failed with `PR CI did not run for this commit with the test label`,
+for a commit whose suites were never asked to run (run 39373933834 on #880, whose
+sibling run 39373933693 had already been cancelled by concurrency). Every job now
+starts from the live snapshot: the entry job runs on every pull-request event and
+publishes `should_*` outputs derived from the API label list (including
+`should_android_build_test`), and `run-pr-ci-go-tests`, `run-pr-ci-ai-mock-tests`,
+`sandbox-android-image-ensure` and `run-pr-ci-android-build` gate on those outputs.
+No job-level `if:` may read `github.event.pull_request.labels` (only the
+informational `no_labels_guidance` job and the `pin-drift-allowed` escape hatch
+still inspect the payload); `LiveLabelGatingTests` in
+`development/scripts/test_pr_ci_superseded_reconcile.py` pins that.
+
 #### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
 
 The SQLite database lives on a single ReadWriteOnce volume, so two backend
