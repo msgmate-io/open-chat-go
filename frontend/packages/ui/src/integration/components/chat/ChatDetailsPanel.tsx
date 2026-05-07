@@ -19,7 +19,20 @@ import {
   Text,
   TextTypes,
 } from "@open-chat-go/ui";
-import { Check, Copy, ExternalLink, LayoutGrid, List, Search, Server } from "lucide-react";
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  Info,
+  LayoutGrid,
+  List,
+  AlignJustify,
+  Search,
+  Server,
+  Settings2,
+  Wrench,
+  X,
+} from "lucide-react";
 
 export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp";
 
@@ -28,11 +41,15 @@ export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp";
  * sub-section of the details now instead of a standalone dialog, and tools get
  * their own browse view with list/tile layouts and filters.
  */
-export const CHAT_DETAILS_TABS: ReadonlyArray<{ id: ChatDetailsTabId; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "init", label: "Init" },
-  { id: "tools", label: "Tools" },
-  { id: "mcp", label: "MCP servers" },
+export const CHAT_DETAILS_TABS: ReadonlyArray<{
+  id: ChatDetailsTabId;
+  label: string;
+  description: string;
+}> = [
+  { id: "overview", label: "Overview", description: "Model and chat configuration" },
+  { id: "init", label: "Init", description: "Per-tool init payload" },
+  { id: "tools", label: "Tools", description: "Browse and inspect chat tools" },
+  { id: "mcp", label: "MCP servers", description: "Connected MCP integrations" },
 ];
 
 export type ChatToolRow = {
@@ -67,7 +84,7 @@ export type ChatMCPServerRow = {
 type MCPServersResponse = { rows?: ChatMCPServerRow[] };
 
 type ToolScope = "chat" | "all";
-type ToolViewMode = "list" | "grid";
+type ToolViewMode = "list" | "compact" | "grid";
 
 /** Full tool slug, eg `integration:signal_send_message`. */
 export function toolSlug(toolName: string): string {
@@ -233,7 +250,7 @@ export function ToolDetailsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
+      <DialogContent className="max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-4xl overflow-y-auto overscroll-contain sm:w-full">
         <DialogHeader>
           <DialogTitle className="break-words">
             {tool ? toolTitle(tool) : toolTitle(name) || "Tool"}
@@ -244,7 +261,11 @@ export function ToolDetailsDialog({
         </DialogHeader>
 
         <div className="space-y-3">
-          <PanelCard title="Tool slug" hint="Namespaced identifier used in the model tool list.">
+          <PanelCard
+            title="Tool slug"
+            hint="Namespaced identifier used in the model tool list."
+            action={name ? <CopyButton value={name} label="Copy slug" /> : undefined}
+          >
             <code className="block break-all rounded-lg border border-border/60 bg-muted/30 p-2 text-xs">
               {name || "unknown"}
             </code>
@@ -330,9 +351,11 @@ export function ToolDetailsDialog({
             </PanelCard>
           ) : null}
 
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className={cn("grid gap-3", tool?.requires_init ? "md:grid-cols-2" : "")}>
             <SchemaBlock title="Input parameters (call schema)" schema={tool?.call_schema} />
-            <SchemaBlock title="Init parameters (init schema)" schema={tool?.init_schema} />
+            {tool?.requires_init ? (
+              <SchemaBlock title="Init parameters (init schema)" schema={tool?.init_schema} />
+            ) : null}
           </div>
         </div>
       </DialogContent>
@@ -350,134 +373,198 @@ function ToolBadges({ tool }: { tool: ChatToolRow }) {
   );
 }
 
-function ToolsToolbar({
-  query,
-  onQueryChange,
-  typeFilter,
-  onTypeFilterChange,
-  typeOptions,
-  viewMode,
-  onViewModeChange,
-  scope,
-  onScopeChange,
-  showScopeToggle,
-}: {
-  query: string;
-  onQueryChange: (value: string) => void;
-  typeFilter: string;
-  onTypeFilterChange: (value: string) => void;
-  typeOptions: string[];
-  viewMode: ToolViewMode;
-  onViewModeChange: (value: ToolViewMode) => void;
-  scope: ToolScope;
-  onScopeChange: (value: ToolScope) => void;
-  showScopeToggle: boolean;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <div className="relative min-w-[160px] flex-1">
-        <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Search tools..."
-          aria-label="Search tools"
-          className="h-9 pl-7"
-        />
-      </div>
-      {showScopeToggle ? (
-        <div role="group" aria-label="Tool scope" className="surface-sunken flex shrink-0 gap-1 p-1">
-          {(["chat", "all"] as ToolScope[]).map((option) => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={scope === option}
-              onClick={() => onScopeChange(option)}
-              className={cn(
-                "rounded-md px-2 py-1 text-xs transition-colors",
-                scope === option
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {option === "chat" ? "This chat" : "All tools"}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="justify-between">
-            <span className="truncate">Type {typeFilter ? `: ${typeFilter}` : "(all)"}</span>
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel>Filter by tool type</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => onTypeFilterChange("")}>All types</DropdownMenuItem>
-          {typeOptions.map((type) => (
-            <DropdownMenuItem key={type} onClick={() => onTypeFilterChange(type)}>
-              {type}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <div role="group" aria-label="Tool layout" className="surface-sunken flex shrink-0 gap-1 p-1">
-        {(
-          [
-            { mode: "list" as ToolViewMode, label: "List layout", Icon: List },
-            { mode: "grid" as ToolViewMode, label: "Tile layout", Icon: LayoutGrid },
-          ]
-        ).map(({ mode, label, Icon }) => (
-          <button
-            key={mode}
-            type="button"
-            aria-label={label}
-            title={label}
-            aria-pressed={viewMode === mode}
-            onClick={() => onViewModeChange(mode)}
-            className={cn(
-              "rounded-md p-1.5 transition-colors",
-              viewMode === mode
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Icon className="size-4" aria-hidden />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+export type ToolFlagFilter = "" | "init" | "confirm" | "no_init";
 
+const TOOL_FLAG_FILTERS: ReadonlyArray<{ value: ToolFlagFilter; label: string }> = [
+  { value: "", label: "All" },
+  { value: "init", label: "Needs init" },
+  { value: "confirm", label: "Needs confirm" },
+  { value: "no_init", label: "No init" },
+];
+
+const TOOL_VIEW_GRID_CLASSES: Record<ToolViewMode, string> = {
+  list: "flex flex-col gap-1.5",
+  compact: "grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3",
+  grid: "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3",
+};
+
+/**
+ * A single tool in the chat tools browser. `row` is the dense list layout,
+ * `card` the tile layout used by the grid view (ci#749).
+ */
 function ToolCard({
   tool,
   onOpen,
-  compact,
+  density = "card",
 }: {
   tool: ChatToolRow;
   onOpen: () => void;
-  compact?: boolean;
+  density?: "row" | "card";
 }) {
+  const description = tool.description || "No description available.";
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full flex-col items-start gap-1 rounded-xl border border-border/70 bg-card/90 p-3 text-left transition-colors hover:border-border hover:bg-muted/40"
+      aria-label={`View details for ${toolTitle(tool)}`}
+      className={cn(
+        "flex w-full min-w-0 flex-col items-start gap-1 rounded-xl border border-border/70 bg-card/90 p-3 text-left transition-colors hover:border-border hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        density === "row" && "gap-0.5 p-2",
+      )}
     >
       <span className="flex w-full min-w-0 items-center justify-between gap-2">
         <span className="truncate text-sm font-medium text-foreground">{toolTitle(tool)}</span>
         <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
       </span>
       <code className="w-full truncate text-[11px] text-muted-foreground">{toolSlug(tool.name)}</code>
-      <span className={cn("text-xs text-muted-foreground", compact ? "line-clamp-1" : "line-clamp-2")}>
-        {tool.description || "No description available."}
+      <span
+        className={cn(
+          "text-xs text-muted-foreground",
+          density === "row" ? "line-clamp-1" : "line-clamp-3",
+        )}
+      >
+        {description}
       </span>
       <span className="mt-1 flex flex-wrap gap-1">
         <ToolBadges tool={tool} />
       </span>
     </button>
+  );
+}
+
+function ToolsToolbar({
+  query,
+  onQueryChange,
+  typeFilter,
+  onTypeFilterChange,
+  typeOptions,
+  flagFilter,
+  onFlagFilterChange,
+  viewMode,
+  onViewModeChange,
+  scope,
+  onScopeChange,
+  showScopeToggle,
+  onReset,
+  hasActiveFilters,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  typeFilter: string;
+  onTypeFilterChange: (value: string) => void;
+  typeOptions: string[];
+  flagFilter: ToolFlagFilter;
+  onFlagFilterChange: (value: ToolFlagFilter) => void;
+  viewMode: ToolViewMode;
+  onViewModeChange: (value: ToolViewMode) => void;
+  scope: ToolScope;
+  onScopeChange: (value: ToolScope) => void;
+  showScopeToggle: boolean;
+  onReset: () => void;
+  hasActiveFilters: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[160px] flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search tools..."
+            aria-label="Search tools"
+            className="h-9 pl-7"
+          />
+        </div>
+        {showScopeToggle ? (
+          <div role="group" aria-label="Tool scope" className="surface-sunken flex shrink-0 gap-1 p-1">
+            {(["chat", "all"] as ToolScope[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={scope === option}
+                onClick={() => onScopeChange(option)}
+                className={cn(
+                  "rounded-md px-2 py-1 text-xs transition-colors",
+                  scope === option
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {option === "chat" ? "This chat" : "All tools"}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="justify-between">
+              <span className="truncate">Type {typeFilter ? `: ${typeFilter}` : "(all)"}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Filter by tool type</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onTypeFilterChange("")}>All types</DropdownMenuItem>
+            {typeOptions.map((type) => (
+              <DropdownMenuItem key={type} onClick={() => onTypeFilterChange(type)}>
+                {type}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div role="group" aria-label="Tool layout" className="surface-sunken flex shrink-0 gap-1 p-1">
+          {(
+            [
+              { mode: "list" as ToolViewMode, label: "List layout", Icon: List },
+              { mode: "compact" as ToolViewMode, label: "Compact layout", Icon: AlignJustify },
+              { mode: "grid" as ToolViewMode, label: "Tile layout", Icon: LayoutGrid },
+            ] as const
+          ).map(({ mode, label, Icon }) => (
+            <button
+              key={mode}
+              type="button"
+              aria-label={label}
+              title={label}
+              aria-pressed={viewMode === mode}
+              onClick={() => onViewModeChange(mode)}
+              className={cn(
+                "rounded-md p-1.5 transition-colors",
+                viewMode === mode
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="size-4" aria-hidden />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        {TOOL_FLAG_FILTERS.map((option) => (
+          <button
+            key={option.value || "all"}
+            type="button"
+            aria-pressed={flagFilter === option.value}
+            onClick={() => onFlagFilterChange(option.value)}
+            className={cn(
+              "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+              flagFilter === option.value
+                ? "border-primary/40 bg-primary/10 text-foreground"
+                : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground",
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+        {hasActiveFilters ? (
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={onReset}>
+            <X className="mr-1 h-3 w-3" aria-hidden /> Reset filters
+          </Button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -487,20 +574,30 @@ function ToolsTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) 
   const { data, isLoading } = useSWR<ToolsResponse>("/api/v1/tools?page=1&page_size=400", fetcher);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [flagFilter, setFlagFilter] = useState<ToolFlagFilter>("");
   const [viewMode, setViewMode] = useState<ToolViewMode>("list");
   const [scope, setScope] = useState<ToolScope>(configuredTools.length > 0 ? "chat" : "all");
   const [detailTool, setDetailTool] = useState<ChatToolRow | null>(null);
 
   const toolsBySlug = useMemo(() => {
+    // The chat config stores tool slugs that may be namespaced (eg
+    // `integration:signal_send_message`) while the catalog can expose either
+    // form, so index by the full slug *and* the normalized short name (ci#749).
     const map = new Map<string, ChatToolRow>();
-    (data?.rows ?? []).forEach((tool) => map.set(tool.name, tool));
+    (data?.rows ?? []).forEach((tool) => {
+      map.set(tool.name, tool);
+      map.set(normalizeToolName(tool.name), tool);
+      if (tool.function_name) map.set(tool.function_name, tool);
+    });
     return map;
   }, [data?.rows]);
 
   const rows = useMemo(() => {
     const source: ChatToolRow[] =
       scope === "chat"
-        ? configuredTools.map((slug) => toolsBySlug.get(normalizeToolName(slug)) ?? { name: slug })
+        ? configuredTools.map(
+            (slug) => toolsBySlug.get(slug) ?? toolsBySlug.get(normalizeToolName(slug)) ?? { name: slug },
+          )
         : (data?.rows ?? []);
     return source;
   }, [configuredTools, data?.rows, scope, toolsBySlug]);
@@ -519,12 +616,22 @@ function ToolsTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) 
     const needle = query.trim().toLowerCase();
     return rows.filter((tool) => {
       if (typeFilter && (tool.type || "tool") !== typeFilter) return false;
+      if (flagFilter === "init" && !tool.requires_init) return false;
+      if (flagFilter === "confirm" && !tool.requires_confirmation) return false;
+      if (flagFilter === "no_init" && tool.requires_init) return false;
       if (!needle) return true;
       return [tool.name, tool.function_name, toolTitle(tool), tool.description]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
     });
-  }, [query, rows, typeFilter]);
+  }, [flagFilter, query, rows, typeFilter]);
+
+  const hasActiveFilters = Boolean(query.trim() || typeFilter || flagFilter);
+  const resetFilters = () => {
+    setQuery("");
+    setTypeFilter("");
+    setFlagFilter("");
+  };
 
   return (
     <div className="space-y-3">
@@ -534,11 +641,15 @@ function ToolsTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) 
         typeFilter={typeFilter}
         onTypeFilterChange={setTypeFilter}
         typeOptions={typeOptions}
+        flagFilter={flagFilter}
+        onFlagFilterChange={setFlagFilter}
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         scope={scope}
         onScopeChange={setScope}
         showScopeToggle={configuredTools.length > 0}
+        onReset={resetFilters}
+        hasActiveFilters={hasActiveFilters}
       />
 
       <div className="flex items-center justify-between gap-2">
@@ -556,16 +667,15 @@ function ToolsTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) 
         <Text type={TextTypes.Body7} color="muted">
           No tools match the current filters.
         </Text>
-      ) : viewMode === "list" ? (
-        <div className="flex flex-col gap-1.5">
-          {filtered.map((tool) => (
-            <ToolCard key={tool.name} tool={tool} compact onOpen={() => setDetailTool(tool)} />
-          ))}
-        </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className={TOOL_VIEW_GRID_CLASSES[viewMode]}>
           {filtered.map((tool) => (
-            <ToolCard key={tool.name} tool={tool} onOpen={() => setDetailTool(tool)} />
+            <ToolCard
+              key={tool.name}
+              tool={tool}
+              density={viewMode === "grid" ? "card" : "row"}
+              onOpen={() => setDetailTool(tool)}
+            />
           ))}
         </div>
       )}
@@ -605,6 +715,11 @@ function InitTab({ chat, isSharedView }: { chat: any; isSharedView: boolean }) {
         hint="The `tool_init` object this chat passes to integrations when tools require init."
         action={hasInit ? <CopyButton value={pretty} label="Copy JSON" /> : undefined}
       >
+        <Text type={TextTypes.Body7} color="muted" className="mb-2 block">
+          {hasInit
+            ? `${entries.length} tool(s) carry init data. Init values are passed to the integration on every tool call.`
+            : "This chat runs without per-tool init data."}
+        </Text>
         {hasInit ? (
           <CodeBlock className="max-h-64" value={pretty} />
         ) : (
@@ -683,8 +798,32 @@ function OverviewTab({ chat, user }: { chat: any; user?: any }) {
   const partner = chat?.partner;
   const chatTitle = (chat?.settings?.title || "").trim();
 
+  const configuredTools: string[] = Array.isArray(config?.tools) ? config.tools : [];
+  const initEntries =
+    config?.tool_init && typeof config.tool_init === "object"
+      ? Object.keys(config.tool_init as Record<string, unknown>)
+      : [];
+
   return (
     <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+      <PanelCard
+        title="Configuration"
+        hint="Counts of the tools and init data attached to this chat."
+        className="md:col-span-2 xl:col-span-3"
+      >
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">
+            <Wrench className="mr-1 h-3 w-3" aria-hidden />
+            {configuredTools.length} tool(s)
+          </Badge>
+          <Badge variant={initEntries.length > 0 ? "secondary" : "outline"}>
+            {initEntries.length} tool init entr(ies)
+          </Badge>
+          <Badge variant="outline">Backend: {config.backend ?? "-"}</Badge>
+          {chat?.settings?.title ? <Badge variant="outline">Custom title</Badge> : null}
+        </div>
+      </PanelCard>
+
       <PanelCard title="Model">
         <KeyValueList
           entries={[
@@ -724,6 +863,13 @@ function OverviewTab({ chat, user }: { chat: any; user?: any }) {
   );
 }
 
+const CHAT_DETAILS_TAB_ICONS: Record<ChatDetailsTabId, typeof Info> = {
+  overview: Info,
+  init: Settings2,
+  tools: Wrench,
+  mcp: Server,
+};
+
 /**
  * Tabbed chat details body (ci#749). Rendered inside the collapsible chat
  * details card; the tab selection is owned by the caller so header menu items
@@ -751,22 +897,25 @@ export function ChatDetailsPanel({
       >
         {CHAT_DETAILS_TABS.map((tab) => {
           const isActive = tab.id === activeTab;
+          const Icon = CHAT_DETAILS_TAB_ICONS[tab.id];
           return (
             <button
               key={tab.id}
               type="button"
               role="tab"
               id={`chat-details-tab-${tab.id}`}
+              title={tab.description}
               aria-selected={isActive}
               aria-controls={`chat-details-panel-${tab.id}`}
               onClick={() => onTabChange(tab.id)}
               className={cn(
-                "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-[color,box-shadow,background-color]",
+                "flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-[color,box-shadow,background-color]",
                 isActive
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
               )}
             >
+              <Icon className="h-3.5 w-3.5" aria-hidden />
               {tab.label}
             </button>
           );
@@ -777,7 +926,8 @@ export function ChatDetailsPanel({
         role="tabpanel"
         id={`chat-details-panel-${activeTab}`}
         aria-labelledby={`chat-details-tab-${activeTab}`}
-        className="max-h-[60vh] overflow-y-auto pr-0.5"
+        tabIndex={0}
+        className="max-h-[min(60vh,32rem)] overflow-y-auto overscroll-contain pr-0.5"
       >
         {activeTab === "overview" ? <OverviewTab chat={chat} user={user} /> : null}
         {activeTab === "init" ? <InitTab chat={chat} isSharedView={isSharedView} /> : null}
