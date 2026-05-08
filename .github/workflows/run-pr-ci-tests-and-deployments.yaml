@@ -2492,6 +2492,23 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
 
+      # ci#722 (continued): the live patch above is undone by the next
+      # `helm upgrade`, because the private Helm chart still renders the redis
+      # container with the kubelet probe defaults and no CPU request. Render that
+      # template and check it against the same contract, so the recurring
+      # re-failure (and the ci#638 queue/state eviction) has to be fixed in the
+      # chart, not only in the live object.
+      - name: Redis chart readiness contract unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_redis_chart_readiness_contract.py -v
+
+      - name: Redis chart readiness contract (checked-in chart template)
+        run: |
+          set -euo pipefail
+          python3 development/scripts/redis_chart_readiness_contract.py \
+            --chart-file development/redis-readiness/chart-redis-template.after.yaml
+
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
