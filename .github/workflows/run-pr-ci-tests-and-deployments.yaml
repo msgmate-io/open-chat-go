@@ -2223,6 +2223,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
           PR_CI_SUPERSEDED_WAIT_SECONDS: ${{ vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '1500' }}
+          # ci#659: a cancelled run holds the `pr-ci-<PR>-<SHA>` concurrency
+          # group for as long as this `always()`-gated job waits, so a
+          # replacement run for the SAME commit can be starved by us (observed
+          # on #892: run 39407028825 stayed `pending` for 12+ minutes with an
+          # empty repository queue). Once a replacement has been unable to
+          # start for this many seconds the reconciler cancels this run to hand
+          # the group over and reports accepted=false; the replacement run's
+          # gate owns the verdict from then on.
+          PR_CI_SUPERSEDED_YIELD_SECONDS: ${{ vars.PR_CI_SUPERSEDED_YIELD_SECONDS || '60' }}
         run: |
           set -uo pipefail
           set +e
