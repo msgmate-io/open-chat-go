@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"backend/logging"
+	"backend/nativecoder"
 	"bufio"
 	"bytes"
 	"context"
@@ -1026,6 +1027,15 @@ func appendExecutedToolCalls(
 		})
 
 		modelToolResult, cut := truncateToolResultForTool(call.result, call.name, limits)
+		// ci#739: a failed `coder_*` call whose output shows the sandbox
+		// toolchain was not on PATH or the private integration modules were
+		// never materialized is a workspace-provisioning problem, not a code
+		// defect. Append the readiness guidance *after* truncation so the
+		// budget can never cut it off, and only for failed calls so a
+		// successful run whose output happens to mention a module is untouched.
+		if call.status == ToolCallStatusFailed {
+			modelToolResult = nativecoder.FrameSandboxFailureGuidance(call.name, modelToolResult)
+		}
 		if cut {
 			truncatedResults++
 			logging.Debugf(
