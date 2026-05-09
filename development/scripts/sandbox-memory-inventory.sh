@@ -13,6 +13,11 @@
 #   * the resulting "agents per pool" suggestion including the headroom sandbox
 #     and the 10% default reserve used by `ResolveSandboxMemoryBudget`
 #     (backend/api/msgmate/sandbox_memory_budget.go),
+#   * the credential lifecycle of the same pool (ci#614): the effective scope
+#     (per-agent, the ci#546 rule), whether a pool pod restart replays
+#     provisioning for every live workspace bound to the pool, and the credential
+#     TTL relative to the reaper idle TTL — reported as
+#     `sandbox_credentials key=value`, never a credential value,
 #   * best-effort `kubectl top nodes` / `top pods` readings when a metrics
 #     server is installed (their absence is reported, never fatal).
 #
@@ -292,6 +297,22 @@ report "sandbox_memory reserve=$(format_bytes "$reserve_bytes") reserve_source=$
 report "sandbox_memory sandboxes_that_fit=$fits agents_per_pool_configured=$AGENTS_PER_POOL effective_agents_per_pool=$max_agents headroom=$(format_bytes "$((usable_bytes - max_agents * request_bytes))")"
 report "sandbox_memory source=measured"
 report "sandbox_memory replay_env OCI_MSGMATE_CODER_SANDBOX_MEMORY_REQUEST=$(format_bytes "$request_bytes") OCI_MSGMATE_CODER_SANDBOX_MEMORY_LIMIT=$(format_bytes "$limit_bytes") OCI_MSGMATE_CODER_NODE_ALLOCATABLE_MEMORY=$(format_bytes "$min_allocatable") OCI_MSGMATE_CODER_SANDBOX_MEMORY_RESERVE=$(format_bytes "$reserve_bytes")"
+
+# --- credential lifecycle of the same pool (ci#614) --------------------------
+# Credentials are per-agent since ci#603, so every workspace bound to a pool owns
+# its own HOME and must be re-provisioned when the pool pod (re)starts. This block
+# reports the *configuration* of that replay: it is a report, not a probe, and it
+# never carries a credential value.
+cred_scope="${OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_SCOPE:-per_agent}"
+cred_ttl="${OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_TTL_SECONDS:-1800}"
+cred_refresh="${OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_REFRESH_AHEAD_SECONDS:-300}"
+cred_replay="${OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_REPROVISION_ON_RESTART:-true}"
+if [[ "$cred_ttl" =~ ^[0-9]+$ ]] && ((cred_ttl >= IDLE_TTL_SECONDS)); then
+  report "sandbox_credentials note=credential_ttl_${cred_ttl}s_not_below_reaper_idle_ttl_${IDLE_TTL_SECONDS}s: a still-attached agent can see an expired credential"
+fi
+report "sandbox_credentials scope=$cred_scope ttl_seconds=$cred_ttl refresh_ahead_seconds=$cred_refresh"
+report "sandbox_credentials reprovision_on_restart=$cred_replay reaper_idle_ttl_seconds=$IDLE_TTL_SECONDS per_agent_home=OCI_MSGMATE_CODER_WORKSPACE_HOME session_env=GH_TOKEN,GITHUB_TOKEN"
+report "sandbox_credentials replay_env OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_SCOPE OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_TTL_SECONDS OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_REFRESH_AHEAD_SECONDS OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_REPROVISION_ON_RESTART"
 
 # --- 4. live usage, if a metrics server answers (never fatal) ----------------
 top_nodes="$("$KUBECTL" top nodes --no-headers 2>/dev/null || true)"

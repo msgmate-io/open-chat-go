@@ -68,6 +68,23 @@ expect "sandbox_memory smallest_node=node-a smallest_allocatable=16Gi"
 expect "sandbox_memory sandboxes_that_fit=7 agents_per_pool_configured=1 effective_agents_per_pool=6"
 expect "sandbox_memory source=measured"
 expect "OCI_MSGMATE_CODER_SANDBOX_MEMORY_REQUEST=2Gi"
+# credential lifecycle of the same pool (ci#614): reported, never a value
+expect "sandbox_credentials scope=per_agent ttl_seconds=1800 refresh_ahead_seconds=300"
+expect "sandbox_credentials reprovision_on_restart=true reaper_idle_ttl_seconds=2700"
+expect "OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_REPROVISION_ON_RESTART"
+# a credential TTL that outlives the reaper idle TTL is called out, because a
+# still-attached agent would then see an expired credential
+cred_out="$(KUBECTL="$work/kubectl" SANDBOX_NAMESPACE=open-chat-sandboxes \
+  OCI_MSGMATE_CODER_SANDBOX_CREDENTIAL_TTL_SECONDS=3600 bash "$script")"
+grep -qF "sandbox_credentials note=credential_ttl_3600s_not_below_reaper_idle_ttl_2700s" <<<"$cred_out" || {
+  echo "FAIL: a credential TTL above the reaper idle TTL must be reported" >&2
+  fail=1
+}
+# the whole report must stay free of credential *values*
+if grep -qiE 'gh[pousr]_[A-Za-z0-9]{16,}|token=[^ ]' <<<"$out$cred_out"; then
+  echo "FAIL: the inventory report must never carry a credential value" >&2
+  fail=1
+fi
 # no metrics server is reported as such, never fatal
 expect "sandbox_memory top_node=unavailable"
 expect "sandbox_memory top_pods=unavailable"
