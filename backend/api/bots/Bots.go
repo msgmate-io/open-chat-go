@@ -1484,6 +1484,14 @@ func createBotInteraction(
 	if repo := nativecoder.AutoSandboxRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides); repo != "" {
 		effectiveConfig = nativecoder.WithAutoSandboxRepo(effectiveConfig, repo)
 	}
+	// ci#756: a native coder interaction also prepares the full development
+	// set-up of the repository it works on *before* the agent starts, so the
+	// first tool call already sees submodules and the build tooling (helm, ci,
+	// mobile, ...) the requested profile pulls in. The resolved repository is
+	// the one the sandbox clones (`repo:<...>` tag, else the effective config's
+	// repo key); an explicit `coder_sandbox_setup_commands` script always wins,
+	// and non-coder interactions are untouched.
+	effectiveConfig = nativecoder.WithDevSetup(effectiveConfig, nativecoder.DevSetupRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides), nativecoder.DevSetupEnvValue())
 	// ci#413 follow-up: the same dispatch can name the branch the per-chat
 	// sandbox should check out (`branch:<name>` tag), eg the branch of an open
 	// pull request, so a re-run for that PR resumes the right checkout instead of

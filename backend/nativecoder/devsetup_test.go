@@ -1,0 +1,115 @@
+package nativecoder
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestDevSetupRoundTrip pins the ci#756 contract: a native coder interaction
+// that knows its repository gets a development set-up script materialized into
+// `coder_sandbox_setup_commands`, an interaction without a repository does not,
+// and an explicitly configured script always wins.
+func TestDevSetupRoundTrip(t *testing.T) {
+	if got := DevSetupRepoForInteraction(nil, nil, nil, nil); got != "" {
+		t.Fatalf("no inputs must not resolve a repository, got %q", got)
+	}
+	if spec := DevSetupSpecForRepo("someone/unknown-repo"); spec.Enabled {
+		t.Fatal("an unknown repository must not get a built-in plan")
+	}
+
+	spec := DevSetupSpecForRepo("msgmate-io/open-chat-go")
+	if !spec.Enabled || spec.Profile != DevSetupProfileDefault || !spec.Submodules {
+		t.Fatalf("known development repo must resolve the full default profile, got %#v", spec)
+	}
+	if DevSetupScript(spec) == "" {
+		t.Fatal("expected a non-empty development set-up script")
+	}
+
+	cfg := map[string]interface{}{"coder_sandbox_template": "full-development"}
+	out := WithDevSetup(cfg, "msgmate-io/open-chat-go", "")
+	if _, mutated := cfg[SandboxSetupCommandsConfigKey]; mutated {
+		t.Fatal("WithDevSetup must not mutate its input config")
+	}
+	script, ok := out[SandboxSetupCommandsConfigKey].(string)
+	if !ok || script == "" {
+		t.Fatalf("expected a materialized set-up script, got %#v", out[SandboxSetupCommandsConfigKey])
+	}
+
+	// A non-coder agent is never touched.
+	if got := WithDevSetup(map[string]interface{}{"model": "gpt"}, "msgmate-io/open-chat-go", ""); got[SandboxSetupCommandsConfigKey] != nil {
+		t.Fatal("non-coder configs must stay unchanged")
+	}
+
+	// An explicitly configured script must be preserved verbatim.
+	explicit := map[string]interface{}{
+		"coder_sandbox_template":      "full-development",
+		SandboxSetupCommandsConfigKey: "echo custom",
+	}
+	if got := WithDevSetup(explicit, "msgmate-io/open-chat-go", ""); got[SandboxSetupCommandsConfigKey] != "echo custom" {
+		t.Fatalf("explicit script must win, got %#v", got[SandboxSetupCommandsConfigKey])
+	}
+
+	// The environment kill-switch rolls the per-repo default back.
+	if got := WithDevSetup(cfg, "msgmate-io/open-chat-go", "0"); got[SandboxSetupCommandsConfigKey] != nil {
+		t.Fatal("kill-switch must disable the automatic set-up")
+	}
+
+	// An explicit per-interaction declaration still applies while the
+	// deployment-wide default is off.
+	if got := WithDevSetup(
+		map[string]interface{}{"coder_sandbox_template": "full-development", DevSetupConfigKey: "full-android"},
+		"",
+		"0",
+	); got[SandboxSetupCommandsConfigKey] == nil {
+		t.Fatal("explicit per-interaction plan must survive the kill-switch")
+	}
+}
+
+// TestDevSetupRepoForInteractionNormalizes checks that the interaction repo
+// (explicit override wins over the effective config) is normalized to owner/name.
+func TestDevSetupRepoForInteractionNormalizes(t *testing.T) {
+	overrides := map[string]interface{}{"git_repo": "https://github.com/msgmate-io/open-chat-go.git"}
+	if got := DevSetupRepoForInteraction(nil, nil, nil, overrides); got != "msgmate-io/open-chat-go" {
+		t.Fatalf("expected normalized repository, got %q", got)
+	}
+	if got := DevSetupRepoForInteraction(nil, []string{"repo:msgmate-io/open-chat-go-ci"}, nil, nil); got != "msgmate-io/open-chat-go-ci" {
+		t.Fatalf("expected repository from tag, got %q", got)
+	}
+}
+
+// TestResolveDevSetupExplicit pins the configurable per-interaction shape.
+func TestResolveDevSetupExplicit(t *testing.T) {
+	spec, ok := ResolveDevSetup(map[string]interface{}{DevSetupConfigKey: "full-android"})
+	if !ok || spec.Profile != "full-android" || !spec.Submodules {
+		t.Fatalf("string profile must resolve, got %#v ok=%v", spec, ok)
+	}
+
+	spec, ok = ResolveDevSetup(map[string]interface{}{
+		DevSetupConfigKey: map[string]interface{}{
+			"profile":    "full-ci",
+			"submodules": false,
+			"repos":      []interface{}{"msgmate-io/open-chat-go-build-tools"},
+			"commands":   "echo warm-cache",
+		},
+	})
+	if !ok || spec.Profile != "full-ci" || spec.Submodules {
+		t.Fatalf("map form must resolve, got %#v ok=%v", spec, ok)
+	}
+	if len(spec.ExtraRepos) != 1 || len(spec.Commands) != 1 {
+		t.Fatalf("map form must carry repos/commands, got %#v", spec)
+	}
+	script := DevSetupScript(spec)
+	if !strings.Contains(script, "openchat-integrations prepare --profile full-ci") || !strings.Contains(script, "echo warm-cache") {
+		t.Fatalf("script must run the profile and the extra command, got %q", script)
+	}
+
+	if _, ok := ResolveDevSetup(map[string]interface{}{}); ok {
+		t.Fatal("missing key must not resolve a plan")
+	}
+	if _, ok := ResolveDevSetup(map[string]interface{}{DevSetupConfigKey: false}); ok {
+		t.Fatal("explicit false must disable the plan")
+	}
+	if _, ok := ResolveDevSetup(map[string]interface{}{DevSetupConfigKey: "rm -rf /"}); ok {
+		t.Fatal("values outside the profile charset must be rejected")
+	}
+}
