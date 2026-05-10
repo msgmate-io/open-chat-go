@@ -1735,6 +1735,13 @@ func processParsedToolCall(
 				// scheduler again (ci#691).
 				noteSandboxCapacityFailure(sandboxCapacityBackoffDelay(retries + 1))
 				toolResult = buildSandboxCapacityToolErrorPlaceholder(name, runErr, retries+1)
+			} else if isSandboxRegistryConflict(runErr) {
+				// ci#739: deterministic, so never retried (isTransientToolFailure
+				// excludes it), but the bare error reads like a blip and invites
+				// the one response that cannot work: repeating the identical
+				// call, whose chat-derived sandbox name collides byte-for-byte
+				// every time. Name the class and the remedies instead.
+				toolResult = buildSandboxRegistryConflictToolErrorPlaceholder(name, runErr)
 			} else if toolBudgetExempt {
 				toolResult = buildTransientToolErrorPlaceholder(name, runErr, retries+1)
 			} else {
