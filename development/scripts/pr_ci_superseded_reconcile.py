@@ -10,8 +10,14 @@ commit no longer needs gating (PR closed, or a newer commit is the live PR
 head) or when a replacement run for the same commit reached the gate job with a
 real verdict, whose conclusion is adopted. Everything else fails closed.
 
-Exit codes: 0 accept, 1 replacement gate not green, 2 missing, 3 timeout,
-4 usage/API error. The last stdout line is `accepted=true|false`.
+Exit codes: 0 accept, 1 replacement gate not green, 2 missing, 3 timeout/budget
+expiry, 4 usage/API error. The last stdout line is `accepted=true|false`.
+
+Exit 3 is a *budget* expiry, not a replacement verdict: no replacement run ever
+got to testify before the wait budget ran out. Its summary starts with the
+`budget-expired:` token and `main` prints a `::warning::` annotation naming the
+budget, so a stale red gate from an exhausted budget is distinguishable in logs
+from a replacement run that really came back non-green (exit 1).
 
 A replacement gate job that was itself `cancelled` cannot testify about the
 commit and is skipped, but every other non-`success` verdict (including
@@ -31,6 +37,31 @@ import urllib.request
 WORKFLOW_FILE = "run-pr-ci-tests-and-deployments.yaml"
 GATE_JOB_NAME = "PR Test Merge Requirement"
 API = "https://api.github.com"
+
+# ci#659 follow-up: the wait budget must outlast a *whole* replacement run, not
+# just the gap to its gate job. Run 39370413734 (PR #879, commit 886d6e26) needed
+# 2550s from creation to its gate verdict, so the previous 1500s default expired
+# ~12 minutes early: run 39370411496 timed out ("replacement run 39370413734
+# still pending after 1500s") and reported the required check as failed for a
+# commit whose replacement gate job then concluded success. One hour covers the
+# slowest observed PR CI run with margin.
+#
+# Known residual, by design: this is still a deadline, so it is a cliff, not a
+# fix of the class. An expiry leaves the gate red for a commit whose replacement
+# may pass minutes later; the deadline is kept because it is what stops the gate
+# job hanging forever when a replacement is queued behind a starving runner.
+# What the fix buys is legibility: exit 3 prints `budget-expired:` plus a
+# `::warning::`, so "we gave up waiting" is distinguishable from "the replacement
+# really concluded non-green" (exit 1).
+#
+# Operational backstop for bumping it: if `budget-expired:` ever shows up on a
+# PR CI run whose replacement gate job concludes `success` afterwards, the budget
+# is again shorter than a real run - raise it, or finally replace the deadline
+# with a replacement-driven liveness/heartbeat wait. No test can assert this,
+# because "budget > actual run duration" is environmental, not a property of the
+# code: the tests only pin that the constant is named, singular and shared with
+# the workflow fallback.
+DEFAULT_WAIT_SECONDS = 3600
 
 _SLEEP = time.sleep
 _MONOTONIC = time.monotonic
@@ -164,13 +195,13 @@ def reconcile(args, token):
             )
         if _MONOTONIC() >= deadline:
             if not candidates:
-                return 3, "timeout: no replacement run for %s within %ds." % (
+                return 3, "budget-expired: no replacement run for %s within %ds." % (
                     args.head_sha[:12],
                     args.wait_seconds,
                 )
             pending = [r for r in candidates if r.get("status") != "completed"]
             if pending:
-                return 3, "timeout: replacement run %s still %s after %ds." % (
+                return 3, "budget-expired: replacement run %s still %s after %ds." % (
                     pending[0].get("id"),
                     pending[0].get("status"),
                     args.wait_seconds,
@@ -191,7 +222,7 @@ def main(argv=None):
     parser.add_argument(
         "--wait-seconds",
         type=int,
-        default=int(os.environ.get("PR_CI_SUPERSEDED_WAIT_SECONDS") or 1500),
+        default=int(os.environ.get("PR_CI_SUPERSEDED_WAIT_SECONDS") or DEFAULT_WAIT_SECONDS),
     )
     args = parser.parse_args(argv)
 
@@ -219,6 +250,19 @@ def main(argv=None):
         code, summary = 4, "error: GitHub API returned HTTP %s for %s." % (error.code, error.url)
     except (urllib.error.URLError, ValueError, KeyError, TypeError) as error:
         code, summary = 4, "error: %s: %s" % (type(error).__name__, error)
+
+    if code == 3:
+        # A budget expiry is not a replacement verdict, but `continue-on-error:
+        # true` keeps the non-zero exit invisible in the UI, so leave a warning
+        # annotation: a red gate from an exhausted budget must be greppable in
+        # the logs, not indistinguishable from a genuine replacement failure.
+        print(
+            "::warning::pr_ci_superseded_reconcile: wait budget of %ds expired "
+            "before a replacement run reached the '%s' job; the gate stays red "
+            "on a budget expiry, not on a replacement verdict - raise "
+            "PR_CI_SUPERSEDED_WAIT_SECONDS if a PR CI run now outlasts the budget."
+            % (args.wait_seconds, GATE_JOB_NAME)
+        )
 
     print(summary)
     print("accepted=%s" % ("true" if code == 0 else "false"))

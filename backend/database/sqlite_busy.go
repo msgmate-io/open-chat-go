@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"backend/logging"
 )
 
 // SQLite grants a single write lock for the whole database file. Whenever two
@@ -113,7 +114,7 @@ func RetryOnBusyWithPolicy(ctx context.Context, policy BusyRetryPolicy, label st
 		err = operation()
 		if err == nil {
 			if attempt > 1 {
-				log.Printf("%s: succeeded after %d attempts", label, attempt)
+				logging.Debugf("%s: succeeded after %d attempts", label, attempt)
 			}
 			return nil
 		}
@@ -124,7 +125,7 @@ func RetryOnBusyWithPolicy(ctx context.Context, policy BusyRetryPolicy, label st
 			break
 		}
 
-		log.Printf("%s: SQLite database is locked by another process (attempt %d/%d), retrying in %s: %v", label, attempt, policy.Attempts, delay, err)
+		logging.Debugf("%s: SQLite database is locked by another process (attempt %d/%d), retrying in %s: %v", label, attempt, policy.Attempts, delay, err)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
