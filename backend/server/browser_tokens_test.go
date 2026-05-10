@@ -96,6 +96,20 @@ func TestMatchRestrictedTokenRoute(t *testing.T) {
 		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/msg-uuid/confirm-actions/act/execute", false},
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/msg-uuid/confirm-actions/act/execute/extra", false},
 
+		// ci#521: the usability overhaul needs live turn state, so the
+		// coder-tui audience can also read the interaction status, hydrate the
+		// in-flight streaming snapshot and stop a turn.
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/status", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/streaming", true},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/signals/interrupt", true},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/signals/stop", true},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/messages/streaming/extra", false},
+		{database.AudienceCoderTUI, http.MethodGet, "/chats/chat-uuid/signals/interrupt", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/status", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/messages/streaming", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/signals/interrupt/extra", false},
+		{database.AudienceCoderTUI, http.MethodPost, "/chats/chat-uuid/signals", false},
+
 		// coder-tui is still default-deny elsewhere
 		{database.AudienceCoderTUI, http.MethodPost, "/chats/create", false},
 		{database.AudienceCoderTUI, http.MethodGet, "/contacts/list", false},

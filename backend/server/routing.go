@@ -34,6 +34,8 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 //go:embed all:frontend routes.json swagger.json
@@ -155,7 +157,7 @@ func pathValuesFromRoute(route string, r *http.Request) map[string]string {
 		if val := r.PathValue(match[1]); val != "" {
 			pathValues[match[1]] = val
 		} else {
-			log.Printf("Warning: No value found for path parameter %s", match[1])
+			logging.Warnf("Warning: No value found for path parameter %s", match[1])
 			pathValues[match[1]] = match[1]
 		}
 	}
@@ -174,7 +176,7 @@ func trimPageContextSuffix(value string) string {
 func serveFrontendRouteFile(route string, pathEnding string, pathValues map[string]string, w http.ResponseWriter, r *http.Request) bool {
 	fsys, err := fs.Sub(frontendFS, "frontend")
 	if err != nil {
-		log.Println(err)
+		logging.Debugf("%v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return false
 	}
@@ -183,7 +185,7 @@ func serveFrontendRouteFile(route string, pathEnding string, pathValues map[stri
 	staticFile := fmt.Sprintf("%s%s", cleanRoute, pathEnding)
 	indexFile, err := fsys.Open(staticFile)
 	if err != nil {
-		log.Printf("Error opening %s for route %s: %v", pathEnding, cleanRoute, err)
+		logging.Errorf("Error opening %s for route %s: %v", pathEnding, cleanRoute, err)
 		http.Error(w, "Page Not Found", http.StatusNotFound)
 		return false
 	}
@@ -191,7 +193,7 @@ func serveFrontendRouteFile(route string, pathEnding string, pathValues map[stri
 
 	content, err := io.ReadAll(indexFile)
 	if err != nil {
-		log.Println(err)
+		logging.Debugf("%v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return false
 	}
@@ -539,13 +541,13 @@ func BackendRouting(
 	if mobileProxyCfg.Enabled {
 		target, parseErr := url.Parse(mobileProxyCfg.Target)
 		if parseErr != nil {
-			log.Printf("Invalid MOBILE_UPSTREAM_URL %q, disabling mobile API/WS proxy: %v", mobileProxyCfg.Target, parseErr)
+			logging.Errorf("Invalid MOBILE_UPSTREAM_URL %q, disabling mobile API/WS proxy: %v", mobileProxyCfg.Target, parseErr)
 			mobileProxyCfg.Enabled = false
 		} else {
 			proxyHandler := commonMiddlewares(Logging(newMobileAPIWSReverseProxy(target)))
 			mux.Handle("/api/", proxyHandler)
 			mux.Handle("/ws/", proxyHandler)
-			log.Printf("Mobile API/WS proxy enabled: /api and /ws -> %s", mobileProxyCfg.Target)
+			logging.Infof("Mobile API/WS proxy enabled: /api and /ws -> %s", mobileProxyCfg.Target)
 		}
 	}
 
@@ -633,7 +635,7 @@ func BackendRouting(
 			// Create swagger reference handler with embedded content
 			swaggerContent, err := frontendFS.ReadFile("swagger.json")
 			if err != nil {
-				log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
+				logging.Errorf("Warning: Failed to read embedded swagger.json: %v", err)
 				mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
 				})
@@ -657,7 +659,7 @@ func BackendRouting(
 	} else {
 		mux.HandleFunc("/reference", reference.ScalarReference)
 		mux.HandleFunc("/api/reference", reference.ScalarReference)
-		log.Printf("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
+		logging.Infof("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
 	}
 
 	// ci#739: the public liveness probe. It is registered *outside*
@@ -680,13 +682,13 @@ func BackendRouting(
 			log.Fatalf("failed to register integration frontend routes: %v", err)
 		}
 	} else {
-		log.Printf("Skipping integration frontend route registration in dev proxy mode")
+		logging.Infof("Skipping integration frontend route registration in dev proxy mode")
 	}
 
 	if frontendProxy == "" {
 		routes, err := getFrontendRoutes()
 		if err != nil {
-			log.Printf("Warning: Failed to load routes from routes.json: %v", err)
+			logging.Errorf("Warning: Failed to load routes from routes.json: %v", err)
 			routes = []string{}
 		}
 

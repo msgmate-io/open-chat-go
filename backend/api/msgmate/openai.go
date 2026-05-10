@@ -1514,7 +1514,12 @@ func shrinkOversizedContextMessages(messages []map[string]interface{}, maxChars 
 		for key, value := range message {
 			clone[key] = value
 		}
-		clone["content"] = content[:maxChars] + notice
+		// headOfString keeps this last-resort cut on a UTF-8 rune boundary: the
+		// content that reaches here is usually an oversized tool result, i.e.
+		// source files, diffs or sandbox logs where non-ASCII is normal, and a
+		// torn rune would make the retry request itself unparseable - the very
+		// failure this fallback exists to survive (ci#680).
+		clone["content"] = headOfString(content, maxChars) + notice
 		out[i] = clone
 		changed = true
 	}
@@ -1893,10 +1898,14 @@ func processStreamingResponseReader(
 			// here instead of being persisted verbatim: it used to write
 			// 150–255 KB of the same line into the chat before the turn was
 			// cancelled, polluting the next turn's context and burning the
-			// completion budget on nothing (ci#670). The one-line note is
-			// streamed so the persisted message (built from the streamed
-			// text) ends with a clear statement of why it stops.
-			if _, looping := detectRepetitionLoop(accumulated); looping {
+			// completion budget on nothing (ci#670). detectDegenerateTail
+			// covers both degeneracy shapes — a byte-identical unit repeated
+			// back to back and a single line shape looped with a mutated
+			// detail — so the runaway tail is stopped as soon as it forms.
+			// The one-line note is streamed so the persisted message (built
+			// from the streamed text) ends with a clear statement of why it
+			// stops.
+			if _, looping := detectDegenerateTail(accumulated); looping {
 				repetitionLoopDetected = true
 				chunkChan <- repetitionLoopNote
 				break
