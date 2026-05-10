@@ -9,7 +9,6 @@ import (
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +16,8 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // This file implements the trusted "agent dispatch" surface: a stable internal
@@ -561,7 +562,7 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 		// Stopping a managed interaction also ends its self-driving loop, so a
 		// scheduled auto-continuation cannot resume the agent afterwards.
 		if stopErr := chats.StopAutoContinueForChat(DB, chat.ID, "stopped_by_agent_manager"); stopErr != nil {
-			log.Printf("agent stop: failed to stop the auto-continuation loop for chat %s: %v", chat.UUID, stopErr)
+			logging.Errorf("agent stop: failed to stop the auto-continuation loop for chat %s: %v", chat.UUID, stopErr)
 		}
 	}
 

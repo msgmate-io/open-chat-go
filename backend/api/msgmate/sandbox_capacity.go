@@ -3,10 +3,11 @@ package msgmate
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
+
+	"backend/logging"
 )
 
 // This file owns the *scheduler capacity* half of the transient-tool-failure
@@ -125,7 +126,7 @@ func awaitSandboxCapacityCooldown(ctx context.Context, toolName string) time.Dur
 	if remaining > DefaultSandboxCapacityRetryMaxDelay {
 		remaining = DefaultSandboxCapacityRetryMaxDelay
 	}
-	log.Printf(
+	logging.Debugf(
 		"Tool %s held back for %s: the node rejected a sandbox for capacity; avoiding a provisioning stampede (ci#691)",
 		toolName, remaining,
 	)

@@ -10,11 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // TODO: allow different message types
@@ -340,12 +341,12 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		// interrupt is authoritative.
 		if deliveryMode == workqueue.BotReplyDeliveryInterrupt {
 			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
-				log.Printf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+				logging.Errorf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
 			} else if cancelled > 0 {
-				log.Printf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
+				logging.Debugf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
 			}
 			if stopErr := StopAutoContinueForChat(DB, chat.ID, "interrupted_by_user"); stopErr != nil {
-				log.Printf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
+				logging.Errorf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
 			}
 		}
 
@@ -374,9 +375,9 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			// it into the response metadata, so the sender's optimistic row and
 			// a later transcript load agree.
 			if marked, markErr := database.SetMessageQueued(DB, &message); markErr != nil {
-				log.Printf("ci#656: failed to mark message %s as queued for chat %s: %v", message.UUID, chatUuid, markErr)
+				logging.Errorf("ci#656: failed to mark message %s as queued for chat %s: %v", message.UUID, chatUuid, markErr)
 			} else if marked {
-				log.Printf("ci#656: message %s queued behind the live turn of chat %s", message.UUID, chatUuid)
+				logging.Debugf("ci#656: message %s queued behind the live turn of chat %s", message.UUID, chatUuid)
 			}
 		} else {
 			// An interrupt or a replace cancels every queued reply of the
@@ -651,15 +652,15 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 			// no-op. Void any parked proposal as well so stopping the response is
 			// authoritative and the action can no longer be executed.
 			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
-				log.Printf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+				logging.Errorf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
 			} else if cancelled > 0 {
-				log.Printf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
+				logging.Debugf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
 			}
 
 			// An interrupt also ends a self-driving interaction: a scheduled
 			// auto-continuation must not resume a chat the user stopped.
 			if stopErr := StopAutoContinueForChat(DB, chat.ID, "interrupted_by_user"); stopErr != nil {
-				log.Printf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
+				logging.Errorf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
 			}
 		} else {
 			ch.MessageHandler.SendMessage(
