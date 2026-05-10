@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -17,6 +16,8 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // This file implements the backend-agnostic "post the final message for them"
@@ -126,16 +127,16 @@ func runPostInteractionActions(db *gorm.DB, queueClient *asynq.Client, queueInsp
 		switch kind, _ := action["kind"].(string); kind {
 		case postActionKindPlanAutoImplement:
 			if err := runPlanAutoImplement(db, queueClient, queueInspector, loaded, action, text); err != nil {
-				log.Printf("post-interaction: plan_auto_implement failed for chat %s: %v", loaded.UUID, err)
+				logging.Errorf("post-interaction: plan_auto_implement failed for chat %s: %v", loaded.UUID, err)
 			}
 		default:
 			comment, ok := decodePostActionGithubComment(action)
 			if !ok {
-				log.Printf("post-interaction: skipping unsupported post action for chat %s", loaded.UUID)
+				logging.Infof("post-interaction: skipping unsupported post action for chat %s", loaded.UUID)
 				continue
 			}
 			if err := postGithubInteractionComment(comment, text); err != nil {
-				log.Printf("post-interaction: github_issue_comment failed for chat %s: %v", loaded.UUID, err)
+				logging.Errorf("post-interaction: github_issue_comment failed for chat %s: %v", loaded.UUID, err)
 			}
 		}
 	}

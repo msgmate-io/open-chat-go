@@ -19,7 +19,7 @@ import {
   Text,
   TextTypes,
 } from "@open-chat-go/ui";
-import { Check, Copy, ExternalLink, LayoutGrid, List, Search, Server } from "lucide-react";
+import { Check, Copy, ExternalLink, LayoutGrid, List, Search, Server, X } from "lucide-react";
 
 export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp";
 
@@ -334,6 +334,13 @@ export function ToolDetailsDialog({
             <SchemaBlock title="Input parameters (call schema)" schema={tool?.call_schema} />
             <SchemaBlock title="Init parameters (init schema)" schema={tool?.init_schema} />
           </div>
+        </div>
+
+        <div className="sticky bottom-0 -mx-4 -mb-4 mt-2 flex justify-end gap-2 border-t border-border/70 bg-background/95 px-4 py-3 backdrop-blur">
+          <Button size="sm" onClick={() => onOpenChange(false)}>
+            <X className="mr-1 h-3.5 w-3.5" />
+            Close
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -742,11 +749,35 @@ export function ChatDetailsPanel({
   activeTab: ChatDetailsTabId;
   onTabChange: (tab: ChatDetailsTabId) => void;
 }) {
+  /** Roving-tabindex keyboard support so the tablist works on web and native shells. */
+  const onTablistKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    const tabs = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    );
+    if (tabs.length === 0) return;
+    const currentIndex = tabs.indexOf(document.activeElement as HTMLButtonElement);
+    const start = currentIndex < 0 ? 0 : currentIndex;
+    let nextIndex = start;
+    if (event.key === "ArrowLeft") nextIndex = (start - 1 + tabs.length) % tabs.length;
+    else if (event.key === "ArrowRight") nextIndex = (start + 1) % tabs.length;
+    else if (event.key === "End") nextIndex = tabs.length - 1;
+    else nextIndex = 0;
+    const next = tabs[nextIndex];
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+    const nextTab = CHAT_DETAILS_TABS[nextIndex];
+    if (nextTab) onTabChange(nextTab.id);
+  };
+
   return (
     <div className="space-y-3">
       <div
         role="tablist"
         aria-label="Chat details sections"
+        onKeyDown={onTablistKeyDown}
         className="surface-sunken scrollbar-hidden -mx-1 flex gap-1 overflow-x-auto p-1"
       >
         {CHAT_DETAILS_TABS.map((tab) => {
@@ -759,9 +790,10 @@ export function ChatDetailsPanel({
               id={`chat-details-tab-${tab.id}`}
               aria-selected={isActive}
               aria-controls={`chat-details-panel-${tab.id}`}
+              tabIndex={isActive ? 0 : -1}
               onClick={() => onTabChange(tab.id)}
               className={cn(
-                "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-[color,box-shadow,background-color]",
+                "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-[color,box-shadow,background-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                 isActive
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
@@ -777,7 +809,8 @@ export function ChatDetailsPanel({
         role="tabpanel"
         id={`chat-details-panel-${activeTab}`}
         aria-labelledby={`chat-details-tab-${activeTab}`}
-        className="max-h-[60vh] overflow-y-auto pr-0.5"
+        tabIndex={0}
+        className="max-h-[min(60vh,32rem)] overflow-y-auto overscroll-contain pr-0.5 focus-visible:outline-none"
       >
         {activeTab === "overview" ? <OverviewTab chat={chat} user={user} /> : null}
         {activeTab === "init" ? <InitTab chat={chat} isSharedView={isSharedView} /> : null}

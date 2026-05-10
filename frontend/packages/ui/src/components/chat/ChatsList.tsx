@@ -28,6 +28,7 @@ import { listChatSearchActions } from "../../integration/components/chat/chat-ui
 import {
     CHAT_LIST_FETCH_BATCH_SIZE,
     CHAT_LIST_INITIAL_BATCHES,
+    buildChatListUrl,
     batchesForPaintedPages,
     paintedRowBudget,
     chatStatesRefreshInterval,
@@ -50,6 +51,10 @@ type ChatListRow = {
     tags?: string[]
     pinned?: boolean
     partner?: { is_automated?: boolean }
+    // state is the server-resolved interaction state shipped with the list row
+    // (ci#761). It drives the initial badge and the server-side state filter;
+    // the /chats/states poll still overlays the live value.
+    state?: string
 }
 
 export const ExploreChatsIcon = () => (
@@ -154,9 +159,9 @@ const TIME_TO_QUERY_PARAM = "time_to"
 const TAGS_QUERY_PARAM = "tags"
 const EXCLUDE_TAGS_QUERY_PARAM = "exclude_tags"
 
-// Chat-state filter. The state is resolved per-chat from the batch
-// `/api/v1/chats/states` endpoint, so filtering happens client-side over the
-// loaded page.
+// Chat-state filter. The state is resolved server-side and travels on every
+// list row (`chat.state`) since ci#761, so the selected state is sent as a
+// request parameter and only the matching chats are ever loaded.
 type ChatStateFilter = "active" | "needs_confirmation" | "finished" | "failed" | "idle"
 const STATE_QUERY_PARAM = "state"
 const CHAT_STATE_FILTER_ORDER: ChatStateFilter[] = ["active", "needs_confirmation", "finished", "failed", "idle"]
@@ -610,37 +615,32 @@ export function ChatsList({
         if (!showChats) {
             return null
         }
-        const params = new URLSearchParams()
-        params.set("chat_types", serializeChatTypes(chatTypeFilters))
-        params.set("page", String(page))
-        params.set("limit", String(CHAT_LIST_FETCH_BATCH_SIZE))
-        if (searchQuery.trim()) {
-            params.set(SEARCH_QUERY_PARAM, searchQuery.trim())
-        }
-        if (tagFilters.length > 0) {
-            params.set(TAGS_QUERY_PARAM, tagFilters.join(","))
-        }
-        if (excludeTagFilters.length > 0) {
-            params.set(EXCLUDE_TAGS_QUERY_PARAM, excludeTagFilters.join(","))
-        }
-        if (timeFrom) {
-            params.set(TIME_FROM_QUERY_PARAM, timeFrom)
-        }
-        if (timeTo) {
-            params.set(TIME_TO_QUERY_PARAM, timeTo)
-        }
-        if (seeAll && isAdmin) {
-            params.set("scope", "all")
-        }
-        return `/api/v1/chats/list?${params.toString()}`
-    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin])
+        // The state filter is applied server-side (ci#761): it is part of the
+        // SWR key, so selecting a state refetches instead of filtering the rows
+        // that happen to be loaded already. Pinned chats stay subject to it.
+        // Both the key and this parameter list live in the pure
+        // `buildChatListUrl` helper, so a test can assert that the selected
+        // state really changes the key.
+        return buildChatListUrl({
+            page,
+            limit: CHAT_LIST_FETCH_BATCH_SIZE,
+            chatTypes: serializeChatTypes(chatTypeFilters),
+            search: searchQuery.trim(),
+            tags: tagFilters,
+            excludeTags: excludeTagFilters,
+            state: stateFilter,
+            timeFrom,
+            timeTo,
+            scope: seeAll && isAdmin ? "all" : "",
+        })
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, stateFilter, timeFrom, timeTo, showChats, seeAll, isAdmin])
 
     // Changing any filter changes the result set, so collapse back to the first
     // painted page (and the small batches backing it) instead of keeping a stale
     // "load more" depth.
     useEffect(() => {
         setPaintedPages(1)
-    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, timeFrom, timeTo, seeAll])
+    }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, stateFilter, timeFrom, timeTo, seeAll])
 
     const { data: availableTags, mutate: mutateAvailableTags } = useSWR<{ tags?: string[] }>(
         showChats ? `/api/v1/chats/tags` : null,
@@ -1006,11 +1006,9 @@ export function ChatsList({
             }
         )
 
-        // The state filter is resolved client-side from the batch states map;
-        // chats without a resolved state count as idle.
-        const filteredRows = stateFilter
-            ? rows.filter((chat: { uuid: string }) => (chatStateByUuid[chat.uuid] ?? "idle") === stateFilter)
-            : rows
+        // The state filter is applied server-side (ci#761), so the rows already
+        // match the selected state; no render-time state filtering happens here.
+        const filteredRows = rows
 
         if (filteredRows.length === 0) {
             return (
@@ -1038,13 +1036,14 @@ export function ChatsList({
             latest_message_at?: string
             tags?: string[]
             pinned?: boolean
+            state?: string
         }) => (
             <ChatItemCompact
                 chat={chat}
                 key={`chat_${chat.uuid}`}
                 isSelected={chat.uuid === chatUUID}
                 navigateTo={navigateWithFilter}
-                state={chatStateByUuid[chat.uuid]}
+                state={chatStateByUuid[chat.uuid] ?? chat.state}
                 stateTracked={automatedChatUuids.has(chat.uuid)}
                 stateLoading={chatStatesLoading}
                 tags={chat.tags}

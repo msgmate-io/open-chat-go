@@ -3,7 +3,6 @@ package chats
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +14,8 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // This file implements the ci#609 "never a silent idle" guard for a native
@@ -353,10 +354,10 @@ func ReportInteractionStall(db *gorm.DB, inspector *asynq.Inspector, chat databa
 		return tx.Model(&database.Chat{}).Where("id = ?", chat.ID).
 			Update("latest_message_id", message.ID).Error
 	}); err != nil {
-		log.Printf("interaction stall: failed to report the stall for chat %s: %v", chat.UUID, err)
+		logging.Errorf("interaction stall: failed to report the stall for chat %s: %v", chat.UUID, err)
 		return false
 	}
-	log.Printf(
+	logging.Debugf(
 		"interaction stall reported for chat %s: no agent turn after %s (age %s, threshold %s, ci#609)",
 		chat.UUID, status.Since.UTC().Format(time.RFC3339), status.Age.Round(time.Second), status.Threshold,
 	)
