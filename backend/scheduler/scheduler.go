@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"backend/api"
 	"backend/api/integrations"
 	"backend/database"
 	"backend/server/util"
@@ -20,7 +19,6 @@ type SchedulerService struct {
 	DB                *gorm.DB
 	ctx               context.Context
 	cancel            context.CancelFunc
-	federationHandler api.FederationHandlerInterface
 	registeredTasks   map[string]Task
 	serverURL         string
 	signalBotService  *integrations.SignalBotService
@@ -28,7 +26,7 @@ type SchedulerService struct {
 }
 
 // NewSchedulerService creates a new scheduler service
-func NewSchedulerService(DB *gorm.DB, federationHandler api.FederationHandlerInterface, serverURL string) *SchedulerService {
+func NewSchedulerService(DB *gorm.DB, serverURL string) *SchedulerService {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create a scheduler with UTC timezone
@@ -43,7 +41,6 @@ func NewSchedulerService(DB *gorm.DB, federationHandler api.FederationHandlerInt
 		DB:                DB,
 		ctx:               ctx,
 		cancel:            cancel,
-		federationHandler: federationHandler,
 		registeredTasks:   make(map[string]Task),
 		serverURL:         serverURL,
 		signalBotService:  signalBotService,
@@ -74,11 +71,6 @@ func (s *SchedulerService) RegisterTasks() {
 
 	// Register data maintenance tasks
 	s.registerTaskGroup(DataMaintenanceTasks(s.DB))
-
-	// Register network tasks if federation handler is available
-	//if s.federationHandler != nil {
-	//	s.registerTaskGroup(NetworkTasks(s.DB, s.federationHandler))
-	//}
 
 	log.Printf("Registered %d scheduled tasks", len(s.registeredTasks))
 }

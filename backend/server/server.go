@@ -1,7 +1,6 @@
 package server
 
 import (
-	"backend/api"
 	"backend/api/integrations"
 	"backend/api/websocket"
 	"backend/database"
@@ -72,7 +71,6 @@ func writeData(rw *bufio.ReadWriter, message string) error {
 
 func BackendServer(
 	DB *gorm.DB,
-	federationHandler api.FederationHandlerInterface,
 	schedulerService *scheduler.SchedulerService,
 	host string,
 	port int64,
@@ -161,7 +159,7 @@ func BackendServer(
 
 		signalService = integrations.NewSignalIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
 		matrixService = integrations.NewMatrixIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
-		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
+		router, websocketHandler = BackendRouting(DB, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:      fmt.Sprintf("%s:%d", host, port),
 			Handler:   router,
@@ -173,7 +171,7 @@ func BackendServer(
 
 		signalService = integrations.NewSignalIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
 		matrixService = integrations.NewMatrixIntegrationService(DB, fmt.Sprintf("%s://%s:%d", protocol, host, port))
-		router, websocketHandler = BackendRouting(DB, federationHandler, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
+		router, websocketHandler = BackendRouting(DB, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
 		server = &http.Server{
 			Addr:    fmt.Sprintf("%s:%d", host, port),
 			Handler: router,
@@ -186,7 +184,6 @@ func BackendServer(
 // New function to create an HTTP fallback server for local access when TLS is enabled
 func CreateHTTPFallbackServer(
 	DB *gorm.DB,
-	federationHandler api.FederationHandlerInterface,
 	schedulerService *scheduler.SchedulerService,
 	host string,
 	port int64,
@@ -200,7 +197,7 @@ func CreateHTTPFallbackServer(
 	signalService := integrations.NewSignalIntegrationService(DB, mainServerURL)
 	matrixService := integrations.NewMatrixIntegrationService(DB, mainServerURL)
 	// Use the same routing as the main server to ensure all middleware and authentication works
-	router, _ := BackendRouting(DB, federationHandler, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
+	router, _ := BackendRouting(DB, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
 
 	// Wrap the router with localhost-only middleware for security
 	localhostOnlyRouter := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
