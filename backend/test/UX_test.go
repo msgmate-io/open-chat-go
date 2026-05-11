@@ -19,7 +19,7 @@ import (
 // 'go test -v ./... -run "^Test_UXFlow$"'
 func Test_UXFlow(t *testing.T) {
 	// what used to be _scripts/simple_api_test.sh
-	err, host, cancel := startTestServer([]string{"backend", "-b", "127.0.0.1", "-p", "1984", "-pp2p", "1985"})
+	err, host, cancel := startTestServer([]string{"backend", "server", "-b", "127.0.0.1", "-p", "1984"})
 
 	fmt.Println("Registering user 1")
 

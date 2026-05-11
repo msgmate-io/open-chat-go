@@ -40,4 +40,4 @@ WORKDIR /backend
 COPY --from=builder /backend/backend /usr/local/bin/backend
 COPY --from=builder /backend/server/routes.json /backend/routes.json
 
-CMD ["backend"]
+CMD ["backend", "server"]
