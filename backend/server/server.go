@@ -3,72 +3,14 @@ package server
 import (
 	"backend/api/websocket"
 	"backend/database"
-	"backend/scheduler"
-	"bufio"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/multiformats/go-multiaddr"
-	"github.com/urfave/cli/v3"
 	"gorm.io/gorm"
 )
 
-var Config *cli.Command
-
-func makeHost(port int, randomness io.Reader) (host.Host, error) {
-	// Creates a new RSA key pair for this host.
-	prvKey, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, randomness)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-
-	// TODO: allow resstriction listen address via param
-	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port))
-	fmt.Println("Host Listen Address:", sourceMultiAddr)
-
-	return libp2p.New(
-		libp2p.ListenAddrs(sourceMultiAddr),
-		libp2p.Identity(prvKey),
-		// Enable stuff for hole punching etc...
-	)
-}
-
-func readData(rw *bufio.ReadWriter) {
-	for {
-		str, err := rw.ReadString('\n')
-		if err != nil {
-			log.Printf("Error reading from stream: %v\n", err)
-			return
-		}
-
-		if str == "" {
-			return
-		}
-		if str != "\n" {
-			fmt.Printf("Received message: %s", str)
-		}
-	}
-}
-
-func writeData(rw *bufio.ReadWriter, message string) error {
-	if _, err := rw.WriteString(fmt.Sprintf("%s\n", message)); err != nil {
-		return err
-	}
-	if err := rw.Flush(); err != nil {
-		return err
-	}
-	return nil
-}
-
 func BackendServer(
 	DB *gorm.DB,
-	schedulerService *scheduler.SchedulerService,
 	host string,
 	port int64,
 	debug bool,
@@ -76,7 +18,7 @@ func BackendServer(
 	cookieDomain string,
 ) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	fullHost := fmt.Sprintf("http://%s:%d", host, port)
-	router, websocketHandler := BackendRouting(DB, schedulerService, debug, frontendProxy, cookieDomain)
+	router, websocketHandler := BackendRouting(DB, debug, frontendProxy, cookieDomain)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", host, port),
 		Handler: router,
