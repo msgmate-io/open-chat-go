@@ -10,7 +10,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 )
@@ -206,71 +205,6 @@ func GetClientCmd(action string) *cli.Command {
 				}
 				fmt.Println("Hashed password:", string(hashedPassword))
 				return nil
-			},
-		}
-	} else if action == "edit-service" {
-		return &cli.Command{
-			Name:  "edit-service",
-			Usage: "Edit the OpenChat systemd service file",
-			Flags: defaultFlags,
-			Action: func(_ context.Context, c *cli.Command) error {
-				fmt.Println("Opening the OpenChat systemd service file in vim...")
-
-				// Check if the service file exists
-				serviceFile := "/etc/systemd/system/open-chat.service"
-				_, err := os.Stat(serviceFile)
-				if os.IsNotExist(err) {
-					return fmt.Errorf("service file %s does not exist", serviceFile)
-				}
-
-				// Execute sudo vim to edit the file
-				cmd := exec.Command("sudo", "vim", serviceFile)
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-
-				err = cmd.Run()
-				if err != nil {
-					return fmt.Errorf("failed to edit service file: %w", err)
-				}
-
-				fmt.Println("Service file edited. Reloading systemd daemon...")
-
-				// Reload systemd daemon
-				reloadCmd := exec.Command("sudo", "systemctl", "daemon-reload")
-				err = reloadCmd.Run()
-				if err != nil {
-					return fmt.Errorf("failed to reload systemd daemon: %w", err)
-				}
-
-				fmt.Println("Restarting open-chat service...")
-
-				// Restart the open-chat service
-				restartCmd := exec.Command("sudo", "systemctl", "restart", "open-chat")
-				err = restartCmd.Run()
-				if err != nil {
-					return fmt.Errorf("failed to restart open-chat service: %w", err)
-				}
-
-				fmt.Println("Service restarted successfully!")
-				return nil
-			},
-		}
-	} else if action == "logs" {
-		return &cli.Command{
-			Name:  "logs",
-			Usage: "Show and follow logs for the OpenChat service",
-			Flags: defaultFlags,
-			Action: func(_ context.Context, c *cli.Command) error {
-				fmt.Println("Following logs for open-chat service. Press Ctrl+C to exit.")
-
-				// Run journalctl with -f flag to follow logs
-				cmd := exec.Command("journalctl", "-u", "open-chat.service", "-f")
-				cmd.Stdin = os.Stdin
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-
-				return cmd.Run()
 			},
 		}
 	} else {

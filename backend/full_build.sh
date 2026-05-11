@@ -3,14 +3,9 @@
 set -e  # Exit on any error
 
 # Parse command line arguments
-INSTALL=false
 FRONTEND=true
 for arg in "$@"; do
     case $arg in
-        -i|--install)
-            INSTALL=true
-            shift
-            ;;
         --no-frontend)
             FRONTEND=false
             shift
@@ -18,7 +13,6 @@ for arg in "$@"; do
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
-            echo "  -i, --install        Install the backend after successful build"
             echo "  --no-frontend        Skip frontend build (useful for backend-only builds)"
             echo "  -h, --help           Show this help message"
             echo ""
@@ -49,9 +43,6 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Starting full build process..."
 echo "Script directory: $SCRIPT_DIR"
 echo "Repo root: $REPO_ROOT"
-if [ "$INSTALL" = true ]; then
-    echo "Install mode: Will run 'sudo ./backend install' after successful build"
-fi
 if [ "$FRONTEND" = false ]; then
     echo "Frontend build: Skipped (--no-frontend flag)"
 fi
@@ -191,17 +182,3 @@ else
 fi
 echo "Version updated to: $NEW_VERSION"
 echo "Backend binary built as: backend"
-
-# Step 5: Install if requested
-if [ "$INSTALL" = true ]; then
-    if [ "$FRONTEND" = true ]; then
-        echo "Step 5: Installing backend..."
-    else
-        echo "Step 4: Installing backend..."
-    fi
-    echo "Running: sudo ./backend install"
-    sudo ./backend install
-    echo "Installation complete!"
-else
-    echo "To install the backend, run: sudo ./backend install"
-fi
