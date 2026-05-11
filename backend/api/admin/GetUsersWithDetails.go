@@ -19,11 +19,7 @@ type UserDetails struct {
 	Email        string    `json:"email"`
 	ContactToken string    `json:"contact_token"`
 	IsAdmin      bool      `json:"is_admin"`
-	UserType     string    `json:"user_type"` // "regular", "network"
-
-	// Network details (if applicable)
-	IsNetworkUser bool   `json:"is_network_user"`
-	NetworkName   string `json:"network_name,omitempty"`
+	UserType     string    `json:"user_type"`
 
 	// Activity details
 	LastLogin     *time.Time `json:"last_login,omitempty"`
@@ -95,16 +91,6 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 			ContactToken: u.ContactToken,
 			IsAdmin:      u.IsAdmin,
 			UserType:     "regular",
-		}
-
-		// Check if user is a network user (created for a network)
-		var network database.Network
-		if err := DB.Where("network_name = ?", u.Name).First(&network).Error; err == nil {
-			details.IsNetworkUser = true
-			details.NetworkName = network.NetworkName
-			if details.UserType == "regular" {
-				details.UserType = "network"
-			}
 		}
 
 		// Get activity stats

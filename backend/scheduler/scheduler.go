@@ -155,21 +155,6 @@ func (s *SchedulerService) archiveOldMessages() {
 	// Implement your archiving logic here
 }
 
-// syncNetworks synchronizes network data
-func (s *SchedulerService) syncNetworks() {
-	var networks []database.Network
-	result := s.DB.Find(&networks)
-	if result.Error != nil {
-		log.Printf("Error finding networks: %v", result.Error)
-		return
-	}
-
-	for _, network := range networks {
-		log.Printf("Syncing network: %s", network.NetworkName)
-		// Implement your network sync logic here
-	}
-}
-
 // AddTask adds a new task to the scheduler dynamically
 func (s *SchedulerService) AddTask(task Task) error {
 	// Check if a task with this name already exists
