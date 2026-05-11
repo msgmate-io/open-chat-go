@@ -166,64 +166,6 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Login successful"))
 }
 
-func (h *UserHandler) NetworkUserLogin(w http.ResponseWriter, r *http.Request) {
-	var data UserLogin
-
-	DB, ok := r.Context().Value("db").(*gorm.DB)
-	if !ok {
-		http.Error(w, "Unable to get database", http.StatusBadRequest)
-		return
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	var networks []database.Network
-	DB.Where("network_name = ?", data.Email).Find(&networks)
-
-	if len(networks) == 0 {
-		http.Error(w, "User is not a member of any network", http.StatusBadRequest)
-		return
-	}
-
-	expiry := time.Now().Add(24 * time.Hour)
-	err, token, twofaRequired := LoginUser(DB, data.Email, data.Password, data.TwoFactorCode, data.RecoveryCode, expiry)
-	if err != nil {
-		if twofaRequired {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]any{"requires_two_factor": true, "error": err.Error()})
-			return
-		}
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-
-	cookieDomain := h.CookieDomain
-	if override, err := cookieDomainOverrideFromQuery(r); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	} else if override != "" || (r.URL.Query().Has("cookie_domain") || r.URL.Query().Has("domain") || r.URL.Query().Has("cookie_origin") || r.URL.Query().Has("origin")) {
-		cookieDomain = override
-	}
-
-	cookie := api.CreateSessionToken(w, r, cookieDomain, token, expiry)
-
-	// Check if x-cookie-header query parameter is set to true
-	if r.URL.Query().Get("x-cookie-header") == "true" {
-		w.Header().Add("X-Set-Cookie", cookie.String())
-	} else {
-		w.Header().Add("Set-Cookie", cookie.String())
-	}
-
-	w.Header().Add("Cache-Control", `no-cache="Set-Cookie"`)
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Login successful"))
-}
-
 func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string, recoveryCode string, expiry time.Time) (error, string, bool) {
 	var user database.User // TODO: sql injection?
 	q := DB.First(&user, "email = ?", email)
