@@ -157,12 +157,6 @@ var Tabels []interface{} = []interface{}{
 	&ContactRequest{},
 	&UploadedFile{},
 	&FileAccess{},
-	&Integration{},
-	&MatrixClientState{},
-	&MatrixRoom{},
-	&MatrixDevice{},
-	&MatrixOutboundSession{},
-	&MatrixInboundSession{},
 }
 
 var Migrations []Migration = []Migration{
@@ -182,12 +176,5 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ContactRequest{}},
 	FileUploadMigration{},
 	ProxyTagsMigration{}, // Adds tags column to proxies table
-	TableMigration{&Integration{}},
 	TableMigration{&ToolInitData{}},
-	// Matrix integration tables
-	TableMigration{&MatrixClientState{}},
-	TableMigration{&MatrixRoom{}},
-	TableMigration{&MatrixDevice{}},
-	TableMigration{&MatrixOutboundSession{}},
-	TableMigration{&MatrixInboundSession{}},
 }

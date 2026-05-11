@@ -1,7 +1,6 @@
 package client
 
 import (
-	"backend/api"
 	"backend/api/chats"
 	"backend/api/metrics"
 	"backend/api/tls"
@@ -17,11 +16,9 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 
 	"backend/api/contacts"
-	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 type SendMessage struct {
@@ -63,39 +60,6 @@ func (c *Client) GetSessionId() string {
 
 func (c *Client) GetHost() string {
 	return c.host
-}
-
-func (c *Client) GetWhitelistedPeers() (error, []peer.ID) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/federation/nodes/whitelisted", c.host), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, []peer.ID{}
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, []peer.ID{}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), []peer.ID{}
-	}
-
-	var peers []peer.ID
-	err = json.NewDecoder(resp.Body).Decode(&peers)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, []peer.ID{}
-	}
-
-	return nil, peers
 }
 
 func (c *Client) SendChatMessage(chatUUID string, data SendMessage) error {
@@ -163,38 +127,6 @@ func (c *Client) GetUserInfo() (error, *database.User) {
 	return nil, &user
 }
 
-func (c *Client) GetFederationIdentity() (error, *api.IdentityResponse) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/federation/identity", c.host), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, nil
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), nil
-	}
-
-	var identity api.IdentityResponse
-	err = json.NewDecoder(resp.Body).Decode(&identity)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, nil
-	}
-
-	return nil, &identity
-}
 func (c *Client) LoginUser(username string, password string) (error, string) {
 	err, sessionId := raw.RawLoginUser(c.host, username, password)
 	if err != nil {
@@ -217,91 +149,6 @@ type PaginatedChats struct {
 
 func (c *Client) SetSessionId(sessionId string) {
 	c.sessionId = sessionId
-}
-
-func (c *Client) RegisterNode(name string, addresses []string, addToNetwork string) (error, *database.Node) {
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(api.RegisterNodeRequest{
-		Name:         name,
-		Addresses:    addresses,
-		AddToNetwork: addToNetwork,
-	})
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err, nil
-	}
-
-	// print the body
-	fmt.Println(string(body.Bytes()))
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/federation/nodes/register", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, nil
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), nil
-	}
-
-	var node database.Node
-	err = json.NewDecoder(resp.Body).Decode(&node)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, nil
-	}
-
-	return nil, &node
-}
-
-func (c *Client) GetNodes(index int64, limit int64) (error, api.PaginatedNodes) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/federation/nodes/list", c.host), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, api.PaginatedNodes{}
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	query := req.URL.Query()
-	query.Add("page", strconv.FormatInt(index, 10))
-	query.Add("limit", strconv.FormatInt(limit, 10))
-	req.URL.RawQuery = query.Encode()
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, api.PaginatedNodes{}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), api.PaginatedNodes{}
-	}
-
-	var paginatedNodes api.PaginatedNodes
-	err = json.NewDecoder(resp.Body).Decode(&paginatedNodes)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, api.PaginatedNodes{}
-	}
-
-	return nil, paginatedNodes
 }
 
 func (c *Client) GetChats(index int64, limit int64) (error, PaginatedChats) {
@@ -375,135 +222,6 @@ func (c *Client) GetKeys(index int64, limit int64) (error, tls.PaginatedKeysResp
 	return nil, paginatedKeys
 }
 
-func (c *Client) CreateProxy(direction string, origin string, target string, port string, networkName string) error {
-	return c.CreateProxyWithExpiration(direction, origin, target, port, networkName, 5) // Default 5 minutes
-}
-
-// CreateProxyWithExpiration creates a proxy with custom expiration time
-func (c *Client) CreateProxyWithExpiration(direction string, origin string, target string, port string, networkName string, expiresInMinutes int) error {
-	if networkName == "" {
-		networkName = "network"
-	}
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(api.CreateAndStartProxyRequest{
-		Direction:     direction,
-		TrafficOrigin: origin,
-		TrafficTarget: target,
-		Port:          port,
-		Kind:          "tcp",
-		NetworkName:   networkName,
-		ExpiresIn:     expiresInMinutes,
-	})
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/federation/nodes/proxy", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status)
-	}
-
-	if expiresInMinutes > 0 {
-		fmt.Printf("Proxy created!! (expires in %d minutes)\n", expiresInMinutes)
-	} else {
-		fmt.Println("Proxy created!! (persistent)")
-	}
-
-	return nil
-}
-
-// CreateDomainProxy creates a domain-based proxy with separate TLS certificate
-func (c *Client) CreateDomainProxy(domain string, certPrefix string, backendPort string, useTLS bool) error {
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(api.CreateAndStartProxyRequest{
-		Direction:     "egress",
-		TrafficOrigin: domain,                                        // Domain name
-		TrafficTarget: fmt.Sprintf("%s:%s", certPrefix, backendPort), // cert_prefix:backend_port
-		Port:          "443",                                         // Default HTTPS port
-		Kind:          "domain",                                      // New domain proxy kind
-		NetworkName:   "network",
-		UseTLS:        useTLS,
-		KeyPrefix:     certPrefix,
-		ExpiresIn:     0, // Domain proxies are persistent (no expiration)
-	})
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/federation/nodes/proxy", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status)
-	}
-
-	fmt.Printf("Domain proxy created for %s -> localhost:%s (cert: %s) - PERSISTENT\n", domain, backendPort, certPrefix)
-
-	return nil
-}
-
-// DeleteProxy deletes a proxy by UUID
-func (c *Client) DeleteProxy(proxyUUID string) error {
-	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v1/federation/proxies/%s", c.host, proxyUUID), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to delete proxy: %s", string(body))
-	}
-
-	fmt.Printf("Proxy %s deleted successfully\n", proxyUUID)
-	return nil
-}
-
 func (c *Client) SolveACMEChallenge(hostname string, keyPrefix string) (error, string) {
 	body := new(bytes.Buffer)
 	err := json.NewEncoder(body).Encode(tls.SolveACMEChallengeRequest{
@@ -574,79 +292,6 @@ func (c *Client) RenewTLSCertificate(hostname string, keyPrefix string) (error, 
 	}
 
 	return nil, ""
-}
-
-func (c *Client) RequestSessionOnRemoteNode(username string, password string, peerId string) (error, string) {
-
-	body := new(bytes.Buffer)
-	loginData := map[string]string{
-		"email":    username,
-		"password": password,
-	}
-	err := json.NewEncoder(body).Encode(loginData)
-	if err != nil {
-		log.Printf("Erroror encoding data: %v", err)
-		return err, ""
-	}
-
-	err, resp := c.RequestNodeByPeerId(peerId, api.RequestNode{
-		Method:  "POST",
-		Path:    "/api/v1/user/login",
-		Headers: map[string]string{},
-		Body:    string(body.Bytes()),
-	})
-	if err != nil {
-		return err, ""
-	}
-
-	cookieHeader := resp.Header.Get("Set-Cookie")
-	// fmt.Println("Cookie header:", cookieHeader)
-	re := regexp.MustCompile(`session_id=([^;]+)`)
-
-	match := re.FindStringSubmatch(cookieHeader)
-	if match != nil && len(match) > 1 {
-		return nil, match[1]
-	}
-	return fmt.Errorf("No session id found"), ""
-}
-
-func (c *Client) RequestNodeByPeerId(peerId string, data api.RequestNode) (error, *http.Response) {
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(data)
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err, nil
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/federation/nodes/peer/%s/request", c.host, peerId), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, nil
-	}
-
-	// req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		// parse the body as text and print it
-		defer resp.Body.Close()
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("Error reading body: %v", err)
-			return fmt.Errorf("Error response: %v", resp.Status), nil
-		}
-		return fmt.Errorf("Error response: %v", string(bodyBytes)), nil
-	}
-
-	return nil, resp
 }
 
 func (c *Client) RandomPassword() string {
@@ -835,39 +480,6 @@ func (c *Client) RetrieveKey(keyName string) (error, *database.Key) {
 	return nil, &key
 }
 
-func (c *Client) ListProxies(index int64, limit int64) (error, api.PaginatedProxies) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/federation/proxies/list", c.host), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, api.PaginatedProxies{}
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, api.PaginatedProxies{}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Error response: %v", resp.Status), api.PaginatedProxies{}
-	}
-
-	var proxies api.PaginatedProxies
-	err = json.NewDecoder(resp.Body).Decode(&proxies)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, api.PaginatedProxies{}
-	}
-
-	return nil, proxies
-}
-
 func (c *Client) DeleteKey(keyName string) error {
 	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v1/tls/keys/%s", c.host, keyName), nil)
 	if err != nil {
@@ -967,85 +579,6 @@ func (c *Client) GetChat(chatUUID string) (error, chats.ListedChat) {
 
 func (c *Client) GetApiKey(keyName string) string {
 	return c.apiKeys[keyName]
-}
-
-func (c *Client) InstallSignalIntegration(alias string, phoneNumber string, port int, mode string) error {
-	body := new(bytes.Buffer)
-	requestData := map[string]interface{}{
-		"alias":        alias,
-		"phone_number": phoneNumber,
-		"port":         port,
-		"mode":         mode,
-	}
-
-	err := json.NewEncoder(body).Encode(requestData)
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/integrations/signal/install", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to install Signal integration: %s", string(bodyBytes))
-	}
-
-	return nil
-}
-
-func (c *Client) UninstallSignalIntegration(alias string) error {
-	body := new(bytes.Buffer)
-	requestData := map[string]interface{}{
-		"alias": alias,
-	}
-
-	err := json.NewEncoder(body).Encode(requestData)
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/integrations/signal/uninstall", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to uninstall Signal integration: %s", string(bodyBytes))
-	}
-
-	return nil
 }
 
 // ListContacts retrieves a paginated list of contacts for the current user
@@ -1150,133 +683,4 @@ func (c *Client) CreateChat(data interface{}) (error, chats.ListedChat) {
 	}
 
 	return nil, listedChat
-}
-
-// AddToSignalWhitelist adds a phone number to the whitelist for a Signal integration
-func (c *Client) AddToSignalWhitelist(alias string, phoneNumber string) error {
-	body := new(bytes.Buffer)
-	requestData := map[string]interface{}{
-		"alias":        alias,
-		"phone_number": phoneNumber,
-	}
-
-	err := json.NewEncoder(body).Encode(requestData)
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/v1/integrations/signal/whitelist/add", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to add number to Signal whitelist: %s", string(bodyBytes))
-	}
-
-	return nil
-}
-
-// RemoveFromSignalWhitelist removes a phone number from the whitelist for a Signal integration
-func (c *Client) RemoveFromSignalWhitelist(alias string, phoneNumber string) error {
-	body := new(bytes.Buffer)
-	requestData := map[string]interface{}{
-		"alias":        alias,
-		"phone_number": phoneNumber,
-	}
-
-	err := json.NewEncoder(body).Encode(requestData)
-	if err != nil {
-		log.Printf("Error encoding data: %v", err)
-		return err
-	}
-
-	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v1/integrations/signal/whitelist/remove", c.host), body)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to remove number from Signal whitelist: %s", string(bodyBytes))
-	}
-
-	return nil
-}
-
-// GetSignalWhitelist retrieves the current whitelist for a Signal integration
-func (c *Client) GetSignalWhitelist(alias string) (error, []string) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/integrations/signal/whitelist", c.host), nil)
-	if err != nil {
-		log.Printf("Error creating request: %v", err)
-		return err, nil
-	}
-
-	query := req.URL.Query()
-	query.Add("alias", alias)
-	req.URL.RawQuery = query.Encode()
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", c.host)
-	req.Header.Set("Cookie", fmt.Sprintf("session_id=%s", c.sessionId))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending request: %v", err)
-		return err, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to get Signal whitelist: %s", string(bodyBytes)), nil
-	}
-
-	var response map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&response)
-	if err != nil {
-		log.Printf("Error decoding response: %v", err)
-		return err, nil
-	}
-
-	// Extract the whitelist from the response
-	whitelist := []string{}
-	if whitelistInterface, ok := response["whitelist"].([]interface{}); ok {
-		for _, item := range whitelistInterface {
-			if str, ok := item.(string); ok {
-				whitelist = append(whitelist, str)
-			}
-		}
-	}
-
-	return nil, whitelist
 }
