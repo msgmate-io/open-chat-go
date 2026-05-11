@@ -5,7 +5,6 @@ import (
 	"backend/api/chats"
 	"backend/api/contacts"
 	"backend/api/files"
-	"backend/api/integrations"
 	"backend/api/metrics"
 	"backend/api/reference"
 	"backend/api/tls"
@@ -153,8 +152,6 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 func BackendRouting(
 	DB *gorm.DB,
 	schedulerService *scheduler.SchedulerService,
-	signalService *integrations.SignalIntegrationService,
-	matrixService *integrations.MatrixIntegrationService,
 	debug bool,
 	frontendProxy string,
 	cookieDomain string,
@@ -171,10 +168,6 @@ func BackendRouting(
 	contactsHandler := &contacts.ContactsHander{}
 	metricsHandler := &metrics.MetricsHandler{}
 	websocketHandler := websocket.NewWebSocketHandler()
-	integrationsHandler := &integrations.IntegrationsHandler{
-		SignalService: signalService,
-		MatrixService: matrixService,
-	}
 	filesHandler := &files.FilesHandler{}
 	toolsHandler := &tools.ToolsHandler{}
 	mcpHandler := &tools.MCPHandler{}
@@ -221,33 +214,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
-
-	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
-	v1PrivateApis.HandleFunc("GET /integrations/{id}", integrationsHandler.Get)
-	v1PrivateApis.HandleFunc("POST /integrations/{id}/toggle-active", integrationsHandler.ToggleActive)
-	v1PrivateApis.HandleFunc("DELETE /integrations/{id}", integrationsHandler.Delete)
-	v1PrivateApis.HandleFunc("GET /integrations/{integration_type}/{integration_alias}/status", integrationsHandler.GetIntegrationStatus)
-	v1PrivateApis.HandleFunc("POST /integrations/create", integrationsHandler.Create)
-	v1PrivateApis.HandleFunc("POST /integrations/signal/install", integrationsHandler.InstallSignalRest)
-	v1PrivateApis.HandleFunc("POST /integrations/signal/uninstall", integrationsHandler.UninstallSignalRest)
-
-	v1PrivateApis.HandleFunc("GET /integrations/signal/{alias}/whitelist", integrationsHandler.GetSignalWhitelist)
-	v1PrivateApis.HandleFunc("POST /integrations/signal/{alias}/whitelist/add", integrationsHandler.AddToSignalWhitelist)
-	v1PrivateApis.HandleFunc("POST /integrations/signal/{alias}/whitelist/remove", integrationsHandler.RemoveFromSignalWhitelist)
-
-	// Matrix integration endpoints
-	v1PrivateApis.HandleFunc("GET /integrations/matrix/{integration_id}/verification/status", integrationsHandler.GetMatrixVerificationStatus)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/verification/start", integrationsHandler.StartMatrixDeviceVerification)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/verification/{transaction_id}/confirm", integrationsHandler.ConfirmMatrixVerification)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/verification/{transaction_id}/cancel", integrationsHandler.CancelMatrixVerification)
-	v1PrivateApis.HandleFunc("GET /integrations/matrix/{integration_id}/devices", integrationsHandler.ListMatrixDevices)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/devices/{device_id}/trust", integrationsHandler.TrustMatrixDevice)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/send", integrationsHandler.SendMatrixMessage)
-	v1PrivateApis.HandleFunc("GET /integrations/matrix/{integration_id}/rooms", integrationsHandler.ListMatrixRooms)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/rooms/{room_id}/join", integrationsHandler.JoinMatrixRoom)
-	v1PrivateApis.HandleFunc("GET /integrations/matrix/{integration_id}/whitelist", integrationsHandler.GetMatrixWhitelist)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/whitelist/add", integrationsHandler.AddToMatrixWhitelist)
-	v1PrivateApis.HandleFunc("POST /integrations/matrix/{integration_id}/whitelist/remove", integrationsHandler.RemoveFromMatrixWhitelist)
 
 	// Add schedulerService to the admin handler
 	scheduledTasksHandler := &admin.ScheduledTasksHandler{

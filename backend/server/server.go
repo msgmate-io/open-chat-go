@@ -1,7 +1,6 @@
 package server
 
 import (
-	"backend/api/integrations"
 	"backend/api/websocket"
 	"backend/database"
 	"backend/scheduler"
@@ -75,17 +74,15 @@ func BackendServer(
 	debug bool,
 	frontendProxy string,
 	cookieDomain string,
-) (*http.Server, *websocket.WebSocketHandler, *integrations.SignalIntegrationService, *integrations.MatrixIntegrationService, string, error) {
+) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	fullHost := fmt.Sprintf("http://%s:%d", host, port)
-	signalService := integrations.NewSignalIntegrationService(DB, fullHost)
-	matrixService := integrations.NewMatrixIntegrationService(DB, fullHost)
-	router, websocketHandler := BackendRouting(DB, schedulerService, signalService, matrixService, debug, frontendProxy, cookieDomain)
+	router, websocketHandler := BackendRouting(DB, schedulerService, debug, frontendProxy, cookieDomain)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", host, port),
 		Handler: router,
 	}
 
-	return httpServer, websocketHandler, signalService, matrixService, fullHost, nil
+	return httpServer, websocketHandler, fullHost, nil
 }
 
 func SetupBaseConnections(

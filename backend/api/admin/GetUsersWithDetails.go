@@ -12,37 +12,24 @@ import (
 )
 
 type UserDetails struct {
-	ID           uint                  `json:"id"`
-	CreatedAt    time.Time            `json:"created_at"`
-	UpdatedAt    time.Time            `json:"updated_at"`
-	Name         string               `json:"name"`
-	Email        string               `json:"email"`
-	ContactToken string               `json:"contact_token"`
-	IsAdmin      bool                 `json:"is_admin"`
-	UserType     string               `json:"user_type"` // "regular", "integration", "network"
-	
-	// Integration details (if applicable)
-	HasIntegrations  bool                 `json:"has_integrations"`
-	IntegrationsCount int                 `json:"integrations_count"`
-	Integrations     []IntegrationSummary `json:"integrations,omitempty"`
-	
-	// Network details (if applicable)
-	IsNetworkUser    bool   `json:"is_network_user"`
-	NetworkName      string `json:"network_name,omitempty"`
-	
-	// Activity details
-	LastLogin        *time.Time `json:"last_login,omitempty"`
-	SessionsCount    int        `json:"sessions_count"`
-	ChatsCount       int        `json:"chats_count"`
-	MessagesCount    int        `json:"messages_count"`
-}
+	ID           uint      `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Name         string    `json:"name"`
+	Email        string    `json:"email"`
+	ContactToken string    `json:"contact_token"`
+	IsAdmin      bool      `json:"is_admin"`
+	UserType     string    `json:"user_type"` // "regular", "network"
 
-type IntegrationSummary struct {
-	ID               uint       `json:"id"`
-	IntegrationName  string     `json:"integration_name"`
-	IntegrationType  string     `json:"integration_type"`
-	Active           bool       `json:"active"`
-	LastUsed         *time.Time `json:"last_used,omitempty"`
+	// Network details (if applicable)
+	IsNetworkUser bool   `json:"is_network_user"`
+	NetworkName   string `json:"network_name,omitempty"`
+
+	// Activity details
+	LastLogin     *time.Time `json:"last_login,omitempty"`
+	SessionsCount int        `json:"sessions_count"`
+	ChatsCount    int        `json:"chats_count"`
+	MessagesCount int        `json:"messages_count"`
 }
 
 type PaginatedUsersData struct {
@@ -108,27 +95,6 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 			ContactToken: u.ContactToken,
 			IsAdmin:      u.IsAdmin,
 			UserType:     "regular",
-		}
-
-		// Check if user has integrations
-		var integrations []database.Integration
-		if err := DB.Where("user_id = ?", u.ID).Find(&integrations).Error; err == nil {
-			details.HasIntegrations = len(integrations) > 0
-			details.IntegrationsCount = len(integrations)
-			
-			if len(integrations) > 0 {
-				details.UserType = "integration"
-				for _, integration := range integrations {
-					summary := IntegrationSummary{
-						ID:               integration.ID,
-						IntegrationName:  integration.IntegrationName,
-						IntegrationType:  integration.IntegrationType,
-						Active:           integration.Active,
-						LastUsed:         integration.LastUsed,
-					}
-					details.Integrations = append(details.Integrations, summary)
-				}
-			}
 		}
 
 		// Check if user is a network user (created for a network)
