@@ -236,10 +236,9 @@ func ensureDefaultBotUser(DB *gorm.DB, username, password string) (*database.Use
 }
 
 func ServerCli() *cli.Command {
-	log.Println("Hello from server cli")
 	cmd := &cli.Command{
-		Name:  "boom",
-		Usage: "make an explosive entrance",
+		Name:  "server",
+		Usage: "start the Open Chat server",
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
 			DB := database.SetupDatabase(database.DBConfig{
