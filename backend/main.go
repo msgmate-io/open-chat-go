@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -219,8 +220,9 @@ func loadOpenChatConfig(raw []byte, source string) (openChatConfig, error) {
 		// (e.g. the CI config-delta publisher) emits minified JSON, so a JSON
 		// config must resolve references exactly like its YAML equivalent:
 		// fall through to the resolution path when the document still carries
-		// a "$anchors." marker instead of returning the raw reference strings.
-		if !bytes.Contains(raw, []byte(openChatYamlRefPrefix)) {
+		// a "$anchors." or "$file" marker instead of returning the raw
+		// reference strings.
+		if !bytes.Contains(raw, []byte(openChatYamlRefPrefix)) && !bytes.Contains(raw, []byte(openChatFileRefPrefix)) {
 			return cfg, nil
 		}
 	} else if !isOpenChatConfigSyntaxError(err) {
@@ -235,6 +237,9 @@ func loadOpenChatConfig(raw []byte, source string) (openChatConfig, error) {
 		return openChatConfig{}, fmt.Errorf("invalid open-chat config (%s): not valid JSON or YAML: %w", source, err)
 	}
 	if err := resolveOpenChatConfigYamlRefs(intermediate); err != nil {
+		return openChatConfig{}, fmt.Errorf("invalid open-chat config (%s): %w", source, err)
+	}
+	if err := resolveOpenChatConfigLinkedFiles(intermediate, openChatConfigBaseDir(source)); err != nil {
 		return openChatConfig{}, fmt.Errorf("invalid open-chat config (%s): %w", source, err)
 	}
 	converted, err := json.Marshal(intermediate)
@@ -429,6 +434,87 @@ func isAnchorNameRune(r byte) bool {
 	default:
 		return false
 	}
+}
+
+// openChatFileRefPrefix marks a config value as a link to a text file whose
+// content is read from disk: "$file.<path>". The path is resolved relative to
+// the directory holding the config file (the working directory for an inline
+// config document), so authors keep long, human-edited artifacts (markdown
+// prompts, kubeconfigs, SSH keys) as real files next to their config instead of
+// inlining them. The marker must be the entire value; a link that is missing,
+// unreadable, binary or pointing outside the config directory fails the boot
+// instead of reaching the runtime as a literal marker.
+const openChatFileRefPrefix = "$file."
+
+// resolveOpenChatConfigLinkedFiles substitutes every "$file.<path>" value in the
+// decoded document with the content of the referenced text file. baseDir is the
+// directory the relative paths resolve against.
+func resolveOpenChatConfigLinkedFiles(doc map[string]interface{}, baseDir string) error {
+	if strings.TrimSpace(baseDir) == "" {
+		baseDir = "."
+	}
+	resolve := func(value interface{}) (interface{}, bool, error) {
+		str, isStr := value.(string)
+		if !isStr {
+			return nil, false, nil
+		}
+		idx := strings.Index(str, openChatFileRefPrefix)
+		if idx < 0 {
+			return nil, false, nil
+		}
+		if idx != 0 {
+			return nil, false, fmt.Errorf("%s links must be the entire config value (found one inside %q)", openChatFileRefPrefix, str)
+		}
+		content, err := readOpenChatLinkedFile(strings.TrimSpace(strings.TrimPrefix(str, openChatFileRefPrefix)), baseDir)
+		if err != nil {
+			return nil, false, err
+		}
+		return content, true, nil
+	}
+	return resolveRefsInValue(doc, resolve)
+}
+
+// readOpenChatLinkedFile reads the text file referenced by a "$file." link,
+// enforcing that it stays inside baseDir and really is a text file.
+func readOpenChatLinkedFile(relPath, baseDir string) (string, error) {
+	if relPath == "" {
+		return "", fmt.Errorf("%s link is missing a file path", openChatFileRefPrefix)
+	}
+	if filepath.IsAbs(relPath) {
+		return "", fmt.Errorf("%s%s must be a path relative to the config directory", openChatFileRefPrefix, relPath)
+	}
+	root := filepath.Clean(baseDir)
+	full := filepath.Join(root, filepath.FromSlash(relPath))
+	inside, err := filepath.Rel(root, full)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s%s points outside the config directory", openChatFileRefPrefix, relPath)
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return "", fmt.Errorf("%s%s could not be read: %w", openChatFileRefPrefix, relPath, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s%s is a directory, not a text file", openChatFileRefPrefix, relPath)
+	}
+	content, err := os.ReadFile(full)
+	if err != nil {
+		return "", fmt.Errorf("%s%s could not be read: %w", openChatFileRefPrefix, relPath, err)
+	}
+	if bytes.IndexByte(content, 0) >= 0 {
+		return "", fmt.Errorf("%s%s is not a text file", openChatFileRefPrefix, relPath)
+	}
+	return string(content), nil
+}
+
+// openChatConfigBaseDir returns the directory "$file." links resolve against:
+// the directory of the config file, or the working directory for inline config
+// documents (which have no file to be relative to).
+func openChatConfigBaseDir(source string) string {
+	trimmed := strings.TrimSpace(source)
+	if trimmed == "" || strings.HasPrefix(trimmed, "inline") {
+		return "."
+	}
+	return filepath.Dir(trimmed)
 }
 
 func decodeOpenChatConfigJSON(raw []byte, source string) (openChatConfig, error) {
