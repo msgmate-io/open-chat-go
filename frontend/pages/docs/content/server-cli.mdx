@@ -227,6 +227,30 @@ arguments after the command name are forwarded to the TUI, so its own flags
 (for example `--where` and `--version`) work through `open-chat tui`. See
 [Terminal UI](/docs#tui) for usage and configuration.
 
+## Linking text files into the config
+
+Long config values — markdown prompts, kubeconfigs, SSH keys — do not have to be
+inlined. Set the value to a `$file.<path>` marker and the server reads that text
+file while loading the config, so the artifact can live as a real file next to
+`open-chat.json`:
+
+```json
+{
+  "env": {
+    "SYSTEM_PROMPT": "$file.prompts/system.md"
+  }
+}
+```
+
+The same works in YAML configs. Paths are resolved relative to the directory of
+the config file (the working directory for an inline `--config` document), and
+the file must stay inside that directory: absolute paths and `../` escapes are
+rejected. The marker must be the entire value, and a missing, unreadable, binary
+or out-of-tree file fails the boot with a message naming it, so a broken link is
+never silently handed to the runtime. Substitution happens before the `env`
+section is written into the process environment, so the usual precedence rules
+are unchanged.
+
 ## `open-chat.json` example
 
 The config file can set environment overrides, integration secrets and
