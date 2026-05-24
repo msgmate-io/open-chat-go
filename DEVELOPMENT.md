@@ -71,6 +71,33 @@ the operator's call. Its regression test,
 `development/scripts/test_redis_readiness_contract.py`, runs in the Pin Freshness
 Gate too.
 
+That patch only fixes the *live* object, though, and the Deployment is re-rendered
+on every deploy from the private Helm chart (`msgmate-io/open-chat-go-helm-chart`,
+`backend/templates/redis.yaml`), which still renders the kubelet probe defaults
+and no CPU request — so the gate finding comes straight back after the next
+`helm upgrade`. The chart half of the fix is carried in this repository as
+`development/redis-readiness/ci-722-chart.patch` plus the rendered before/after
+fixtures next to it (`chart-redis-template.{before,after}.yaml`, captured from the
+chart template and the chart's own redis values), and
+`development/scripts/redis_chart_readiness_contract.py` renders that Go-template
+subset and checks the result against the same contract as the live checker — so
+"the chart renders a redis container the readiness gate would accept" is checkable
+before any deploy:
+
+```bash
+development/scripts/redis_chart_readiness_contract.py \
+  --chart-file development/redis-readiness/chart-redis-template.after.yaml
+development/scripts/redis_chart_readiness_contract.py --chart-dir /path/to/open-chat-go-helm-chart
+```
+
+The automation identity has no write access to the chart repository, so an
+operator applies the patch at the chart root
+(`git apply development/redis-readiness/ci-722-chart.patch`) and then the same
+`kubectl patch` shown by the gate; until the chart is updated, a redeploy
+re-introduces the finding. The chart checker and its regression test
+(`development/scripts/test_redis_chart_readiness_contract.py`, stdlib-only like
+its sibling) run in the Pin Freshness Gate.
+
 The PR-CI progress comments follow the same rule. Every job that upserts the
 `<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
 `repository`/`PR number` pair: pass it through step `env` with the event context
@@ -157,6 +184,21 @@ job listings are read page by page (`api_pages`): a single-page read could miss
 the gate job, mistake the run for one that never gated the commit and adopt the
 verdict of an older run for the same SHA.
 
+Waiting is not always the right answer, because the waiter is also the blocker:
+the concurrency group is held by *this* run until it completes, and the
+`always()`-gated job keeps a cancelled run alive for the whole wait budget, so a
+replacement run for the identical commit can be starved by the very run that is
+waiting for it (observed on #892: run 39407028825 stayed `pending` for 12+
+minutes with an empty repository queue, blocked behind the cancelled run
+39407027496). A replacement that has been unable to start for
+`PR_CI_SUPERSEDED_YIELD_SECONDS` (default 60s, repo variable of the same name)
+therefore makes the reconciler cancel its own run - `yield_group`, exit code 5,
+`accepted=false` - and hand the group over; a replacement that is already
+`in_progress` is left to finish, and a `409` on the cancel (already cancelling)
+still counts as yielded. The replacement run's gate owns the verdict from then
+on. Set the variable to `0` to disable yielding and keep the old
+wait-until-timeout behaviour.
+
 The reconciler runs from the workspace, so the `PR Test Merge Requirement` job
 starts with a shallow `actions/checkout` of the pull request's head commit. The
 step is `continue-on-error: true` (the gate step decides), which is why the
@@ -164,6 +206,24 @@ reconciler also checks for its own file and emits an `::error::` annotation with
 `accepted=false` instead of dying quietly: the very first version of this fix
 shipped without the checkout and therefore never engaged (run 39261844509 on
 #844). `WorkflowWiringTests` pins the checkout-before-reconciler ordering.
+
+The same payload-versus-live distinction applies to *every* job, not just the gate
+(ci#659 follow-up). `gh pr create -l ...`, and the default `test` label that
+`no_labels_guidance` attaches in a second API call, both land after the event was
+emitted, so an `opened` payload is label-free. The entry job
+(`run-pr-ci-tests-and-deployments`) used to gate *itself* on that payload and was
+therefore skipped while the always()-gated `PR Test Merge Requirement` read the
+live list and failed with `PR CI did not run for this commit with the test label`,
+for a commit whose suites were never asked to run (run 39373933834 on #880, whose
+sibling run 39373933693 had already been cancelled by concurrency). Every job now
+starts from the live snapshot: the entry job runs on every pull-request event and
+publishes `should_*` outputs derived from the API label list (including
+`should_android_build_test`), and `run-pr-ci-go-tests`, `run-pr-ci-ai-mock-tests`,
+`sandbox-android-image-ensure` and `run-pr-ci-android-build` gate on those outputs.
+No job-level `if:` may read `github.event.pull_request.labels` (only the
+informational `no_labels_guidance` job and the `pin-drift-allowed` escape hatch
+still inspect the payload); `LiveLabelGatingTests` in
+`development/scripts/test_pr_ci_superseded_reconcile.py` pins that.
 
 #### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
 
@@ -889,7 +949,7 @@ The `trigger-open-chat-coding-interaction.yaml` workflow in the private
 start another coding agent: it shells out through `coder_bash`
 (`gh workflow run`) and relies on GitHub to deliver the trigger. It stays
 supported as the reproducible, auditable fallback, but it is **deprecated as the
-primary route** for the development lead.
+primary route** for the coordinating `msgmate-coder` agent.
 
 The native route is the in-server agent-dispatch surface documented in
 `backend/api/bots/AgentDispatch.go`, exposed to the native coder (and through the
