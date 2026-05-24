@@ -2618,6 +2618,16 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    # ci#774 follow-up: record exactly what was dispatched - the ref, that
+    # ref's commit, the HTTP status and the response body - so the waiter can
+    # prove the run it observes is this dispatch and can print the response
+    # body when the CI repository never turns the dispatch into a run.
+    outputs:
+      dispatch_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_ref }}
+      dispatch_ref_sha: ${{ steps.dispatch_ci_deploy.outputs.dispatch_ref_sha }}
+      dispatch_status: ${{ steps.dispatch_ci_deploy.outputs.dispatch_status }}
+      dispatch_response: ${{ steps.dispatch_ci_deploy.outputs.dispatch_response }}
+      dispatch_target_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_target_ref }}
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -2655,6 +2665,12 @@ jobs:
           done
 
       - name: Dispatch deployment workflow in CI repository
+        id: dispatch_ci_deploy
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          SRC_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
+          DISPATCH_TARGET_REF: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          DISPATCH_PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
         run: |
           set -euo pipefail
           payload="$(
@@ -2686,6 +2702,42 @@ jobs:
                 }
               }'
           )"
+          # ci#774 follow-up: a PR deploy must deploy the PR head, so verify the ref
+          # this dispatch carries against the live head of the source PR. The
+          # pr-deploy-<n> concurrency supersedes a stale approve job, but this makes
+          # the stale case fail loudly instead of dispatching an outdated sha that
+          # the waiter could then never match.
+          if [ -n "${DISPATCH_PR_NUMBER:-}" ] && [ -n "${DISPATCH_TARGET_REF:-}" ]; then
+            live_head_sha="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SRC_REPO}/pulls/${DISPATCH_PR_NUMBER}" \
+              | jq -r '.head.sha // ""')" || live_head_sha=""
+            if [ -z "$live_head_sha" ]; then
+              echo "::error::Could not resolve the head sha of PR #${DISPATCH_PR_NUMBER} in ${SRC_REPO}; refusing to dispatch an unverified deploy."
+              exit 1
+            fi
+            if [ "$live_head_sha" != "$DISPATCH_TARGET_REF" ]; then
+              echo "::error::PR #${DISPATCH_PR_NUMBER} head is ${live_head_sha} but this run would dispatch the outdated ref ${DISPATCH_TARGET_REF}; refusing a stale deploy."
+              exit 1
+            fi
+            echo "Dispatch target verified against PR #${DISPATCH_PR_NUMBER} head ${live_head_sha}."
+          fi
+          # A workflow_dispatch run reports the dispatched ref as head_branch and that
+          # ref's commit as head_sha; resolve the commit now so the waiter can reject a
+          # run that was not created by this dispatch.
+          dispatch_ref_sha="$(curl -fsSL \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CI_REPO}/commits/${CI_REF}" \
+            | jq -r '.sha // ""')" || dispatch_ref_sha=""
+          if [ -z "$dispatch_ref_sha" ]; then
+            echo "::warning::Could not resolve the commit of CI ref '${CI_REF}' in ${CI_REPO}; the waiter will match the dispatched ref only."
+          else
+            echo "Dispatching approved deploy from CI ref '${CI_REF}' @ ${dispatch_ref_sha}."
+          fi
           status_code="$(curl -s -o /tmp/ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -2697,13 +2749,23 @@ jobs:
             cat /tmp/ci_deploy_dispatch.json || true
             exit 1
           fi
+          # A 204 returns an empty body; the waiter prints this body when the
+          # dispatch is rejected or never turns into a run (ci#774 follow-up).
+          {
+            echo "dispatch_ref=$CI_REF"
+            echo "dispatch_ref_sha=$dispatch_ref_sha"
+            echo "dispatch_target_ref=$DISPATCH_TARGET_REF"
+            echo "dispatch_status=$status_code"
+            echo "dispatch_response=$(tr '\n' ' ' < /tmp/ci_deploy_dispatch.json | cut -c1-900)"
+          } >> "$GITHUB_OUTPUT"
           # A 204 only means GitHub accepted the request: a mis-targeted or
           # silently rejected dispatch (wrong ref, missing workflow_dispatch
           # trigger, run-name that does not embed the dispatch id) creates no run
           # at all and used to surface only as a 25-minute "run never appeared"
           # timeout in the waiter job with nothing to diagnose. Record exactly what
-          # was dispatched here; the waiter now fails fast (300s) and prints the
-          # recent dispatched run titles (ci#774).
+          # was dispatched here; the waiter fails fast (CI_DISPATCH_GRACE_SECONDS,
+          # default 60s), verifies the run it observes was created from that ref/sha
+          # and prints this response body plus the recent dispatched run titles.
           echo "::notice::Deploy dispatch accepted (HTTP 204): repo='${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}' ref='${CI_REF:-main}' dispatch_id='${DISPATCH_RUN_ID:-none}' target='${DEPLOYMENT_NAME:-none}' response_body=$(cat /tmp/ci_deploy_dispatch.json 2>/dev/null || echo '(empty)')."
 
       - name: Dispatch build and release workflow in source repository
@@ -2866,6 +2928,11 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      DISPATCH_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_ref }}
+      DISPATCH_REF_SHA: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_ref_sha }}
+      DISPATCH_STATUS: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_status }}
+      DISPATCH_RESPONSE: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_response }}
+      DISPATCH_TARGET_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_target_ref }}
     steps:
       - name: Wait for dispatched CI deployment workflow
         timeout-minutes: 30
@@ -2904,11 +2971,22 @@ jobs:
           # A run that never appears means the dispatch was dropped or used the
           # wrong ref - never a slow deploy - so do not burn the 25-minute window.
           first_miss_at=""
-          miss_fail_seconds=300
+          # ci#774 follow-up: this is the dispatch grace, not a deploy budget. A
+          # dispatched run appears within seconds; when the CI repository rejects
+          # the dispatch or never creates the run, the waiter must fail fast (and
+          # print the dispatch response body) instead of burning the full
+          # CI_WAIT_MAX_SECONDS / ~90 poll attempts. Overridable for debugging.
+          miss_fail_seconds="${CI_DISPATCH_GRACE_SECONDS:-60}"
           poll_interval=15
           # Cover a full 12-25 minute deploy instead of the old ~5 minute bound,
           # which falsely failed while the dispatched deploy was still running.
           deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          if [ -n "${DISPATCH_STATUS:-}" ] && [ "$DISPATCH_STATUS" != "204" ]; then
+            echo "::error::The CI deploy dispatch was rejected (HTTP ${DISPATCH_STATUS}); no deployment run will be created."
+            echo "Dispatch ref: ${DISPATCH_REF:-<unknown>}${DISPATCH_REF_SHA:+ @ ${DISPATCH_REF_SHA}}"
+            echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+            exit 1
+          fi
           attempt=0
 
           while :; do
@@ -2943,7 +3021,7 @@ jobs:
                 [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
                 // candidates[0]
               end)
-              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url] | @tsv end
+              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url, (.head_branch // ""), (.head_sha // "")] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
@@ -2959,6 +3037,8 @@ jobs:
               # notice, which records the dispatch ref, target and response body
               # (ci#774).
               if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "Dispatched ref: ${DISPATCH_REF:-<unknown>}${DISPATCH_REF_SHA:+ @ ${DISPATCH_REF_SHA}} target=${DISPATCH_TARGET_REF:-<unknown>}"
+                echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
                 echo "::error::No CI deployment run for 'Deploy ${DEPLOYMENT_NAME}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the 'Dispatch Approved Deploy' job notice for the dispatch ref, target and response body - a silently dropped or wrong-ref dispatch looks identical to a very slow deploy."
                 exit 1
               fi
@@ -2966,8 +3046,21 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+            IFS=$'\t' read -r run_id run_status run_conclusion run_url run_ref run_sha <<< "$run_line"
+            echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none} ref=${run_ref:-none} sha=${run_sha:-none}"
+            # ci#774 follow-up: the observed run must belong to the ref/sha this job
+            # dispatched, otherwise a run created from another commit would be
+            # observed here and reported as this PR's deploy.
+            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] && [ "$run_ref" != "$DISPATCH_REF" ]; then
+              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'."
+              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+              exit 1
+            fi
+            if [ -n "${DISPATCH_REF_SHA:-}" ] && [ -n "${run_sha:-}" ] && [ "$run_sha" != "$DISPATCH_REF_SHA" ]; then
+              echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA}."
+              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+              exit 1
+            fi
 
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep "$poll_interval"
