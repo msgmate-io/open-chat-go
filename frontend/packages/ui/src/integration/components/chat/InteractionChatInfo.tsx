@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { cn } from "../../lib/utils";
-import { EllipsisVertical } from "lucide-react";
+import { ChevronDown, EllipsisVertical, Info, Server, Settings2, Wrench } from "lucide-react";
 import {
   Badge,
   BotDisplay,
@@ -12,7 +12,19 @@ import {
   DropdownMenuTrigger,
 } from "@open-chat-go/ui";
 import { CollapseIndicator } from "../CollapseIndicator";
-import { ChatDetailsPanel, ChatDetailsTabId } from "./ChatDetailsPanel";
+import { ChatDetailsPanel, type ChatDetailsTabId } from "./ChatDetailsPanel";
+
+const DETAILS_MENU_ITEMS: ReadonlyArray<{
+  tab: ChatDetailsTabId;
+  label: string;
+  Icon: typeof Info;
+  hiddenInSharedView?: boolean;
+}> = [
+  { tab: "overview", label: "Overview", Icon: Info },
+  { tab: "init", label: "Tool init", Icon: Settings2, hiddenInSharedView: true },
+  { tab: "tools", label: "Browse tools", Icon: Wrench },
+  { tab: "mcp", label: "MCP servers", Icon: Server },
+];
 
 interface InteractionChatInfoProps {
   chat: any;
@@ -115,7 +127,7 @@ export function InteractionChatInfo({
 
   return (
     <div className="w-full px-2 pb-2 pt-2.5 md:px-4 md:pt-3">
-      <Card className="mx-auto w-full border border-border/70 bg-card/95 p-2.5 shadow-sm md:max-w-[900px] md:p-3">
+      <Card className="mx-auto w-full border border-border/70 bg-card/95 p-2.5 shadow-sm md:max-w-[960px] md:p-3">
         <div className="flex items-center gap-2">
           {onToggleSidebar ? (
             <CollapseIndicator
@@ -150,6 +162,21 @@ export function InteractionChatInfo({
               {statusBadge.label}
             </Badge>
           ) : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsExpanded((prev) => !prev)}
+            aria-expanded={isExpanded}
+            aria-controls="interaction-chat-details"
+            title={isExpanded ? "Hide chat details" : "Show chat details"}
+            className="hidden h-7 shrink-0 gap-1 rounded-full px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground sm:inline-flex"
+          >
+            Details
+            <ChevronDown
+              className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
+              aria-hidden
+            />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -162,25 +189,22 @@ export function InteractionChatInfo({
                 <EllipsisVertical className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              {!isSharedView ? (
-                <DropdownMenuItem
-                  onClick={() => {
-                    setActiveTab("init");
-                    setIsExpanded(true);
-                  }}
-                >
-                  View tool init
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem
-                onClick={() => {
-                  setActiveTab("tools");
-                  setIsExpanded(true);
-                }}
-              >
-                Browse tools
-              </DropdownMenuItem>
+            <DropdownMenuContent align="end" className="w-56">
+              {DETAILS_MENU_ITEMS.map(({ tab, label, Icon, hiddenInSharedView }) => {
+                if (hiddenInSharedView && isSharedView) return null;
+                return (
+                  <DropdownMenuItem
+                    key={tab}
+                    onClick={() => {
+                      setActiveTab(tab);
+                      setIsExpanded(true);
+                    }}
+                  >
+                    <Icon className="mr-2 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    {label}
+                  </DropdownMenuItem>
+                );
+              })}
               {extraMenuItems}
               <DropdownMenuItem
                 onClick={() => setIsExpanded((prev) => !prev)}
@@ -197,7 +221,7 @@ export function InteractionChatInfo({
         ) : null}
 
         {isExpanded && (
-          <div className="mt-3">
+          <div id="interaction-chat-details" className="mt-3">
             <ChatDetailsPanel
               chat={chat}
               user={user}
