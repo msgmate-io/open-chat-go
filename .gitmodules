@@ -4,3 +4,6 @@
 [submodule "development/helm"]
 	path = development/helm
 	url = https://github.com/msgmate-io/open-chat-go-helm-chart
+[submodule "development/ci"]
+	path = development/ci
+	url = https://github.com/msgmate-io/open-chat-go-ci
