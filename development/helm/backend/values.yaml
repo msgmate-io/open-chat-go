@@ -12,31 +12,23 @@ backend:
   imagePullPolicy: IfNotPresent
   service:
     port: 1984
+  sqlite:
+    path: data.db
+    persistence:
+      enabled: false
+      mountPath: /backend/data
+      fileName: data.db
+      size: 1Gi
+      accessMode: ReadWriteOnce
+      # storageClassName: ""
+      # existingClaim: ""
   env:
     HOST: ""
     PORT: "1984"
+    DB_BACKEND: sqlite
     DEBUG: "false"
     START_BOT: "false"
     ROOT_CREDENTIALS: "admin:random"
-
-postgres:
-  enabled: true
-  image: postgres:15-alpine
-  imagePullPolicy: IfNotPresent
-  service:
-    name: postgres-service
-    port: 5432
-  auth:
-    username: postgres
-    password: dbpass
-    database: dbname
-  persistence:
-    enabled: true
-    mountPath: /var/lib/postgresql/data
-    size: 5Gi
-    accessMode: ReadWriteOnce
-    # storageClassName: ""
-    # existingClaim: ""
 
 ingress:
   use: false
