@@ -1,0 +1,16 @@
+{{- if and .Values.postgres.enabled .Values.postgres.persistence.enabled (not .Values.postgres.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: {{ .Values.rootNamespace }}
+spec:
+  accessModes:
+    - {{ .Values.postgres.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.persistence.size }}
+  {{- with .Values.postgres.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

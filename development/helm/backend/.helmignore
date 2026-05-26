@@ -1,0 +1,12 @@
+# Common VCS dirs
+.git/
+.gitignore
+
+# IDE files
+.idea/
+.vscode/
+
+# Temp files
+*.swp
+*.tmp
+*.bak

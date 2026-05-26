@@ -1,0 +1,46 @@
+rootNamespace: default
+
+registryAuth:
+  use: false
+  host: ghcr.io
+  token: ""
+  secretName: dockerconfigjson-github-com
+
+backend:
+  replicas: 1
+  imageURL: ghcr.io/example/msgmate-open-chat:latest
+  imagePullPolicy: IfNotPresent
+  service:
+    port: 1984
+  env:
+    HOST: ""
+    PORT: "1984"
+    DEBUG: "false"
+    START_BOT: "false"
+    ROOT_CREDENTIALS: "admin:random"
+
+postgres:
+  enabled: true
+  image: postgres:15-alpine
+  imagePullPolicy: IfNotPresent
+  service:
+    name: postgres-service
+    port: 5432
+  auth:
+    username: postgres
+    password: dbpass
+    database: dbname
+  persistence:
+    enabled: true
+    mountPath: /var/lib/postgresql/data
+    size: 5Gi
+    accessMode: ReadWriteOnce
+    # storageClassName: ""
+    # existingClaim: ""
+
+ingress:
+  use: false
+  className: public
+  certManager: false
+  host: ""
+  extraAnnotations: {}
