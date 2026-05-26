@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-env
+  namespace: {{ .Values.rootNamespace }}
+type: Opaque
+data:
+{{- range $key, $value := .Values.backend.env }}
+  {{ $key }}: {{ $value | toString | b64enc | quote }}
+{{- end }}
+{{- if and .Values.postgres.enabled (not (hasKey .Values.backend.env "DB_BACKEND")) }}
+  DB_BACKEND: {{ "postgres" | b64enc | quote }}
+{{- end }}
+{{- if and .Values.postgres.enabled (not (hasKey .Values.backend.env "DB_PATH")) }}
+  DB_PATH: {{ printf "postgresql://%s:%s@%s.%s.svc.cluster.local:%v/%s" .Values.postgres.auth.username .Values.postgres.auth.password .Values.postgres.service.name .Values.rootNamespace (.Values.postgres.service.port | int) .Values.postgres.auth.database | b64enc | quote }}
+{{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-container
+  namespace: {{ .Values.rootNamespace }}
+  labels:
+    app: backend-container
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      app: backend-container
+  template:
+    metadata:
+      labels:
+        app: backend-container
+    spec:
+      containers:
+        - name: backend-container
+          image: {{ .Values.backend.imageURL }}
+          imagePullPolicy: {{ .Values.backend.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.service.port }}
+          envFrom:
+            - secretRef:
+                name: backend-env
+      {{- if .Values.registryAuth.use }}
+      imagePullSecrets:
+        - name: {{ .Values.registryAuth.secretName }}
+      {{- end }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: {{ .Values.rootNamespace }}
+  labels:
+    app: backend-container
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.port }}
+  selector:
+    app: backend-container
