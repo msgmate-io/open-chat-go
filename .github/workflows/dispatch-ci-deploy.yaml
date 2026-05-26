@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.action != 'closed' || github.event.pull_request.merged == true
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_PAT }}
+      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
       CI_REPOSITORY_VAR: ${{ vars.CI_REPOSITORY }}
       CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CI_DISPATCH_TOKEN:-}" ]; then
-            echo "Missing CI_DISPATCH_TOKEN or BOT_PAT secret."
+            echo "Missing CI_DISPATCH_TOKEN, BOT_TOKEN, or BOT_PAT secret."
             exit 1
           fi
 
