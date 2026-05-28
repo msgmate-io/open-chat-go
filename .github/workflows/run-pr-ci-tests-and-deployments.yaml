@@ -15,6 +15,10 @@ on:
         description: CI repository that contains the deploy workflow
         required: false
         default: msgmate-io/open-chat-go-ci
+      BOT_USER:
+        description: GitHub username that owns the bot comments
+        required: false
+        default: cur1ousdude
   pull_request:
     types:
       - opened
@@ -38,6 +42,8 @@ permissions:
 env:
   CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
   CI_REF: ${{ vars.CI_REF || 'main' }}
+  BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   no_labels_guidance:
@@ -48,6 +54,7 @@ jobs:
       - name: Delete previous workflow comments
         env:
           COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
           comments="$(
@@ -56,7 +63,7 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              | jq -r '.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
+              | jq -r --arg bot_user "$BOT_USER" '.[] | select(.user.login == $bot_user) | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
           )"
           for comment in $comments; do
             curl -fsSL -X DELETE \
@@ -67,13 +74,12 @@ jobs:
           done
 
       - name: Post no-label guidance comment
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
-          issue-number: ${{ github.event.pull_request.number }}
-          body-includes: "<!-- open-chat-pr-ci-no-label-guidance -->"
-          edit-mode: replace
-          body: |
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<'EOF'
             Add labels to trigger CI actions:
 
             - `deploy`: trigger deployment dispatch to CI sub-repo
@@ -82,6 +88,32 @@ jobs:
             No label found, so I automatically added `test` for this PR.
 
             <!-- open-chat-pr-ci-no-label-guidance -->
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              -d "$payload"
+          fi
 
       - name: Add default test label
         env:
@@ -147,6 +179,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
           comments="$(
@@ -155,7 +188,7 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
-              | jq -r '.[] | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
+              | jq -r --arg bot_user "$BOT_USER" '.[] | select(.user.login == $bot_user) | select((.body | contains("<!-- open-chat-pr-ci-progress -->")) or (.body | contains("<!-- open-chat-pr-ci-no-label-guidance -->")) or (.body | contains("<!-- open-chat-ci-deploy-comment -->"))) | .id'
           )"
           for comment in $comments; do
             curl -fsSL -X DELETE \
@@ -167,13 +200,12 @@ jobs:
 
       - name: Create initial progress comment
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          token: ${{ env.COMMENT_TOKEN }}
-          issue-number: ${{ steps.context.outputs.pr_number }}
-          body-includes: "<!-- open-chat-pr-ci-progress -->"
-          edit-mode: replace
-          body: |
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<'EOF'
             Running PR CI orchestration.
 
             <!-- open-chat-pr-ci-progress -->
@@ -182,6 +214,32 @@ jobs:
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for builds and approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
 
       - name: Checkout source repository
         if: steps.context.outputs.should_deploy != '' || steps.context.outputs.should_test != ''
@@ -229,6 +287,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
 
       - name: Run Go tests
         if: steps.context.outputs.should_test != ''
@@ -239,13 +298,12 @@ jobs:
 
       - name: Update progress comment after build
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          token: ${{ env.COMMENT_TOKEN }}
-          issue-number: ${{ steps.context.outputs.pr_number }}
-          body-includes: "<!-- open-chat-pr-ci-progress -->"
-          edit-mode: replace
-          body: |
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<'EOF'
             Running PR CI orchestration.
 
             <!-- open-chat-pr-ci-progress -->
@@ -254,6 +312,32 @@ jobs:
             ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `waiting for approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
 
       - name: Skip deploy dispatch when deploy label is missing
         if: steps.context.outputs.should_deploy == ''
@@ -261,13 +345,12 @@ jobs:
 
       - name: Update progress comment after dispatch
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          token: ${{ env.COMMENT_TOKEN }}
-          issue-number: ${{ steps.context.outputs.pr_number }}
-          body-includes: "<!-- open-chat-pr-ci-progress -->"
-          edit-mode: replace
-          body: |
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<'EOF'
             Running PR CI orchestration.
 
             <!-- open-chat-pr-ci-progress -->
@@ -276,14 +359,50 @@ jobs:
             ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(3) deploy` `awaiting approval`' || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.context.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
 
-  approve-and-dispatch-deploy:
-    name: Approve and Dispatch Deploy
+  wait-for-deployment-approval:
+    name: Wait for Admin Deployment Approval
     runs-on: ubuntu-latest
     needs: [run-pr-ci-tests-and-deployments]
     if: needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     environment:
       name: pr-deployments
+    steps:
+      - name: Deployment approved
+        run: |
+          echo "Deployment approval granted for ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}."
+
+  approve-and-dispatch-deploy:
+    name: Dispatch Approved Deploy
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments, wait-for-deployment-approval]
+    if: needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
@@ -332,6 +451,7 @@ jobs:
               --arg imageUrl "${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url }}" \
               --arg sourceRepository "${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
+              --arg botUser "$BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
               '{
                 ref: $ref,
@@ -341,6 +461,7 @@ jobs:
                   BUILT_IMAGE_URL: $imageUrl,
                   SOURCE_REPOSITORY: $sourceRepository,
                   SOURCE_PR_NUMBER: $sourcePrNumber,
+                  BOT_USER: $botUser,
                   DISPATCH_RUN_ID: $dispatchRunId
                 }
               }'
@@ -438,13 +559,12 @@ jobs:
 
       - name: Update progress comment after approved dispatch
         if: needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          token: ${{ env.COMMENT_TOKEN }}
-          issue-number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
-          body-includes: "<!-- open-chat-pr-ci-progress -->"
-          edit-mode: replace
-          body: |
+        env:
+          COMMENT_TOKEN: ${{ env.COMMENT_TOKEN }}
+          BOT_USER: ${{ env.BOT_USER }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<'EOF'
             Running PR CI orchestration.
 
             <!-- open-chat-pr-ci-progress -->
@@ -453,3 +573,29 @@ jobs:
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             - [x] `(3) deploy` `dispatch triggered`
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
+              -d "$payload"
+          fi
