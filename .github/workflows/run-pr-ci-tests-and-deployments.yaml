@@ -433,23 +433,13 @@ jobs:
               -d "$payload"
           fi
 
-  wait-for-deployment-approval:
-    name: Wait for Admin Deployment Approval
+  approve-and-dispatch-deploy:
+    name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
     needs: [run-pr-ci-tests-and-deployments]
     if: needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     environment:
       name: pr-deployments
-    steps:
-      - name: Deployment approved
-        run: |
-          echo "Deployment approval granted for ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}."
-
-  approve-and-dispatch-deploy:
-    name: Dispatch Approved Deploy
-    runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, wait-for-deployment-approval]
-    if: needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
@@ -701,23 +691,13 @@ jobs:
           echo "ci_repository=$CI_REPOSITORY_DEFAULT" >> "$GITHUB_OUTPUT"
           echo "deployment_url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
 
-  wait-for-merged-deployment-approval:
-    name: Wait for Merged Deployment Approval
+  dispatch-merged-deployment:
+    name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
     needs: [resolve-merged-deployment]
     if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
     environment:
       name: ${{ needs.resolve-merged-deployment.outputs.approval_environment }}
-    steps:
-      - name: Deployment approved
-        run: |
-          echo "Approved ${{ needs.resolve-merged-deployment.outputs.deployment_name }} deployment."
-
-  dispatch-merged-deployment:
-    name: Dispatch Merged Deployment
-    runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment, wait-for-merged-deployment-approval]
-    if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
