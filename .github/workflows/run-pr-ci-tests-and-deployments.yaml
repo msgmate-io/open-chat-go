@@ -288,6 +288,7 @@ jobs:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
+      DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Create GitHub deployment
         id: deployment
@@ -331,6 +332,7 @@ jobs:
               --arg imageUrl "${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url }}" \
               --arg sourceRepository "${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
+              --arg dispatchRunId "$DISPATCH_RUN_ID" \
               '{
                 ref: $ref,
                 inputs: {
@@ -338,7 +340,8 @@ jobs:
                   TARGET_REF: $targetRef,
                   BUILT_IMAGE_URL: $imageUrl,
                   SOURCE_REPOSITORY: $sourceRepository,
-                  SOURCE_PR_NUMBER: $sourcePrNumber
+                  SOURCE_PR_NUMBER: $sourcePrNumber,
+                  DISPATCH_RUN_ID: $dispatchRunId
                 }
               }'
           )"
@@ -349,27 +352,89 @@ jobs:
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
             -d "$payload"
 
-      - name: Mark deployment success
-        if: success()
+      - name: Wait for dispatched CI deployment workflow
+        id: wait_ci_deploy
         run: |
           set -euo pipefail
+          expected_title="Deploy ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }} ${DISPATCH_RUN_ID}"
+          ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
+          run_id=""
+          run_url=""
+
+          for attempt in $(seq 1 80); do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+
+            run_line="$(jq -r --arg title "$expected_title" '
+              [
+                .workflow_runs[]
+                | select((.display_title // "") == $title)
+                | [.id, .status, (.conclusion // ""), .html_url]
+                | @tsv
+              ][0] // ""
+            ' <<< "$runs_json")"
+
+            if [ -z "$run_line" ]; then
+              echo "Attempt $attempt/80: waiting for dispatched CI workflow run '$expected_title' to appear."
+              sleep 15
+              continue
+            fi
+
+            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
+            echo "Attempt $attempt/80: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+
+            if [ "$run_status" != "completed" ]; then
+              sleep 15
+              continue
+            fi
+
+            echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
+            if [ "$run_conclusion" = "success" ]; then
+              exit 0
+            fi
+
+            echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
+            exit 1
+          done
+
+          echo "Timed out waiting for dispatched CI deployment workflow."
+          if [ -n "$run_url" ]; then
+            echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
+          fi
+          exit 1
+
+      - name: Mark deployment success
+        if: success() && steps.deployment.outputs.id != ''
+        run: |
+          set -euo pipefail
+          log_url="${{ steps.wait_ci_deploy.outputs.ci_run_url }}"
+          if [ -z "$log_url" ]; then
+            log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n '{state:"success", log_url:"'"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"'"}')"
+            -d "$(jq -n --arg log_url "$log_url" '{state:"success", log_url:$log_url}')"
 
       - name: Mark deployment failure
-        if: failure()
+        if: failure() && steps.deployment.outputs.id != ''
         run: |
           set -euo pipefail
+          log_url="${{ steps.wait_ci_deploy.outputs.ci_run_url }}"
+          if [ -z "$log_url" ]; then
+            log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n '{state:"failure", log_url:"'"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"'"}')"
+            -d "$(jq -n --arg log_url "$log_url" '{state:"failure", log_url:$log_url}')"
 
       - name: Update progress comment after approved dispatch
         if: needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
