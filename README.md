@@ -3,8 +3,9 @@
 > 10th generation of Open Chat, written in Go.
 > ( Without federation again ;) see my project status update ( to be posted soon )
 
-Production: [`msgmate.io`](https://msgmate.io)
-API Docs: [`msgmate.io/reference`](https://msgmate.io/reference)
+- Production: [`msgmate.io`](https://msgmate.io) ( branch [`production`]() )
+- Staging: [`stage.msgmate.io`](https://stage.msgmate.io) ( branch [`main`]() )
+- API Docs: [`msgmate.io/reference`](https://msgmate.io/reference)
 
 ### Development
 
