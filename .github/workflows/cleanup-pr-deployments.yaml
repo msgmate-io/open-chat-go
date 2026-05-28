@@ -1,0 +1,165 @@
+name: Cleanup PR Deployments
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+env:
+  CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
+  CI_REF: ${{ vars.CI_REF || 'main' }}
+  BOT_USER: cur1ousdude
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  cleanup-pr-deployment:
+    name: Cleanup PR Deployment
+    runs-on: ubuntu-latest
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      DEPLOYMENT_NAME: ${{ vars.CI_DEPLOYMENT_NAME || 'msgmate-io-staging' }}
+      DISPATCH_RUN_ID: cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Resolve PR deployment identity
+        id: context
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          RAW_PR_NAME="${{ github.event.pull_request.head.ref }}"
+          PR_SLUG="$(printf '%s' "$RAW_PR_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9.-]/-/g' \
+            | sed 's/-\+/-/g; s/\.\+/./g' \
+            | sed 's/^[.-]\+//; s/[.-]\+$//')"
+          if [ -z "$PR_SLUG" ]; then
+            PR_SLUG="pr"
+          fi
+          if ! printf '%s' "$PR_SLUG" | grep -q '^[a-z0-9]'; then
+            PR_SLUG="p${PR_SLUG}"
+          fi
+          if ! printf '%s' "$PR_SLUG" | grep -q '[a-z0-9]$'; then
+            PR_SLUG="${PR_SLUG}p"
+          fi
+          UNIQUE_SUFFIX="pr-${PR_NUMBER}"
+          MAX_SLUG_LENGTH=$((63 - ${#UNIQUE_SUFFIX} - 1))
+          if [ "$MAX_SLUG_LENGTH" -lt 1 ]; then
+            MAX_SLUG_LENGTH=1
+          fi
+          PR_SLUG="$(printf '%s' "$PR_SLUG" | cut -c1-"$MAX_SLUG_LENGTH" | sed 's/[.-]\+$//')"
+          if [ -z "$PR_SLUG" ]; then
+            PR_SLUG="pr"
+          fi
+          DEPLOY_HOST="${PR_SLUG}-${UNIQUE_SUFFIX}.pr-env.msgmate.io"
+          echo "deploy_host=$DEPLOY_HOST" >> "$GITHUB_OUTPUT"
+          echo "deploy_url=https://$DEPLOY_HOST" >> "$GITHUB_OUTPUT"
+          echo "namespace=open-chat-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "helm_release=backend-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "ci_repository=${CI_REPOSITORY_DEFAULT}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch cleanup workflow in CI repository
+        run: |
+          set -euo pipefail
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg deploymentName "$DEPLOYMENT_NAME" \
+              --arg namespace "${{ steps.context.outputs.namespace }}" \
+              --arg helmRelease "${{ steps.context.outputs.helm_release }}" \
+              --arg deployHost "${{ steps.context.outputs.deploy_host }}" \
+              --arg sourceRepository "${{ github.repository }}" \
+              --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
+              --arg botUser "$BOT_USER" \
+              --arg dispatchRunId "$DISPATCH_RUN_ID" \
+              '{
+                ref: $ref,
+                inputs: {
+                  DEPLOYMENT_NAME: $deploymentName,
+                  NAMESPACE: $namespace,
+                  HELM_RELEASE: $helmRelease,
+                  DEPLOY_HOST: $deployHost,
+                  SOURCE_REPOSITORY: $sourceRepository,
+                  SOURCE_PR_NUMBER: $sourcePrNumber,
+                  BOT_USER: $botUser,
+                  DISPATCH_RUN_ID: $dispatchRunId
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ steps.context.outputs.ci_repository }}/actions/workflows/cleanup-pr-deployment.yaml/dispatches" \
+            -d "$payload"
+
+      - name: Wait for dispatched CI cleanup workflow
+        run: |
+          set -euo pipefail
+          expected_title="Cleanup ${{ steps.context.outputs.namespace }} ${DISPATCH_RUN_ID}"
+          ci_repo="${{ steps.context.outputs.ci_repository }}"
+
+          for attempt in $(seq 1 80); do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${ci_repo}/actions/workflows/cleanup-pr-deployment.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+
+            run_line="$(jq -r --arg title "$expected_title" '
+              [
+                .workflow_runs[]
+                | select((.display_title // "") == $title)
+                | [.status, (.conclusion // ""), .html_url]
+                | @tsv
+              ][0] // ""
+            ' <<< "$runs_json")"
+
+            if [ -z "$run_line" ]; then
+              echo "Attempt $attempt/80: waiting for cleanup workflow run '$expected_title' to appear."
+              sleep 15
+              continue
+            fi
+
+            IFS=$'\t' read -r run_status run_conclusion run_url <<< "$run_line"
+            echo "Attempt $attempt/80: cleanup status=$run_status conclusion=${run_conclusion:-none}"
+            if [ "$run_status" != "completed" ]; then
+              sleep 15
+              continue
+            fi
+            if [ "$run_conclusion" = "success" ]; then
+              exit 0
+            fi
+            echo "Cleanup workflow failed: $run_url"
+            exit 1
+          done
+
+          echo "Timed out waiting for cleanup workflow."
+          exit 1
+
+      - name: Comment cleanup result
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ "${{ job.status }}" = "success" ]; then
+            status="Cleaned up"
+          else
+            status="Cleanup attempted"
+          fi
+          body="$(cat <<EOF
+          ${status} PR deployment [\`${{ steps.context.outputs.deploy_url }}\`](${{ steps.context.outputs.deploy_url }}).
+
+          <!-- open-chat-pr-ci-cleanup -->
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            -d "$payload"
