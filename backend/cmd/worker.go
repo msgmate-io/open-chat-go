@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"backend/api/msgmate"
 	"backend/database"
 	"backend/integrations"
 	"backend/queue"
@@ -65,7 +66,7 @@ func WorkerCli() *cli.Command {
 				Value:   true,
 			},
 		}, GetRedisFlags()...),
-		Action: func(_ context.Context, c *cli.Command) error {
+		Action: func(ctx context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 			for _, migration := range integrations.AdditionalMigrations() {
@@ -114,6 +115,13 @@ func WorkerCli() *cli.Command {
 				},
 			)
 
+			queueClient := asynq.NewClient(redisRuntime.ConnOpt)
+			defer queueClient.Close()
+			queueInspector := asynq.NewInspector(redisRuntime.ConnOpt)
+			// ci#724/ci#747: in-turn tools without request scope (coder_schedule)
+			// and the self-resume runtime resolve the process-wide handles.
+			workqueue.SetGlobalQueueHandles(queueClient, queueInspector)
+
 			if c.Bool("run-scheduler") {
 				integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
 				if err != nil {
@@ -121,6 +129,18 @@ func WorkerCli() *cli.Command {
 				}
 				if integrationScheduler != nil {
 					defer integrationScheduler.Shutdown()
+				}
+				// ci#747 (RC1, depends on ci#744): seed the declarative
+				// self-message schedules (OPEN_CHAT_SELF_MESSAGE_SCHEDULES) in
+				// the same single-owner gate, so a worker-only deployment also
+				// re-fires a configured actor. No-op when nothing is configured.
+				selfMessageRuntime, err := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
+				if err != nil {
+					return err
+				}
+				if selfMessageRuntime != nil {
+					defer selfMessageRuntime.Shutdown()
+					logging.Infof("Self-message self-resume schedules active (ci#744/ci#747)")
 				}
 			} else {
 				logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
