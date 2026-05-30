@@ -12,6 +12,7 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       FRONTEND_PROXY: "http://frontend:3000"
+      ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
       PORT: 1984
     extra_hosts:
