@@ -110,7 +110,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var PublicRoutes = []string{"/"}
+var PublicRoutes = []string{"/", "/docs"}
 
 func FrontendAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
