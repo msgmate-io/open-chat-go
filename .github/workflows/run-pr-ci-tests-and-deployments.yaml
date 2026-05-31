@@ -651,21 +651,36 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
+        timeout-minutes: 6
         env:
           DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
         run: |
           set -euo pipefail
+          trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
+
+          interruptible_sleep() {
+            local remaining="$1"
+            while [ "$remaining" -gt 0 ]; do
+              sleep 1
+              remaining=$((remaining - 1))
+            done
+          }
+
+          github_api_get() {
+            curl -fsSL --connect-timeout 10 --max-time 30 \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$1"
+          }
+
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
 
-          for attempt in $(seq 1 80); do
-            runs_json="$(curl -fsSL \
-              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          for attempt in $(seq 1 20); do
+            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
 
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
               def candidates:
@@ -683,16 +698,16 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
-              sleep 15
+              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              interruptible_sleep 15
               continue
             fi
 
             IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/80: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt $attempt/20: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
 
             if [ "$run_status" != "completed" ]; then
-              sleep 15
+              interruptible_sleep 15
               continue
             fi
 
@@ -1031,19 +1046,34 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
+        timeout-minutes: 6
         env:
           DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
         run: |
           set -euo pipefail
-          ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
-          run_url=""
+          trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
 
-          for attempt in $(seq 1 80); do
-            runs_json="$(curl -fsSL \
+          interruptible_sleep() {
+            local remaining="$1"
+            while [ "$remaining" -gt 0 ]; do
+              sleep 1
+              remaining=$((remaining - 1))
+            done
+          }
+
+          github_api_get() {
+            curl -fsSL --connect-timeout 10 --max-time 30 \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+              "$1"
+          }
+
+          ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_url=""
+
+          for attempt in $(seq 1 20); do
+            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
 
             run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
               [
@@ -1057,15 +1087,15 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
-              sleep 15
+              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              interruptible_sleep 15
               continue
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/80: CI status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt $attempt/20: CI status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              sleep 15
+              interruptible_sleep 15
               continue
             fi
 
