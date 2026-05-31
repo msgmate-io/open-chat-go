@@ -2,8 +2,8 @@ package msgmate
 
 import "fmt"
 
-// ci#747 (RC2): a turn that exhausts its tool-call budget used to end as a hard
-// failure. When the sandbox/gh/API is degraded an agent burns the whole
+// ci#747 (RC2/RC3): a turn that exhausts its tool-call budget used to end as a
+// hard failure. When the sandbox/gh/API is degraded an agent burns the whole
 // failed-tool-call budget on retries and the interaction stops as `failed` with
 // nothing re-firing it. The cap must instead degrade to a partial report plus
 // *one* continuation, so the work resumes on its own and a human never has to
@@ -11,7 +11,7 @@ import "fmt"
 //
 // This file owns the (pure) decision of that continuation: whether a terminal
 // turn deserves one, which prompt it carries and under which stable correlation
-// id it is enqueued. The id is stable for the same chain so a repeated decision
+// id it is enqueued. The id is stable for the same chain, so a repeated decision
 // cancels the previous task instead of duplicating it (the dedupe rule of RC7).
 const (
 	// TurnContinuationMaxAttempts is how many automatic continuations a single
@@ -58,11 +58,6 @@ const (
 // It is deliberately a pure value: the caller (the tool loop / the interaction
 // handler) owns the enqueue, so this decision stays unit-testable without a
 // provider, a database or a queue.
-func turnContinuationNone() TurnContinuation {
-	return TurnContinuation{}
-}
-
-// TurnContinuation is the decision to continue a finished turn automatically.
 type TurnContinuation struct {
 	// Required is true when exactly one continuation must be enqueued.
 	Required bool
@@ -76,52 +71,52 @@ type TurnContinuation struct {
 	CorrelationID string
 }
 
-// transientInfraFailure reports whether the turn ran into a failure that a
-// retry can plausibly fix: a budget-exempt transient tool failure (ci#688) or a
-// sandbox that could not be scheduled (ci#691). A genuine tool error - bad
-// arguments, a 404, a failing test - is not transient and must not be retried
-// silently.
-func transientInfraFailure(outcome *TurnOutcome) bool {
-	if outcome == nil {
-		return false
-	}
-	return outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0
+// turnContinuationNone is the explicit "do not continue" decision. Kept as a
+// function so the intent is readable at the call sites and testable as the zero
+// value.
+func turnContinuationNone() TurnContinuation {
+	return TurnContinuation{}
 }
 
 // CapContinuationForOutcome decides whether a finished turn is continued
 // automatically.
 //
-// attempts is how many continuations this chain already enqueued, so the chain
-// is bounded by TurnContinuationMaxAttempts. chainKey identifies the chain (the
+// transientInfra is true when the turn hit a failure a retry can plausibly fix:
+// a budget-exempt transient tool failure (ci#688) or a workspace that could not
+// be scheduled (ci#691). It is passed in instead of being read off the outcome so
+// the decision stays a pure function of its inputs (and so the classification
+// itself stays owned by the turn loop that observed it).
+//
+// attempts is how many continuations this chain already enqueued, so the chain is
+// bounded by TurnContinuationMaxAttempts. chainKey identifies the chain (the
 // interaction or the ticket+lane owner key); an empty chainKey yields no
 // correlation id and therefore no continuation, because an unidentified retry
 // could not be de-duplicated.
-func CapContinuationForOutcome(outcome *TurnOutcome, attempts int, chainKey string) TurnContinuation {
-	if outcome == nil || attempts >= TurnContinuationMaxAttempts {
+func CapContinuationForOutcome(outcome *TurnOutcome, transientInfra bool, attempts int, chainKey string) TurnContinuation {
+	if outcome == nil || attempts >= TurnContinuationMaxAttempts || chainKey == "" {
 		return turnContinuationNone()
 	}
-	if chainKey == "" {
-		return turnContinuationNone()
-	}
-	reason := ""
-	prompt := ""
 	switch outcome.reason() {
 	case TurnEndedFailedToolCallCap:
-		reason, prompt = TurnContinuationFailedToolCap, TurnContinuationPrompt
+		return newTurnContinuation(TurnContinuationFailedToolCap, TurnContinuationPrompt, chainKey)
 	case TurnEndedToolCallCap:
 		// A total-cap exhaustion with no failure is a turn that simply ran out
 		// of budget while doing work: continue it once.
-		reason, prompt = TurnContinuationToolCap, TurnContinuationPrompt
+		return newTurnContinuation(TurnContinuationToolCap, TurnContinuationPrompt, chainKey)
 	case TurnEndedProviderError:
-		if !transientInfraFailure(outcome) {
+		if !transientInfra {
 			// A provider error without a single transient failure is not
 			// recoverable by retrying the same turn.
 			return turnContinuationNone()
 		}
-		reason, prompt = TurnContinuationTransient, TurnContinuationTransientPrompt
+		return newTurnContinuation(TurnContinuationTransient, TurnContinuationTransientPrompt, chainKey)
 	default:
 		return turnContinuationNone()
 	}
+}
+
+// newTurnContinuation builds a required continuation for one chain.
+func newTurnContinuation(reason, prompt, chainKey string) TurnContinuation {
 	return TurnContinuation{
 		Required:      true,
 		Reason:        reason,
