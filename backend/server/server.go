@@ -15,10 +15,11 @@ func BackendServer(
 	port int64,
 	debug bool,
 	frontendProxy string,
+	storybookProxy string,
 	sessionCookieDomain string,
 ) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	fullHost := fmt.Sprintf("http://%s:%d", host, port)
-	router, websocketHandler := BackendRouting(DB, debug, frontendProxy, sessionCookieDomain)
+	router, websocketHandler := BackendRouting(DB, debug, frontendProxy, storybookProxy, sessionCookieDomain)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", host, port),
 		Handler: router,
