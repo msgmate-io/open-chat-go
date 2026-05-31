@@ -33,6 +33,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
