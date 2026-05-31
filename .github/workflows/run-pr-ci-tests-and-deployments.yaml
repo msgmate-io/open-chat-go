@@ -651,9 +651,11 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
+        env:
+          DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
         run: |
           set -euo pipefail
-          expected_title="Deploy ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }} ${DISPATCH_RUN_ID}"
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
@@ -663,19 +665,25 @@ jobs:
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
 
-            run_line="$(jq -r --arg title "$expected_title" '
-              [
-                .workflow_runs[]
-                | select((.display_title // "") == $title)
-                | [.id, .status, (.conclusion // ""), .html_url]
-                | @tsv
-              ][0] // ""
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
+              def candidates:
+                [.workflow_runs[]
+                | select((.display_title // "") | endswith($dispatch_id))
+                | select((.display_title // "") | startswith("Deploy " + $deployment))];
+              (if $pr != "" then
+                [candidates[] | select((.display_title // "") | contains("PR#" + $pr))][0]
+                // candidates[0]
+              else
+                [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
+                // candidates[0]
+              end)
+              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for dispatched CI workflow run '$expected_title' to appear."
+              echo "Attempt $attempt/80: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
               sleep 15
               continue
             fi
@@ -1023,9 +1031,10 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
+        env:
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
         run: |
           set -euo pipefail
-          expected_title="Deploy ${{ needs.resolve-merged-deployment.outputs.deployment_name }} ${DISPATCH_RUN_ID}"
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
 
@@ -1034,19 +1043,21 @@ jobs:
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
 
-            run_line="$(jq -r --arg title "$expected_title" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
               [
                 .workflow_runs[]
-                | select((.display_title // "") == $title)
+                | select((.display_title // "") | endswith($dispatch_id))
+                | select((.display_title // "") | startswith("Deploy " + $deployment))
+                | select((.display_title // "") | contains("PR#") | not)
                 | [.status, (.conclusion // ""), .html_url]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for dispatched CI workflow run '$expected_title' to appear."
+              echo "Attempt $attempt/80: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
               sleep 15
               continue
             fi
