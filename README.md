@@ -7,6 +7,7 @@
 - Staging: [`stage.msgmate.io`](https://stage.msgmate.io) ( branch [`main`](https://github.com/msgmate-io/open-chat-go) )
 - Docs (wip): [`msgmate.io/docs`](https://msgmate.io/docs)
 - API Docs: [`msgmate.io/reference`](https://msgmate.io/reference)
+- Design System: [`msgmate-io.github.io/open-chat-go`](https://msgmate-io.github.io/open-chat-go/)
 
 ### Development
 
