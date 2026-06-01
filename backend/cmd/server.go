@@ -253,6 +253,7 @@ func ensureDefaultBotUser(DB *gorm.DB, username, password string) (*database.Use
 	if err != nil {
 		return nil, err
 	}
+	botUser.IsAutomated = true
 	DB.Save(&botUser)
 	if err := msgmate.CreateOrUpdateBotProfile(DB, *botUser); err != nil {
 		return nil, err
@@ -357,7 +358,11 @@ func ServerCli() *cli.Command {
 					},
 				)
 
-				processor := &queue.Processor{DB: DB}
+				processor := &queue.Processor{
+					DB:          DB,
+					BackendHost: fullHost,
+					WSHandler:   ch,
+				}
 				go func() {
 					log.Printf("Starting embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 					if workerErr := workerServer.Run(processor.NewServeMux()); workerErr != nil {

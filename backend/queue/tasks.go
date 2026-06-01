@@ -26,9 +26,9 @@ type ToolExecutionResult struct {
 }
 
 type BotReplyPayload struct {
-	ChatUUID   string `json:"chat_uuid"`
+	ChatUUID    string `json:"chat_uuid"`
 	MessageUUID string `json:"message_uuid"`
-	BotUserID  uint   `json:"bot_user_id"`
+	BotUserID   uint   `json:"bot_user_id"`
 }
 
 func NewToolExecutionTask(payload ToolExecutionPayload) (*TaskWithPayload, error) {

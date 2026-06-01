@@ -43,6 +43,12 @@ func WorkerCli() *cli.Command {
 				Usage:   "number of concurrent worker goroutines",
 				Value:   10,
 			},
+			&cli.StringFlag{
+				Sources: cli.EnvVars("OPEN_CHAT_HOST"),
+				Name:    "backend-host",
+				Usage:   "Backend base URL used by async bot tasks",
+				Value:   "http://127.0.0.1:1984",
+			},
 		}, GetRedisFlags()...),
 		Action: func(_ context.Context, c *cli.Command) error {
 			redisConnOpt, err := resolveRedisConnOpt(c)
@@ -57,7 +63,10 @@ func WorkerCli() *cli.Command {
 				ResetDB:  false,
 			})
 
-			processor := &queue.Processor{DB: DB}
+			processor := &queue.Processor{
+				DB:          DB,
+				BackendHost: c.String("backend-host"),
+			}
 
 			server := asynq.NewServer(
 				redisConnOpt,
