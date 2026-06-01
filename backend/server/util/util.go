@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"io"
@@ -45,6 +46,22 @@ func GetWebsocket(r *http.Request) (*websocket.WebSocketHandler, error) {
 		return nil, errors.New("invalid websocket")
 	}
 	return websocket, nil
+}
+
+func GetAsynqClient(r *http.Request) (*asynq.Client, error) {
+	client, ok := r.Context().Value("asynq_client").(*asynq.Client)
+	if !ok || client == nil {
+		return nil, errors.New("invalid asynq client")
+	}
+	return client, nil
+}
+
+func GetAsynqInspector(r *http.Request) (*asynq.Inspector, error) {
+	inspector, ok := r.Context().Value("asynq_inspector").(*asynq.Inspector)
+	if !ok || inspector == nil {
+		return nil, errors.New("invalid asynq inspector")
+	}
+	return inspector, nil
 }
 
 func CreateUserPwPreHashed(
