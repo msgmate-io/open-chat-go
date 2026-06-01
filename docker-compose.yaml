@@ -7,6 +7,7 @@ services:
     depends_on:
       - frontend
       - storybook
+      - redis
     ports:
       - "1984:1984"
     volumes:
@@ -20,6 +21,7 @@ services:
       ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
       PORT: 1984
+      REDIS_URL: "redis://redis:6379/0"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -53,6 +55,12 @@ services:
       - ./frontend:/frontend
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - app-network
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     networks:
       - app-network
 
