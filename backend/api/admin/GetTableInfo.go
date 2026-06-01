@@ -96,8 +96,26 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 	stmt := &gorm.Statement{DB: DB}
 	stmt.Parse(model)
 
+	exhaustive := r.URL.Query().Get("full") == "1" || r.URL.Query().Get("full") == "true"
+
 	fields := make([]FieldInfo, 0)
 	for _, field := range stmt.Schema.Fields {
+		if exhaustive {
+			fieldType := string(field.DataType)
+			if fieldType == "" {
+				fieldType = "unknown"
+			}
+			fields = append(fields, FieldInfo{
+				Name:       field.Name,
+				NameRaw:    field.DBName,
+				Type:       fieldType,
+				IsPrimary:  field.PrimaryKey,
+				IsNullable: !field.NotNull,
+				Tag:        string(field.TagSettings["JSON"]),
+			})
+			continue
+		}
+
 		// Check if we have a configuration for this table
 		if config, exists := tableConfigurations[tableName]; exists {
 			// Only include field if it's in the IncludeFields list
@@ -121,6 +139,10 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			if fieldType == "" {
+				fieldType = "unknown"
+			}
+
 			fields = append(fields, FieldInfo{
 				Name:       field.Name,
 				NameRaw:    field.DBName,
@@ -130,10 +152,14 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 				Tag:        string(field.TagSettings["JSON"]),
 			})
 		} else {
+			fieldType := string(field.DataType)
+			if fieldType == "" {
+				fieldType = "unknown"
+			}
 			fields = append(fields, FieldInfo{
 				Name:       field.Name,
 				NameRaw:    field.DBName,
-				Type:       string(field.DataType),
+				Type:       fieldType,
 				IsPrimary:  field.PrimaryKey,
 				IsNullable: !field.NotNull,
 				Tag:        string(field.TagSettings["JSON"]),
@@ -142,23 +168,25 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add preloaded fields to the result
-	if config, exists := tableConfigurations[tableName]; exists && len(config.Preloads) > 0 {
-		for _, preload := range config.Preloads {
-			// Get the JSON key from the mapping or use the preload name
-			nameRaw := preload
-			if mapping, ok := config.PreloadMappings[preload]; ok {
-				nameRaw = mapping
-			}
+	if !exhaustive {
+		if config, exists := tableConfigurations[tableName]; exists && len(config.Preloads) > 0 {
+			for _, preload := range config.Preloads {
+				// Get the JSON key from the mapping or use the preload name
+				nameRaw := preload
+				if mapping, ok := config.PreloadMappings[preload]; ok {
+					nameRaw = mapping
+				}
 
-			// Add the preload field to the fields list
-			fields = append(fields, FieldInfo{
-				Name:       preload,
-				NameRaw:    nameRaw,
-				Type:       "object", // Preloaded fields are typically objects
-				IsPrimary:  false,
-				IsNullable: true,
-				Tag:        "",
-			})
+				// Add the preload field to the fields list
+				fields = append(fields, FieldInfo{
+					Name:       preload,
+					NameRaw:    nameRaw,
+					Type:       "object", // Preloaded fields are typically objects
+					IsPrimary:  false,
+					IsNullable: true,
+					Tag:        "",
+				})
+			}
 		}
 	}
 

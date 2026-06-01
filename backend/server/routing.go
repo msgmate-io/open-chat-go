@@ -210,6 +210,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /admin/delete_all_entries/{table_name}", admin.DeleteAllEntries)
 	v1PrivateApis.HandleFunc("GET /admin/tables", admin.GetAllTables)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
+	v1PrivateApis.HandleFunc("GET /admin/schema/sql", admin.GetSchemaSQL)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks", admin.ListAsynqTasks)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks/{task_id}", admin.GetAsynqTask)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/stats", admin.GetAsynqQueueStats)
