@@ -48,7 +48,7 @@ func GetSchemaSQL(w http.ResponseWriter, r *http.Request) {
 
 func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
 	tableNames := make([]string, 0, len(database.Tabels))
-	tableByCanonical := make(map[string]string)
+	tableSet := make(map[string]struct{})
 	tableColumns := make(map[string][]string)
 	createStatements := make([]string, 0, len(database.Tabels))
 	relationStatements := make(map[string]struct{})
@@ -62,7 +62,7 @@ func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
 		}
 		tableName := stmt.Schema.Table
 		tableNames = append(tableNames, tableName)
-		tableByCanonical[canonicalTableName(tableName)] = tableName
+		tableSet[tableName] = struct{}{}
 
 		columnTypes, err := DB.Migrator().ColumnTypes(model)
 		if err != nil {
@@ -97,32 +97,45 @@ func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
 		createStatements = append(createStatements, fmt.Sprintf("CREATE TABLE \"%s\" (\n%s\n);", tableName, strings.Join(lines, ",\n")))
 
 		for _, relationship := range stmt.Schema.Relationships.Relations {
-			for _, reference := range relationship.References {
-				if reference == nil || reference.ForeignKey == nil || reference.PrimaryKey == nil {
+			constraint := relationship.ParseConstraint()
+			if constraint == nil || constraint.Schema == nil || constraint.ReferenceSchema == nil {
+				continue
+			}
+
+			fromTable := constraint.Schema.Table
+			toTable := constraint.ReferenceSchema.Table
+			if fromTable == "" || toTable == "" {
+				continue
+			}
+			if _, ok := tableSet[fromTable]; !ok {
+				continue
+			}
+			if _, ok := tableSet[toTable]; !ok {
+				continue
+			}
+
+			limit := len(constraint.ForeignKeys)
+			if len(constraint.References) < limit {
+				limit = len(constraint.References)
+			}
+
+			for i := 0; i < limit; i++ {
+				foreignKey := constraint.ForeignKeys[i]
+				referenceKey := constraint.References[i]
+				if foreignKey == nil || referenceKey == nil {
 					continue
 				}
 
-				fromField := reference.ForeignKey.DBName
-				toField := reference.PrimaryKey.DBName
-				toTable := ""
-				if reference.PrimaryKey.Schema != nil {
-					toTable = reference.PrimaryKey.Schema.Table
-				}
-				if toTable == "" && relationship.FieldSchema != nil {
-					toTable = relationship.FieldSchema.Table
-				}
-				if toTable == "" {
-					continue
-				}
-
-				relationKey := fmt.Sprintf("%s.%s->%s.%s", tableName, fromField, toTable, toField)
+				fromField := foreignKey.DBName
+				toField := referenceKey.DBName
+				relationKey := fmt.Sprintf("%s.%s->%s.%s", fromTable, fromField, toTable, toField)
 				if _, exists := seenRelations[relationKey]; exists {
 					continue
 				}
 				seenRelations[relationKey] = struct{}{}
 
 				relations = append(relations, SchemaRelation{
-					FromTable: tableName,
+					FromTable: fromTable,
 					FromField: fromField,
 					ToTable:   toTable,
 					ToField:   toField,
@@ -139,10 +152,7 @@ func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
 				continue
 			}
 			base := strings.TrimSuffix(columnName, "_id")
-			targetTable := tableByCanonical[canonicalTableName(base)]
-			if targetTable == "" {
-				targetTable = tableByCanonical[canonicalTableName(base+"s")]
-			}
+			targetTable := inferTargetTable(base, tableSet)
 			if targetTable == "" {
 				continue
 			}
@@ -198,6 +208,17 @@ func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
 	return strings.Join(allStatements, "\n\n"), relations, nil
 }
 
-func canonicalTableName(value string) string {
-	return strings.ReplaceAll(strings.ToLower(value), "_", "")
+func inferTargetTable(base string, tableSet map[string]struct{}) string {
+	candidates := []string{base, base + "s", base + "es"}
+	if strings.HasSuffix(base, "y") {
+		candidates = append(candidates, strings.TrimSuffix(base, "y")+"ies")
+	}
+
+	for _, candidate := range candidates {
+		if _, ok := tableSet[candidate]; ok {
+			return candidate
+		}
+	}
+
+	return ""
 }
