@@ -29,21 +29,28 @@ on:
       - closed
 
 concurrency:
-  group: pr-ci-${{ github.event.pull_request.id || github.ref }}
+  group: >-
+    ${{ github.event_name == 'workflow_dispatch'
+        && format('manual-deploy-{0}', github.run_id)
+        || github.event.action == 'closed'
+        && format('merged-deploy-{0}', github.event.pull_request.base.ref)
+        || format('pr-ci-{0}', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
-  actions: read
-  deployments: write
+  actions: write
   packages: write
 
 env:
   CI_REPOSITORY_DEFAULT: msgmate-io/open-chat-go-ci
   CI_REF: ${{ vars.CI_REF || 'main' }}
   BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+  DEPLOYMENT_PR: msgmate-io-pr-deployment
+  DEPLOYMENT_STAGING: msgmate-io-staging
+  DEPLOYMENT_PRODUCTION: msgmate-io-production
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -152,20 +159,52 @@ jobs:
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
     steps:
+      - name: Cancel superseded workflow runs for this PR
+        if: github.event_name == 'pull_request' && github.event.action != 'closed'
+        env:
+          CANCEL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CANCEL_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-pr-ci-tests-and-deployments.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg current "$CURRENT_RUN_ID" --arg head_ref "$PR_HEAD_REF" \
+              '.workflow_runs[]
+              | select(.id != ($current | tonumber))
+              | select(.head_branch == $head_ref)
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded workflow run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CANCEL_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
+
       - name: Resolve context and label actions
         id: context
         run: |
           set -euo pipefail
           CI_REPOSITORY="${CI_REPOSITORY_INPUT:-$CI_REPOSITORY_DEFAULT}"
-          DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ vars.CI_DEPLOYMENT_NAME || 'msgmate-io-staging' }}}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             TARGET_REF="${{ github.event.pull_request.head.sha }}"
             PR_NUMBER="${{ github.event.pull_request.number }}"
             SOURCE_REPOSITORY="${{ github.repository }}"
+            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
             SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
             SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
           else
+            DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ env.DEPLOYMENT_STAGING }}}"
             TARGET_REF="${TARGET_REF_INPUT:-main}"
             PR_NUMBER=""
             SOURCE_REPOSITORY="${{ github.repository }}"
@@ -532,14 +571,45 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
       (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
+    concurrency:
+      group: pr-deploy-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     environment:
-      name: pr-deployments
+      name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Cancel superseded CI deployment runs for this PR
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg pr "$PR_NUMBER" \
+              '.workflow_runs[]
+              | select((.display_title // "") | contains("PR#" + $pr))
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded CI deployment run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
+
       - name: Dispatch deployment workflow in CI repository
         run: |
           set -euo pipefail
@@ -581,40 +651,63 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
+        timeout-minutes: 6
+        env:
+          DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
         run: |
           set -euo pipefail
-          expected_title="Deploy ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }} ${DISPATCH_RUN_ID}"
+          trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
+
+          interruptible_sleep() {
+            local remaining="$1"
+            while [ "$remaining" -gt 0 ]; do
+              sleep 1
+              remaining=$((remaining - 1))
+            done
+          }
+
+          github_api_get() {
+            curl -fsSL --connect-timeout 10 --max-time 30 \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$1"
+          }
+
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
 
-          for attempt in $(seq 1 80); do
-            runs_json="$(curl -fsSL \
-              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+          for attempt in $(seq 1 20); do
+            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
 
-            run_line="$(jq -r --arg title "$expected_title" '
-              [
-                .workflow_runs[]
-                | select((.display_title // "") == $title)
-                | [.id, .status, (.conclusion // ""), .html_url]
-                | @tsv
-              ][0] // ""
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
+              def candidates:
+                [.workflow_runs[]
+                | select((.display_title // "") | endswith($dispatch_id))
+                | select((.display_title // "") | startswith("Deploy " + $deployment))];
+              (if $pr != "" then
+                [candidates[] | select((.display_title // "") | contains("PR#" + $pr))][0]
+                // candidates[0]
+              else
+                [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
+                // candidates[0]
+              end)
+              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for dispatched CI workflow run '$expected_title' to appear."
-              sleep 15
+              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              interruptible_sleep 15
               continue
             fi
 
             IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/80: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt $attempt/20: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
 
             if [ "$run_status" != "completed" ]; then
-              sleep 15
+              interruptible_sleep 15
               continue
             fi
 
@@ -683,10 +776,11 @@ jobs:
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
-      approval_environment: ${{ steps.context.outputs.approval_environment }}
       target_ref: ${{ steps.context.outputs.target_ref }}
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_url: ${{ steps.context.outputs.deployment_url }}
+      merge_target: ${{ steps.context.outputs.merge_target }}
+      helm_values_file: ${{ steps.context.outputs.helm_values_file }}
     steps:
       - name: Resolve merged deployment context
         id: context
@@ -699,67 +793,225 @@ jobs:
           fi
 
           if [ "$BASE_REF" = "production" ]; then
-            DEPLOYMENT_NAME="msgmate-io-production"
-            APPROVAL_ENVIRONMENT="production-deployments"
+            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
             DEPLOYMENT_URL="https://msgmate.io"
+            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
           else
-            DEPLOYMENT_NAME="msgmate-io-staging"
-            APPROVAL_ENVIRONMENT="staging-deployments"
+            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
             DEPLOYMENT_URL="https://stage.msgmate.io"
+            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
           fi
 
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
-          echo "approval_environment=$APPROVAL_ENVIRONMENT" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
           echo "ci_repository=$CI_REPOSITORY_DEFAULT" >> "$GITHUB_OUTPUT"
           echo "deployment_url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
+          echo "merge_target=$BASE_REF" >> "$GITHUB_OUTPUT"
+          echo "helm_values_file=$HELM_VALUES_FILE" >> "$GITHUB_OUTPUT"
+
+  open-production-promotion-pr:
+    name: Open Production Promotion PR
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment]
+    if: |
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
+      needs.resolve-merged-deployment.outputs.merge_target == 'main'
+    env:
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Open or refresh main to production promotion PR
+        env:
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
+          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
+          PROMOTED_SHA: ${{ needs.resolve-merged-deployment.outputs.target_ref }}
+          STAGING_DEPLOY_URL: ${{ needs.resolve-merged-deployment.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          compare_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/compare/production...main")"
+          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          if [ "$ahead_by" = "0" ]; then
+            echo "main is not ahead of production; skipping production promotion PR."
+            exit 0
+          fi
+
+          title="[Production deploy] Promote main → production — merging updates msgmate.io"
+          body="$(cat <<EOF
+          <!-- open-chat-production-promotion -->
+
+          This pull request was opened automatically after a merge to \`main\`.
+
+          **Merging this PR will trigger a production deployment to [msgmate.io](https://msgmate.io).**
+          Deployment requires admin approval in the \`${{ env.DEPLOYMENT_PRODUCTION }}\` environment.
+
+          | | |
+          | --- | --- |
+          | Helm values | \`development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml\` |
+          | Deployment environment | \`${{ env.DEPLOYMENT_PRODUCTION }}\` |
+          | Staging preview | [${STAGING_DEPLOY_URL}](${STAGING_DEPLOY_URL}) |
+          | Promoted commit | \`${PROMOTED_SHA}\` |
+          | Source merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) — ${MERGED_PR_TITLE} |
+
+          The \`test\` label is required before merge. CI must pass via **PR Test Merge Requirement**.
+          EOF
+          )"
+
+          existing_pr_number="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:main&base=production&per_page=1" \
+              | jq -r '.[0].number // ""'
+          )"
+
+          if [ -n "$existing_pr_number" ]; then
+            echo "Closing stale production promotion PR #${existing_pr_number} before opening a fresh one."
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
+              -d '{"state":"closed"}'
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/issues/${existing_pr_number}/comments" \
+              -d "$(jq -n --arg body 'Superseded by a newer merge to `main`. A fresh production promotion PR is being opened.' '{body: $body}')"
+          fi
+
+          echo "Creating production promotion PR from main to production."
+          pr_number="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/pulls" \
+              -d "$(jq -n \
+                --arg title "$title" \
+                --arg body "$body" \
+                --arg head "main" \
+                --arg base "production" \
+                '{title: $title, body: $body, head: $head, base: $base}')" \
+              | jq -r '.number'
+          )"
+
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/issues/${pr_number}/labels" \
+            -d '{"labels":["test"]}'
+
+          echo "Production promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
+
+  post-merged-deploy-approval-link:
+    name: Post Merged Deploy Approval Link
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment]
+    if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+    steps:
+      - name: Comment deployment approval link on merged PR
+        env:
+          BOT_USER: ${{ env.BOT_USER }}
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+          DEPLOYMENT_URL: ${{ needs.resolve-merged-deployment.outputs.deployment_url }}
+          HELM_VALUES_FILE: ${{ needs.resolve-merged-deployment.outputs.helm_values_file }}
+          APPROVAL_RUN_URL: ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<EOF
+          Merged deployment queued for **${DEPLOYMENT_NAME}** → [${DEPLOYMENT_URL}](${DEPLOYMENT_URL}).
+
+          - Helm values: \`${HELM_VALUES_FILE}\`
+          - Deployment environment: \`${DEPLOYMENT_NAME}\`
+          - [Approve deployment here](${APPROVAL_RUN_URL})
+
+          <!-- open-chat-merged-deploy-comment -->
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${MERGED_PR_NUMBER}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-merged-deploy-comment -->")))][0].id // ""'
+          )"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/comments/${comment_id}" \
+              -d "$payload"
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${MERGED_PR_NUMBER}/comments" \
+              -d "$payload"
+          fi
 
   dispatch-merged-deployment:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment]
-    if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
+    needs: [resolve-merged-deployment, post-merged-deploy-approval-link]
+    if: |
+      always() &&
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
+      (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
+    concurrency:
+      group: merged-deploy-dispatch-${{ github.event.pull_request.base.ref }}
+      cancel-in-progress: true
     environment:
-      name: ${{ needs.resolve-merged-deployment.outputs.approval_environment }}
+      name: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Create GitHub deployment
-        id: deployment
+      - name: Cancel superseded CI deployment runs for this branch
+        env:
+          CI_REPO: ${{ needs.resolve-merged-deployment.outputs.ci_repository }}
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
         run: |
           set -euo pipefail
-          deployment_json="$(curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/deployments" \
-            -d "$(jq -n \
-              --arg ref "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
-              --arg env "${{ needs.resolve-merged-deployment.outputs.deployment_name }}" \
-              '{
-                ref: $ref,
-                environment: $env,
-                auto_merge: false,
-                required_contexts: []
-              }')")"
-          deployment_id="$(jq -r '.id' <<< "$deployment_json")"
-          echo "id=$deployment_id" >> "$GITHUB_OUTPUT"
-
-      - name: Mark deployment in progress
-        run: |
-          set -euo pipefail
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n \
-              --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              --arg environment_url "${{ needs.resolve-merged-deployment.outputs.deployment_url }}" \
-              '{state:"in_progress", log_url:$log_url, environment_url:$environment_url}')"
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+              '.workflow_runs[]
+              | select((.display_title // "") | startswith("Deploy " + $deployment))
+              | select((.display_title // "") | contains("PR#") | not)
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded CI deployment run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
 
       - name: Dispatch deployment workflow in CI repository
         run: |
@@ -794,38 +1046,56 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
+        timeout-minutes: 6
+        env:
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
         run: |
           set -euo pipefail
-          expected_title="Deploy ${{ needs.resolve-merged-deployment.outputs.deployment_name }} ${DISPATCH_RUN_ID}"
-          ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
-          run_url=""
+          trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
 
-          for attempt in $(seq 1 80); do
-            runs_json="$(curl -fsSL \
+          interruptible_sleep() {
+            local remaining="$1"
+            while [ "$remaining" -gt 0 ]; do
+              sleep 1
+              remaining=$((remaining - 1))
+            done
+          }
+
+          github_api_get() {
+            curl -fsSL --connect-timeout 10 --max-time 30 \
               -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&branch=${CI_REF}&per_page=20")"
+              "$1"
+          }
 
-            run_line="$(jq -r --arg title "$expected_title" '
+          ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_url=""
+
+          for attempt in $(seq 1 20); do
+            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
               [
                 .workflow_runs[]
-                | select((.display_title // "") == $title)
+                | select((.display_title // "") | endswith($dispatch_id))
+                | select((.display_title // "") | startswith("Deploy " + $deployment))
+                | select((.display_title // "") | contains("PR#") | not)
                 | [.status, (.conclusion // ""), .html_url]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/80: waiting for dispatched CI workflow run '$expected_title' to appear."
-              sleep 15
+              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              interruptible_sleep 15
               continue
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/80: CI status=$run_status conclusion=${run_conclusion:-none}"
+            echo "Attempt $attempt/20: CI status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              sleep 15
+              interruptible_sleep 15
               continue
             fi
 
@@ -842,39 +1112,3 @@ jobs:
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
           exit 1
-
-      - name: Mark deployment success
-        if: success() && steps.deployment.outputs.id != ''
-        run: |
-          set -euo pipefail
-          log_url="${{ steps.wait_ci_deploy.outputs.ci_run_url }}"
-          if [ -z "$log_url" ]; then
-            log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          fi
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n \
-              --arg log_url "$log_url" \
-              --arg environment_url "${{ needs.resolve-merged-deployment.outputs.deployment_url }}" \
-              '{state:"success", log_url:$log_url, environment_url:$environment_url}')"
-
-      - name: Mark deployment failure
-        if: failure() && steps.deployment.outputs.id != ''
-        run: |
-          set -euo pipefail
-          log_url="${{ steps.wait_ci_deploy.outputs.ci_run_url }}"
-          if [ -z "$log_url" ]; then
-            log_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          fi
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/deployments/${{ steps.deployment.outputs.id }}/statuses" \
-            -d "$(jq -n \
-              --arg log_url "$log_url" \
-              --arg environment_url "${{ needs.resolve-merged-deployment.outputs.deployment_url }}" \
-              '{state:"failure", log_url:$log_url, environment_url:$environment_url}')"
