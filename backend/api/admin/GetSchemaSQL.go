@@ -209,9 +209,23 @@ func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
 }
 
 func inferTargetTable(base string, tableSet map[string]struct{}) string {
-	candidates := []string{base, base + "s", base + "es"}
-	if strings.HasSuffix(base, "y") {
-		candidates = append(candidates, strings.TrimSuffix(base, "y")+"ies")
+	candidates := make([]string, 0)
+	addCandidates := func(token string) {
+		if token == "" {
+			return
+		}
+		candidates = append(candidates, token, token+"s", token+"es")
+		if strings.HasSuffix(token, "y") {
+			candidates = append(candidates, strings.TrimSuffix(token, "y")+"ies")
+		}
+	}
+
+	addCandidates(base)
+
+	parts := strings.Split(base, "_")
+	for i := 1; i < len(parts); i++ {
+		suffix := strings.Join(parts[i:], "_")
+		addCandidates(suffix)
 	}
 
 	for _, candidate := range candidates {
