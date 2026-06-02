@@ -3,13 +3,13 @@ package chats
 import (
 	wsapi "backend/api/websocket"
 	"backend/database"
+	"backend/workqueue"
 	"backend/server/util"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
@@ -282,25 +282,17 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		payloadBytes, payloadErr := json.Marshal(map[string]interface{}{
-			"chat_uuid":    chatUuid,
-			"message_uuid": message.UUID,
-			"bot_user_id":  receiver.ID,
-		})
-		if payloadErr != nil {
-			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
+		queueInspector, inspectorErr := util.GetAsynqInspector(r)
+		if inspectorErr != nil {
+			http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 			return
 		}
 
-		task := asynq.NewTask("bot:reply", payloadBytes)
-
-		if _, enqueueErr := queueClient.Enqueue(
-			task,
-			asynq.Queue("default"),
-			asynq.MaxRetry(10),
-			asynq.Timeout(5*time.Minute),
-			asynq.Retention(24*time.Hour),
-		); enqueueErr != nil {
+		if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+			ChatUUID:    chatUuid,
+			MessageUUID: message.UUID,
+			BotUserID:   receiver.ID,
+		}); enqueueErr != nil {
 			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
 			return
 		}
@@ -389,14 +381,23 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 	}
 
 	if signal == "interrupt" {
-		ch.MessageHandler.SendMessage(
-			ch,
-			receiver.UUID,
-			ch.MessageHandler.InterruptSignal(
-				chatUuid,
-				user.UUID,
-			),
-		)
+		if receiver.IsAutomated {
+			queueInspector, inspectorErr := util.GetAsynqInspector(r)
+			if inspectorErr != nil {
+				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
+				return
+			}
+			workqueue.CancelBotReplyTask(queueInspector, chatUuid)
+		} else {
+			ch.MessageHandler.SendMessage(
+				ch,
+				receiver.UUID,
+				ch.MessageHandler.InterruptSignal(
+					chatUuid,
+					user.UUID,
+				),
+			)
+		}
 	} else {
 		http.Error(w, "Invalid signal", http.StatusBadRequest)
 		return
