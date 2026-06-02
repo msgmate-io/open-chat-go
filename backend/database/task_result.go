@@ -1,7 +1,9 @@
 package database
 
+// @doc:open-chat-task-results-model
 // TaskResult stores persisted async task execution outcomes for admin inspection.
-// Unlike Redis queue state, these records are durable in the application DB.
+// Unlike Redis queue state, these records are durable in the application DB and
+// can be queried through regular admin table APIs for auditing and debugging.
 type TaskResult struct {
 	Model
 	TaskID      string `json:"task_id" gorm:"index;not null"`
