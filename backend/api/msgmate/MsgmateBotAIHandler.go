@@ -339,11 +339,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		),
 	)
 
-	// Helper function to send final message and cleanup
-	sendFinalMessage := func(isCancelled bool) {
-		// If we're still thinking when finishing, add the final thinking time
-		totalTime := time.Since(startTime)
-
+	finalizePartial := func() {
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -352,13 +348,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				message.Content.SenderUUID,
 			),
 		)
+	}
+
+	// Helper function to send final message and cleanup
+	sendFinalMessage := func(isCancelled bool) {
+		// If we're still thinking when finishing, add the final thinking time
+		totalTime := time.Since(startTime)
+
+		finalizePartial()
 
 		text := fullText.String()
 		if isCancelled {
-			text += "\n[cancelled]"
+			text += "\nI paused this response. Send another message when you want me to continue."
 			if reasoning {
 				thoughtText.WriteString(thoughtBuffer.String())
-				thoughtText.WriteString("\n[cancelled]")
+				thoughtText.WriteString("\nResponse paused.")
 			}
 		}
 
@@ -542,7 +546,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		case err, ok := <-errs:
 			if ok && err != nil {
 				log.Printf("streamChatCompletion error: %v", err)
-				sendFinalMessage(true)
+				finalizePartial()
 				return err
 			}
 			errs = nil
