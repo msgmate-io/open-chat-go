@@ -5,8 +5,12 @@ services:
       context: .
     image: dev-backend
     depends_on:
-      - frontend
-      - storybook
+      frontend:
+        condition: service_started
+      storybook:
+        condition: service_started
+      redis:
+        condition: service_healthy
     ports:
       - "1984:1984"
     volumes:
@@ -20,6 +24,7 @@ services:
       ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
       PORT: 1984
+      REDIS_URL: "redis://redis:6379/0"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -53,6 +58,18 @@ services:
       - ./frontend:/frontend
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - app-network
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - app-network
 
