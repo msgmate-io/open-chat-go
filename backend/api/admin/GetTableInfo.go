@@ -4,6 +4,7 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -29,17 +30,23 @@ type FieldInfo struct {
 type TableInfo struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
+	SourceURL   string      `json:"source_url,omitempty"`
 	Fields      []FieldInfo `json:"fields"`
+}
+
+type modelDocMeta struct {
+	Description string
+	SourceURL   string
 }
 
 var (
 	modelDescriptionOnce  sync.Once
-	modelDescriptionCache map[string]string
+	modelDescriptionCache map[string]modelDocMeta
 )
 
-func loadModelDescriptions(DB *gorm.DB) map[string]string {
+func loadModelDescriptions(DB *gorm.DB) map[string]modelDocMeta {
 	modelDescriptionOnce.Do(func() {
-		modelDescriptionCache = make(map[string]string)
+		modelDescriptionCache = make(map[string]modelDocMeta)
 		fset := token.NewFileSet()
 		_, thisFile, _, ok := runtime.Caller(0)
 		if !ok {
@@ -47,6 +54,9 @@ func loadModelDescriptions(DB *gorm.DB) map[string]string {
 		}
 
 		databaseDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "database")
+		backendDir := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+		repoRoot := filepath.Clean(filepath.Join(backendDir, ".."))
+		repoSourceBaseURL := "https://github.com/msgmate-io/open-chat-go/blob/main"
 		databaseDir = filepath.Clean(databaseDir)
 		if stat, err := os.Stat(databaseDir); err != nil || !stat.IsDir() {
 			return
@@ -58,7 +68,7 @@ func loadModelDescriptions(DB *gorm.DB) map[string]string {
 			return
 		}
 
-		descriptionsByType := make(map[string]string)
+		metaByType := make(map[string]modelDocMeta)
 		for _, filePath := range files {
 			parsed, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
 			if err != nil {
@@ -80,19 +90,27 @@ func loadModelDescriptions(DB *gorm.DB) map[string]string {
 						continue
 					}
 
+					position := fset.Position(typeSpec.Pos())
+					repoRelativePath, err := filepath.Rel(repoRoot, position.Filename)
+					if err != nil {
+						continue
+					}
+					repoRelativePath = filepath.ToSlash(repoRelativePath)
+
 					commentGroup := typeSpec.Doc
 					if commentGroup == nil {
 						commentGroup = genDecl.Doc
 					}
-					if commentGroup == nil {
-						continue
+
+					description := ""
+					if commentGroup != nil {
+						description = strings.TrimSpace(commentGroup.Text())
 					}
 
-					description := strings.TrimSpace(commentGroup.Text())
-					if description == "" {
-						continue
+					metaByType[typeSpec.Name.Name] = modelDocMeta{
+						Description: description,
+						SourceURL:   fmt.Sprintf("%s/%s#L%d", repoSourceBaseURL, repoRelativePath, position.Line),
 					}
-					descriptionsByType[typeSpec.Name.Name] = description
 				}
 			}
 		}
@@ -111,8 +129,8 @@ func loadModelDescriptions(DB *gorm.DB) map[string]string {
 				continue
 			}
 
-			if description, ok := descriptionsByType[t.Name()]; ok {
-				modelDescriptionCache[stmt.Schema.Table] = description
+			if meta, ok := metaByType[t.Name()]; ok {
+				modelDescriptionCache[stmt.Schema.Table] = meta
 			}
 		}
 	})
@@ -288,9 +306,12 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	docMeta := loadModelDescriptions(DB)[tableName]
+
 	tableInfo := TableInfo{
 		Name:        tableName,
-		Description: loadModelDescriptions(DB)[tableName],
+		Description: docMeta.Description,
+		SourceURL:   docMeta.SourceURL,
 		Fields:      fields,
 	}
 
