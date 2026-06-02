@@ -60,10 +60,13 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 
 	toolInstance := msgmate.GetNewToolInstanceByName(payload.ToolName, toolInitData)
 	if toolInstance == nil {
-		return writeResult(task, ToolExecutionResult{
+		failure := ToolExecutionResult{
 			Success: false,
 			Error:   fmt.Sprintf("tool '%s' not found", payload.ToolName),
-		})
+		}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("tool '%s' not found", payload.ToolName)
 	}
 
 	var (
@@ -74,10 +77,13 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 	if payload.InputParameters != nil {
 		toolInput, parseErr := toolInstance.ParseArguments(convertMapToJSON(payload.InputParameters))
 		if parseErr != nil {
-			return writeResult(task, ToolExecutionResult{
+			failure := ToolExecutionResult{
 				Success: false,
 				Error:   fmt.Sprintf("invalid tool input parameters: %v", parseErr),
-			})
+			}
+			_ = writeResult(task, failure)
+			persistTaskResult(deps.DB, task, failure)
+			return fmt.Errorf("invalid tool input parameters: %w", parseErr)
 		}
 		toolResult, err = toolInstance.RunTool(toolInput)
 	} else {
@@ -90,8 +96,13 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	if err != nil {
-		return writeResult(task, ToolExecutionResult{Success: false, Error: err.Error()})
+		failure := ToolExecutionResult{Success: false, Error: err.Error()}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("tool execution failed: %w", err)
 	}
 
-	return writeResult(task, ToolExecutionResult{Success: true, Result: toolResult})
+	success := ToolExecutionResult{Success: true, Result: toolResult}
+	persistTaskResult(deps.DB, task, success)
+	return writeResult(task, success)
 }
