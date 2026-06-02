@@ -212,6 +212,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 	v1PrivateApis.HandleFunc("GET /admin/schema/sql", admin.GetSchemaSQL)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
+	v1PrivateApis.HandleFunc("GET /admin/server/config", admin.GetServerRuntimeConfig)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks", admin.ListAsynqTasks)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks/{task_id}", admin.GetAsynqTask)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/stats", admin.GetAsynqQueueStats)
