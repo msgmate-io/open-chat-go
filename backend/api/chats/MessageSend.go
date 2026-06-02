@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
@@ -273,8 +274,40 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Now publish websocket updates to online & subscribed users
-	SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
+	isAutomatedReceiver := isAutomatedUserFromDB(DB, receiver)
+	if isAutomatedReceiver {
+		queueClient, clientErr := util.GetAsynqClient(r)
+		if clientErr != nil {
+			http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
+			return
+		}
+
+		payloadBytes, payloadErr := json.Marshal(map[string]interface{}{
+			"chat_uuid":    chatUuid,
+			"message_uuid": message.UUID,
+			"bot_user_id":  receiver.ID,
+		})
+		if payloadErr != nil {
+			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
+			return
+		}
+
+		task := asynq.NewTask("bot:reply", payloadBytes)
+
+		if _, enqueueErr := queueClient.Enqueue(
+			task,
+			asynq.Queue("default"),
+			asynq.MaxRetry(10),
+			asynq.Timeout(5*time.Minute),
+			asynq.Retention(24*time.Hour),
+		); enqueueErr != nil {
+			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// For human receivers, continue to publish websocket updates immediately.
+		SendWebsocketMessage(ch, receiver.UUID, chatUuid, *user, data)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -304,6 +337,11 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(listedMessage)
+}
+
+func isAutomatedUserFromDB(DB *gorm.DB, receiver database.User) bool {
+	_ = DB
+	return receiver.IsAutomated
 }
 
 func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request) {
