@@ -4,8 +4,17 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"gorm.io/gorm"
 	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
 )
 
 type FieldInfo struct {
@@ -18,8 +27,97 @@ type FieldInfo struct {
 }
 
 type TableInfo struct {
-	Name   string      `json:"name"`
-	Fields []FieldInfo `json:"fields"`
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Fields      []FieldInfo `json:"fields"`
+}
+
+var (
+	modelDescriptionOnce  sync.Once
+	modelDescriptionCache map[string]string
+)
+
+func loadModelDescriptions(DB *gorm.DB) map[string]string {
+	modelDescriptionOnce.Do(func() {
+		modelDescriptionCache = make(map[string]string)
+		fset := token.NewFileSet()
+		_, thisFile, _, ok := runtime.Caller(0)
+		if !ok {
+			return
+		}
+
+		databaseDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "database")
+		databaseDir = filepath.Clean(databaseDir)
+		if stat, err := os.Stat(databaseDir); err != nil || !stat.IsDir() {
+			return
+		}
+
+		pattern := filepath.Join(databaseDir, "*.go")
+		files, err := filepath.Glob(pattern)
+		if err != nil {
+			return
+		}
+
+		descriptionsByType := make(map[string]string)
+		for _, filePath := range files {
+			parsed, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+			if err != nil {
+				continue
+			}
+
+			for _, decl := range parsed.Decls {
+				genDecl, ok := decl.(*ast.GenDecl)
+				if !ok || genDecl.Tok != token.TYPE {
+					continue
+				}
+
+				for _, spec := range genDecl.Specs {
+					typeSpec, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					if _, ok := typeSpec.Type.(*ast.StructType); !ok {
+						continue
+					}
+
+					commentGroup := typeSpec.Doc
+					if commentGroup == nil {
+						commentGroup = genDecl.Doc
+					}
+					if commentGroup == nil {
+						continue
+					}
+
+					description := strings.TrimSpace(commentGroup.Text())
+					if description == "" {
+						continue
+					}
+					descriptionsByType[typeSpec.Name.Name] = description
+				}
+			}
+		}
+
+		for _, model := range database.Tabels {
+			stmt := &gorm.Statement{DB: DB}
+			if err := stmt.Parse(model); err != nil || stmt.Schema == nil {
+				continue
+			}
+
+			t := reflect.TypeOf(model)
+			if t.Kind() == reflect.Ptr {
+				t = t.Elem()
+			}
+			if t.Kind() != reflect.Struct {
+				continue
+			}
+
+			if description, ok := descriptionsByType[t.Name()]; ok {
+				modelDescriptionCache[stmt.Schema.Table] = description
+			}
+		}
+	})
+
+	return modelDescriptionCache
 }
 
 type TableInfoConfig struct {
@@ -191,8 +289,9 @@ func GetTableInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tableInfo := TableInfo{
-		Name:   tableName,
-		Fields: fields,
+		Name:        tableName,
+		Description: loadModelDescriptions(DB)[tableName],
+		Fields:      fields,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
