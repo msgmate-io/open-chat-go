@@ -9,7 +9,6 @@ import (
 const (
 	QueueDefault      = "default"
 	TypeToolExecution = "tools:execute"
-	TypeBotReply      = "bot:reply"
 )
 
 type ToolExecutionPayload struct {
@@ -25,12 +24,6 @@ type ToolExecutionResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-type BotReplyPayload struct {
-	ChatUUID    string `json:"chat_uuid"`
-	MessageUUID string `json:"message_uuid"`
-	BotUserID   uint   `json:"bot_user_id"`
-}
-
 func NewToolExecutionTask(payload ToolExecutionPayload) (*TaskWithPayload, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -44,13 +37,4 @@ func NewToolExecutionTask(payload ToolExecutionPayload) (*TaskWithPayload, error
 type TaskWithPayload struct {
 	Task    *asynq.Task
 	Payload ToolExecutionPayload
-}
-
-func NewBotReplyTask(payload BotReplyPayload) (*asynq.Task, error) {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	return asynq.NewTask(TypeBotReply, payloadBytes), nil
 }
