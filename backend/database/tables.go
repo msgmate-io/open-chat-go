@@ -130,6 +130,7 @@ var Tabels []interface{} = []interface{}{
 	&Message{},
 	&UploadedFile{},
 	&FileAccess{},
+	&TaskResult{},
 }
 
 var Migrations []Migration = []Migration{
@@ -142,4 +143,5 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ChatSettings{}},
 	FileUploadMigration{},
 	TableMigration{&ToolInitData{}},
+	TableMigration{&TaskResult{}},
 }
