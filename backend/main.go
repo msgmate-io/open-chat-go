@@ -37,6 +37,7 @@ func main() {
 		Usage: "Open Chat command line interface",
 		Commands: []*ufcli.Command{
 			cmd.ServerCli(),
+			cmd.WorkerCli(),
 		},
 	}
 
