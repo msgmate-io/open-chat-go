@@ -37,6 +37,9 @@ type snapshotStatsResponse struct {
 	Relations    int    `json:"relations_count"`
 	TagsCount    int    `json:"tags_count"`
 	OutputPath   string `json:"output_path"`
+	AbsolutePath string `json:"absolute_path,omitempty"`
+	WrittenBytes int    `json:"written_bytes,omitempty"`
+	FileMtime    string `json:"file_mtime,omitempty"`
 	GeneratedAt  string `json:"generated_at"`
 	Instructions string `json:"instructions,omitempty"`
 }
@@ -172,12 +175,12 @@ func buildModelsSnapshot(DB *gorm.DB) (modelsSnapshotPayload, error) {
 
 		fields := make([]FieldInfo, 0, len(stmt.Schema.Fields))
 		for _, field := range stmt.Schema.Fields {
-			if field == nil || field.DBName == "" {
+			if field == nil {
 				continue
 			}
 			fieldType := string(field.DataType)
 			if fieldType == "" {
-				fieldType = string(field.GORMDataType)
+				fieldType = "unknown"
 			}
 			fields = append(fields, FieldInfo{
 				Name:       field.Name,
@@ -185,11 +188,10 @@ func buildModelsSnapshot(DB *gorm.DB) (modelsSnapshotPayload, error) {
 				Type:       fieldType,
 				IsPrimary:  field.PrimaryKey,
 				IsNullable: !field.NotNull,
-				Tag:        string(field.Tag),
+				Tag:        string(field.TagSettings["JSON"]),
 			})
 		}
 
-		sort.Slice(fields, func(i, j int) bool { return fields[i].NameRaw < fields[j].NameRaw })
 		meta := docMeta[tableName]
 		tables = append(tables, TableInfo{Name: tableName, Description: meta.Description, SourceURL: meta.SourceURL, Fields: fields})
 	}
@@ -406,6 +408,29 @@ func GetServerCommandSnapshotData(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(buildServerCommandSnapshot())
 }
 
+func GetDocsSnapshotDataByTag(w http.ResponseWriter, r *http.Request) {
+	DB, err := docsSnapshotsGuard(w, r)
+	if err != nil {
+		return
+	}
+
+	snapshot := strings.TrimSpace(r.PathValue("snapshot"))
+	entry, ok := getSnapshotEntry(snapshot)
+	if !ok {
+		http.Error(w, "Unknown snapshot", http.StatusNotFound)
+		return
+	}
+
+	payload, err := entry.build(DB)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to build snapshot: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(payload)
+}
+
 func WriteDocsSnapshot(w http.ResponseWriter, r *http.Request) {
 	_, err := docsSnapshotsGuard(w, r)
 	if err != nil {
@@ -477,10 +502,14 @@ func GetDocsSnapshotStatsByTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, relPath, err := entry.outputPath()
+	absPath, relPath, err := entry.outputPath()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	fileMtime := ""
+	if info, statErr := os.Stat(absPath); statErr == nil {
+		fileMtime = info.ModTime().UTC().Format(time.RFC3339)
 	}
 
 	tablesCount, relationsCount, tagsCount, generatedAt := snapshotCounts(payload)
@@ -490,6 +519,8 @@ func GetDocsSnapshotStatsByTag(w http.ResponseWriter, r *http.Request) {
 		Relations:    relationsCount,
 		TagsCount:    tagsCount,
 		OutputPath:   relPath,
+		AbsolutePath: absPath,
+		FileMtime:    fileMtime,
 		GeneratedAt:  generatedAt,
 		Instructions: fmt.Sprintf("Call POST /api/v1/admin/docs/snapshots/%s/refresh to write this snapshot to disk.", snapshot),
 	}
@@ -540,6 +571,10 @@ func RefreshDocsSnapshotByTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tablesCount, relationsCount, tagsCount, generatedAt := snapshotCounts(payload)
+	fileMtime := ""
+	if info, statErr := os.Stat(absPath); statErr == nil {
+		fileMtime = info.ModTime().UTC().Format(time.RFC3339)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(snapshotStatsResponse{
 		Snapshot:    snapshot,
@@ -547,6 +582,9 @@ func RefreshDocsSnapshotByTag(w http.ResponseWriter, r *http.Request) {
 		Relations:   relationsCount,
 		TagsCount:   tagsCount,
 		OutputPath:  relPath,
+		AbsolutePath: absPath,
+		WrittenBytes: len(jsonBytes) + 1,
+		FileMtime:    fileMtime,
 		GeneratedAt: generatedAt,
 	})
 }
