@@ -149,6 +149,10 @@ func DevSetupScript(spec DevSetupSpec) string {
 	}
 	var lines []string
 	lines = append(lines, devSetupSetupMarker+" profile "+spec.Profile)
+	// ci#739: the set-up shell and the agent's later tool-call shells are
+	// different processes, so the toolchain PATH and the private-module opt-outs
+	// must be persisted, not merely exported here (see SandboxEnvSetupLines).
+	lines = append(lines, SandboxEnvSetupLines()...)
 	if spec.Submodules {
 		lines = append(lines, `if [ -f .gitmodules ]; then git submodule update --init --recursive; fi`)
 	}
@@ -159,11 +163,33 @@ func DevSetupScript(spec DevSetupSpec) string {
 		}
 		lines = append(lines, `[ -d `+name+` ] || git clone --depth 1 https://github.com/`+repo+`.git `+name)
 	}
+	// ci#739: bootstrap the integration manager through its own entry point.
+	// The previous inline `[ -d development/build-tools ]` gate silently skipped
+	// provisioning whenever the build-tools submodule was not materialized (the
+	// usual state in a fresh checkout), leaving exactly the unprovisioned
+	// workspace the agent then reports as a private-module defect. build_tools.sh
+	// installs the CLI into .venv on first use and falls back to the upstream
+	// repository; a success marker keeps a re-run (re-attached sandbox, replayed
+	// set-up) from paying the full provisioning cost again, and the readiness
+	// check afterwards tells the transcript whether the workspace can actually run
+	// local Go checks.
+	lines = append(lines, SandboxProfileSetupLines(spec.Profile)...)
 	lines = append(lines,
-		`if [ -d development/build-tools ] && command -v python3 >/dev/null 2>&1; then`,
+		`if [ -x development/scripts/check_coder_sandbox_readiness.sh ]; then`,
+		`  development/scripts/check_coder_sandbox_readiness.sh . || true`,
+		`fi`,
+		// Legacy path: no `development/scripts/build_tools.sh` in the checkout
+		// (an older revision of the repository), but the vendored build-tools
+		// submodule is present, so install the CLI directly. This path is the
+		// only remaining user of the submodule, which is why the submodule-free
+		// bootstrapping above matters.
+		`if [ ! -f "$openchat_sandbox_profile" ] && [ ! -d development/build-tools ] && [ ! -x development/scripts/build_tools.sh ]; then`,
+		`  echo "[ci#739 dev-setup] WARNING: neither development/scripts/build_tools.sh nor development/build-tools is present; the checkout cannot be provisioned" >&2`,
+		`fi`,
+		`if [ ! -f "$openchat_sandbox_profile" ] && [ -d development/build-tools ] && [ ! -x development/scripts/build_tools.sh ] && command -v python3 >/dev/null 2>&1; then`,
 		`  [ -d .venv ] || python3 -m venv .venv`,
 		`  .venv/bin/pip install --quiet --disable-pip-version-check ./development/build-tools`,
-		`  .venv/bin/openchat-integrations prepare --profile `+spec.Profile,
+		`  .venv/bin/openchat-integrations prepare --profile `+spec.Profile+` && printf '%s\n' '`+spec.Profile+`' > "$openchat_sandbox_profile"`,
 		`fi`,
 	)
 	lines = append(lines, spec.Commands...)
