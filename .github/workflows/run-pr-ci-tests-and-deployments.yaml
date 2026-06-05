@@ -2498,6 +2498,16 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_provider_failure.sh
 
+      # ci#739: the coding-sandbox readiness probe tells a msgmate-coder agent
+      # whether local Go checks can run at all, and its recovery hint must point
+      # at the submodule-free provisioning entry point
+      # (`development/scripts/build_tools.sh`) so a fresh checkout can always
+      # bootstrap itself.
+      - name: Coder sandbox readiness probe unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_coder_sandbox_readiness.sh
+
       # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
       # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
       # networking design). Pin the in-pod probe script contract (single-line
