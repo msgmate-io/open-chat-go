@@ -23,7 +23,35 @@ func setupChatsTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	DB := database.SetupDatabase(cfg)
+	closeChatsTestDB(t, DB)
+	return DB
+}
+
+// closeChatsTestDB closes the connection pool behind a test database when the
+// test finishes. t.TempDir registers its RemoveAll cleanup *before* this one is
+// registered and cleanups run LIFO, so the pool is already closed by the time
+// the temporary directory is removed.
+//
+// Without it the pool outlives the test: SQLite runs in WAL mode (see
+// sqliteDSNPragmas), so a pooled connection can recreate the -wal/-shm sidecars
+// while RemoveAll is walking the directory. That races into
+// "TempDir RemoveAll cleanup: unlinkat ...: directory not empty" and, once the
+// main database file is gone underneath a still-open connection, into
+// "disk I/O error (522)" (observed flaking in CI on
+// TestApproveInteractionConfirmationAppliesOverrides).
+func closeChatsTestDB(t *testing.T, DB *gorm.DB) {
+	t.Helper()
+	if DB == nil {
+		return
+	}
+	t.Cleanup(func() {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return
+		}
+		_ = sqlDB.Close()
+	})
 }
 
 func createUserForChatsTest(t *testing.T, DB *gorm.DB, name string, isAdmin bool) *database.User {
@@ -517,13 +545,29 @@ func TestCreateChatSnapshotsToolCallBudget(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a per-chat tool-call budget snapshot, got %#v", config[nativecoder.ToolCallBudgetConfigKey])
 	}
+	// The snapshot keeps the caps the chat was created with...
 	if snapshot.MaxTotal != 400 || snapshot.MaxFailed != 25 {
 		t.Fatalf("expected the bot's caps at creation time in the snapshot, got %+v", snapshot)
 	}
 
+	// ...while the *effective* caps are the fleet-wide floor of the resolved
+	// sources (ci#709): a chat snapshotted with a smaller budget than the
+	// compiled-in default is lifted to that default, and a larger declared cap
+	// would win. Resolve both sides against the constants so raising the floor
+	// (500/20 as of #931) keeps this regression honest.
+	wantTotal, wantFailed := 400, 25
+	if nativecoder.DefaultToolCallMaxTotal > wantTotal {
+		wantTotal = nativecoder.DefaultToolCallMaxTotal
+	}
+	if nativecoder.DefaultToolCallMaxFailed > wantFailed {
+		wantFailed = nativecoder.DefaultToolCallMaxFailed
+	}
 	resolved := nativecoder.ResolveToolCallBudget(config, nil)
-	if resolved.MaxTotal != 400 || resolved.MaxFailed != 25 {
-		t.Fatalf("expected the snapshot to make the caps effective, got %+v", resolved)
+	if resolved.MaxTotal != wantTotal || resolved.MaxFailed != wantFailed {
+		t.Fatalf("expected the effective budget %d/%d, got %+v", wantTotal, wantFailed, resolved)
+	}
+	if resolved.SnapshotMaxTotal != 400 || resolved.SnapshotMaxFailed != 25 {
+		t.Fatalf("expected the snapshot to stay reported even when the floor is higher, got %+v", resolved)
 	}
 	meta := resolved.Metadata()
 	if meta["snapshot_max_total"] != 400 || meta["snapshot_max_failed"] != 25 {

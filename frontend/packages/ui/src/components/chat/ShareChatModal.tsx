@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { Check, Copy, Globe, Link2, Lock, Share2, User } from "lucide-react"
+import { Check, Copy, EyeOff, Globe, Link2, Lock, Share2, ShieldCheck, User } from "lucide-react"
 import { Button } from "../button"
 import {
   Dialog,
@@ -11,10 +11,16 @@ import { Text, TextTypes } from "../text"
 
 type ShareMode = "public" | "user"
 
+// ContentMode controls how much of a shared chat is exposed. "censored" (the
+// default) strips tool arguments/results, message meta-data and anything that
+// looks like a secret; "unsecure" exposes the raw conversation.
+type ContentMode = "censored" | "unsecure"
+
 type PublishResponse = {
   chat_uuid?: string
   chat_share_uuid?: string
   access_mode?: string
+  content_mode?: string
   target_username?: string
 }
 
@@ -40,6 +46,7 @@ export function ShareChatModal({
   setOpen: (open: boolean) => void
 }) {
   const [mode, setMode] = useState<ShareMode>("public")
+  const [contentMode, setContentMode] = useState<ContentMode>("censored")
   const [targetUsername, setTargetUsername] = useState("")
   const [creating, setCreating] = useState(false)
   const [revoking, setRevoking] = useState(false)
@@ -83,6 +90,7 @@ export function ShareChatModal({
       setShare(null)
       setTargetUsername("")
       setMode("public")
+      setContentMode("censored")
     }
   }
 
@@ -102,6 +110,7 @@ export function ShareChatModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           access_mode: mode,
+          content_mode: contentMode,
           target_username: mode === "user" ? targetUsername.trim() : "",
         }),
       })
@@ -210,6 +219,53 @@ export function ShareChatModal({
               />
             </label>
           ) : null}
+
+          <div className="flex flex-col gap-1">
+            <span className="px-1 text-[10px] uppercase tracking-wide text-muted-foreground">Content</span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                data-testid="share-content-censored"
+                onClick={() => {
+                  setContentMode("censored")
+                  setShare(null)
+                }}
+                className={`flex flex-col gap-1 rounded-md border p-2 text-left transition-colors ${
+                  contentMode === "censored" ? "border-primary bg-primary/5" : "border-border/70 hover:bg-secondary"
+                }`}
+              >
+                <span className="flex items-center gap-1.5 text-xs font-semibold">
+                  <ShieldCheck className="size-3.5" /> Censored
+                </span>
+                <Text type={TextTypes.Body7} color="muted">
+                  Messages and tool names only. Parameters, results and meta-data are hidden.
+                </Text>
+              </button>
+              <button
+                type="button"
+                data-testid="share-content-unsecure"
+                onClick={() => {
+                  setContentMode("unsecure")
+                  setShare(null)
+                }}
+                className={`flex flex-col gap-1 rounded-md border p-2 text-left transition-colors ${
+                  contentMode === "unsecure" ? "border-primary bg-primary/5" : "border-border/70 hover:bg-secondary"
+                }`}
+              >
+                <span className="flex items-center gap-1.5 text-xs font-semibold">
+                  <EyeOff className="size-3.5" /> Unsecure
+                </span>
+                <Text type={TextTypes.Body7} color="muted">
+                  Full conversation including tool parameters, results and meta-data.
+                </Text>
+              </button>
+            </div>
+            {contentMode === "unsecure" ? (
+              <Text type={TextTypes.Body7} color="muted" className="px-1 text-destructive">
+                Unsecure shares expose everything in this chat. Only use it when you are sure it contains no secrets.
+              </Text>
+            ) : null}
+          </div>
 
           {shareUrl ? (
             <div className="flex flex-col gap-2 rounded-md border border-border/70 bg-card p-2">

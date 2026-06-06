@@ -23,7 +23,7 @@ func setupAccessTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	return database.SetupTestDatabase(t, cfg)
 }
 
 func TestIsVisibleToUserGatesGrants(t *testing.T) {
