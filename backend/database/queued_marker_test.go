@@ -14,6 +14,7 @@ func openMarkerTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open sqlite database: %v", err)
 	}
+	CloseTestDB(t, DB)
 	if err := DB.AutoMigrate(&Chat{}, &User{}, &Message{}); err != nil {
 		t.Fatalf("failed to migrate test schema: %v", err)
 	}

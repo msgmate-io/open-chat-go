@@ -120,6 +120,13 @@ const (
 	// because api/msgmate imports api/chats, so the dependency cannot be
 	// reversed.
 	turnEndedNoUsableToolCall = "no_usable_tool_call"
+	// turnEndedToolCallCap / turnEndedFailedToolCallCap mirror
+	// msgmate.TurnEndedToolCallCap / msgmate.TurnEndedFailedToolCallCap
+	// (backend/api/msgmate/turn_outcome.go), again as literals because of the
+	// import direction. A turn that stopped on its per-chat tool budget is an
+	// *unfinished* turn (ci#747, RC2).
+	turnEndedToolCallCap       = "tool_call_cap_reached"
+	turnEndedFailedToolCallCap = "failed_tool_call_cap_reached"
 )
 
 // autoContinueSettingsSchema documents the state keys stored in
@@ -257,6 +264,7 @@ func defaultAutoContinueIncompletePrompt(config AutoContinueConfig) string {
 	return fmt.Sprintf(
 		"Your previous turn ended before you finished: it stopped without a final summary, so the work was not yet reported. "+
 			"Finish it now — make sure any completed work is committed and pushed (and, if the task calls for it, that a draft pull request is open), then reply with a short summary of what you changed and what is still pending. "+
+			"If the turn ended because tool calls kept failing, do not retry the same failing call: name the blocker in that summary — which call failed, how it failed, and whether it looks like an infrastructure/transient outage rather than a wrong argument — and say what you need to get past it. "+
 			"Do not restart the task. When the WHOLE task is complete and verified, end your reply with the line %s. "+
 			"If and only if you are blocked on a decision only a human can make, end with the line %s and state exactly what you need.",
 		config.CompletionMarker, config.HumanMarker,
@@ -404,9 +412,13 @@ func decideAutoContinue(config AutoContinueConfig, state autoContinueState, mess
 // (ci#709). Only outcomes that mean "the agent stopped before it could report"
 // qualify. Every other outcome is deliberately excluded:
 //
-//   - `tool_call_cap_reached` / `failed_tool_call_cap_reached`: retrying burns
-//     the per-chat tool budget for no gain; the generic continuation (when the
-//     budget allows) already resumes the work.
+//   - `tool_call_cap_reached` / `failed_tool_call_cap_reached`: the turn ran out
+//     of its per-chat tool budget *before* it could report, so it is retried
+//     (ci#747, RC2) — with this bounded retry budget and its partial-report
+//     instruction rather than the unbounded generic continuation. A degraded
+//     sandbox can therefore no longer burn the whole loop budget on retries and
+//     then park the interaction; when the bounded budget is used up the loop
+//     stops with an explicit stop reason (`incomplete_retries_exhausted`).
 //   - `provider_error`: a transport failure, not a policy stop — the provider
 //     retry path already handles it and a retry loop would amplify an outage.
 //   - `cancelled`: the user (or an interrupt) stopped the turn deliberately.
@@ -421,7 +433,12 @@ func turnEndedIncompleteRetryable(meta map[string]interface{}) bool {
 		return false
 	}
 	reason, _ := meta[turnEndedMetadataKey].(string)
-	return strings.TrimSpace(reason) == turnEndedNoUsableToolCall
+	switch strings.TrimSpace(reason) {
+	case turnEndedNoUsableToolCall, turnEndedToolCallCap, turnEndedFailedToolCallCap:
+		return true
+	default:
+		return false
+	}
 }
 
 // continuationOutstanding reports whether a continuation prompt was already

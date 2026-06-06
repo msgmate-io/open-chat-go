@@ -8,7 +8,7 @@ import { InteractionChatInfo } from "@open-chat-go/ui"
 import { SharedInteractionWebsocketHandler } from "@/components/chat/SharedInteractionWebsocketHandler"
 import { usePartialMessageStore } from "@open-chat-go/ui"
 import { BotDisplay, Button, LoadingSpinner, Text, TextTypes } from "@open-chat-go/ui"
-import { ExternalLink, LogIn } from "lucide-react"
+import { ExternalLink, LogIn, ShieldCheck } from "lucide-react"
 
 type SharedInteractionAccessResponse = {
   authenticated?: boolean
@@ -20,6 +20,11 @@ type SharedChatResponse = {
   uuid: string
   chat_share_uuid: string
   chat_type: string
+  /**
+   * How much of the chat this share exposes. "censored" (default) hides tool
+   * parameters/results and message meta-data; "unsecure" exposes everything.
+   */
+  content_mode?: "censored" | "unsecure" | string
   published_at?: string
   partner?: {
     uuid?: string
@@ -151,6 +156,7 @@ export default function SharedInteractionPage() {
     },
   }
   const botUUID = chat.partner?.uuid || ""
+  const isCensored = chat.content_mode !== "unsecure"
 
   return (
     <div className="flex h-screen w-full flex-col items-center px-4">
@@ -178,6 +184,14 @@ export default function SharedInteractionPage() {
 
       <div className="chat-messages-column">
         <InteractionChatInfo chat={renderedChat} isSharedView />
+        {isCensored ? (
+          <div className="mx-4 mt-2 flex items-center justify-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1">
+            <ShieldCheck className="size-3.5 text-muted-foreground" />
+            <Text type={TextTypes.Body7} color="muted">
+              Censored share · tool parameters, results and message meta-data are hidden
+            </Text>
+          </div>
+        ) : null}
         <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-12">
           {[...(messages.rows || [])].reverse().map((message) => {
             const isBotSender = message.sender_is_automated === true || (botUUID !== "" && message.sender_uuid === botUUID)

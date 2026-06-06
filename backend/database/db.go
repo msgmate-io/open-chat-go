@@ -79,7 +79,7 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 				tableName := stmt.Schema.Table
 				logging.Debugf("%v", fmt.Sprintf("Dropping tables (%v/%v): %v", i+1, len(Migrations), tableName))
 				if tableName == "keys" {
-					fmt.Println("NOT dropping keys table")
+					logging.Infof("NOT dropping keys table")
 				} else {
 					db.Migrator().DropTable(tableMigration.Model)
 				}

@@ -11,7 +11,7 @@ import (
 
 func setupAccessTokenMintTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := SetupDatabase(DBConfig{
+	db := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "access_token_mint_test.db"),
 		ResetDB:  true,

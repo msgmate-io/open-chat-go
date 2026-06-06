@@ -97,6 +97,24 @@ operator applies the patch at the chart root
 re-introduces the finding. The chart checker and its regression test
 (`development/scripts/test_redis_chart_readiness_contract.py`, stdlib-only like
 its sibling) run in the Pin Freshness Gate.
+The compose profiles are the second consumer of that same redis, so the `ci#722`
+numbers are mirrored there as well: `docker-compose.yaml`, `docker-compose.ci.yaml`
+and `docker-compose.pro.yaml` carry a healthcheck of `interval: 5s`,
+`timeout: 2s`, `retries: 12` and `start_period: 5s` — a budget that tolerates a
+minute of sustained failure — plus a `deploy.resources` reservation of `0.1` CPU
+with a `0.5` CPU limit. A healthcheck that gives up after a few seconds of
+contention marks the container unhealthy and a redis without a CPU reservation is
+starved behind the agent workloads on a shared runner; either way the queue/state
+endpoint disappears under load and freshly dispatched interactions are dead on
+arrival. `development/scripts/redis_compose_readiness_contract.py` is the compose
+half of the contract: stdlib-only (the Pin Freshness Gate has no PyYAML), it
+extracts the `redis` service with a small block-mapping parser, re-derives the
+same finding ids (`probe_missing`, `probe_timeout_too_low`,
+`probe_budget_too_short`, `startup_probe_missing`, `redis_cpu_request_missing`,
+…), prints GitHub `::error::` annotations and exits non-zero while any check
+fails, so a flapping redis healthcheck cannot silently come back. Its regression
+test, `development/scripts/test_redis_compose_readiness_contract.py`, runs in the
+Pin Freshness Gate next to the Kubernetes half.
 
 The PR-CI progress comments follow the same rule. Every job that upserts the
 `<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
@@ -298,6 +316,74 @@ upsert, so it must never be fatal:
 - Still a maintainer/ops item: watch the 1Gi SQLite PVC (it grows with
   interactions and history) and raise it or add retention when it approaches the
   limit.
+
+#### Test helpers close their SQLite pool before `t.TempDir` removes the directory (ci#920)
+
+A test helper that points SQLite at `filepath.Join(t.TempDir(), ...)` and never
+closes the `gorm` pool leaves the pool alive past the test. Because the database
+runs in WAL mode (`sqliteDSNPragmas`,
+`backend/database/db_sqlite_driver_default.go`), a pooled connection can recreate
+the `-wal`/`-shm` sidecars while `t.TempDir`'s `RemoveAll` walks the directory,
+racing into
+
+```
+TempDir RemoveAll cleanup: unlinkat /tmp/Test.../001: directory not empty
+```
+
+and, once the database file is unlinked underneath a still-open connection, into
+`disk I/O error (522)`.
+
+- `database.SetupTestDatabase(t, cfg)` / `database.CloseTestDB(t, DB)`
+  (`backend/database/testdb.go`) are the shared helpers. `t.TempDir` registers its
+  `RemoveAll` cleanup *before* the helper registers the pool close and cleanups
+  run LIFO, so the close always precedes `RemoveAll`. Use
+  `SetupTestDatabase` instead of `SetupDatabase` in tests; a site that opens the
+  pool itself (`gorm.Open`, `openSQLite`) registers `CloseTestDB(t, DB)` right
+  after the successful open.
+- `CloseTestDB` is nil-safe and tolerates a site that closes its own pool, since
+  `database/sql` `Close` is idempotent - so it never double-closes.
+- The ordering rationale lives in exactly one place instead of a per-package
+  `closeXTestDB` copy; `backend/database/testdb_test.go` pins the close-before-
+  `RemoveAll` ordering and the idempotent re-close.
+- The audit is held in place by `TestTempDirSQLiteHelpersCloseTheirPool` in the
+  same file: it scans the backend module's `*_test.go` files and fails when a
+  file binds `t.TempDir()` to a SQLite pool (`SetupDatabase(`, `gorm.Open(`,
+  `openSQLite(`) without referencing `SetupTestDatabase(`/`CloseTestDB(`, a
+  package-local `close*TestDB(` helper (the shape the #919 `api/chats` fix ships,
+  verified by applying that patch), or both `.DB()` and `.Close()` when it
+  unwraps the pool itself. Requiring both halves there matters: a file that
+  closes some unrelated handle and never touches the pool is exactly the shape
+  `api/chats/browser_token_access_test.go` had. A new helper copied from a stale
+  one fails there instead of flaking CI intermittently, which is the only failure
+  mode this bug has.
+- The scan skips the vendored/private checkouts (dot-dirs, `clients/`, `ci/`, plus
+  `node_modules`/`vendor`/`frontend`/`dist`/`build`) for the same reason
+  `backend/docguard` does: `openchat-integrations sync` and
+  `openchat-integrations setup` materialize another repository's tree under
+  `clients/integrations/` and `development/ci/`, and their tests cannot be fixed
+  from here. Without that skip the guard went red on any tree that had synced
+  (the integration `bootstrap_test.go` files bind `t.TempDir()` to a pool they
+  never close), which is a false positive on someone else's code, not a
+  regression in ours.
+- `knownTempDirPoolViolations` in that file is the only escape hatch: it lists
+  files whose fix is owned by an in-flight PR, and the guard fails on an entry
+  that no longer violates, so the exception has to be deleted with the fix rather
+  than quietly outliving it. It is empty as of the r56 consolidation (the three
+  `api/chats` entries were #919 and went away with that fix).
+- Known limitation of that scan, deliberate and *not* closed here: the predicate
+  is per *file*, so a file that calls `SetupTestDatabase(` for one helper and a
+  bare `SetupDatabase(` for another is exempted wholesale. The hole is latent
+  today - the only three bare call sites on the tree are the `#919` ones and none
+  of those files calls `SetupTestDatabase(` - but it is real. Closing it needs a
+  per-function scan plus string-literal stripping (the guard's own fixtures embed
+  `SetupDatabase(`/`gorm.Open(` literals, so naive occurrence counting would
+  false-positive on the guard file itself). Worth a follow-up, not a bolt-on.
+  Two further reasons the accepted `close*TestDB(` form is weaker than the
+  "package-local helper" label suggests, both pointing the same way: it is a
+  raw-text match, so a fixture or comment *spelling out* `closeChatsTestDB(`
+  would exempt the guard file itself, and it fires on the helper's *declaration*
+  alone - nothing checks that the helper is ever called, or called by every
+  helper in the file. Same per-file hole, one more accepted token.
 
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
@@ -938,6 +1024,19 @@ one-line note about the current shortfall:
   for the private runbook and for run evidence; closing a gap in prose without
   closing it in the registry no longer matches what the gate reports.
 
+While a gap is still open the agent needs to know what to do *instead* of the
+opencode capability it misses, and that mitigation is data too:
+`backend/nativecoder/parityfallbacks.go` keeps one fallback line per gap id
+(`ParityFallbackFor`, `ParityFallbackGuidanceLines`,
+`RenderParityFallbackMarkdown`, `ParityFallbackJSON`). Each line names at least
+one tool of `CoderSurfaceTools()`, so the guidance can only point at a tool the
+coder actually ships, and `ValidateParityFallbackGuidance` /
+`UncoveredParityGapIDs` fail when a new gap is registered without a mitigation, a
+mitigation names no shipped tool, or a *closed* gap still carries a workaround
+(that would tell the agent to avoid a capability the coder already has). That
+keeps ci#394 honest in both directions: the registry says what is missing, the
+fallback table says how the coder copes until it is added.
+
 Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
@@ -996,3 +1095,46 @@ implements one issue does not need the dispatch family.
 2. Keep both routes until the native route is verified live.
 3. Then retire the workflow from the lead's prompt/config in one consolidation
    PR and record the version that flipped it, so the change is revertible.
+
+### opencode retirement umbrella (ci#585)
+
+`backend/nativecoder/opencoderetirement.go` gates the retirement of the opencode
+integration on the flipped fleet. `backend/nativecoder/retirementevidence.go`
+breaks the same gate down per umbrella step (`OpencodeRetirementEvidence`): each
+checklist entry of the ticket gets the status the gate implies and the blocker
+lines that belong to it, and `RenderOpencodeRetirementEvidenceMarkdown` renders
+that table for a ticket comment. Because the rows are derived from
+`OpencodeRetirementBlockers`, a step cannot be reported as signed off while its
+blocker is still listed.
+
+The config half of the same umbrella (ci#582) is the *delta* the flip publishes:
+`backend/nativecoder/retirementdelta.go` renders the per-bot runtime mutations
+from the same flip registry - `OpencodeRetirementFlipDelta`,
+`OpencodeRetirementRollbackDelta`, `OpencodeRetirementDeltaJSON` - together with
+the ordered apply plan (`OpencodeRetirementDeltaApplyPlan`), which goes through
+the vault-sync path `publish-open-chat-config.yaml` with `DRY_RUN=true` first.
+`ValidateOpencodeRetirementDeltas` fails unless the rollback delta is the exact
+inverse of the flip delta, and `PendingOpencodeRetirementFlipDelta` reports the
+entries still outstanding for the observed fleet, so the delta, the gate and the
+deployment never disagree. The read-only job
+`backend/scripts/opencode_retirement_report` prints the per-step evidence
+(`--format=markdown`, `--format=json`) or the flip delta (`--format=delta`) for a
+ticket comment; `--require-ready` turns the gate into a non-zero exit for a
+scripted check.
+
+## Decoupled integration builds (ci#423)
+
+Once an integration's shipped packages no longer import `backend/...` (verified by
+`development/scripts/check_integration_decoupling.py`), it can be built against its
+minimal compile inputs only:
+
+- pass `decoupled: true` to `.github/workflows/reusable-integration-module-ci.yaml`, or
+- set `DECOUPLED=true` when calling `development/scripts/integration_module_ci.sh` directly.
+
+That path skips profile materialization, so the compile inputs are the integration
+module plus the pinned `clients/go_integration_interface` module, and it enforces the
+decoupling guard (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`). It is the
+per-integration prebuild precondition from the ci#345 design
+(`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
+for the remaining integrations lives in
+`frontend/pages/docs/content/integration-development.mdx`.
