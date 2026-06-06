@@ -683,6 +683,37 @@ checks out (unless the caller pinned it in
 authoritative), so a re-run for a pull request resumes that PR's branch instead
 of the bot's default.
 
+#### First-class docker tooling (ci#787)
+
+Coding sandboxes are routinely provisioned **without a docker daemon**, and the
+worst failure mode was agents improvising around it: `docker compose up`,
+`docker run`, repeated `docker build` retries, occasionally installing a daemon
+inside the sandbox. That burns sandbox time, hides the real blocker and can leak
+host state. Docker work therefore goes through a typed surface instead of
+hand-written shell commands:
+
+- the registry in `backend/nativecoder/dockertooling.go` is the single source of
+  truth: every tool is named `docker_sandbox_*` and owned by the
+  `docker_sandbox` integration (`check`, `ps`, `logs`, `build`, `run`, `compose`,
+  `exec`), declares typed arguments, the raw shell shapes it retires, and a
+  policy (read-only, bounded output, `--rm`, never `--privileged`, no implicit
+  credentials);
+- `development/scripts/coder_docker.sh` is the one supported shell entry point
+  when the typed tools are not wired up yet, and it doubles as the readiness
+  probe (`coder_docker.sh check`);
+- `development/scripts/check_coder_sandbox_readiness.sh` reports docker as a
+  **soft** requirement: a missing CLI or unreachable daemon is guidance, not a
+  readiness failure, while a missing wrapper is a hard failure because it would
+  push agents back to raw docker commands;
+- the `integration_clis` phase of the bash-retirement plan points at the whole
+  docker registry, so `docker ps`/`docker build`/`docker compose` shell usage is
+  retired rather than tolerated.
+
+When no daemon is reachable: report the gap in the PR or issue body, keep the
+change, run the fast docker-free checks (unit tests, `gofmt`, lint), and let PR
+CI be the authoritative gate for image builds, compose up and e2e suites.
+**Never install or start a docker daemon inside the sandbox.**
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
