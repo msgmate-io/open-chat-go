@@ -54,7 +54,7 @@ func TestSyncDefaultBotModelsByProviderKeys(t *testing.T) {
 		"LITELLM_API_KEY":   "",
 	})
 
-	DB := SetupDatabase(DBConfig{
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "provider_key_sync.db"),
 		Debug:    false,
@@ -118,7 +118,7 @@ func TestSyncDefaultBotModelsByProviderKeys(t *testing.T) {
 }
 
 func TestSyncDefaultBotModelsByProviderKeysRequiresBotUsername(t *testing.T) {
-	DB := SetupDatabase(DBConfig{
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "provider_key_sync_empty_bot.db"),
 		Debug:    false,
@@ -131,7 +131,7 @@ func TestSyncDefaultBotModelsByProviderKeysRequiresBotUsername(t *testing.T) {
 }
 
 func TestSyncBotModelsFromBotMirrorsDefaultModelAssignments(t *testing.T) {
-	DB := SetupDatabase(DBConfig{
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "bot_model_access_sync.db"),
 		Debug:    false,

@@ -59,6 +59,11 @@ on:
         required: false
         type: string
         default: "720"
+      sandbox_test_timeout:
+        description: Total wall-clock limit per test in seconds, across all retry attempts (default 1500)
+        required: false
+        type: string
+        default: "1500"
       upload_artifacts:
         description: Upload per-test result artifacts
         required: false
@@ -364,8 +369,9 @@ jobs:
     runs-on: ubuntu-latest
     # Hard cap for the whole matrix job. The LLM interaction is capped via
     # SANDBOX_INTERACTION_TIMEOUT; tests may override per-test via config.json
-    # "interaction_timeout". Extra minutes cover startup/verification/upload.
-    timeout-minutes: 46
+    # "interaction_timeout". The whole test (all attempts) is capped via
+    # SANDBOX_TEST_TIMEOUT; extra minutes cover startup/verification/upload.
+    timeout-minutes: 30
     needs: [discover, backend-image, sandbox-image-ensure]
     if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
     strategy:
@@ -382,6 +388,7 @@ jobs:
       SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
       SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
       SANDBOX_INTERACTION_TIMEOUT: ${{ inputs.sandbox_interaction_timeout }}
+      SANDBOX_TEST_TIMEOUT: ${{ inputs.sandbox_test_timeout }}
       # Model/provider pin for the opencode runtime. Only the openrouter API
       # key is configured by default; other providers need their own secret.
       SANDBOX_OPENCODE_PROVIDER: ${{ inputs.opencode_provider }}
@@ -432,14 +439,27 @@ jobs:
 
       - name: Run sandbox test ${{ matrix.test }}
         id: test
-        # Independent wall-clock backstop below the 22-minute job cap. The
+        # Independent wall-clock backstop below the 30-minute job cap. The
         # native coder is model-driven, so a single test can miss on variance
         # (a refusal, a different-but-valid tool choice, stray framing) with no
         # regression; retry a failed test once (run_test.sh tears the stack down
         # between attempts, so each attempt starts clean) before failing the gate.
-        timeout-minutes: 40
+        # The retry shares one SANDBOX_TEST_TIMEOUT budget (ci#803).
+        timeout-minutes: 27
         run: |
           set -euo pipefail
+          # ci#803: a retry must not multiply the limit. Cap the whole test
+          # (every attempt) with SANDBOX_TEST_TIMEOUT and give each attempt only
+          # the remaining budget, so a hanging test cannot occupy a runner for
+          # two full per-attempt windows.
+          test_timeout="${SANDBOX_TEST_TIMEOUT:-1500}"
+          case "$test_timeout" in
+            ''|*[!0-9]*)
+              echo "::error::SANDBOX_TEST_TIMEOUT must be a positive integer in seconds (got '${test_timeout}')"
+              exit 1
+              ;;
+          esac
+          deadline=$(( $(date +%s) + test_timeout ))
           # Classify a failed attempt as a provider-side infrastructure problem
           # rather than a coder-sandbox regression. The classifier lives in a
           # unit-tested, sourceable script (development/scripts/
@@ -463,9 +483,16 @@ jobs:
           max_attempts=2
           attempt=1
           while :; do
-            echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts}"
+            remaining=$(( deadline - $(date +%s) ))
+            if [ "$remaining" -le 30 ]; then
+              echo "::error::sandbox test '${{ matrix.test }}' exceeded its ${test_timeout}s total limit (ci#803)"
+              exit 1
+            fi
+            attempt_timeout="$remaining"
+            [ "$attempt_timeout" -gt 1020 ] && attempt_timeout=1020
+            echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts} (budget ${attempt_timeout}s of ${remaining}s remaining)"
             rc=0
-            if timeout --foreground --kill-after=30 1020 \
+            if timeout --foreground --kill-after=30 "$attempt_timeout" \
                  bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"; then
               echo "::endgroup::"
               exit 0

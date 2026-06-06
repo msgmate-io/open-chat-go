@@ -98,6 +98,12 @@ type SharedChatInstance struct {
 	AccessMode   string `json:"access_mode" gorm:"default:'public'"`
 	TargetUserId *uint  `json:"-" gorm:"index"`
 	TargetUser   *User  `json:"-" gorm:"foreignKey:TargetUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	// ContentMode controls how much content a share exposes: "censored" (the
+	// default) strips tool-call arguments/results, message meta-data, reasoning
+	// and attachments so a shared view can never leak secrets or user data;
+	// "unsecure" exposes the full payload and must be picked explicitly.
+	// Empty is treated as "censored" for legacy rows.
+	ContentMode string `json:"content_mode" gorm:"default:'censored'"`
 }
 
 // ChatPin is a per-user pin flag: a user can pin any chat they participate in
@@ -126,4 +132,11 @@ func (s SharedChatInstance) AllowsUser(userID uint) bool {
 		return true
 	}
 	return s.TargetUserId != nil && *s.TargetUserId == userID
+}
+
+// IsCensored reports whether a share must strip sensitive payload fields.
+// Anything that is not an explicit "unsecure" is censored, so legacy rows and
+// unknown values stay fail-closed.
+func (s SharedChatInstance) IsCensored() bool {
+	return !strings.EqualFold(s.ContentMode, "unsecure")
 }

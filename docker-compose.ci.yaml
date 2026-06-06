@@ -47,11 +47,37 @@ services:
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6380}:6379"
+    # ci#722 (coder-sandbox readiness gate, ci#666/#638): the queue/state
+    # endpoint must never be evicted merely because a contended node is busy.
+    # An explicit, contention-tolerant budget (sustained failure tolerated
+    # >= 60s: interval 5s x retries 12) and a timeout above the 1s/3s default
+    # keep a healthy redis in the pool under load, and the CPU/memory budget
+    # below gives redis a scheduling guarantee behind the agent workloads -
+    # the same contract the live Deployment is patched with
+    # (`development/redis-readiness/ci-722-redis-probes.patch.json`).
+    #
+    # The budget uses the non-swarm keys (`cpus`/`mem_limit`) that
+    # `docker compose up` actually honours and that the sandbox overlay
+    # (`docker-compose.sandbox.yaml` in the private CI repo) also pins with
+    # the SAME env-overridable values. Expressing the *limit* as
+    # deploy.resources.limits here instead makes compose reject the merged
+    # project ("can't set distinct values on 'mem_limit' and
+    # 'deploy.resources.limits.memory'"), which kept the sandbox stack from
+    # starting (r56 regression, ci#785). The scheduling *reservation* stays
+    # under deploy.resources.reservations, which has no top-level counterpart
+    # and therefore merges cleanly.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout: 2s
+      retries: 12
+      start_period: 5s
+    cpus: "${REDIS_CPUS:-0.5}"
+    mem_limit: "${REDIS_MEM_LIMIT:-512m}"
+    deploy:
+      resources:
+        reservations:
+          cpus: "${REDIS_CPU_RESERVATION:-0.1}"
     networks:
       - app-network
 

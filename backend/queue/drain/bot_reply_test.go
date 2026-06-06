@@ -21,6 +21,7 @@ func openDrainTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open sqlite database: %v", err)
 	}
+	database.CloseTestDB(t, DB)
 	if err := DB.AutoMigrate(&database.Chat{}, &database.User{}, &database.Message{}); err != nil {
 		t.Fatalf("failed to migrate test schema: %v", err)
 	}

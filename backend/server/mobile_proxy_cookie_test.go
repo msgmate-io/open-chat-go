@@ -51,7 +51,7 @@ func TestMobileProxyRewritesSessionCookieName(t *testing.T) {
 	withMobileProxyRuntimeConfigNamespace(t, upstream.URL, namespace)
 
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/user/login", nil)

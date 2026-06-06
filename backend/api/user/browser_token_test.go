@@ -23,7 +23,7 @@ func setupBrowserTokenTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	return database.SetupTestDatabase(t, cfg)
 }
 
 func createBrowserTokenTestUser(t *testing.T, DB *gorm.DB, name string) *database.User {

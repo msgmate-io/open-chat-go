@@ -58,7 +58,7 @@ func TestFindAdminBootstrapUserNoEntry(t *testing.T) {
 
 func TestBootstrapAdminViaUserConfigWhenRootCredentialsUnset(t *testing.T) {
 	t.Setenv("ROOT_CREDENTIALS", "")
-	DB := database.SetupDatabase(*setupBootstrapUserTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupBootstrapUserTestDB(t))
 
 	creds, err := resolveRootCredentials(&cli.Command{Name: "test"}, []string{`{"username":"admin","password":"BootstrapPass1!","is_admin":true}`})
 	if err != nil {
