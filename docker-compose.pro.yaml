@@ -63,11 +63,23 @@ services:
     image: redis:7-alpine
     ports:
       - "6380:6379"
+    # ci#722 (coder-sandbox readiness gate, ci#666/#638): keep the redis
+    # queue/state endpoint in the pool while a contended host is busy. Budget
+    # tolerates >= 60s of sustained failure (5s x 12) with a timeout above the
+    # 1s/3s default, and the CPU limit/reservation mirror the ci#722 deployment
+    # patch (development/redis-readiness/ci-722-redis-probes.patch.json).
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout: 2s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+        reservations:
+          cpus: "0.1"
 
 volumes:
   postgres_data:

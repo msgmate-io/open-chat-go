@@ -2509,10 +2509,21 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_pool_egress_gate.sh
 
-      # ci#745: the PR-CI progress-comment step must thread its repository/PR
-      # context explicitly and must skip (instead of 404-looping) when that
-      # context is empty. Pin the contract so the empty-URL red job cannot
-      # come back.
+      # ci#745: every PR-CI progress-comment step must address an explicit,
+      # non-empty repository/PR target and must skip (instead of 404-looping)
+      # when that target is empty. Pins the workflow wiring; the helper's
+      # runtime behaviour is covered by the hermetic shell test below it.
+      # ci#612: a *pooled* workspace must get its own network namespace, and a
+      # sensitive repo must never be handed a pooled slot (follow-up of the
+      # ci#546 shared sandbox networking design). Pin the in-pod namespace
+      # script contract (deterministic per-workspace namespace, exec prefix,
+      # slirp sidecar keeping egress/DNS, sibling-port isolation refusal,
+      # --print-only never failing, no credential material).
+      - name: Sandbox workspace netns unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_workspace_netns.sh
+
       - name: PR CI progress-comment target unit tests
         run: |
           set -euo pipefail
@@ -2533,11 +2544,15 @@ jobs:
       # redis_cpu_request_missing - an unbudgeted, unschedulable redis takes the
       # queue/state endpoint down and leaves fresh interactions dead on arrival.
       # Pin the read-only contract checker, the emitted strategic-merge patch and
-      # the checked-in patch artifact so they cannot drift apart.
+      # the checked-in patch artifact so they cannot drift apart. The compose
+      # profiles (docker-compose*.yaml) carry the same numbers, so their half of
+      # the contract and its regression test run here too.
       - name: Redis probe budget contract unit tests
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
+          python3 -m unittest development/scripts/test_redis_compose_readiness_contract.py -v
+          python3 development/scripts/redis_compose_readiness_contract.py
 
       # ci#722 (continued): the live patch above is undone by the next
       # `helm upgrade`, because the private Helm chart still renders the redis
@@ -3051,8 +3066,15 @@ jobs:
             # ci#774 follow-up: the observed run must belong to the ref/sha this job
             # dispatched, otherwise a run created from another commit would be
             # observed here and reported as this PR's deploy.
-            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] && [ "$run_ref" != "$DISPATCH_REF" ]; then
-              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'."
+            # ci#818: a workflow_dispatch can report the resolved commit sha as
+            # the run's head_branch, so a run whose ref equals the dispatched sha
+            # IS this dispatch's run. Rejecting it dyed the whole PR run red while
+            # the deploy itself was fine; only a ref that is neither the dispatched
+            # ref name nor its sha belongs to another dispatch.
+            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] \
+              && [ "$run_ref" != "$DISPATCH_REF" ] \
+              && [ "$run_ref" != "${DISPATCH_REF_SHA:-}" ]; then
+              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'${DISPATCH_REF_SHA:+ (or its commit ${DISPATCH_REF_SHA})}."
               echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
               exit 1
             fi

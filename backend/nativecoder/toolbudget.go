@@ -46,9 +46,13 @@ const (
 	ToolCallBudgetSnapshotVersion = 1
 
 	// DefaultToolCallMaxTotal / DefaultToolCallMaxFailed are the compiled-in
-	// caps used when neither the chat nor the bot declares one.
-	DefaultToolCallMaxTotal  = 12
-	DefaultToolCallMaxFailed = 3
+	// caps used when neither the chat nor the bot declares one. They are a
+	// fleet-wide floor: the effective cap is the maximum of the chat snapshot,
+	// the chat/bot config and this default, so raising them lifts chats that
+	// still carry the old 100-call snapshot (ci#709) while an explicitly
+	// declared larger budget is never lost.
+	DefaultToolCallMaxTotal  = 500
+	DefaultToolCallMaxFailed = 20
 )
 
 // Tool-call budget origins, reported as structured state.

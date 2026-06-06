@@ -18,7 +18,7 @@ func setupToolInitDB(t *testing.T) *DBConfig {
 
 func TestDisposeToolInitDataForChatRedactsShapeAndDeletesRows(t *testing.T) {
 	dbConfig := setupToolInitDB(t)
-	DB := SetupDatabase(*dbConfig)
+	DB := SetupTestDatabase(t, *dbConfig)
 
 	user1, err := RegisterUser(DB, "user1", "user1@example.com", []byte("Passw0rd!"))
 	if err != nil {

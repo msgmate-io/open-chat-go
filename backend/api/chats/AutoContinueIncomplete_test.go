@@ -2,6 +2,7 @@ package chats
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"backend/database"
@@ -12,7 +13,14 @@ import (
 // other outcome either already has its own recovery path, is a deliberate stop,
 // or is a transport failure that must not be amplified by a retry loop.
 func TestTurnEndedIncompleteRetryable(t *testing.T) {
-	retryable := []string{turnEndedNoUsableToolCall}
+	// ci#747 (RC2): a turn that ran out of its per-chat tool budget stopped
+	// *before* it could report, exactly like a turn with no usable tool call,
+	// so it is retried too.
+	retryable := []string{
+		turnEndedNoUsableToolCall,
+		"tool_call_cap_reached",
+		"failed_tool_call_cap_reached",
+	}
 	for _, reason := range retryable {
 		if !turnEndedIncompleteRetryable(map[string]interface{}{turnEndedMetadataKey: reason}) {
 			t.Errorf("turn_ended=%q must be retryable", reason)
@@ -20,10 +28,6 @@ func TestTurnEndedIncompleteRetryable(t *testing.T) {
 	}
 
 	neverRetry := []string{
-		// The per-chat tool budget is spent; the generic continuation resumes
-		// the work and a retry would only burn the budget again.
-		"tool_call_cap_reached",
-		"failed_tool_call_cap_reached",
 		// A transport failure. The provider retry path owns this.
 		"provider_error",
 		// The user (or an interrupt) stopped the turn deliberately.
@@ -172,10 +176,10 @@ func TestDecideAutoContinueIncompleteRetryResetsOnCleanCompletion(t *testing.T) 
 // not own, and the retry counter must stay untouched for all of them.
 func TestDecideAutoContinueNeverRetriesOtherTurnOutcomes(t *testing.T) {
 	config := enabledConfig()
+	// ci#747 (RC2): the cap-exhausted outcomes are deliberately absent from
+	// this list - they are retryable now (see TestTurnEndedIncompleteRetryable).
 	for _, reason := range []string{
 		"cancelled",
-		"tool_call_cap_reached",
-		"failed_tool_call_cap_reached",
 		"provider_error",
 		"confirmable_pause",
 	} {
@@ -362,5 +366,74 @@ func TestAutoContinueStatusReportsIncompleteRetries(t *testing.T) {
 	response := populateAutoContinueStatus(DB, chat, InteractionStatusResponse{ChatUUID: chat.UUID})
 	if response.AutoContinueIncompleteRetries != 2 || response.AutoContinueMaxIncompleteRetries != 4 {
 		t.Fatalf("unexpected incomplete-retry response: %+v", response)
+	}
+}
+
+// TestDecideAutoContinueRetriesCapExhaustedTurn is the ci#747 (RC2) regression:
+// a turn aborted by the per-chat tool budget (or its failed-call budget) used to
+// end the loop as a failure. It must instead schedule a bounded retry with the
+// partial-report instruction, and it must stop with an explicit reason once that
+// bounded budget is used up - never park the interaction silently.
+func TestDecideAutoContinueRetriesCapExhaustedTurn(t *testing.T) {
+	config := enabledConfig()
+	if config.MaxIncompleteRetries <= 0 {
+		t.Fatalf("the default config must allow at least one cap-recovery retry, got %d", config.MaxIncompleteRetries)
+	}
+
+	for _, reason := range []string{"tool_call_cap_reached", "failed_tool_call_cap_reached"} {
+		message := finishedMessage(`{"finished":true,"turn_ended":"` + reason + `"}`)
+		meta := decodeOrFail(t, message.MetaData)
+
+		state := autoContinueState{Turns: 1}
+		decision := decideAutoContinue(config, state, message, meta, false)
+		if !decision.Continue {
+			t.Fatalf("turn_ended=%q must be recovered, got stop reason %q", reason, decision.StopReason)
+		}
+		if decision.Reason != autoContinueIncompleteRetryReason {
+			t.Fatalf("turn_ended=%q Reason = %q, want %q", reason, decision.Reason, autoContinueIncompleteRetryReason)
+		}
+		if decision.Prompt != config.IncompletePrompt || decision.Prompt == "" {
+			t.Fatalf("turn_ended=%q must use the partial-report retry prompt", reason)
+		}
+		if decision.Prompt == config.Prompt {
+			t.Fatalf("turn_ended=%q must not reuse the generic continuation prompt", reason)
+		}
+		if decision.IncompleteRetries != state.IncompleteRetries+1 {
+			t.Fatalf("turn_ended=%q IncompleteRetries = %d, want %d", reason, decision.IncompleteRetries, state.IncompleteRetries+1)
+		}
+		if decision.Delay <= 0 {
+			t.Fatalf("turn_ended=%q must carry the configured delay, got %v", reason, decision.Delay)
+		}
+
+		// The bounded budget still bites: once spent, the loop stops with an
+		// explicit stop reason rather than continuing forever.
+		exhausted := decideAutoContinue(config, autoContinueState{Turns: 1, IncompleteRetries: config.MaxIncompleteRetries}, message, meta, false)
+		if exhausted.Continue {
+			t.Fatalf("turn_ended=%q must stop once the bounded retry budget is spent", reason)
+		}
+		if exhausted.StopReason != autoContinueIncompleteExhaustedReason {
+			t.Fatalf("turn_ended=%q stop reason = %q, want %q", reason, exhausted.StopReason, autoContinueIncompleteExhaustedReason)
+		}
+	}
+
+	// A clean completion right after a cap-retry returns to the generic
+	// continuation and clears the retry debt.
+	clean := finishedMessage(`{"finished":true}`)
+	cleanDecision := decideAutoContinue(config, autoContinueState{Turns: 2, IncompleteRetries: 1}, clean, decodeOrFail(t, clean.MetaData), false)
+	if !cleanDecision.Continue || cleanDecision.Reason != "continuation" || cleanDecision.IncompleteRetries != 0 {
+		t.Fatalf("a clean completion must reset the cap-recovery debt, got %+v", cleanDecision)
+	}
+}
+
+// TestIncompletePromptDemandsPartialReportOnInfraFailure pins the ci#747 (RC2)
+// wording requirement: a retry after failing tool calls must ask for a partial
+// summary plus the blocker instead of another blind retry.
+func TestIncompletePromptDemandsPartialReportOnInfraFailure(t *testing.T) {
+	config := enabledConfig()
+	prompt := config.IncompletePrompt
+	for _, want := range []string{"blocker", "tool calls"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the incomplete/partial-report prompt must mention %q, got %q", want, prompt)
+		}
 	}
 }

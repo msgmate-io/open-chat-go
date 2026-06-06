@@ -1596,7 +1596,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 				fullText.Reset()
 				currentBuffer.Reset()
-				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
+				logging.Debugf("toolCall %s %s", toolCall.ToolName, toolCall.ToolInput)
 
 				// A reasoning block that is still streaming when the call is
 				// dispatched belongs *before* it in the timeline.

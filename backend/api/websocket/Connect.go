@@ -107,7 +107,7 @@ func (ws *WebSocketHandler) ConnectSharedInteraction(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := ws.SubscribeChatChannel(w, r, chat.UUID); err != nil {
+	if err := ws.SubscribeChatChannel(w, r, chat.UUID, share.ContentMode); err != nil {
 		if !isExpectedSocketClose(err) {
 			ws.logf("error shared interaction socket connection error: %v", err)
 		}

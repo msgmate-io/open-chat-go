@@ -509,6 +509,12 @@ func BackendRouting(
 	// Effective native-coder provider admission state (ci#620): the cap that is
 	// actually in force plus the current in-flight/queue counts.
 	v1PrivateApis.HandleFunc("GET /admin/provider-admission", admin.GetProviderAdmissionStatus)
+	// Pool-level DNS/egress readiness gate (ci#613, follow-up of the ci#546
+	// shared-sandbox networking design): the verdict a pooled backing sandbox
+	// has to pass before it accepts leases, plus the ingestion of the in-pod
+	// probe report that decides it.
+	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-egress", admin.GetSandboxPoolEgressStatus)
+	v1PrivateApis.HandleFunc("POST /admin/sandbox-pool-egress/report", admin.IngestSandboxPoolEgressReport)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings", admin.ListIntegrationSettings)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings/{integration_name}", admin.GetIntegrationSettings)
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/{integration_name}", admin.SaveIntegrationSettings)
@@ -715,7 +721,7 @@ func BackendRouting(
 		routes = filteredRoutes
 
 		for _, route := range routes {
-			fmt.Printf("Serving route: %s\n", route)
+			logging.Debugf("Serving route: %s", route)
 			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
 		}
 		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
