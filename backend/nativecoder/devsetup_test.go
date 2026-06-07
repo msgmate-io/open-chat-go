@@ -1,6 +1,7 @@
 package nativecoder
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -74,6 +75,77 @@ func TestDevSetupRepoForInteractionNormalizes(t *testing.T) {
 	}
 	if got := DevSetupRepoForInteraction(nil, []string{"repo:msgmate-io/open-chat-go-ci"}, nil, nil); got != "msgmate-io/open-chat-go-ci" {
 		t.Fatalf("expected repository from tag, got %q", got)
+	}
+}
+
+// TestDevSetupScriptProvisionsSubmoduleFree pins the ci#739 fix: the generated
+// script must bootstrap the integration CLI through `build_tools.sh` (which
+// installs the CLI from upstream when the build-tools submodule is absent)
+// instead of gating provisioning on the submodule directory, and it must persist
+// the toolchain environment for the agent's later shells.
+func TestDevSetupScriptProvisionsSubmoduleFree(t *testing.T) {
+	script := DevSetupScript(DevSetupSpecForRepo("msgmate-io/open-chat-go"))
+	for _, want := range []string{
+		"development/scripts/build_tools.sh",
+		"prepare --profile full-ci",
+		"check_coder_sandbox_readiness.sh",
+		"export PATH=\"/usr/local/go/bin",
+		"export GOPRIVATE=",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script must contain %q, got %q", want, script)
+		}
+	}
+	if strings.Contains(script, "if [ -d development/build-tools ] && command -v python3") {
+		t.Fatal("provisioning must not be gated on the build-tools submodule directory")
+	}
+	// A re-run must not pay the full provisioning cost twice.
+	if !strings.Contains(script, "openchat_sandbox_profile") {
+		t.Fatal("script must mark a successful profile set-up")
+	}
+}
+
+// TestDevSetupScriptWarnsWhenUnprovisionable checks that a checkout with
+// neither the script nor the submodule reports the gap instead of silently
+// handing an unprepared workspace to the model.
+func TestDevSetupScriptWarnsWhenUnprovisionable(t *testing.T) {
+	script := DevSetupScript(DevSetupSpec{Enabled: true, Profile: DevSetupProfileDefault})
+	if !strings.Contains(script, "cannot be provisioned") {
+		t.Fatalf("expected an unprepared-workspace warning, got %q", script)
+	}
+	if !strings.HasPrefix(script, "set -e") {
+		t.Fatal("script must remain fail-fast")
+	}
+}
+
+// TestDevSetupScriptIsValidShell parses every generated variant with the shell
+// it will actually run under. The set-up script is assembled from many string
+// fragments (quoting, `for` loops, `$(...)`), so a typo would only surface as an
+// opaque sandbox bootstrap failure — this keeps it a local test failure.
+func TestDevSetupScriptIsValidShell(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no POSIX shell available to parse the script")
+	}
+	cases := map[string]DevSetupSpec{
+		"default":       DevSetupSpecForRepo("msgmate-io/open-chat-go"),
+		"no-submodules": {Enabled: true, Profile: DevSetupProfileDefault},
+		"custom": {
+			Enabled:  true,
+			Profile:  "full-ci",
+			Commands: []string{"echo warm-cache"},
+			ExtraRepos: []string{
+				"msgmate-io/open-chat-go-build-tools",
+			},
+		},
+	}
+	for name, spec := range cases {
+		script := DevSetupScript(spec)
+		cmd := exec.Command("sh", "-n")
+		cmd.Stdin = strings.NewReader(script)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: generated script is not valid shell: %v\n%s\nscript:\n%s", name, err, out, script)
+		}
 	}
 }
 
