@@ -65,9 +65,11 @@ wonder why the transcript is a wall of tool calls.
 ## Interaction tags
 
 Chats and interactions carry free-form **tags** used for filtering in the chat
-list (`GET /api/v1/chats/list?tags=...&exclude_tags=...`). Automation- and
-git-triggered chats are hidden by default via the `automation` and `trigger`
-tags.
+list (`GET /api/v1/chats/list?tags=...&exclude_tags=...`). Internally generated
+automation chats are hidden by default via the `automation` tag. Git-triggered
+coding interactions are **not** tagged `trigger` anymore (ci#746): they carry the
+same `git` / `repo:<slug>` / `via:<event>` tags as any other coder interaction,
+so they are visible in the default list.
 
 Automated coding interactions add a compact, self-describing tag pair so the
 workspace and the trigger can be filtered independently:
