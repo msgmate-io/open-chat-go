@@ -84,6 +84,36 @@ else
   note "     see the Go toolchain. Re-run the dev set-up (the generated script persists it)."
 fi
 
+# ci#787: docker is a soft requirement. A sandbox without a docker daemon can
+# still write code and run the fast Go/Python checks, so the missing daemon is
+# reported as guidance instead of flipping the readiness exit code. What must
+# never happen is an agent improvising raw `docker ...` shell commands: the
+# typed docker_sandbox_* tools (or the wrapper below) are the supported surface.
+note "== docker tooling (ci#787) =="
+wrapper="$root/development/scripts/coder_docker.sh"
+if [ -x "$wrapper" ]; then
+  note "ok   docker wrapper present ($wrapper)"
+else
+  note "MISS $wrapper is missing or not executable; agents would fall back to raw docker shell commands."
+  status=1
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  note "ok   docker CLI on PATH ($(command -v docker))"
+  if docker info >/dev/null 2>&1; then
+    note "ok   docker daemon reachable; docker_sandbox_* tools can run containers."
+  else
+    note "WARN docker CLI present but no daemon is reachable."
+    note "     Do NOT install or start a docker daemon inside the sandbox and do not retry"
+    note "     raw docker commands: report the gap and keep the change, PR CI builds the images."
+  fi
+else
+  note "WARN docker CLI is not installed in this sandbox."
+  note "     Docker-dependent checks (compose up, image builds, e2e) cannot run locally here;"
+  note "     use the docker_sandbox_* tools where a daemon exists and otherwise let PR CI be the"
+  note "     authoritative full-suite gate. Never shell out to raw docker commands (ci#787)."
+fi
+
 if [ "$status" -eq 0 ]; then
   note "== ready: local targeted Go checks can run =="
 else
