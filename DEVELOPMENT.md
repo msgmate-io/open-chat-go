@@ -1041,6 +1041,39 @@ Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
 (sub-agents, code search/LSP, per-workspace MCP).
+
+### A/B validation of the opencode -> native flip (ci#583, umbrella ci#585)
+
+Before a bot family is flipped from its opencode-era bot to the native
+`msgmate-coder` replacement, the two are run side by side on the same tickets
+and compared axis by axis. That evidence is data, not prose:
+`backend/nativecoder/abvalidation.go` holds the comparison axes (ticket
+implemented, PR opened with CI labels, auto-sandbox used, no `chat_backend`
+fallback, auto-continue completed the turn, no parked turn) and the gate over the
+recorded paired runs.
+
+- `ABValidationCases()` is the empty state ci#583 starts from; `ABValidationTemplate()`
+  is the fill-in skeleton (one row per family and run, pairing pre-filled), and
+  `ValidateABValidationPlan` rejects a plan with an unknown family, a family
+  paired against the wrong runtime or a foreign legacy bot, an unknown axis, or a
+  family with no paired run.
+- `ABValidationFamilyBlockers` / `ABValidationFlipAllowed` gate a single family
+  (too few runs, a missing outcome, or a native regression on an axis the legacy
+  run passed); `ABValidationBlockers` adds the fleet-wide ci#581 parity gaps, so
+  "may we start the rollout?" is one call.
+- `ABValidationSignOff` derives the `ABValidationDone` field of the ci#585
+  retirement gate from the evidence via `ABValidatedRetirementState`, so the
+  umbrella flag is a fact about the paired runs instead of a hand-set boolean.
+- `MigrationUmbrellaSteps` derives the ci#585 checklist (parity, config delta,
+  A/B, rollout, retire) from the same registries, so the umbrella cannot claim
+  progress the repository does not support; a blocked step carries the first
+  blocker as its detail.
+
+`go run ./backend/scripts/ab_validation_report/` renders the table, with
+`--format=json|text` and `--umbrella` for the checklist; it takes JSONL paired
+runs (blank lines and `#` comments ignored) and is read-only - it never
+dispatches a bot and never touches the deployment.
+
 ## Native agent dispatch - retiring the workflow-only dispatch route (ci#757)
 
 The `trigger-open-chat-coding-interaction.yaml` workflow in the private
