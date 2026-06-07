@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"backend/nativecoder"
 	"strings"
 	"testing"
 )
@@ -35,8 +36,8 @@ func TestAppendExecutedToolCallsFramesSandboxProvisioningFailures(t *testing.T) 
 	if !strings.Contains(bashResult, "not materialized") {
 		t.Fatalf("coder_bash module failure must carry provisioning guidance, got %q", bashResult)
 	}
-	if !strings.Contains(bashResult, "openchat-integrations") {
-		t.Fatalf("guidance must name the setup command, got %q", bashResult)
+	if !strings.Contains(bashResult, nativecoder.SandboxProfileSetupCommand) {
+		t.Fatalf("guidance must name the setup command %q, got %q", nativecoder.SandboxProfileSetupCommand, bashResult)
 	}
 
 	// `go` was not on PATH but the workspace was fine: the guidance must point
