@@ -6,6 +6,7 @@ import (
 	"backend/api/contacts"
 	"backend/api/files"
 	"backend/api/metrics"
+	"backend/api/models"
 	"backend/api/reference"
 	"backend/api/tools"
 	"backend/api/user"
@@ -176,6 +177,7 @@ func BackendRouting(
 	filesHandler := &files.FilesHandler{}
 	toolsHandler := &tools.ToolsHandler{}
 	mcpHandler := &tools.MCPHandler{}
+	modelsHandler := &models.ModelsHandler{}
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
@@ -203,6 +205,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
+	v1PrivateApis.HandleFunc("GET /models/list", modelsHandler.List)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}", admin.GetTableInfo)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/data", admin.GetTableDataPaginated)
 	v1PrivateApis.HandleFunc("GET /admin/table/{table_name}/{id}", admin.GetTableItemById)

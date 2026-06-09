@@ -3,6 +3,7 @@ package admin
 import (
 	"backend/server/util"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -98,8 +99,12 @@ func ListAsynqTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, "Failed to list tasks", http.StatusInternalServerError)
-		return
+		if errors.Is(err, asynq.ErrQueueNotFound) || state == "completed" {
+			tasks = []*asynq.TaskInfo{}
+		} else {
+			http.Error(w, "Failed to list tasks: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	items := make([]AsynqTaskItem, 0, len(tasks))
