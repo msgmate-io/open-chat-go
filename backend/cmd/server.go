@@ -317,6 +317,10 @@ func ServerCli() *cli.Command {
 				ResetDB:  c.Bool("reset-db"),
 			})
 
+			if err := database.SeedModelConfigs(DB); err != nil {
+				return err
+			}
+
 			if c.Bool("setup-test-users") {
 				database.SetupTestUsers(DB)
 			}
