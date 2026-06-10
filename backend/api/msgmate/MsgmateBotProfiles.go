@@ -29,10 +29,10 @@ type BotModel struct {
 	Configuration BotProfileConfig `json:"configuration"`
 }
 
-// GetBotModels returns bot model configurations from the database.
-func GetBotModels(DB *gorm.DB) ([]BotModel, error) {
-	var configs []database.ModelConfig
-	if err := DB.Order("id ASC").Find(&configs).Error; err != nil {
+// GetBotModels returns model configurations assigned to the given bot username.
+func GetBotModels(DB *gorm.DB, botUsername string) ([]BotModel, error) {
+	configs, err := database.GetModelConfigsForBot(DB, botUsername)
+	if err != nil {
 		return nil, err
 	}
 
@@ -78,7 +78,7 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		DB.Unscoped().Delete(&botProfile)
 	}
 
-	models, err := GetBotModels(DB)
+	models, err := GetBotModels(DB, botUser.Name)
 	if err != nil {
 		return err
 	}
@@ -110,6 +110,22 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	q := DB.Create(&newBotProfile)
 	if q.Error != nil {
 		return q.Error
+	}
+
+	return nil
+}
+
+// SyncAutomatedBotProfiles refreshes public profiles for all automated bot users.
+func SyncAutomatedBotProfiles(DB *gorm.DB) error {
+	var bots []database.User
+	if err := DB.Where("is_automated = ?", true).Find(&bots).Error; err != nil {
+		return err
+	}
+
+	for _, bot := range bots {
+		if err := CreateOrUpdateBotProfile(DB, bot); err != nil {
+			return fmt.Errorf("failed to sync profile for bot %q: %w", bot.Name, err)
+		}
 	}
 
 	return nil
