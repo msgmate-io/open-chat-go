@@ -6,6 +6,7 @@ import (
 	"backend/api/contacts"
 	"backend/api/files"
 	"backend/api/metrics"
+	"backend/api/models"
 	"backend/api/reference"
 	"backend/api/tools"
 	"backend/api/user"
@@ -176,6 +177,7 @@ func BackendRouting(
 	filesHandler := &files.FilesHandler{}
 	toolsHandler := &tools.ToolsHandler{}
 	mcpHandler := &tools.MCPHandler{}
+	modelsHandler := &models.ModelsHandler{}
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
@@ -220,6 +222,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks", admin.ListAsynqTasks)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks/{task_id}", admin.GetAsynqTask)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/stats", admin.GetAsynqQueueStats)
+	v1PrivateApis.HandleFunc("POST /admin/bots/{bot_uuid}/models/selection", admin.UpdateBotModelSelection)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
 
@@ -243,6 +246,8 @@ func BackendRouting(
 	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
 	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
+	mux.Handle("GET /api/v1/models/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
+	mux.Handle("GET /api/v1/tools/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
 
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 

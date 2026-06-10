@@ -110,7 +110,48 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var PublicRoutes = []string{"/", "/docs"}
+func OptionalAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		DB, ok := r.Context().Value("db").(*gorm.DB)
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		cookie, err := r.Cookie("session_id")
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		token := strings.TrimSpace(cookie.Value)
+		if token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		var session database.Session
+		if err := DB.First(&session, "token = ?", token).Error; err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if session.Expiry.Before(time.Now()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		var user database.User
+		if err := DB.First(&user, "id = ?", session.UserId).Error; err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), UserContextKey, &user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+var PublicRoutes = []string{"/", "/docs", "/models", "/tools"}
 
 func FrontendAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
