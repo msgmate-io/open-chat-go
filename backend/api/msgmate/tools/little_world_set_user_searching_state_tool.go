@@ -13,6 +13,7 @@ type LittleWorldSetUserSearchingStateToolInput struct {
 var LittleWorldSetUserSearchingStateToolDef = ToolDefinition{
 	Name:           "little_world__set_user_searching_state",
 	Description:    "Change a user's searching state in Little World.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      LittleWorldSetUserSearchingStateToolInput{},
 	RequiredParams: []string{"searching"},
