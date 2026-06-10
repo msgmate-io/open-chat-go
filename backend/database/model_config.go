@@ -1,11 +1,13 @@
 package database
 
 import (
+	"database/sql/driver"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
 	"slices"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -20,8 +22,61 @@ type ModelConfig struct {
 	Description   string          `json:"description"`
 	ModelID       string          `json:"model_id" gorm:"uniqueIndex;not null"`
 	Configuration json.RawMessage `json:"configuration" gorm:"type:jsonb"`
-	BotUsernames  []string        `json:"bot_usernames" gorm:"serializer:json"`
+	BotUsernames  StringSliceJSON `json:"bot_usernames" gorm:"type:jsonb"`
 	IsDefault     bool            `json:"is_default" gorm:"default:false"`
+}
+
+type StringSliceJSON []string
+
+func (s *StringSliceJSON) Scan(value interface{}) error {
+	if value == nil {
+		*s = StringSliceJSON{}
+		return nil
+	}
+
+	var raw string
+	switch v := value.(type) {
+	case []byte:
+		raw = string(v)
+	case string:
+		raw = v
+	default:
+		return fmt.Errorf("unsupported type for StringSliceJSON: %T", value)
+	}
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		*s = StringSliceJSON{}
+		return nil
+	}
+
+	if strings.HasPrefix(raw, "[") {
+		var parsed []string
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			return err
+		}
+		*s = StringSliceJSON(parsed)
+		return nil
+	}
+
+	raw = strings.Trim(raw, `"`)
+	if raw == "" {
+		*s = StringSliceJSON{}
+		return nil
+	}
+	*s = StringSliceJSON{raw}
+	return nil
+}
+
+func (s StringSliceJSON) Value() (driver.Value, error) {
+	if s == nil {
+		return "[]", nil
+	}
+	b, err := json.Marshal([]string(s))
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
 }
 
 // AssignedToBot reports whether this model is configured for the given bot username.

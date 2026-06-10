@@ -3,6 +3,7 @@ package tools
 type ToolDefinition struct {
 	Name           string
 	Description    string
+	AdminOnly      bool
 	RequiresInit   bool
 	InputType      interface{}
 	RequiredParams []string

@@ -14,6 +14,7 @@ type RWTHAachenSeminarTimsAutoPaperIncludeExcludeAgentInput struct {
 var RWTHAachenSeminarTimsAutoPaperIncludeExcludeAgentDef = ToolDefinition{
 	Name:           "rwth_aachen_seminar_tims_auto_paper_include_exclude",
 	Description:    "Include or exclude a paper from the seminar tims auto-paper selection.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      RWTHAachenSeminarTimsAutoPaperIncludeExcludeAgentInput{},
 	RequiredParams: []string{"include"},

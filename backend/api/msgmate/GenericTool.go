@@ -16,7 +16,11 @@ type GenericTool struct {
 }
 
 func (t *GenericTool) RunTool(input interface{}) (string, error) {
-	return t.Definition.RunFunction(input, t.ToolInit.(map[string]interface{}))
+	initData, ok := t.ToolInit.(map[string]interface{})
+	if !ok || initData == nil {
+		initData = map[string]interface{}{}
+	}
+	return t.Definition.RunFunction(input, initData)
 }
 
 func (t *GenericTool) ParseArguments(input string) (interface{}, error) {
@@ -58,6 +62,7 @@ func NewToolFromDefinition(def ToolDefinition) Tool {
 		Definition: def,
 	}
 	tool.BaseTool = BaseTool{
+		AdminOnly:       def.AdminOnly,
 		RequiresInit:    def.RequiresInit,
 		ToolName:        def.Name,
 		ToolType:        "function",

@@ -7,6 +7,7 @@ type LittleWorldGetPastMessagesWithUserToolInput struct{}
 var LittleWorldGetPastMessagesWithUserToolDef = ToolDefinition{
 	Name:           "little_world__get_past_messages",
 	Description:    "Retrieve past messages from a Little World support chat.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      LittleWorldGetPastMessagesWithUserToolInput{},
 	RequiredParams: []string{},

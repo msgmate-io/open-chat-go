@@ -9,6 +9,7 @@ type LittleWorldResolveMatchToolInput struct {
 var LittleWorldResolveMatchToolDef = ToolDefinition{
 	Name:           "little_world__resolve_match",
 	Description:    "Resolve a match in Little World.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      LittleWorldResolveMatchToolInput{},
 	RequiredParams: []string{"match_id"},

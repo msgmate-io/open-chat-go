@@ -10,6 +10,7 @@ type LittleWorldRetrieveMatchOverviewToolInput struct{}
 var LittleWorldRetrieveMatchOverviewToolDef = ToolDefinition{
 	Name:           "little_world__retrieve_match_overview",
 	Description:    "Retrieve an overview of the user's matches in Little World.",
+	AdminOnly:      true,
 	RequiresInit:   true,
 	InputType:      LittleWorldRetrieveMatchOverviewToolInput{},
 	RequiredParams: []string{},
