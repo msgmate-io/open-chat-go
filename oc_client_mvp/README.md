@@ -8,3 +8,8 @@ pip install git+https://github.com/msgmate-io/open-chat-go#subdirectory=oc_clien
 python3 -m venv venv
 source venv/bin/activate
 ```
+
+```bash
+pip install -e ./oc_client_mvp
+oc_client --host http://localhost:1984 --username admin --password password --message "hi"
+```
