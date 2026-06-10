@@ -54,3 +54,12 @@ type ChatSettings struct {
 	Chat       Chat            `json:"Chat" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	ConfigData json.RawMessage `json:"config_data" gorm:"type:jsonb"`
 }
+
+type SharedChatInstance struct {
+	Model
+	ChatId        uint   `json:"-" gorm:"index"`
+	Chat          Chat   `json:"-" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	OwningUserId  uint   `json:"-" gorm:"index"`
+	OwningUser    User   `json:"-" gorm:"foreignKey:OwningUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	ChatShareUUID string `json:"chat_share_uuid" gorm:"uniqueIndex;not null"`
+}
