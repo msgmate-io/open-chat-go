@@ -53,7 +53,13 @@ func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config ma
 	// source a cap raise comes from. The snapshot belongs to a chat and is
 	// recorded on the chat itself (chats.Create, createBotInteraction).
 	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
-	return nativecoder.ApplyCoderAutonomousConfig(withConsolidation), nil
+	// The native agent-dispatch tool family (ci#757) is a default of a native
+	// coder/dev-agent config too, so a lead agent can start and steer peer agents
+	// through the hive mind instead of shelling out to the deprecated
+	// trigger-coding-interaction GitHub workflow. An explicit non-empty `tools`
+	// list still wins and `OPENCHAT_DEV_AGENT_HIVEMIND_TOOLS=off` disables it.
+	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
+	return nativecoder.ApplyCoderAutonomousConfig(withDispatch), nil
 }
 
 type BotDTO struct {
