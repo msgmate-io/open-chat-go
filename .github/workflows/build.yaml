@@ -94,7 +94,7 @@ jobs:
       - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
@@ -165,7 +165,7 @@ jobs:
       - name: Checkout repository (for source archive)
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
@@ -263,7 +263,7 @@ jobs:
       - name: Update PR progress comment from template
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.source_pr_number != ''
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           BOT_USER: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
           SOURCE_PR_NUMBER: ${{ github.event.inputs.source_pr_number }}
           RELEASE_TAG: ${{ steps.release_meta.outputs.tag_name }}
