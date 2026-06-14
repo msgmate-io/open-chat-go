@@ -8,6 +8,12 @@
 - API Docs: [`msgmate.io/reference`](https://msgmate.io/reference)
 - Design System: [`msgmate-io.github.io/open-chat-go`](https://msgmate-io.github.io/open-chat-go/)
 
+### TL;DR
+
+- Production Docker: `docker build -f Dockerfile -t open-chat:latest .`
+- Go Linux Binary: `wget -O open-chat "https://github.com/msgmate-io/open-chat-go/releases/latest/download/open-chat-linux-amd64"`
+- Python Client: `pip install git+https://github.com/msgmate-io/open-chat-go-python-client.git`
+
 ### Development
 
 ```bash
@@ -25,3 +31,11 @@ docker compose -f docker-compose.pro.yaml build
 # backend ( postgres + frontend static html + js )
 docker compose -f docker-compose.pro.yaml up -d
 ```
+
+### Releases
+
+We release all versions always ( after admin confirmation ):
+
+- PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
+- Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
+- Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )

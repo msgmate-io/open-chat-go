@@ -1115,6 +1115,79 @@ jobs:
             "https://api.github.com/repos/${{ needs.resolve-merged-deployment.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
             -d "$payload"
 
+      - name: Dispatch build and release workflow for merged deployment
+        env:
+          MERGE_TARGET: ${{ needs.resolve-merged-deployment.outputs.merge_target }}
+        run: |
+          set -euo pipefail
+          if [ "$MERGE_TARGET" = "production" ]; then
+            RELEASE_KIND="production"
+          else
+            RELEASE_KIND="staging"
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg releaseKind "$RELEASE_KIND" \
+              --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
+              --arg sourceBranch "${{ github.event.pull_request.base.ref }}" \
+              '{
+                ref: $ref,
+                inputs: {
+                  target_ref: $targetRef,
+                  release_kind: $releaseKind,
+                  source_pr_number: $sourcePrNumber,
+                  source_branch: $sourceBranch,
+                  prerelease: "true"
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build.yaml/dispatches" \
+            -d "$payload"
+
+      - name: Dispatch python client tagging workflow for merged deployment
+        env:
+          MERGE_TARGET: ${{ needs.resolve-merged-deployment.outputs.merge_target }}
+        run: |
+          set -euo pipefail
+          if [ "$MERGE_TARGET" = "production" ]; then
+            RELEASE_KIND="production"
+          else
+            RELEASE_KIND="staging"
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg releaseKind "$RELEASE_KIND" \
+              --arg sourceRepository "${{ github.repository }}" \
+              --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
+              --arg sourceTargetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg botUser "$BOT_USER" \
+              '{
+                ref: $ref,
+                inputs: {
+                  release_kind: $releaseKind,
+                  source_repository: $sourceRepository,
+                  source_pr_number: $sourcePrNumber,
+                  source_target_ref: $sourceTargetRef,
+                  bot_user: $botUser
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
+            -d "$payload"
+
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
         timeout-minutes: 25
