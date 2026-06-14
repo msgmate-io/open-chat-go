@@ -29,6 +29,7 @@ func printToolDefinition(tool Tool) {
 	fmt.Printf("Type: %s\n", tool.GetToolType())
 	fmt.Printf("Description: %s\n", tool.GetToolDescription())
 	fmt.Printf("Requires Init: %v\n", tool.GetRequiresInit())
+	fmt.Printf("Requires Confirmation: %v\n", tool.GetRequiresConfirmation())
 
 	// Print parameters
 	fmt.Println("Parameters:")
@@ -41,6 +42,21 @@ func printToolDefinition(tool Tool) {
 	fmt.Println("Full Tool Definition:")
 	fmt.Printf("  %s\n", string(toolDef))
 	fmt.Println("=====================")
+}
+
+func buildConfirmationSuggestion(toolName string, toolInput interface{}) string {
+	payload := map[string]interface{}{
+		"type":                  "confirm-action",
+		"requires_confirmation": true,
+		"tool_name":             toolName,
+		"tool_input":            toolInput,
+		"status":                "pending_confirmation",
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "{\"type\":\"confirm-action\",\"requires_confirmation\":true,\"status\":\"pending_confirmation\"}"
+	}
+	return string(encoded)
 }
 
 func toolRequest(host string, model string, backend string, messages []map[string]string, tools []interface{}, apiKey string) (<-chan ToolCallsResult, <-chan *struct {
@@ -631,21 +647,28 @@ func processStreamingRequest(
 							result.toolName = currentToolCall.name
 							result.arguments = currentToolCall.arguments
 
-							// Execute the tool and get the result
-							toolResult, err := tool.RunTool(toolInput)
-							if err != nil {
-								result.err = err
-								log.Printf("Error executing tool %s: %v", currentToolCall.name, err)
+							var toolResult string
+							if tool.GetRequiresConfirmation() {
+								toolResult = buildConfirmationSuggestion(currentToolCall.name, toolInput)
 							} else {
-								result.result = toolResult
-
-								// Send tool call notification with complete information
-								toolChan <- ToolCall{
-									ToolName:  currentToolCall.name,
-									ToolInput: toolInput,
-									Id:        currentToolCall.id,
-									Result:    toolResult,
+								// Execute the tool and get the result
+								executedResult, err := tool.RunTool(toolInput)
+								if err != nil {
+									result.err = err
+									log.Printf("Error executing tool %s: %v", currentToolCall.name, err)
+									break
 								}
+								toolResult = executedResult
+							}
+
+							result.result = toolResult
+
+							// Send tool call notification with complete information
+							toolChan <- ToolCall{
+								ToolName:  currentToolCall.name,
+								ToolInput: toolInput,
+								Id:        currentToolCall.id,
+								Result:    toolResult,
 							}
 
 							// Important: Break out of the loop after processing a complete tool call

@@ -7,3 +7,6 @@
 [submodule "development/ci"]
 	path = development/ci
 	url = https://github.com/msgmate-io/open-chat-go-ci
+[submodule "clients/oc_python_client"]
+	path = clients/oc_python_client
+	url = https://github.com/msgmate-io/open-chat-go-python-client

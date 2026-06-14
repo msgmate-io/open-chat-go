@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,61 @@ import (
 	wsapi "backend/api/websocket"
 	"backend/client"
 )
+
+func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[string]interface{} {
+	confirmation, ok := toolCall["confirmation"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	targetToolName, _ := confirmation["target_tool_name"].(string)
+	if targetToolName == "" {
+		targetToolName, _ = toolCall["name"].(string)
+	}
+
+	actionID, _ := toolCall["id"].(string)
+	action := map[string]interface{}{
+		"action_id":             actionID,
+		"source_tool_name":      toolCall["name"],
+		"target_tool_name":      targetToolName,
+		"status":                "pending",
+		"requires_confirmation": true,
+		"created_at":            time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if suggested, exists := confirmation["suggested_inputs"]; exists {
+		action["input"] = suggested
+	}
+	if title, ok := confirmation["title"].(string); ok && title != "" {
+		action["title"] = title
+	}
+	if description, ok := confirmation["description"].(string); ok && description != "" {
+		action["description"] = description
+	}
+	if confirmLabel, ok := confirmation["confirm_label"].(string); ok && confirmLabel != "" {
+		action["confirm_label"] = confirmLabel
+	}
+	if dangerLevel, ok := confirmation["danger_level"].(string); ok && dangerLevel != "" {
+		action["danger_level"] = dangerLevel
+	}
+
+	return action
+}
+
+func collectConfirmableActions(toolCalls []interface{}) []interface{} {
+	actions := make([]interface{}, 0)
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		action := buildConfirmableActionFromToolCall(toolCall)
+		if action != nil {
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
 
 // AIHandlerImpl implements the AIHandler interface
 type AIHandlerImpl struct {
@@ -371,6 +427,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			"cancelled":  isCancelled,
 			"finished":   true,
 		}
+		confirmableActions := collectConfirmableActions(allToolCalls)
+		if len(confirmableActions) > 0 {
+			metadata["confirmable_actions"] = confirmableActions
+		}
 		if tokenUsage != nil {
 			metadata["token_usage"] = tokenUsage
 		}
@@ -520,11 +580,29 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						}
 					}
 
+					if tool, found := NewToolByName(toolCall.ToolName); found && tool.GetRequiresConfirmation() {
+						toolCallRepr["requires_confirmation"] = true
+						if toolCall.Result != "" {
+							var confirmationMeta map[string]interface{}
+							if err := json.Unmarshal([]byte(toolCall.Result), &confirmationMeta); err == nil {
+								toolCallRepr["confirmation"] = confirmationMeta
+							}
+						}
+					}
+
 					if !alreadyInList {
 						allToolCalls = append(allToolCalls, toolCallRepr)
 					}
 
 					totalTime := time.Since(startTime)
+					partialMeta := map[string]interface{}{
+						"total_time": totalTime.Round(time.Millisecond).String(),
+						"tool_call":  toolCall.ToolName,
+					}
+					confirmableActions := collectConfirmableActions(allToolCalls)
+					if len(confirmableActions) > 0 {
+						partialMeta["confirmable_actions"] = confirmableActions
+					}
 					aih.botContext.WSHandler.MessageHandler.SendMessage(
 						aih.botContext.WSHandler,
 						message.Content.SenderUUID,
@@ -533,10 +611,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 							message.Content.SenderUUID,
 							"",
 							[]string{""},
-							&map[string]interface{}{
-								"total_time": totalTime.Round(time.Millisecond).String(),
-								"tool_call":  toolCall.ToolName,
-							},
+							&partialMeta,
 							&allToolCalls,
 							nil,
 						),
