@@ -79,6 +79,7 @@ env:
   DEPLOYMENT_PR: msgmate-io-pr-deployment
   DEPLOYMENT_STAGING: msgmate-io-staging
   DEPLOYMENT_PRODUCTION: msgmate-io-production
+  TEST_DOCS_BASE: https://msgmate.io/docs#go-tests
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
@@ -399,7 +400,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
-          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && format('- [ ] `(4) test` [`running`]({0}?action_run_id={1}&action_job_id={2}&test_status=running)', env.TEST_DOCS_BASE, github.run_id, github.job) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/002-progress-initial.md)"
@@ -485,7 +486,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
-          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && format('- [ ] `(4) test` [`running`]({0}?action_run_id={1}&action_job_id={2}&test_status=running)', env.TEST_DOCS_BASE, github.run_id, github.job) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
@@ -528,7 +529,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
-          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && format('- [x] `(4) test` [`passed`]({0}?action_run_id={1}&action_job_id={2}&test_status=passed)', env.TEST_DOCS_BASE, github.run_id, github.job) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
@@ -621,7 +622,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}'
-          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && format('- [x] `(4) test` [`passed`]({0}?action_run_id={1}&action_job_id={2}&test_status=passed)', env.TEST_DOCS_BASE, github.run_id, github.job) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/005-progress-approval-open.md)"
@@ -775,6 +776,7 @@ jobs:
             printf '%s' "$content" | grep -q 'release_kind:' || return 1
             printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
             printf '%s' "$content" | grep -q 'source_branch:' || return 1
+            printf '%s' "$content" | grep -q 'source_run_url:' || return 1
             printf '%s' "$content" | grep -q 'deploy_url:' || return 1
             printf '%s' "$content" | grep -q 'bot_user:' || return 1
             printf '%s' "$content" | grep -q 'prerelease:' || return 1
@@ -792,6 +794,7 @@ jobs:
               --arg targetRef "$TARGET_BUILD_REF" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
               --arg sourceBranch "$SOURCE_BRANCH_REF" \
+              --arg sourceRunUrl "${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}" \
               --arg deployUrl "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}" \
               --arg botUser "$BOT_USER" \
               '{
@@ -801,6 +804,7 @@ jobs:
                   release_kind: "pr-alpha",
                   source_pr_number: $sourcePrNumber,
                   source_branch: $sourceBranch,
+                  source_run_url: $sourceRunUrl,
                   deploy_url: $deployUrl,
                   bot_user: $botUser,
                   prerelease: "true"
@@ -958,6 +962,7 @@ jobs:
             fi
 
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
+            echo "ci_run_id=$run_id" >> "$GITHUB_OUTPUT"
             if [ "$run_conclusion" = "success" ]; then
               exit 0
             fi
@@ -969,6 +974,9 @@ jobs:
           echo "Timed out waiting for dispatched CI deployment workflow."
           if [ -n "$run_url" ]; then
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$run_id" ]; then
+            echo "ci_run_id=$run_id" >> "$GITHUB_OUTPUT"
           fi
           exit 1
 
@@ -982,7 +990,7 @@ jobs:
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='- [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})'
-          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && format('- [x] `(4) test` [`passed`]({0}?action_run_id={1}&action_job_id={2}&test_status=passed)', env.TEST_DOCS_BASE, steps.wait_ci_deploy.outputs.ci_run_id, github.job) || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
@@ -1382,6 +1390,7 @@ jobs:
             printf '%s' "$content" | grep -q 'release_kind:' || return 1
             printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
             printf '%s' "$content" | grep -q 'source_branch:' || return 1
+            printf '%s' "$content" | grep -q 'source_run_url:' || return 1
             printf '%s' "$content" | grep -q 'deploy_url:' || return 1
             printf '%s' "$content" | grep -q 'bot_user:' || return 1
             printf '%s' "$content" | grep -q 'prerelease:' || return 1
@@ -1414,6 +1423,7 @@ jobs:
               --arg releaseKind "$RELEASE_KIND" \
               --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
               --arg sourceBranch "${{ github.event.pull_request.base.ref }}" \
+              --arg sourceRunUrl "${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}" \
               --arg deployUrl "${{ needs.resolve-merged-deployment.outputs.deployment_url }}" \
               --arg botUser "$BOT_USER" \
               '{
@@ -1423,6 +1433,7 @@ jobs:
                   release_kind: $releaseKind,
                   source_pr_number: $sourcePrNumber,
                   source_branch: $sourceBranch,
+                  source_run_url: $sourceRunUrl,
                   deploy_url: $deployUrl,
                   bot_user: $botUser,
                   prerelease: "true"
