@@ -71,7 +71,11 @@ export {
   type TurnToolCallBlock,
 } from "./components/chat/turnTimeline";
 export { ProviderRetryEventWidget, resolveProviderRetryEvent, type ProviderRetryEvent } from "./components/chat/ProviderRetryEventWidget";
-export { InteractionChatInfo } from "./components/chat/InteractionChatInfo";
+export {
+  ChatDetailsDialog,
+  ChatDetailsDialogHeader,
+  InteractionChatInfo,
+} from "./components/chat/InteractionChatInfo";
 export {
   ChatDetailsPanel,
   ToolDetailsDialog,
