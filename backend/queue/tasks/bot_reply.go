@@ -67,7 +67,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	host := deps.BackendHost
 	if host == "" {
-		host = "http://127.0.0.1:1984"
+		host = "http://127.0.0.1:1984" // TODO ensure just fallback always present
 	}
 
 	ocClient := client.NewClient(host)

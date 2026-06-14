@@ -55,6 +55,8 @@ type ChatSettings struct {
 	ConfigData json.RawMessage `json:"config_data" gorm:"type:jsonb"`
 }
 
+// SharedChatInstance links a private chat to a public share UUID owned by a user.
+// It powers publish/unpublish chat sharing and public read-only shared interaction views.
 type SharedChatInstance struct {
 	Model
 	ChatId        uint   `json:"-" gorm:"index"`

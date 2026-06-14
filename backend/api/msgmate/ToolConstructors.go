@@ -64,3 +64,7 @@ func NewRunCallbackFunctionTool() Tool {
 func NewN8NTriggerWorkflowWebhookTool() Tool {
 	return NewToolFromDefinition(tooldefs.N8NTriggerWorkflowWebhookToolDef)
 }
+
+func NewCreateConfirmableActionSuggestionTool() Tool {
+	return NewToolFromDefinition(tooldefs.CreateConfirmableActionSuggestionToolDef)
+}
