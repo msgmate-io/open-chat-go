@@ -19,18 +19,19 @@ import (
 )
 
 type ToolListItem struct {
-	Name         string                 `json:"name"`
-	FunctionName string                 `json:"function_name"`
-	Description  string                 `json:"description"`
-	Type         string                 `json:"type"`
-	SourcePath   string                 `json:"source_path,omitempty"`
-	SourceLine   int                    `json:"source_line,omitempty"`
-	SourceURL    string                 `json:"source_url,omitempty"`
-	RequiresInit bool                   `json:"requires_init,omitempty"`
-	Parameters   map[string]interface{} `json:"parameters,omitempty"`
-	Required     []string               `json:"required,omitempty"`
-	CallSchema   map[string]interface{} `json:"call_schema,omitempty"`
-	InitSchema   map[string]interface{} `json:"init_schema,omitempty"`
+	Name                 string                 `json:"name"`
+	FunctionName         string                 `json:"function_name"`
+	Description          string                 `json:"description"`
+	Type                 string                 `json:"type"`
+	SourcePath           string                 `json:"source_path,omitempty"`
+	SourceLine           int                    `json:"source_line,omitempty"`
+	SourceURL            string                 `json:"source_url,omitempty"`
+	RequiresInit         bool                   `json:"requires_init,omitempty"`
+	RequiresConfirmation bool                   `json:"requires_confirmation,omitempty"`
+	Parameters           map[string]interface{} `json:"parameters,omitempty"`
+	Required             []string               `json:"required,omitempty"`
+	CallSchema           map[string]interface{} `json:"call_schema,omitempty"`
+	InitSchema           map[string]interface{} `json:"init_schema,omitempty"`
 }
 
 type toolStaticMetadata struct {
@@ -70,6 +71,7 @@ type ToolsListResponse struct {
 //	@Param			type query string false "Filter by tool type"
 //	@Param			q query string false "Search by tool name or description"
 //	@Param			requires_init query string false "Authenticated only: true/false filter"
+//	@Param			requires_confirmation query string false "Authenticated only: true/false filter"
 //	@Success		200 {object} ToolsListResponse
 //	@Router			/api/v1/tools/list [get]
 func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +99,7 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 	typeFilter := strings.TrimSpace(r.URL.Query().Get("type"))
 	queryFilter := strings.TrimSpace(r.URL.Query().Get("q"))
 	requiresInitFilter := strings.TrimSpace(r.URL.Query().Get("requires_init"))
+	requiresConfirmationFilter := strings.TrimSpace(r.URL.Query().Get("requires_confirmation"))
 
 	rows := make([]ToolListItem, 0, len(msgmate.AllTools))
 	typesSet := make(map[string]struct{})
@@ -116,6 +119,7 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 
 		requiresInit := tool.GetRequiresInit()
+		requiresConfirmation := tool.GetRequiresConfirmation()
 		if isAuthenticated && requiresInitFilter != "" {
 			switch strings.ToLower(requiresInitFilter) {
 			case "true", "1", "yes":
@@ -124,6 +128,18 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 			case "false", "0", "no":
 				if requiresInit {
+					continue
+				}
+			}
+		}
+		if isAuthenticated && requiresConfirmationFilter != "" {
+			switch strings.ToLower(requiresConfirmationFilter) {
+			case "true", "1", "yes":
+				if !requiresConfirmation {
+					continue
+				}
+			case "false", "0", "no":
+				if requiresConfirmation {
 					continue
 				}
 			}
@@ -167,6 +183,7 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 		if isAuthenticated {
 			item.RequiresInit = requiresInit
+			item.RequiresConfirmation = requiresConfirmation
 			item.Parameters = tool.GetToolParameters()
 			item.CallSchema = map[string]interface{}{
 				"type":       "object",

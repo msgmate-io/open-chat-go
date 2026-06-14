@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -517,6 +518,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 							// Update the result if it exists
 							allToolCalls[i].(map[string]interface{})["result"] = toolCall.Result
 							break
+						}
+					}
+
+					if tool, found := NewToolByName(toolCall.ToolName); found && tool.GetRequiresConfirmation() {
+						toolCallRepr["requires_confirmation"] = true
+						if toolCall.Result != "" {
+							var confirmationMeta map[string]interface{}
+							if err := json.Unmarshal([]byte(toolCall.Result), &confirmationMeta); err == nil {
+								toolCallRepr["confirmation"] = confirmationMeta
+							}
 						}
 					}
 
