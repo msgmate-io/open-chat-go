@@ -2,6 +2,35 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Git ref or SHA to build
+        required: false
+        default: main
+      release_kind:
+        description: Release type (pr-alpha, staging, production, manual)
+        required: false
+        default: manual
+      source_pr_number:
+        description: Source PR number (for pr-alpha releases)
+        required: false
+        default: ""
+      source_branch:
+        description: Source branch name (for metadata)
+        required: false
+        default: ""
+      release_tag:
+        description: Explicit release tag override
+        required: false
+        default: ""
+      release_name:
+        description: Explicit release name override
+        required: false
+        default: ""
+      prerelease:
+        description: Mark release as prerelease (true/false)
+        required: false
+        default: "true"
   push:
     branches:
       - fix-build-matrix
@@ -60,6 +89,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.BOT_PAT }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
       - name: Set up Go
@@ -130,7 +160,69 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.BOT_PAT }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)"
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+
+          RELEASE_KIND="${{ github.event.inputs.release_kind || 'manual' }}"
+          SOURCE_PR_NUMBER="${{ github.event.inputs.source_pr_number || '' }}"
+          SOURCE_BRANCH="${{ github.event.inputs.source_branch || '' }}"
+
+          TAG_NAME="build-${{ github.run_number }}"
+          RELEASE_NAME="Build ${{ github.run_number }}"
+          PRERELEASE_VALUE="false"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            case "$RELEASE_KIND" in
+              pr-alpha)
+                TAG_NAME="open-chat-pr-alpha-release-${VERSION}-${SHORT_SHA}"
+                if [ -n "$SOURCE_PR_NUMBER" ]; then
+                  RELEASE_NAME="PR Alpha Release ${VERSION} (PR #${SOURCE_PR_NUMBER})"
+                else
+                  RELEASE_NAME="PR Alpha Release ${VERSION}"
+                fi
+                PRERELEASE_VALUE="true"
+                ;;
+              staging)
+                TAG_NAME="open-chat-staging-${VERSION}"
+                RELEASE_NAME="Staging Release ${VERSION}"
+                PRERELEASE_VALUE="true"
+                ;;
+              production)
+                TAG_NAME="open-chat-${VERSION}"
+                RELEASE_NAME="Production Release ${VERSION}"
+                PRERELEASE_VALUE="false"
+                ;;
+              *)
+                TAG_NAME="build-${{ github.run_number }}"
+                RELEASE_NAME="Manual Build ${{ github.run_number }}"
+                PRERELEASE_VALUE="${{ github.event.inputs.prerelease || 'true' }}"
+                ;;
+            esac
+          fi
+
+          if [ -n "${{ github.event.inputs.release_tag || '' }}" ]; then
+            TAG_NAME="${{ github.event.inputs.release_tag }}"
+          fi
+          if [ -n "${{ github.event.inputs.release_name || '' }}" ]; then
+            RELEASE_NAME="${{ github.event.inputs.release_name }}"
+          fi
+
+          if [ -n "$SOURCE_BRANCH" ]; then
+            RELEASE_NAME="${RELEASE_NAME} [${SOURCE_BRANCH}]"
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE_VALUE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -152,10 +244,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: ${{ steps.release_meta.outputs.release_name }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
           files: |
             all-artifacts/**/*
             code.zip

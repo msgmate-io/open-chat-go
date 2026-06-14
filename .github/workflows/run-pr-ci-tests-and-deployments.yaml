@@ -57,7 +57,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test')
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build')
     steps:
       - name: Delete previous workflow comments
         env:
@@ -92,6 +92,7 @@ jobs:
 
             - `deploy`: trigger deployment dispatch to CI sub-repo
             - `test`: indicates API tests required for merge policy
+            - `build`: trigger Build and Release after deploy approval
 
             No label found, so I automatically added `test` for this PR.
 
@@ -138,7 +139,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test')))
+    if: github.event_name == 'workflow_dispatch' || (github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -151,7 +152,9 @@ jobs:
       pr_helm_release: ${{ steps.context.outputs.pr_helm_release }}
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       should_test: ${{ steps.context.outputs.should_test }}
+      should_build: ${{ steps.context.outputs.should_build }}
       image_url: ${{ steps.image.outputs.image_url }}
+      dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
@@ -202,7 +205,9 @@ jobs:
             DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
             SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
             SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
+            DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
           else
             DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ env.DEPLOYMENT_STAGING }}}"
             TARGET_REF="${TARGET_REF_INPUT:-main}"
@@ -210,7 +215,9 @@ jobs:
             SOURCE_REPOSITORY="${{ github.repository }}"
             SHOULD_DEPLOY="deploy"
             SHOULD_TEST=""
+            SHOULD_BUILD=""
             RAW_PR_NAME="$DEPLOYMENT_NAME"
+            DISPATCH_REF="$TARGET_REF"
           fi
           PR_SLUG="$(printf '%s' "$RAW_PR_NAME" \
             | tr '[:upper:]' '[:lower:]' \
@@ -259,7 +266,9 @@ jobs:
           echo "pr_helm_release=$PR_HELM_RELEASE" >> "$GITHUB_OUTPUT"
           echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
           echo "should_test=$SHOULD_TEST" >> "$GITHUB_OUTPUT"
-          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false}"
+          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
+          echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
+          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} build=${SHOULD_BUILD:-false}"
 
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
@@ -300,6 +309,7 @@ jobs:
             ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for builds and approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+            ${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
           EOF
           )"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
@@ -398,6 +408,7 @@ jobs:
             ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+            ${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
           EOF
           )"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
@@ -445,6 +456,7 @@ jobs:
             ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
             ${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+            ${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
           EOF
           )"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
@@ -535,6 +547,7 @@ jobs:
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             ${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
           EOF
           )"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
@@ -649,6 +662,34 @@ jobs:
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
             -d "$payload"
 
+      - name: Dispatch build and release workflow in source repository
+        if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != ''
+        run: |
+          set -euo pipefail
+          payload="$(
+            jq -n \
+              --arg ref "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
+              --arg targetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
+              --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
+              --arg sourceBranch "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
+              '{
+                ref: $ref,
+                inputs: {
+                  target_ref: $targetRef,
+                  release_kind: "pr-alpha",
+                  source_pr_number: $sourcePrNumber,
+                  source_branch: $sourceBranch,
+                  prerelease: "true"
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/build.yaml/dispatches" \
+            -d "$payload"
+
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
         timeout-minutes: 6
@@ -742,6 +783,7 @@ jobs:
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
             - [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})
             ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
+            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
           EOF
           )"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
