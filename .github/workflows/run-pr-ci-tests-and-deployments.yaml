@@ -823,27 +823,58 @@ jobs:
         if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true'
         run: |
           set -euo pipefail
-          workflow_check_status="$(curl -s -o /tmp/python_tag_workflow_check.json -w "%{http_code}" \
-            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/tag-python-client-release.yaml")"
-          if [ "$workflow_check_status" = "404" ]; then
-            echo "::notice::Workflow tag-python-client-release.yaml not available on default branch yet; skipping python client tag dispatch."
+          SOURCE_REPO="${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}"
+          PRIMARY_REF="$CI_REF"
+          SECONDARY_REF="${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}"
+
+          check_py_tag_workflow_inputs() {
+            local ref_name="$1"
+            local status_code
+            status_code="$(curl -s -o /tmp/python_tag_workflow_content.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
+            if [ "$status_code" != "200" ]; then
+              return 1
+            fi
+            content="$(jq -r '.content' < /tmp/python_tag_workflow_content.json | tr -d '\n' | base64 -d)"
+            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
+            printf '%s' "$content" | grep -q 'release_kind:' || return 1
+            printf '%s' "$content" | grep -q 'source_repository:' || return 1
+            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
+            printf '%s' "$content" | grep -q 'source_target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'source_branch:' || return 1
+            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            return 0
+          }
+
+          PY_TAG_DISPATCH_REF=""
+          for candidate_ref in "$PRIMARY_REF" "$SECONDARY_REF"; do
+            if [ -z "$candidate_ref" ]; then
+              continue
+            fi
+            if [ "$candidate_ref" = "$PY_TAG_DISPATCH_REF" ]; then
+              continue
+            fi
+            if check_py_tag_workflow_inputs "$candidate_ref"; then
+              PY_TAG_DISPATCH_REF="$candidate_ref"
+              break
+            fi
+          done
+
+          if [ -z "$PY_TAG_DISPATCH_REF" ]; then
+            echo "::notice::Workflow tag-python-client-release.yaml with required inputs is not available yet; skipping python client tag dispatch."
             exit 0
-          fi
-          if [ "$workflow_check_status" != "200" ]; then
-            echo "::error::Failed to resolve python tag workflow (status $workflow_check_status)."
-            cat /tmp/python_tag_workflow_check.json || true
-            exit 1
           fi
 
           payload="$(
             jq -n \
-              --arg ref "$CI_REF" \
+              --arg ref "$PY_TAG_DISPATCH_REF" \
               --arg sourceRepository "${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}" \
               --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
               --arg sourceTargetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
+              --arg sourceBranch "${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}" \
               --arg botUser "$BOT_USER" \
               '{
                 ref: $ref,
@@ -852,6 +883,7 @@ jobs:
                   source_repository: $sourceRepository,
                   source_pr_number: $sourcePrNumber,
                   source_target_ref: $sourceTargetRef,
+                  source_branch: $sourceBranch,
                   bot_user: $botUser
                 }
               }'
@@ -1457,6 +1489,7 @@ jobs:
             printf '%s' "$content" | grep -q 'source_repository:' || return 1
             printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
             printf '%s' "$content" | grep -q 'source_target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'source_branch:' || return 1
             printf '%s' "$content" | grep -q 'bot_user:' || return 1
             return 0
           }
@@ -1487,6 +1520,7 @@ jobs:
               --arg sourceRepository "${{ github.repository }}" \
               --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
               --arg sourceTargetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg sourceBranch "${{ github.event.pull_request.base.ref }}" \
               --arg botUser "$BOT_USER" \
               '{
                 ref: $ref,
@@ -1495,6 +1529,7 @@ jobs:
                   source_repository: $sourceRepository,
                   source_pr_number: $sourcePrNumber,
                   source_target_ref: $sourceTargetRef,
+                  source_branch: $sourceBranch,
                   bot_user: $botUser
                 }
               }'
