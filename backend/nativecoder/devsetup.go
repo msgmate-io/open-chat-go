@@ -33,8 +33,16 @@ const (
 	// DevSetupEnvKey is the deployment-wide kill switch for the per-repo default.
 	DevSetupEnvKey = "OCI_MSGMATE_CODER_DEV_SETUP"
 	// DevSetupProfileDefault is the profile of the built-in default for a
-	// known development repository (all batteries included, ci#756).
-	DevSetupProfileDefault = "full-ci"
+	// known development repository (all batteries included, ci#756): the
+	// `full-development` profile materializes the private CI tooling, the Helm
+	// chart, the mobile client and the LLM coding context in one go.
+	DevSetupProfileDefault = "full-development"
+	// DevSetupProfileFallback is the profile the generated set-up script falls
+	// back to when the private integrations manifest does not know
+	// DevSetupProfileDefault yet: the private profile membership ships from the
+	// `ci` repository, so the public default must degrade gracefully instead of
+	// failing every coding sandbox with an unknown-profile error.
+	DevSetupProfileFallback = "full-ci"
 	// devSetupSetupMarker is prepended to every generated script so the sandbox
 	// transcript shows which profile prepared the workspace.
 	devSetupSetupMarker = "[ci#756 dev-setup]"
@@ -189,7 +197,7 @@ func DevSetupScript(spec DevSetupSpec) string {
 		`if [ ! -f "$openchat_sandbox_profile" ] && [ -d development/build-tools ] && [ ! -x development/scripts/build_tools.sh ] && command -v python3 >/dev/null 2>&1; then`,
 		`  [ -d .venv ] || python3 -m venv .venv`,
 		`  .venv/bin/pip install --quiet --disable-pip-version-check ./development/build-tools`,
-		`  .venv/bin/openchat-integrations prepare --profile `+spec.Profile+` && printf '%s\n' '`+spec.Profile+`' > "$openchat_sandbox_profile"`,
+		`  `+devSetupPrepareCommand(`.venv/bin/openchat-integrations`, spec.Profile)+` && printf '%s\n' '`+spec.Profile+`' > "$openchat_sandbox_profile"`,
 		`fi`,
 	)
 	lines = append(lines, spec.Commands...)
