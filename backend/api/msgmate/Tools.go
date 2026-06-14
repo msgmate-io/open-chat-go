@@ -15,6 +15,7 @@ type Tool interface {
 	GetToolParameters() map[string]interface{}
 	GetAdminOnly() bool
 	GetRequiresInit() bool
+	GetRequiresConfirmation() bool
 	ConstructTool() interface{}
 	SetInitData(data interface{})
 }
@@ -32,6 +33,7 @@ var AllTools = []Tool{
 	NewRWTHAachenSeminarTimsAutoPaperIncludeExcludeAgent(),
 	NewRunCallbackFunctionTool(),
 	NewN8NTriggerWorkflowWebhookTool(),
+	NewCreateConfirmableActionSuggestionTool(),
 }
 
 // NewToolByName maps tool names to their constructor functions
@@ -61,6 +63,8 @@ func NewToolByName(name string) (Tool, bool) {
 		return NewRunCallbackFunctionTool(), true
 	case "n8n_trigger_workflow_webhook":
 		return NewN8NTriggerWorkflowWebhookTool(), true
+	case "create_confirmable_action_suggestion":
+		return NewCreateConfirmableActionSuggestionTool(), true
 	default:
 		return nil, false
 	}
@@ -82,23 +86,29 @@ func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool
 }
 
 type BaseTool struct {
-	AdminOnly       bool
-	RequiresInit    bool
-	ToolName        string
-	ToolType        string
-	ToolDescription string
-	ToolInput       interface{}
-	ToolInit        interface{}
-	RequiredParams  []string
-	Parameters      map[string]interface{}
+	AdminOnly            bool
+	RequiresInit         bool
+	RequiresConfirmation bool
+	ToolName             string
+	ToolType             string
+	ToolDescription      string
+	ToolInput            interface{}
+	ToolInit             interface{}
+	RequiredParams       []string
+	Parameters           map[string]interface{}
 }
 
 func (t *BaseTool) ConstructTool() interface{} {
+	description := t.GetToolDescription()
+	if t.GetRequiresConfirmation() {
+		description += " This tool requires human confirmation before execution. Calling it creates an action suggestion only."
+	}
+
 	return map[string]interface{}{
 		"type": t.ToolType,
 		"function": map[string]interface{}{
 			"name":        t.GetToolFunctionName(),
-			"description": t.GetToolDescription(),
+			"description": description,
 			"parameters": map[string]interface{}{
 				"type":        "object",
 				"properties":  t.GetToolParameters(),
@@ -124,6 +134,10 @@ func (t *BaseTool) ParseArguments(input string) (interface{}, error) {
 
 func (t *BaseTool) GetRequiresInit() bool {
 	return t.RequiresInit
+}
+
+func (t *BaseTool) GetRequiresConfirmation() bool {
+	return t.RequiresConfirmation
 }
 
 func (t *BaseTool) GetAdminOnly() bool {

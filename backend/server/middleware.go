@@ -7,7 +7,6 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 )
@@ -151,7 +150,16 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var PublicRoutes = []string{"/", "/docs", "/models", "/tools"}
+var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction"}
+
+func isPublicFrontendRoute(path string) bool {
+	for _, route := range PublicRoutes {
+		if path == route || strings.HasPrefix(path, route+"/") {
+			return true
+		}
+	}
+	return false
+}
 
 func FrontendAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +180,7 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 				Secure:   false,
 				SameSite: http.SameSiteStrictMode,
 			})
-			if slices.Contains(PublicRoutes, r.URL.Path) {
+			if isPublicFrontendRoute(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
