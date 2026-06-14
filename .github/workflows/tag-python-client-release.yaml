@@ -19,6 +19,10 @@ on:
         description: Source target ref/SHA used for version + commit suffix
         required: false
         default: main
+      source_branch:
+        description: Source branch name used for latest alias tag
+        required: false
+        default: ""
       client_repository:
         description: Python client repository to tag
         required: false
@@ -47,6 +51,7 @@ jobs:
         env:
           SOURCE_REPOSITORY: ${{ github.event.inputs.source_repository }}
           SOURCE_TARGET_REF: ${{ github.event.inputs.source_target_ref }}
+          SOURCE_BRANCH: ${{ github.event.inputs.source_branch }}
           RELEASE_KIND: ${{ github.event.inputs.release_kind }}
         run: |
           set -euo pipefail
@@ -74,12 +79,19 @@ jobs:
           case "$RELEASE_KIND" in
             pr-alpha)
               TAG_NAME="open-chat-pr-alpha-release-${VERSION}-${SHORT_SHA}"
+              BRANCH_SLUG="$(printf '%s' "${SOURCE_BRANCH:-pr}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\+/-/g; s/\.\+/./g; s/^[.-]\+//; s/[.-]\+$//')"
+              if [ -z "$BRANCH_SLUG" ]; then
+                BRANCH_SLUG="pr"
+              fi
+              LATEST_TAG_NAME="open-chat-pr-alpha-release-${VERSION}-${BRANCH_SLUG}-latest"
               ;;
             staging)
               TAG_NAME="open-chat-staging-${VERSION}"
+              LATEST_TAG_NAME=""
               ;;
             production)
               TAG_NAME="open-chat-${VERSION}"
+              LATEST_TAG_NAME=""
               ;;
             *)
               echo "::error::Unsupported release_kind: ${RELEASE_KIND}"
@@ -89,6 +101,7 @@ jobs:
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag_name=${LATEST_TAG_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve python client default branch SHA
         id: client_sha
@@ -115,50 +128,82 @@ jobs:
         env:
           CLIENT_REPOSITORY: ${{ github.event.inputs.client_repository }}
           TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          LATEST_TAG_NAME: ${{ steps.meta.outputs.latest_tag_name }}
           CLIENT_SHA: ${{ steps.client_sha.outputs.client_sha }}
         run: |
           set -euo pipefail
-          status_code="$(curl -s -o /tmp/client_tag_lookup.json -w "%{http_code}" \
-            -H "Authorization: Bearer ${API_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/ref/tags/${TAG_NAME}")"
+          create_or_update_tag() {
+            local tag_name="$1"
+            local lookup_file="$2"
+            local write_file="$3"
+            local status_code
 
-          if [ "$status_code" = "200" ]; then
-            echo "Tag ${TAG_NAME} already exists in ${CLIENT_REPOSITORY}; skipping create."
-            echo "tag_created=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+            status_code="$(curl -s -o "$lookup_file" -w "%{http_code}" \
+              -H "Authorization: Bearer ${API_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/ref/tags/${tag_name}")"
 
-          if [ "$status_code" != "404" ]; then
-            echo "::error::Unexpected status checking tag: $status_code"
-            cat /tmp/client_tag_lookup.json || true
+            if [ "$status_code" = "200" ]; then
+              update_payload="$(jq -n --arg sha "$CLIENT_SHA" '{sha: $sha, force: true}')"
+              update_status="$(curl -s -o "$write_file" -w "%{http_code}" -X PATCH \
+                -H "Authorization: Bearer ${API_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/refs/tags/${tag_name}" \
+                -d "$update_payload")"
+              [ "$update_status" = "200" ] && return 0
+              echo "::error::Failed updating tag ${tag_name} (status ${update_status})."
+              cat "$write_file" || true
+              return 1
+            fi
+
+            if [ "$status_code" = "404" ]; then
+              create_payload="$(jq -n --arg ref "refs/tags/${tag_name}" --arg sha "$CLIENT_SHA" '{ref: $ref, sha: $sha}')"
+              create_status="$(curl -s -o "$write_file" -w "%{http_code}" -X POST \
+                -H "Authorization: Bearer ${API_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/refs" \
+                -d "$create_payload")"
+              [ "$create_status" = "201" ] && return 0
+              if [ "$create_status" = "404" ]; then
+                echo "::warning::Unable to create tag in ${CLIENT_REPOSITORY} (404). Token likely lacks write access to that repository; continuing without client tag."
+                cat "$write_file" || true
+                return 2
+              fi
+              echo "::error::Failed creating tag ${tag_name} (status ${create_status})."
+              cat "$write_file" || true
+              return 1
+            fi
+
+            echo "::error::Unexpected status checking tag ${tag_name}: ${status_code}"
+            cat "$lookup_file" || true
+            return 1
+          }
+
+          tag_created=true
+          create_or_update_tag "$TAG_NAME" /tmp/client_tag_lookup.json /tmp/client_tag_write.json || rc=$?
+          if [ "${rc:-0}" = "2" ]; then
+            tag_created=false
+          elif [ "${rc:-0}" != "0" ]; then
             exit 1
           fi
 
-          payload="$(jq -n --arg ref "refs/tags/${TAG_NAME}" --arg sha "$CLIENT_SHA" '{ref: $ref, sha: $sha}')"
-          create_status="$(curl -s -o /tmp/client_tag_create.json -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer ${API_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${CLIENT_REPOSITORY}/git/refs" \
-            -d "$payload")"
-
-          if [ "$create_status" = "201" ]; then
-            echo "tag_created=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          latest_tag_created=false
+          if [ "$tag_created" = "true" ] && [ -n "$LATEST_TAG_NAME" ]; then
+            create_or_update_tag "$LATEST_TAG_NAME" /tmp/client_latest_tag_lookup.json /tmp/client_latest_tag_write.json || rc=$?
+            if [ "${rc:-0}" = "2" ]; then
+              latest_tag_created=false
+            elif [ "${rc:-0}" != "0" ]; then
+              exit 1
+            else
+              latest_tag_created=true
+            fi
           fi
 
-          if [ "$create_status" = "404" ]; then
-            echo "::warning::Unable to create tag in ${CLIENT_REPOSITORY} (404). Token likely lacks write access to that repository; continuing without client tag."
-            cat /tmp/client_tag_create.json || true
-            echo "tag_created=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "::error::Failed creating tag in ${CLIENT_REPOSITORY} (status ${create_status})."
-          cat /tmp/client_tag_create.json || true
-          exit 1
+          echo "tag_created=$tag_created" >> "$GITHUB_OUTPUT"
+          echo "latest_tag_created=$latest_tag_created" >> "$GITHUB_OUTPUT"
 
       - name: Comment installation instructions on source PR
         if: github.event.inputs.source_pr_number != ''
@@ -167,15 +212,23 @@ jobs:
           SOURCE_PR_NUMBER: ${{ github.event.inputs.source_pr_number }}
           BOT_USER: ${{ github.event.inputs.bot_user }}
           TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          LATEST_TAG_NAME: ${{ steps.meta.outputs.latest_tag_name }}
           CLIENT_REPOSITORY: ${{ github.event.inputs.client_repository }}
           TAG_CREATED: ${{ steps.create_tag.outputs.tag_created }}
+          LATEST_TAG_CREATED: ${{ steps.create_tag.outputs.latest_tag_created }}
         run: |
           set -euo pipefail
           if [ "$TAG_CREATED" = "true" ]; then
+            if [ "$LATEST_TAG_CREATED" = "true" ] && [ -n "$LATEST_TAG_NAME" ]; then
+              latest_install="\`pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${LATEST_TAG_NAME}\`"
+            else
+              latest_install=""
+            fi
             body="$(cat <<EOF
           Python client tag created: \`${TAG_NAME}\`
 
           \`pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${TAG_NAME}\`
+          ${latest_install}
 
           <!-- open-chat-python-client-tag -->
           EOF
