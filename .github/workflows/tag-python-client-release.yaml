@@ -173,18 +173,9 @@ jobs:
           set -euo pipefail
           if [ "$TAG_CREATED" = "true" ]; then
             body="$(cat <<EOF
-          Python client release tag created.
+          Python client tag created: \`${TAG_NAME}\`
 
-          - Repo: \`${CLIENT_REPOSITORY}\`
-          - Tag: \`${TAG_NAME}\`
-
-          Install from this specific tag:
-
-          ```bash
-          pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${TAG_NAME}
-          ```
-
-          Repository URL: https://github.com/${CLIENT_REPOSITORY}
+          \`pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${TAG_NAME}\`
 
           <!-- open-chat-python-client-tag -->
           EOF
