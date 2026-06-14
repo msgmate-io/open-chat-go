@@ -1175,6 +1175,61 @@ jobs:
               -d "$payload"
           fi
 
+      - name: Create or update deployment approval issue
+        env:
+          ISSUE_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+          DEPLOYMENT_URL: ${{ needs.resolve-merged-deployment.outputs.deployment_url }}
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
+          APPROVAL_RUN_URL: ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}
+          APPROVAL_PENDING_URL: ${{ format('https://github.com/{0}/actions/runs/{1}/pending_deployments', github.repository, github.run_id) }}
+        run: |
+          set -euo pipefail
+          marker="<!-- open-chat-merged-deploy-approval-issue run:${GITHUB_RUN_ID} -->"
+          title="[Deploy approval] ${DEPLOYMENT_NAME} from merged PR #${MERGED_PR_NUMBER}"
+          body="$(cat <<EOF
+          ${marker}
+
+          Deployment approval is waiting for **${DEPLOYMENT_NAME}**.
+
+          - Approval page: ${APPROVAL_PENDING_URL}
+          - Workflow run: ${APPROVAL_RUN_URL}
+          - Source PR: #${MERGED_PR_NUMBER} (${MERGED_PR_URL})
+          - Deployment URL: ${DEPLOYMENT_URL}
+
+          This issue is closed automatically after approval or cancellation.
+          EOF
+          )"
+          payload="$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')"
+
+          issue_id="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq -r --arg marker "$marker" '[.[] | select(.pull_request | not) | select((.body // "") | contains($marker))][0].number // ""'
+          })"
+
+          if [ -n "$issue_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${issue_id}" \
+              -d "$payload" >/dev/null
+            echo "Updated deployment approval issue #${issue_id}."
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues" \
+              -d "$payload" >/dev/null
+            echo "Created deployment approval issue."
+          fi
+
   dispatch-merged-deployment:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
@@ -1269,9 +1324,55 @@ jobs:
             RELEASE_KIND="staging"
           fi
 
+          SOURCE_REPO="${{ github.repository }}"
+          PRIMARY_REF="$MERGE_TARGET"
+          SECONDARY_REF="$CI_REF"
+          TERTIARY_REF="${{ github.event.repository.default_branch }}"
+
+          check_build_workflow_inputs() {
+            local ref_name="$1"
+            local status_code
+            status_code="$(curl -s -o /tmp/merged_build_workflow_content.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
+            if [ "$status_code" != "200" ]; then
+              return 1
+            fi
+            content="$(jq -r '.content' < /tmp/merged_build_workflow_content.json | tr -d '\n' | base64 -d)"
+            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
+            printf '%s' "$content" | grep -q 'target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'release_kind:' || return 1
+            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
+            printf '%s' "$content" | grep -q 'source_branch:' || return 1
+            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            printf '%s' "$content" | grep -q 'prerelease:' || return 1
+            return 0
+          }
+
+          BUILD_DISPATCH_REF=""
+          for candidate_ref in "$PRIMARY_REF" "$SECONDARY_REF" "$TERTIARY_REF"; do
+            if [ -z "$candidate_ref" ]; then
+              continue
+            fi
+            if [ "$candidate_ref" = "$BUILD_DISPATCH_REF" ]; then
+              continue
+            fi
+            if check_build_workflow_inputs "$candidate_ref"; then
+              BUILD_DISPATCH_REF="$candidate_ref"
+              break
+            fi
+          done
+
+          if [ -z "$BUILD_DISPATCH_REF" ]; then
+            echo "::error::Could not find a dispatchable build.yaml ref. Tried '${PRIMARY_REF}', '${SECONDARY_REF}', '${TERTIARY_REF}'."
+            exit 1
+          fi
+
           payload="$(
             jq -n \
-              --arg ref "$CI_REF" \
+              --arg ref "$BUILD_DISPATCH_REF" \
               --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
               --arg releaseKind "$RELEASE_KIND" \
               --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
@@ -1327,9 +1428,54 @@ jobs:
             RELEASE_KIND="staging"
           fi
 
+          SOURCE_REPO="${{ github.repository }}"
+          PRIMARY_REF="$MERGE_TARGET"
+          SECONDARY_REF="$CI_REF"
+          TERTIARY_REF="${{ github.event.repository.default_branch }}"
+
+          check_py_tag_workflow_inputs() {
+            local ref_name="$1"
+            local status_code
+            status_code="$(curl -s -o /tmp/merged_py_tag_workflow_content.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
+            if [ "$status_code" != "200" ]; then
+              return 1
+            fi
+            content="$(jq -r '.content' < /tmp/merged_py_tag_workflow_content.json | tr -d '\n' | base64 -d)"
+            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
+            printf '%s' "$content" | grep -q 'release_kind:' || return 1
+            printf '%s' "$content" | grep -q 'source_repository:' || return 1
+            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
+            printf '%s' "$content" | grep -q 'source_target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            return 0
+          }
+
+          PY_TAG_DISPATCH_REF=""
+          for candidate_ref in "$PRIMARY_REF" "$SECONDARY_REF" "$TERTIARY_REF"; do
+            if [ -z "$candidate_ref" ]; then
+              continue
+            fi
+            if [ "$candidate_ref" = "$PY_TAG_DISPATCH_REF" ]; then
+              continue
+            fi
+            if check_py_tag_workflow_inputs "$candidate_ref"; then
+              PY_TAG_DISPATCH_REF="$candidate_ref"
+              break
+            fi
+          done
+
+          if [ -z "$PY_TAG_DISPATCH_REF" ]; then
+            echo "::error::Could not find a dispatchable tag-python-client-release.yaml ref. Tried '${PRIMARY_REF}', '${SECONDARY_REF}', '${TERTIARY_REF}'."
+            exit 1
+          fi
+
           payload="$(
             jq -n \
-              --arg ref "$CI_REF" \
+              --arg ref "$PY_TAG_DISPATCH_REF" \
               --arg releaseKind "$RELEASE_KIND" \
               --arg sourceRepository "${{ github.repository }}" \
               --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
@@ -1430,3 +1576,62 @@ jobs:
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
           exit 1
+
+  close-merged-deploy-approval-issue:
+    name: Close Merged Deploy Approval Issue
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment, post-merged-deploy-approval-link, dispatch-merged-deployment]
+    if: |
+      always() &&
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
+      (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
+    env:
+      ISSUE_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      DISPATCH_RESULT: ${{ needs.dispatch-merged-deployment.result }}
+    steps:
+      - name: Close deployment approval issue for this run
+        run: |
+          set -euo pipefail
+          marker="<!-- open-chat-merged-deploy-approval-issue run:${GITHUB_RUN_ID} -->"
+
+          issue_number="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq -r --arg marker "$marker" '[.[] | select(.pull_request | not) | select((.body // "") | contains($marker))][0].number // ""'
+          })"
+
+          if [ -z "$issue_number" ]; then
+            echo "No open deployment approval issue found for this run."
+            exit 0
+          fi
+
+          case "$DISPATCH_RESULT" in
+            success)
+              closing_note="Deployment approval completed and dispatch finished successfully."
+              ;;
+            cancelled)
+              closing_note="Deployment approval was cancelled or rejected; closing this request issue."
+              ;;
+            *)
+              closing_note="Deployment request is no longer pending (result: ${DISPATCH_RESULT}); closing this issue."
+              ;;
+          esac
+
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${issue_number}/comments" \
+            -d "$(jq -n --arg body "$closing_note" '{body: $body}')" >/dev/null
+
+          curl -fsSL -X PATCH \
+            -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${issue_number}" \
+            -d '{"state":"closed"}' >/dev/null
+
+          echo "Closed deployment approval issue #${issue_number}."
