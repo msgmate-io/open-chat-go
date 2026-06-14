@@ -514,6 +514,10 @@ func BackendRouting(
 	// has to pass before it accepts leases, plus the ingestion of the in-pod
 	// probe report that decides it.
 	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-egress", admin.GetSandboxPoolEgressStatus)
+	// Resolved pool network plan (ci#792, follow-up of the ci#546 shared-sandbox
+	// networking design): the isolation mode, the port block geometry and the
+	// block/alias each live workspace owns.
+	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-network", admin.GetSandboxPoolNetworkStatus)
 	v1PrivateApis.HandleFunc("POST /admin/sandbox-pool-egress/report", admin.IngestSandboxPoolEgressReport)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings", admin.ListIntegrationSettings)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings/{integration_name}", admin.GetIntegrationSettings)
