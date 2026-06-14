@@ -7,8 +7,6 @@ services:
     depends_on:
       frontend:
         condition: service_started
-      storybook:
-        condition: service_started
       redis:
         condition: service_healthy
     ports:
@@ -43,6 +41,7 @@ services:
     networks:
       - app-network
   storybook:
+    profiles: [ "storybook" ]
     image: dev-frontend
     build:
       dockerfile: dev.dockerfile
@@ -64,7 +63,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
