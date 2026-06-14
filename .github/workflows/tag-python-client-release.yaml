@@ -40,7 +40,7 @@ jobs:
     name: Create Python Client Tag
     runs-on: ubuntu-latest
     env:
-      API_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      API_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
       - name: Resolve source version and commit metadata
         id: meta
