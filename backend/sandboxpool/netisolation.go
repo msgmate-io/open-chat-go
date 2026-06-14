@@ -77,9 +77,11 @@ package sandboxpool
 //  7. localhost assumptions - injected CODER_LOCALHOST; a literal 127.0.0.1
 //     bind remains the documented shared-mode limitation.
 //
-// Follow-ups (one batched ticket): publish the allocated block through the pool
-// Service so an operator can reach a workspace dev server; expose the plan on the
-// admin surface next to ProviderAdmission; add a per-workspace cgroup guard.
+// Follow-ups (one batched ticket, ci#792): publish the allocated block through
+// the pool Service so an operator can reach a workspace dev server; add a
+// per-workspace cgroup guard; provision per-workspace netns; and surface a
+// distinct port-block exhaustion signal. The admin view of the resolved plan
+// landed with the network plan status (see netplanstatus.go).
 
 import (
 	"crypto/sha256"
