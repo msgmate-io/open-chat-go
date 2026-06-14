@@ -2,12 +2,51 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Git ref or SHA to build
+        required: false
+        default: main
+      release_kind:
+        description: Release type (pr-alpha, staging, production, manual)
+        required: false
+        default: manual
+      source_pr_number:
+        description: Source PR number (for pr-alpha releases)
+        required: false
+        default: ""
+      source_branch:
+        description: Source branch name (for metadata)
+        required: false
+        default: ""
+      deploy_url:
+        description: Deployment URL for final PR progress comment
+        required: false
+        default: ""
+      bot_user:
+        description: GitHub username that owns bot comments
+        required: false
+        default: cur1ousdude
+      release_tag:
+        description: Explicit release tag override
+        required: false
+        default: ""
+      release_name:
+        description: Explicit release name override
+        required: false
+        default: ""
+      prerelease:
+        description: Mark release as prerelease (true/false)
+        required: false
+        default: "true"
   push:
     branches:
       - fix-build-matrix
 
 permissions:
   contents: write
+  actions: write
+  issues: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -59,7 +98,8 @@ jobs:
       - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.BOT_PAT }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
       - name: Set up Go
@@ -129,8 +169,70 @@ jobs:
       - name: Checkout repository (for source archive)
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.BOT_PAT }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*var VERSION = "\(.*\)".*/\1/p' backend/api/metrics/handler.go)"
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+
+          RELEASE_KIND="${{ github.event.inputs.release_kind || 'manual' }}"
+          SOURCE_PR_NUMBER="${{ github.event.inputs.source_pr_number || '' }}"
+          SOURCE_BRANCH="${{ github.event.inputs.source_branch || '' }}"
+
+          TAG_NAME="build-${{ github.run_number }}"
+          RELEASE_NAME="Build ${{ github.run_number }}"
+          PRERELEASE_VALUE="false"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            case "$RELEASE_KIND" in
+              pr-alpha)
+                TAG_NAME="open-chat-pr-alpha-release-${VERSION}-${SHORT_SHA}"
+                if [ -n "$SOURCE_PR_NUMBER" ]; then
+                  RELEASE_NAME="PR Alpha Release ${VERSION} (PR #${SOURCE_PR_NUMBER})"
+                else
+                  RELEASE_NAME="PR Alpha Release ${VERSION}"
+                fi
+                PRERELEASE_VALUE="true"
+                ;;
+              staging)
+                TAG_NAME="open-chat-staging-${VERSION}"
+                RELEASE_NAME="Staging Release ${VERSION}"
+                PRERELEASE_VALUE="true"
+                ;;
+              production)
+                TAG_NAME="open-chat-${VERSION}"
+                RELEASE_NAME="Production Release ${VERSION}"
+                PRERELEASE_VALUE="false"
+                ;;
+              *)
+                TAG_NAME="build-${{ github.run_number }}"
+                RELEASE_NAME="Manual Build ${{ github.run_number }}"
+                PRERELEASE_VALUE="${{ github.event.inputs.prerelease || 'true' }}"
+                ;;
+            esac
+          fi
+
+          if [ -n "${{ github.event.inputs.release_tag || '' }}" ]; then
+            TAG_NAME="${{ github.event.inputs.release_tag }}"
+          fi
+          if [ -n "${{ github.event.inputs.release_name || '' }}" ]; then
+            RELEASE_NAME="${{ github.event.inputs.release_name }}"
+          fi
+
+          if [ -n "$SOURCE_BRANCH" ]; then
+            RELEASE_NAME="${RELEASE_NAME} [${SOURCE_BRANCH}]"
+          fi
+
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE_VALUE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -152,12 +254,63 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }}
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: ${{ steps.release_meta.outputs.release_name }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
           files: |
             all-artifacts/**/*
             code.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update PR progress comment from template
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.source_pr_number != ''
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          BOT_USER: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+          SOURCE_PR_NUMBER: ${{ github.event.inputs.source_pr_number }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag_name }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          CLIENT_REPOSITORY: msgmate-io/open-chat-go-python-client
+          BINARY_NAME: open-chat-${{ steps.release_meta.outputs.version }}-linux-amd64
+        run: |
+          set -euo pipefail
+          comments_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments")"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""' <<< "$comments_json")"
+          if [ -z "$comment_id" ]; then
+            echo "::error::Could not find existing PR progress comment to update."
+            exit 1
+          fi
+
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_RELEASE_TAG="$RELEASE_TAG"
+          TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
+          TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
+          TPL_BINARY_NAME="$BINARY_NAME"
+          DEPLOY_URL="${{ github.event.inputs.deploy_url || '' }}"
+          if [ -n "$DEPLOY_URL" ]; then
+            TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
+          else
+            TPL_DEPLOY_STEP="- [x] \`(3) deploy\`"
+          fi
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP
+          python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md > /tmp/pr_comment_body.md
+
+          payload="$(jq -Rs '{body: .}' < /tmp/pr_comment_body.md)"
+          status_code="$(curl -s -o /tmp/pr_comment_update.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
+            -d "$payload")"
+          if [ "$status_code" != "200" ]; then
+            echo "::error::Failed to update PR progress comment (status $status_code)."
+            cat /tmp/pr_comment_update.json || true
+            exit 1
+          fi

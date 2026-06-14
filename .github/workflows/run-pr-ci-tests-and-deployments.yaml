@@ -19,6 +19,34 @@ on:
         description: GitHub username that owns the bot comments
         required: false
         default: cur1ousdude
+      callback_action:
+        description: Optional callback mode for post-release comment updates
+        required: false
+        default: ""
+      source_repository:
+        description: Source repository for callback operations
+        required: false
+        default: msgmate-io/open-chat-go
+      source_pr_number:
+        description: Source PR number for callback operations
+        required: false
+        default: ""
+      release_tag:
+        description: Release tag emitted by build workflow
+        required: false
+        default: ""
+      release_version:
+        description: Release version emitted by build workflow
+        required: false
+        default: ""
+      client_repository:
+        description: Python client repository used in install instructions
+        required: false
+        default: msgmate-io/open-chat-go-python-client
+      binary_name:
+        description: Binary asset filename used in install instructions
+        required: false
+        default: ""
   pull_request:
     types:
       - opened
@@ -54,14 +82,78 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  update-pr-comment-after-release:
+    name: Update PR Comment After Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == 'release_comment' && github.event.inputs.source_pr_number != ''
+    env:
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+    steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Update PR progress comment with release details
+        run: |
+          set -euo pipefail
+          SOURCE_REPOSITORY="${{ github.event.inputs.source_repository || github.repository }}"
+          SOURCE_PR_NUMBER="${{ github.event.inputs.source_pr_number }}"
+          RELEASE_TAG="${{ github.event.inputs.release_tag }}"
+          RELEASE_VERSION="${{ github.event.inputs.release_version }}"
+          CLIENT_REPOSITORY="${{ github.event.inputs.client_repository || 'msgmate-io/open-chat-go-python-client' }}"
+          BINARY_NAME="${{ github.event.inputs.binary_name }}"
+
+          if [ -z "$BINARY_NAME" ] && [ -n "$RELEASE_VERSION" ]; then
+            BINARY_NAME="open-chat-${RELEASE_VERSION}-linux-amd64"
+          fi
+
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_RELEASE_TAG="$RELEASE_TAG"
+          TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
+          TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
+          TPL_BINARY_NAME="$BINARY_NAME"
+          TPL_DEPLOY_STEP='- [x] `(3) deploy`'
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md)"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comment_id="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${SOURCE_PR_NUMBER}/comments" \
+              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
+          })"
+          if [ -z "$comment_id" ]; then
+            echo "::error::Could not find existing progress comment to update."
+            exit 1
+          fi
+          curl -fsSL -X PATCH \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
+            -d "$payload" >/dev/null
+
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test')
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build')
     steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Delete previous workflow comments
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
@@ -83,21 +175,11 @@ jobs:
 
       - name: Post no-label guidance comment
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Add labels to trigger CI actions:
-
-            - `deploy`: trigger deployment dispatch to CI sub-repo
-            - `test`: indicates API tests required for merge policy
-
-            No label found, so I automatically added `test` for this PR.
-
-            <!-- open-chat-pr-ci-no-label-guidance -->
-          EOF
-          )"
+          body="$(cat development/ci/bot_message_templates/001-no-label-guidance.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -125,7 +207,7 @@ jobs:
 
       - name: Add default test label
         env:
-          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
         run: |
           set -euo pipefail
           curl -fsSL -X POST \
@@ -138,7 +220,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || (github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test')))
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -151,10 +233,13 @@ jobs:
       pr_helm_release: ${{ steps.context.outputs.pr_helm_release }}
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       should_test: ${{ steps.context.outputs.should_test }}
+      should_build: ${{ steps.context.outputs.should_build }}
       image_url: ${{ steps.image.outputs.image_url }}
+      dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
+      is_same_repo_pr: ${{ steps.context.outputs.is_same_repo_pr }}
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
@@ -202,7 +287,14 @@ jobs:
             DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
             SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
             SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
+            DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
+            if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+              IS_SAME_REPO_PR="true"
+            else
+              IS_SAME_REPO_PR="false"
+            fi
           else
             DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ env.DEPLOYMENT_STAGING }}}"
             TARGET_REF="${TARGET_REF_INPUT:-main}"
@@ -210,7 +302,10 @@ jobs:
             SOURCE_REPOSITORY="${{ github.repository }}"
             SHOULD_DEPLOY="deploy"
             SHOULD_TEST=""
+            SHOULD_BUILD=""
             RAW_PR_NAME="$DEPLOYMENT_NAME"
+            DISPATCH_REF="$TARGET_REF"
+            IS_SAME_REPO_PR="true"
           fi
           PR_SLUG="$(printf '%s' "$RAW_PR_NAME" \
             | tr '[:upper:]' '[:lower:]' \
@@ -259,7 +354,17 @@ jobs:
           echo "pr_helm_release=$PR_HELM_RELEASE" >> "$GITHUB_OUTPUT"
           echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
           echo "should_test=$SHOULD_TEST" >> "$GITHUB_OUTPUT"
-          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false}"
+          echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
+          echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
+          echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
+          echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} build=${SHOULD_BUILD:-false}"
+
+      - name: Checkout source repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.context.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
 
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
@@ -291,17 +396,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for builds and approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/002-progress-initial.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -327,14 +428,6 @@ jobs:
               -d "$payload"
           fi
 
-      - name: Checkout source repository
-        if: steps.context.outputs.should_deploy != '' || steps.context.outputs.should_test != ''
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.context.outputs.target_ref }}
-          token: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
-          submodules: recursive
-
       - name: Resolve build image metadata
         if: steps.context.outputs.should_deploy != ''
         id: image
@@ -354,7 +447,7 @@ jobs:
         if: steps.context.outputs.should_deploy != ''
         run: |
           set -euo pipefail
-          echo "${{ secrets.BOT_TOKEN || secrets.BOT_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.BOT_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Build and push temporary deployment image
         if: steps.context.outputs.should_deploy != ''
@@ -389,17 +482,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -436,17 +525,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            ${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -519,24 +604,27 @@ jobs:
     needs: [run-pr-ci-tests-and-deployments]
     if: github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Update progress comment when approval gate opens
         env:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}'
+          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/005-progress-approval-open.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -577,11 +665,18 @@ jobs:
     environment:
       name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Cancel superseded CI deployment runs for this PR
         env:
           CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
@@ -642,11 +737,130 @@ jobs:
                 }
               }'
           )"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch CI deploy workflow (status $status_code)."
+            cat /tmp/ci_deploy_dispatch.json || true
+            exit 1
+          fi
+
+      - name: Dispatch build and release workflow in source repository
+        if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true'
+        run: |
+          set -euo pipefail
+          SOURCE_REPO="${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}"
+          BUILD_DISPATCH_REF="$CI_REF"
+          TARGET_BUILD_REF="${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}"
+          SOURCE_BRANCH_REF="${{ needs.run-pr-ci-tests-and-deployments.outputs.dispatch_ref }}"
+
+          check_build_workflow_inputs() {
+            local ref_name="$1"
+            local status_code
+            status_code="$(curl -s -o /tmp/build_workflow_content.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
+            if [ "$status_code" != "200" ]; then
+              return 1
+            fi
+            content="$(jq -r '.content' < /tmp/build_workflow_content.json | tr -d '\n' | base64 -d)"
+            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
+            printf '%s' "$content" | grep -q 'target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'release_kind:' || return 1
+            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
+            printf '%s' "$content" | grep -q 'source_branch:' || return 1
+            printf '%s' "$content" | grep -q 'deploy_url:' || return 1
+            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            printf '%s' "$content" | grep -q 'prerelease:' || return 1
+            return 0
+          }
+
+          if ! check_build_workflow_inputs "$BUILD_DISPATCH_REF"; then
+            echo "::error::build.yaml on ref '${BUILD_DISPATCH_REF}' does not expose required workflow_dispatch inputs."
+            exit 1
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "$BUILD_DISPATCH_REF" \
+              --arg targetRef "$TARGET_BUILD_REF" \
+              --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
+              --arg sourceBranch "$SOURCE_BRANCH_REF" \
+              --arg deployUrl "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}" \
+              --arg botUser "$BOT_USER" \
+              '{
+                ref: $ref,
+                inputs: {
+                  target_ref: $targetRef,
+                  release_kind: "pr-alpha",
+                  source_pr_number: $sourcePrNumber,
+                  source_branch: $sourceBranch,
+                  deploy_url: $deployUrl,
+                  bot_user: $botUser,
+                  prerelease: "true"
+                }
+              }'
+          )"
+          status_code="$(curl -s -o /tmp/build_dispatch.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/build.yaml/dispatches" \
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch build workflow (status $status_code)."
+            cat /tmp/build_dispatch.json || true
+            exit 1
+          fi
+
+      - name: Dispatch python client tagging workflow
+        if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true'
+        run: |
+          set -euo pipefail
+          workflow_check_status="$(curl -s -o /tmp/python_tag_workflow_check.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/tag-python-client-release.yaml")"
+          if [ "$workflow_check_status" = "404" ]; then
+            echo "::notice::Workflow tag-python-client-release.yaml not available on default branch yet; skipping python client tag dispatch."
+            exit 0
+          fi
+          if [ "$workflow_check_status" != "200" ]; then
+            echo "::error::Failed to resolve python tag workflow (status $workflow_check_status)."
+            cat /tmp/python_tag_workflow_check.json || true
+            exit 1
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg sourceRepository "${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}" \
+              --arg sourcePrNumber "${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}" \
+              --arg sourceTargetRef "${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}" \
+              --arg botUser "$BOT_USER" \
+              '{
+                ref: $ref,
+                inputs: {
+                  release_kind: "pr-alpha",
+                  source_repository: $sourceRepository,
+                  source_pr_number: $sourcePrNumber,
+                  source_target_ref: $sourceTargetRef,
+                  bot_user: $botUser
+                }
+              }'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
             -d "$payload"
 
       - name: Wait for dispatched CI deployment workflow
@@ -733,17 +947,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            - [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='- [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})'
+          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -818,7 +1028,7 @@ jobs:
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
     env:
-      PR_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       REPOSITORY: ${{ github.repository }}
       REPO_OWNER: ${{ github.repository_owner }}
     steps:
@@ -919,8 +1129,15 @@ jobs:
     needs: [resolve-merged-deployment]
     if: needs.resolve-merged-deployment.outputs.should_deploy == 'true'
     env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
+      - name: Checkout source repository for templates
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-merged-deployment.outputs.target_ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
       - name: Comment deployment approval link on merged PR
         env:
           BOT_USER: ${{ env.BOT_USER }}
@@ -931,16 +1148,12 @@ jobs:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          body="$(cat <<EOF
-          Merged deployment queued for **${DEPLOYMENT_NAME}** → [${DEPLOYMENT_URL}](${DEPLOYMENT_URL}).
-
-          - Helm values: \`${HELM_VALUES_FILE}\`
-          - Deployment environment: \`${DEPLOYMENT_NAME}\`
-          - [Approve deployment here](${APPROVAL_RUN_URL})
-
-          <!-- open-chat-merged-deploy-comment -->
-          EOF
-          )"
+          TPL_DEPLOYMENT_NAME="$DEPLOYMENT_NAME"
+          TPL_DEPLOYMENT_URL="$DEPLOYMENT_URL"
+          TPL_HELM_VALUES_FILE="$HELM_VALUES_FILE"
+          TPL_APPROVAL_RUN_URL="$APPROVAL_RUN_URL"
+          export TPL_DEPLOYMENT_NAME TPL_DEPLOYMENT_URL TPL_HELM_VALUES_FILE TPL_APPROVAL_RUN_URL
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/008-merged-deploy-approval-link.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -966,6 +1179,61 @@ jobs:
               -d "$payload"
           fi
 
+      - name: Create or update deployment approval issue
+        env:
+          ISSUE_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+          DEPLOYMENT_URL: ${{ needs.resolve-merged-deployment.outputs.deployment_url }}
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
+          APPROVAL_RUN_URL: ${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}
+          APPROVAL_REVIEW_URL: ${{ format('https://github.com/{0}/actions/runs/{1}?check_suite_focus=true', github.repository, github.run_id) }}
+        run: |
+          set -euo pipefail
+          marker="<!-- open-chat-merged-deploy-approval-issue run:${GITHUB_RUN_ID} -->"
+          title="[Deploy approval] ${DEPLOYMENT_NAME} from merged PR #${MERGED_PR_NUMBER}"
+          body="$(cat <<EOF
+          ${marker}
+
+          Deployment approval required for **${DEPLOYMENT_NAME}**.
+
+          - Approval page: ${APPROVAL_REVIEW_URL}
+          - Workflow run: ${APPROVAL_RUN_URL}
+          - Source PR: #${MERGED_PR_NUMBER} (${MERGED_PR_URL})
+          - Deployment URL: ${DEPLOYMENT_URL}
+
+          This issue is closed automatically after approval or cancellation.
+          EOF
+          )"
+          payload="$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')"
+
+          issue_id="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq -r --arg marker "$marker" '[.[] | select(.pull_request | not) | select((.body // "") | contains($marker))][0].number // ""'
+          })"
+
+          if [ -n "$issue_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/${issue_id}" \
+              -d "$payload" >/dev/null
+            echo "Updated deployment approval issue #${issue_id}."
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues" \
+              -d "$payload" >/dev/null
+            echo "Created deployment approval issue."
+          fi
+
   dispatch-merged-deployment:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
@@ -980,7 +1248,7 @@ jobs:
     environment:
       name: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
     env:
-      CI_DISPATCH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN || secrets.BOT_TOKEN || secrets.BOT_PAT }}
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: merged-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
@@ -1037,12 +1305,211 @@ jobs:
               }'
           )"
           echo "Dispatching CI deploy with run id suffix: ${DISPATCH_RUN_ID}"
-          curl -fsSL -X POST \
+          status_code="$(curl -s -o /tmp/merged_ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ needs.resolve-merged-deployment.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
-            -d "$payload"
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged CI deploy workflow (status $status_code)."
+            cat /tmp/merged_ci_deploy_dispatch.json || true
+            exit 1
+          fi
+
+      - name: Dispatch build and release workflow for merged deployment
+        env:
+          MERGE_TARGET: ${{ needs.resolve-merged-deployment.outputs.merge_target }}
+        run: |
+          set -euo pipefail
+          if [ "$MERGE_TARGET" = "production" ]; then
+            RELEASE_KIND="production"
+          else
+            RELEASE_KIND="staging"
+          fi
+
+          SOURCE_REPO="${{ github.repository }}"
+          PRIMARY_REF="$MERGE_TARGET"
+          SECONDARY_REF="$CI_REF"
+          TERTIARY_REF="${{ github.event.repository.default_branch }}"
+
+          check_build_workflow_inputs() {
+            local ref_name="$1"
+            local status_code
+            status_code="$(curl -s -o /tmp/merged_build_workflow_content.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/.github/workflows/build.yaml?ref=${ref_name}")"
+            if [ "$status_code" != "200" ]; then
+              return 1
+            fi
+            content="$(jq -r '.content' < /tmp/merged_build_workflow_content.json | tr -d '\n' | base64 -d)"
+            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
+            printf '%s' "$content" | grep -q 'target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'release_kind:' || return 1
+            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
+            printf '%s' "$content" | grep -q 'source_branch:' || return 1
+            printf '%s' "$content" | grep -q 'deploy_url:' || return 1
+            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            printf '%s' "$content" | grep -q 'prerelease:' || return 1
+            return 0
+          }
+
+          BUILD_DISPATCH_REF=""
+          for candidate_ref in "$PRIMARY_REF" "$SECONDARY_REF" "$TERTIARY_REF"; do
+            if [ -z "$candidate_ref" ]; then
+              continue
+            fi
+            if [ "$candidate_ref" = "$BUILD_DISPATCH_REF" ]; then
+              continue
+            fi
+            if check_build_workflow_inputs "$candidate_ref"; then
+              BUILD_DISPATCH_REF="$candidate_ref"
+              break
+            fi
+          done
+
+          if [ -z "$BUILD_DISPATCH_REF" ]; then
+            echo "::error::Could not find a dispatchable build.yaml ref. Tried '${PRIMARY_REF}', '${SECONDARY_REF}', '${TERTIARY_REF}'."
+            exit 1
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "$BUILD_DISPATCH_REF" \
+              --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg releaseKind "$RELEASE_KIND" \
+              --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
+              --arg sourceBranch "${{ github.event.pull_request.base.ref }}" \
+              --arg deployUrl "${{ needs.resolve-merged-deployment.outputs.deployment_url }}" \
+              --arg botUser "$BOT_USER" \
+              '{
+                ref: $ref,
+                inputs: {
+                  target_ref: $targetRef,
+                  release_kind: $releaseKind,
+                  source_pr_number: $sourcePrNumber,
+                  source_branch: $sourceBranch,
+                  deploy_url: $deployUrl,
+                  bot_user: $botUser,
+                  prerelease: "true"
+                }
+              }'
+          )"
+          status_code="$(curl -s -o /tmp/merged_build_dispatch.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build.yaml/dispatches" \
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged build workflow (status $status_code)."
+            cat /tmp/merged_build_dispatch.json || true
+            exit 1
+          fi
+
+      - name: Dispatch python client tagging workflow for merged deployment
+        env:
+          MERGE_TARGET: ${{ needs.resolve-merged-deployment.outputs.merge_target }}
+        run: |
+          set -euo pipefail
+          workflow_check_status="$(curl -s -o /tmp/python_tag_workflow_check.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/tag-python-client-release.yaml")"
+          if [ "$workflow_check_status" = "404" ]; then
+            echo "::notice::Workflow tag-python-client-release.yaml not available on default branch yet; skipping python client tag dispatch."
+            exit 0
+          fi
+          if [ "$workflow_check_status" != "200" ]; then
+            echo "::error::Failed to resolve python tag workflow (status $workflow_check_status)."
+            cat /tmp/python_tag_workflow_check.json || true
+            exit 1
+          fi
+
+          if [ "$MERGE_TARGET" = "production" ]; then
+            RELEASE_KIND="production"
+          else
+            RELEASE_KIND="staging"
+          fi
+
+          SOURCE_REPO="${{ github.repository }}"
+          PRIMARY_REF="$MERGE_TARGET"
+          SECONDARY_REF="$CI_REF"
+          TERTIARY_REF="${{ github.event.repository.default_branch }}"
+
+          check_py_tag_workflow_inputs() {
+            local ref_name="$1"
+            local status_code
+            status_code="$(curl -s -o /tmp/merged_py_tag_workflow_content.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/contents/.github/workflows/tag-python-client-release.yaml?ref=${ref_name}")"
+            if [ "$status_code" != "200" ]; then
+              return 1
+            fi
+            content="$(jq -r '.content' < /tmp/merged_py_tag_workflow_content.json | tr -d '\n' | base64 -d)"
+            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
+            printf '%s' "$content" | grep -q 'release_kind:' || return 1
+            printf '%s' "$content" | grep -q 'source_repository:' || return 1
+            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
+            printf '%s' "$content" | grep -q 'source_target_ref:' || return 1
+            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            return 0
+          }
+
+          PY_TAG_DISPATCH_REF=""
+          for candidate_ref in "$PRIMARY_REF" "$SECONDARY_REF" "$TERTIARY_REF"; do
+            if [ -z "$candidate_ref" ]; then
+              continue
+            fi
+            if [ "$candidate_ref" = "$PY_TAG_DISPATCH_REF" ]; then
+              continue
+            fi
+            if check_py_tag_workflow_inputs "$candidate_ref"; then
+              PY_TAG_DISPATCH_REF="$candidate_ref"
+              break
+            fi
+          done
+
+          if [ -z "$PY_TAG_DISPATCH_REF" ]; then
+            echo "::error::Could not find a dispatchable tag-python-client-release.yaml ref. Tried '${PRIMARY_REF}', '${SECONDARY_REF}', '${TERTIARY_REF}'."
+            exit 1
+          fi
+
+          payload="$(
+            jq -n \
+              --arg ref "$PY_TAG_DISPATCH_REF" \
+              --arg releaseKind "$RELEASE_KIND" \
+              --arg sourceRepository "${{ github.repository }}" \
+              --arg sourcePrNumber "${{ github.event.pull_request.number }}" \
+              --arg sourceTargetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg botUser "$BOT_USER" \
+              '{
+                ref: $ref,
+                inputs: {
+                  release_kind: $releaseKind,
+                  source_repository: $sourceRepository,
+                  source_pr_number: $sourcePrNumber,
+                  source_target_ref: $sourceTargetRef,
+                  bot_user: $botUser
+                }
+              }'
+          )"
+          status_code="$(curl -s -o /tmp/merged_py_tag_dispatch.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged python tag workflow (status $status_code)."
+            cat /tmp/merged_py_tag_dispatch.json || true
+            exit 1
+          fi
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
@@ -1116,3 +1583,62 @@ jobs:
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
           exit 1
+
+  close-merged-deploy-approval-issue:
+    name: Close Merged Deploy Approval Issue
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment, post-merged-deploy-approval-link, dispatch-merged-deployment]
+    if: |
+      always() &&
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
+      (needs.post-merged-deploy-approval-link.result == 'success' || needs.post-merged-deploy-approval-link.result == 'skipped')
+    env:
+      ISSUE_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      DISPATCH_RESULT: ${{ needs.dispatch-merged-deployment.result }}
+    steps:
+      - name: Close deployment approval issue for this run
+        run: |
+          set -euo pipefail
+          marker="<!-- open-chat-merged-deploy-approval-issue run:${GITHUB_RUN_ID} -->"
+
+          issue_number="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100" \
+              | jq -r --arg marker "$marker" '[.[] | select(.pull_request | not) | select((.body // "") | contains($marker))][0].number // ""'
+          })"
+
+          if [ -z "$issue_number" ]; then
+            echo "No open deployment approval issue found for this run."
+            exit 0
+          fi
+
+          case "$DISPATCH_RESULT" in
+            success)
+              closing_note="Deployment approval completed and dispatch finished successfully."
+              ;;
+            cancelled)
+              closing_note="Deployment approval was cancelled or rejected; closing this request issue."
+              ;;
+            *)
+              closing_note="Deployment request is no longer pending (result: ${DISPATCH_RESULT}); closing this issue."
+              ;;
+          esac
+
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${issue_number}/comments" \
+            -d "$(jq -n --arg body "$closing_note" '{body: $body}')" >/dev/null
+
+          curl -fsSL -X PATCH \
+            -H "Authorization: Bearer ${ISSUE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${issue_number}" \
+            -d '{"state":"closed"}' >/dev/null
+
+          echo "Closed deployment approval issue #${issue_number}."

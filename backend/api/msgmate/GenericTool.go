@@ -62,15 +62,16 @@ func NewToolFromDefinition(def ToolDefinition) Tool {
 		Definition: def,
 	}
 	tool.BaseTool = BaseTool{
-		AdminOnly:       def.AdminOnly,
-		RequiresInit:    def.RequiresInit,
-		ToolName:        def.Name,
-		ToolType:        "function",
-		ToolDescription: def.Description,
-		ToolInput:       def.InputType,
-		ToolInit:        interface{}(nil),
-		RequiredParams:  def.RequiredParams,
-		Parameters:      def.Parameters,
+		AdminOnly:            def.AdminOnly,
+		RequiresInit:         def.RequiresInit,
+		RequiresConfirmation: def.RequiresConfirmation,
+		ToolName:             def.Name,
+		ToolType:             "function",
+		ToolDescription:      def.Description,
+		ToolInput:            def.InputType,
+		ToolInit:             interface{}(nil),
+		RequiredParams:       def.RequiredParams,
+		Parameters:           def.Parameters,
 	}
 	return tool
 }

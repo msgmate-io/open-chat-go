@@ -127,6 +127,7 @@ var Tabels []interface{} = []interface{}{
 	&Chat{},
 	&SharedChatConfig{},
 	&ChatSettings{},
+	&SharedChatInstance{},
 	&Message{},
 	&UploadedFile{},
 	&FileAccess{},
@@ -142,6 +143,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&Contact{}},
 	ChatAndMessageMigration{}, // Migrates: 'Chat', 'SharedChatConfig', 'Message'
 	TableMigration{&ChatSettings{}},
+	TableMigration{&SharedChatInstance{}},
 	FileUploadMigration{},
 	TableMigration{&ToolInitData{}},
 	TableMigration{&TaskResult{}},
