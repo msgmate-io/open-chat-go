@@ -263,11 +263,12 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.source_pr_number != ''
         env:
           CALLBACK_TOKEN: ${{ secrets.BOT_TOKEN || secrets.BOT_PAT || github.token }}
+          CALLBACK_REF: ${{ vars.CI_REF || 'main' }}
         run: |
           set -euo pipefail
           payload="$(
             jq -n \
-              --arg ref "${{ github.event.inputs.target_ref || 'main' }}" \
+              --arg ref "$CALLBACK_REF" \
               --arg callbackAction "release_comment" \
               --arg sourceRepository "${{ github.repository }}" \
               --arg sourcePrNumber "${{ github.event.inputs.source_pr_number }}" \
