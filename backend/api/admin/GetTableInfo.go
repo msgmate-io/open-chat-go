@@ -170,6 +170,14 @@ var tableConfigurations = map[string]TableInfoConfig{
 		},
 		JsonFields: []string{"ConfigData"},
 	},
+	"shared_chat_instances": {
+		IncludeFields: []string{"ID", "CreatedAt", "UpdatedAt", "DeletedAt", "ChatId", "OwningUserId", "ChatShareUUID"},
+		Preloads:      []string{"Chat", "OwningUser"},
+		PreloadMappings: map[string]string{
+			"Chat":       "chat",
+			"OwningUser": "owning_user",
+		},
+	},
 }
 
 func GetTableInfo(w http.ResponseWriter, r *http.Request) {
