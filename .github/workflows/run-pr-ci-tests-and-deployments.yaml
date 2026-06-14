@@ -104,27 +104,13 @@ jobs:
             BINARY_NAME="open-chat-${RELEASE_VERSION}-linux-amd64"
           fi
 
-          body="$(cat <<EOF
-          Running PR CI orchestration.
-
-          <!-- open-chat-pr-ci-progress -->
-
-          - [x] \`(1) setup\` [\`run\`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-          - [x] \`(2) build\`
-          - [x] \`(3) deploy\`
-          - [x] \`(4) test\` \`passed\`
-          - [x] \`(5) release build\` \`released: ${RELEASE_TAG}\`
-
-          <details>
-          <summary>Install Commands</summary>
-
-          \`\`\`bash
-          pip install git+https://github.com/${CLIENT_REPOSITORY}.git@${RELEASE_TAG}
-          wget -O open-chat "https://github.com/${SOURCE_REPOSITORY}/releases/download/${RELEASE_TAG}/${BINARY_NAME}"
-          \`\`\`
-          </details>
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_RELEASE_TAG="$RELEASE_TAG"
+          TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
+          TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
+          TPL_BINARY_NAME="$BINARY_NAME"
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$({
             curl -fsSL \
@@ -178,18 +164,7 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Add labels to trigger CI actions:
-
-            - `deploy`: trigger deployment dispatch to CI sub-repo
-            - `test`: indicates API tests required for merge policy
-            - `build`: trigger Build and Release after deploy approval
-
-            No label found, so I automatically added `test` for this PR.
-
-            <!-- open-chat-pr-ci-no-label-guidance -->
-          EOF
-          )"
+          body="$(cat development/ci/bot_message_templates/001-no-label-guidance.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -391,18 +366,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for builds and approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-            ${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && '- [ ] `(2) build` `running`' || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for builds and approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/002-progress-initial.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -490,18 +460,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            ${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-            ${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` [`image={0}`]({1})', steps.image.outputs.image_url, format('https://github.com/{0}/pkgs/container/{1}', github.repository_owner, 'open-chat-go')) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `waiting for approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [ ] `(4) test` `pending`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/003-progress-after-build.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -538,18 +503,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}
-            ${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-            ${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ steps.context.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', steps.image.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ steps.context.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', steps.context.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
+          TPL_STEP_TEST='${{ steps.context.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ steps.context.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/004-progress-after-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -629,18 +589,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            ${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1}) `awaiting approval`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}'
+          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build` `waiting for deploy approval`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/005-progress-approval-open.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -911,18 +866,13 @@ jobs:
           BOT_USER: ${{ env.BOT_USER }}
         run: |
           set -euo pipefail
-          body="$(cat <<'EOF'
-            Running PR CI orchestration.
-
-            <!-- open-chat-pr-ci-progress -->
-
-            - [x] `(1) setup` [`run`](${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }})
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}
-            - [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}
-            ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}
-          EOF
-          )"
+          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
+          TPL_STEP_DEPLOY='- [x] `(3) deploy` [`url=${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }}`](${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url }})'
+          TPL_STEP_TEST='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && '- [x] `(4) test` `passed`' || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [x] `(5) release build` `dispatched`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
+          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
@@ -1110,16 +1060,12 @@ jobs:
           MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          body="$(cat <<EOF
-          Merged deployment queued for **${DEPLOYMENT_NAME}** → [${DEPLOYMENT_URL}](${DEPLOYMENT_URL}).
-
-          - Helm values: \`${HELM_VALUES_FILE}\`
-          - Deployment environment: \`${DEPLOYMENT_NAME}\`
-          - [Approve deployment here](${APPROVAL_RUN_URL})
-
-          <!-- open-chat-merged-deploy-comment -->
-          EOF
-          )"
+          TPL_DEPLOYMENT_NAME="$DEPLOYMENT_NAME"
+          TPL_DEPLOYMENT_URL="$DEPLOYMENT_URL"
+          TPL_HELM_VALUES_FILE="$HELM_VALUES_FILE"
+          TPL_APPROVAL_RUN_URL="$APPROVAL_RUN_URL"
+          export TPL_DEPLOYMENT_NAME TPL_DEPLOYMENT_URL TPL_HELM_VALUES_FILE TPL_APPROVAL_RUN_URL
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/008-merged-deploy-approval-link.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           comment_id="$(
             curl -fsSL \
