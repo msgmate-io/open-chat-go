@@ -20,12 +20,6 @@ def main() -> int:
         if key.startswith("TPL_"):
             text = text.replace("{{" + key[4:] + "}}", value)
 
-    defaults = {
-        "TEST_STEP": "- [x] `(4) test` `passed`",
-    }
-    for key, value in defaults.items():
-        text = text.replace("{{" + key + "}}", value)
-
     sys.stdout.write(text)
     return 0
 
