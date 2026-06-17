@@ -141,8 +141,8 @@ jobs:
             exit 1
           fi
           TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
-          TPL_TEST_STEP="- [x] \`(4) test\` [\`passed\`](${DEPLOY_URL}/docs#go-tests?test_status=passed&pr_id=${SOURCE_PR_NUMBER})"
-          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP TPL_TEST_STEP
+          TPL_STEP_TEST="- [x] \`(4) test\` [\`passed\`](${DEPLOY_URL}/docs#go-tests?test_status=passed&pr_id=${SOURCE_PR_NUMBER})"
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP TPL_STEP_TEST
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md)"
           payload="$(jq -n --arg body "$body" '{body: $body}')"
           curl -fsSL -X PATCH \
