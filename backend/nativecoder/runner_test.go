@@ -3,6 +3,8 @@ package nativecoder
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +29,7 @@ type fakeConsolidationClient struct {
 	comments   []string
 	approved   []int
 	merged     []int
+	closed     []int
 	rollups    []string
 }
 
@@ -58,10 +61,11 @@ func (f *fakeConsolidationClient) ListOpenConsolidations(_ context.Context, pref
 	for _, pr := range f.openPRs {
 		if IsConsolidationPullRequest(AutoConsolidationPolicy{BranchPrefix: prefix}, pr) {
 			out = append(out, ExistingConsolidation{
-				Number:    pr.Number,
-				Branch:    pr.HeadRef,
-				Green:     checksGreen(pr.ChecksState),
-				CreatedAt: pr.CreatedAt,
+				Number:       pr.Number,
+				Branch:       pr.HeadRef,
+				Green:        checksGreen(pr.ChecksState),
+				CreatedAt:    pr.CreatedAt,
+				LinkedIssues: append([]int(nil), pr.LinkedIssues...),
 			})
 		}
 	}
@@ -110,6 +114,13 @@ func (f *fakeConsolidationClient) MergePullRequest(_ context.Context, number int
 	return nil
 }
 
+func (f *fakeConsolidationClient) CloseIssue(_ context.Context, number int, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = append(f.closed, number)
+	return nil
+}
+
 func (f *fakeConsolidationClient) EnsureRollupIssue(_ context.Context, title, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -126,6 +137,7 @@ func readyPR(number int) PullRequest {
 		Mergeable:        true,
 		MergeStateStatus: MergeStateClean,
 		ChecksState:      "success",
+		LinkedIssues:     []int{number},
 	}
 }
 
@@ -169,14 +181,15 @@ func TestRunnerOpensExactlyOneConsolidationAndLabelsIt(t *testing.T) {
 // rolls into the NEXT consolidation and no second PR is opened.
 func TestRunnerDefersWhileAConsolidationIsOpen(t *testing.T) {
 	open := PullRequest{
-		Number:      500,
-		Title:       "chore(consolidate): earlier batch",
-		Author:      "cur1ousdude",
-		HeadRef:     "chore/consolidate-2026-10-17",
-		BaseRef:     "main",
-		Mergeable:   true,
-		ChecksState: "pending",
-		CreatedAt:   time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+		Number:       500,
+		Title:        "chore(consolidate): earlier batch",
+		Author:       "cur1ousdude",
+		HeadRef:      "chore/consolidate-2026-10-17",
+		BaseRef:      "main",
+		Mergeable:    true,
+		ChecksState:  "pending",
+		CreatedAt:    time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+		LinkedIssues: []int{500},
 	}
 	client := newFakeConsolidationClient("cur1ousdude", []PullRequest{open, readyPR(21)})
 	runner := ConsolidationRunner{
@@ -214,14 +227,15 @@ func TestRunnerDefersWhileAConsolidationIsOpen(t *testing.T) {
 // approved and merged, and no new PR is opened.
 func TestRunnerMergesOneGreenConsolidation(t *testing.T) {
 	green := PullRequest{
-		Number:      600,
-		Title:       "chore(consolidate): ready",
-		Author:      "cur1ousdude",
-		HeadRef:     "chore/consolidate-2026-10-18",
-		BaseRef:     "main",
-		Mergeable:   true,
-		ChecksState: "success",
-		CreatedAt:   time.Date(2026, 10, 18, 8, 0, 0, 0, time.UTC),
+		Number:       600,
+		Title:        "chore(consolidate): ready",
+		Author:       "cur1ousdude",
+		HeadRef:      "chore/consolidate-2026-10-18",
+		BaseRef:      "main",
+		Mergeable:    true,
+		ChecksState:  "success",
+		CreatedAt:    time.Date(2026, 10, 18, 8, 0, 0, 0, time.UTC),
+		LinkedIssues: []int{813},
 	}
 	client := newFakeConsolidationClient("cur1ousdude", []PullRequest{green})
 	runner := ConsolidationRunner{
@@ -245,6 +259,12 @@ func TestRunnerMergesOneGreenConsolidation(t *testing.T) {
 	}
 	if !result.Merged {
 		t.Fatalf("expected the run result to report the merge")
+	}
+	if len(result.ClosedIssues) != 1 || result.ClosedIssues[0] != 813 {
+		t.Fatalf("expected ci#813 to be closed after the merge, got %v", result.ClosedIssues)
+	}
+	if len(client.closed) != 1 || client.closed[0] != 813 {
+		t.Fatalf("expected the client to close ci#813, got %v", client.closed)
 	}
 }
 
@@ -278,5 +298,46 @@ func TestRunnerNoClientIsSkipped(t *testing.T) {
 	}
 	if result.Ran || result.Skipped == "" {
 		t.Fatalf("expected a skipped run without a client, got %#v", result)
+	}
+}
+
+// TestConsolidationBodyClosesEveryLinkedIssue pins the machine-readable closing
+// lines the CI merge gate and the post-merge closure rely on (ci#813).
+func TestConsolidationBodyClosesEveryLinkedIssue(t *testing.T) {
+	plan := ConsolidationPlan{
+		Base:         "main",
+		Include:      []PullRequest{readyPR(11), readyPR(12)},
+		LinkedIssues: []int{11, 12},
+	}
+	body := consolidationBody(plan)
+	for _, want := range []string{
+		"Closes msgmate-io/open-chat-go-ci#11",
+		"Closes msgmate-io/open-chat-go-ci#12",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("consolidation body is missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestRefreshKeepsExistingLinkedIssues guards one-open-at-a-time: refreshing a
+// consolidation body must not drop the issues it already closes.
+func TestRefreshKeepsExistingLinkedIssues(t *testing.T) {
+	policy := DefaultAutoConsolidationPolicy()
+	plan := Plan(policy, ConsolidationFacts{
+		Repo:      "msgmate-io/open-chat-go",
+		SelfLogin: "cur1ousdude",
+		OpenPRs:   []PullRequest{readyPR(21)},
+		OpenConsolidations: []ExistingConsolidation{{
+			Number:       500,
+			Branch:       "chore/consolidate-2026-10-17",
+			Green:        false,
+			LinkedIssues: []int{7, 8},
+		}},
+		Now: time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC),
+	})
+	want := []int{7, 8}
+	if !reflect.DeepEqual(plan.LinkedIssues, want) {
+		t.Fatalf("plan.LinkedIssues = %v, want %v (PR #21 is deferred, not folded in)", plan.LinkedIssues, want)
 	}
 }
