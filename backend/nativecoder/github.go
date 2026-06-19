@@ -43,14 +43,20 @@ const (
 	// GitHubLoginEnv pins the identity `authors: [self]` resolves to, instead
 	// of asking the API.
 	GitHubLoginEnv = "OPEN_CHAT_GITHUB_LOGIN"
+	// GitHubIssuesRepoEnv names the repository that owns the leaf issues closed
+	// by a consolidation PR (ci#813). It defaults to LinkedIssueRepo.
+	GitHubIssuesRepoEnv = "OPEN_CHAT_GITHUB_ISSUES_REPO"
 )
 
 // GitHubAPIClient is the REST client used by the auto-consolidation runner.
 type GitHubAPIClient struct {
 	BaseURL string
 	Repo    string
-	Token   string
-	HTTP    *http.Client
+	// IssuesRepo is the repository that owns the leaf issues (ci#813); it may
+	// differ from Repo (the pull-request repository).
+	IssuesRepo string
+	Token      string
+	HTTP       *http.Client
 	// rules caches the base branch's ruleset-required contexts for the lifetime
 	// of the client, ie for one consolidation pass over many PRs (ci#683).
 	rules rulesetCache
@@ -79,10 +85,11 @@ func NewGitHubAPIClientFromEnv(repo string) (*GitHubAPIClient, error) {
 		base = "https://api.github.com"
 	}
 	return &GitHubAPIClient{
-		BaseURL: strings.TrimRight(base, "/"),
-		Repo:    strings.TrimSpace(repo),
-		Token:   token,
-		HTTP:    &http.Client{Timeout: 30 * time.Second},
+		BaseURL:    strings.TrimRight(base, "/"),
+		Repo:       strings.TrimSpace(repo),
+		IssuesRepo: firstNonEmpty(os.Getenv(GitHubIssuesRepoEnv), LinkedIssueRepo),
+		Token:      token,
+		HTTP:       &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 
@@ -197,6 +204,7 @@ func (c *GitHubAPIClient) SelfLogin(ctx context.Context) (string, error) {
 type githubPullRequest struct {
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
+	Body      string `json:"body"`
 	Draft     bool   `json:"draft"`
 	Mergeable *bool  `json:"mergeable"`
 	Head      struct {
@@ -254,6 +262,8 @@ func (c *GitHubAPIClient) pullRequestFromREST(ctx context.Context, row githubPul
 		Draft:            row.Draft,
 		MergeStateStatus: row.MergeStateStatus,
 		CreatedAt:        row.CreatedAt,
+		Body:             row.Body,
+		LinkedIssues:     LinkedIssueNumbers(row.Body),
 	}
 	for _, label := range row.Labels {
 		pr.Labels = append(pr.Labels, label.Name)
@@ -326,6 +336,7 @@ func (c *GitHubAPIClient) ListOpenConsolidations(ctx context.Context, branchPref
 			Green:               checksGreen(pr.ChecksState),
 			InformationalChecks: append([]string(nil), pr.InformationalChecks...),
 			CreatedAt:           pr.CreatedAt,
+			LinkedIssues:        append([]int(nil), pr.LinkedIssues...),
 		})
 	}
 	return out, nil
@@ -401,6 +412,43 @@ func (c *GitHubAPIClient) MergePullRequest(ctx context.Context, number int) erro
 		"commit_title": fmt.Sprintf("chore(consolidate): fold ready PRs into main (#%d)", number),
 	}
 	return c.request(ctx, http.MethodPut, fmt.Sprintf("/repos/%s/pulls/%d/merge", c.Repo, number), payload, nil)
+}
+
+// issuesRepo returns the repository that owns the leaf issues (ci#813).
+func (c *GitHubAPIClient) issuesRepo() string {
+	if repo := strings.TrimSpace(c.IssuesRepo); repo != "" {
+		return repo
+	}
+	return LinkedIssueRepo
+}
+
+// CloseIssue marks a leaf issue completed after its consolidation PR merged.
+// It is idempotent: an already-closed issue is left untouched, and the comment
+// is only posted on the transition. GitHub cannot auto-close a cross-repository
+// issue, so the runner performs the transition explicitly (ci#813).
+func (c *GitHubAPIClient) CloseIssue(ctx context.Context, number int, comment string) error {
+	if number <= 0 {
+		return fmt.Errorf("close issue: invalid issue number %d", number)
+	}
+	repo := c.issuesRepo()
+	var issue struct {
+		State string `json:"state"`
+	}
+	if err := c.request(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%d", repo, number), nil, &issue); err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(issue.State), "closed") {
+		return nil
+	}
+	if strings.TrimSpace(comment) != "" {
+		if err := c.request(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, number), map[string]interface{}{"body": comment}, nil); err != nil {
+			return err
+		}
+	}
+	return c.request(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/issues/%d", repo, number), map[string]interface{}{
+		"state":        "closed",
+		"state_reason": "completed",
+	}, nil)
 }
 
 // EnsureRollupIssue maintains the single consolidation tracker issue (ci#415).
