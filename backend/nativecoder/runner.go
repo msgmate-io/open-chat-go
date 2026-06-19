@@ -63,6 +63,9 @@ type ConsolidationRunResult struct {
 	// InformationalChecks names red checks/statuses the base-branch ruleset does
 	// not require that the merged consolidation PR carried (ci#683).
 	InformationalChecks []string `json:"informational_checks,omitempty"`
+	// ClosedIssues are the leaf issues closed after the consolidation merged
+	// (ci#813).
+	ClosedIssues []int `json:"closed_issues,omitempty"`
 }
 
 // Run performs one consolidation pass for the given policy and repository.
@@ -183,10 +186,40 @@ func (r ConsolidationRunner) Run(ctx context.Context, policy AutoConsolidationPo
 			)
 		} else {
 			result.Merged = true
+			r.closeLinkedIssues(ctx, plan, &result)
 		}
 	}
 
 	return result, nil
+}
+
+// issueCloser is the optional capability that lets the runner close the leaf
+// issues a merged consolidation PR named (ci#813). Clients without it still
+// consolidate; the caller/human then closes the issues.
+type issueCloser interface {
+	CloseIssue(ctx context.Context, number int, comment string) error
+}
+
+// closeLinkedIssues closes every leaf issue the merged consolidation PR named.
+// A failure is logged and does not undo the merge: the PR is already on main,
+// and the issue can be closed manually from the transcript.
+func (r ConsolidationRunner) closeLinkedIssues(ctx context.Context, plan ConsolidationPlan, result *ConsolidationRunResult) {
+	if len(plan.LinkedIssues) == 0 {
+		return
+	}
+	closer, ok := r.Client.(issueCloser)
+	if !ok {
+		r.logf("auto consolidation: client cannot close the %d linked issue(s); close them manually", len(plan.LinkedIssues))
+		return
+	}
+	for _, number := range plan.LinkedIssues {
+		comment := fmt.Sprintf("Closed by consolidation PR #%d (merged into `%s`).", plan.Existing.Number, plan.Base)
+		if err := closer.CloseIssue(ctx, number, comment); err != nil {
+			r.logf("auto consolidation: close `%s#%d` after merging #%d: %v", LinkedIssueRepo, number, plan.Existing.Number, err)
+			continue
+		}
+		result.ClosedIssues = append(result.ClosedIssues, number)
+	}
 }
 
 // applyLabels ensures the standard label set is present on the consolidation PR.
@@ -246,6 +279,17 @@ func consolidationBody(plan ConsolidationPlan) string {
 	} else {
 		for _, pr := range plan.Include {
 			fmt.Fprintf(&builder, "- #%d %s\n", pr.Number, strings.TrimSpace(pr.Title))
+		}
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("### Closes\n\n")
+	if len(plan.LinkedIssues) == 0 {
+		builder.WriteString("_no linked leaf issue (the merge gate rejects this)_\n\n")
+	} else {
+		for _, number := range plan.LinkedIssues {
+			builder.WriteString(LinkedIssueLine(number))
+			builder.WriteString("\n")
 		}
 		builder.WriteString("\n")
 	}
