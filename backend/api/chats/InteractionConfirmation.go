@@ -293,7 +293,7 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 	// Emit the interaction-confirmed notification once the interaction leaves
 	// the pending gate and its deferred reply is enqueued. Best-effort and
 	// detached so notification delivery never delays the approval response.
-	go maybeDispatchInteractionConfirmedNotification(context.Background(), DB, chat, *user)
+	chatsDetachedDBWork.Go(func() { maybeDispatchInteractionConfirmedNotification(context.Background(), DB, chat, *user) })
 
 	writeInteractionConfirmationResponse(w, InteractionConfirmationResponse{
 		Success: true,
