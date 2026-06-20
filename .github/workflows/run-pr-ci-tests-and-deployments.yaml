@@ -502,12 +502,12 @@ jobs:
         if: steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != ''
         run: |
           set -euo pipefail
-          if [ -z "${AI_TEST_API_HOST}" ]; then
-            echo "::error::AI_TEST_API_HOST secret is required when ai-test-mock or ai-test-real label is set."
-            exit 1
-          fi
           if [ "${{ steps.context.outputs.should_ai_test_real }}" != "" ] && [ -z "${AI_TEST_API_KEY}" ]; then
             echo "::error::AI_TEST_API_KEY secret is required when ai-test-real label is set."
+            exit 1
+          fi
+          if [ "${{ steps.context.outputs.should_ai_test_real }}" != "" ] && [ -z "${AI_TEST_API_HOST}" ]; then
+            echo "::error::AI_TEST_API_HOST secret is required when ai-test-real label is set."
             exit 1
           fi
 
@@ -525,16 +525,46 @@ jobs:
           python -m pip install -r development/ci/ai_process_tests/requirements.txt
           python -m pip install -e ./clients/oc_python_client
 
+      - name: Start backend for mocked AI process tests
+        if: steps.context.outputs.should_ai_test_mock != ''
+        env:
+          LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
+          LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yaml up -d redis
+          docker compose -f docker-compose.yaml up -d --build --no-deps backend
+
+          for i in $(seq 1 90); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
+            if [ "$code" != "000" ]; then
+              echo "Mocked test backend is reachable (HTTP $code)."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
+          docker compose -f docker-compose.yaml logs backend || true
+          exit 1
+
       - name: Run mocked AI process tests
         if: steps.context.outputs.should_ai_test_mock != ''
         env:
-          OPEN_CHAT_HOST: ${{ env.AI_TEST_API_HOST }}
+          OPEN_CHAT_HOST: http://127.0.0.1:1984
           OPEN_CHAT_USERNAME: admin
           OPEN_CHAT_PASSWORD: password
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"
         run: |
           set -euo pipefail
           ./development/ci/ai_process_tests/run_suite.sh mocked
+
+      - name: Stop backend for mocked AI process tests
+        if: steps.context.outputs.should_ai_test_mock != '' && always()
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yaml logs backend || true
+          docker compose -f docker-compose.yaml down -v || true
 
       - name: Run real AI process tests
         if: steps.context.outputs.should_ai_test_real != ''
