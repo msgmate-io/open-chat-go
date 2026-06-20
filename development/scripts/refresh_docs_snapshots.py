@@ -5,6 +5,7 @@ Refresh docs static snapshots defined in docs MDX frontmatter.
 Reads `frontend/pages/docs/content/*.mdx`, extracts:
 - snapshotApis
 - snapshotOutputPath
+- snapshotScript (optional local script returning JSON payload on stdout)
 
 Then calls each configured API and writes a deterministic JSON snapshot.
 
@@ -20,6 +21,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 import urllib.error
@@ -40,6 +42,7 @@ class SnapshotDoc:
     snapshot_apis: list[str]
     output_path: str
     snapshot_key: str
+    snapshot_script: str
 
 
 def parse_frontmatter(text: str) -> dict[str, object]:
@@ -85,8 +88,17 @@ def discover_snapshot_docs() -> list[SnapshotDoc]:
         apis = [str(x).strip() for x in apis_raw] if isinstance(apis_raw, list) else []
         out = str(fm.get("snapshotOutputPath", "")).strip()
         snapshot_key = str(fm.get("snapshotKey", "")).strip() or path.stem
-        if apis and out:
-            docs.append(SnapshotDoc(mdx_path=path, snapshot_apis=apis, output_path=out, snapshot_key=snapshot_key))
+        snapshot_script = str(fm.get("snapshotScript", "")).strip()
+        if out and (apis or snapshot_script):
+            docs.append(
+                SnapshotDoc(
+                    mdx_path=path,
+                    snapshot_apis=apis,
+                    output_path=out,
+                    snapshot_key=snapshot_key,
+                    snapshot_script=snapshot_script,
+                )
+            )
     return docs
 
 
@@ -104,6 +116,22 @@ def api_request(method: str, url: str, session_id: str) -> dict:
 
 
 def build_snapshot_payload(snapshot_doc: SnapshotDoc, host: str, session_id: str) -> dict:
+    if snapshot_doc.snapshot_script:
+        script_path = ROOT / snapshot_doc.snapshot_script
+        if not script_path.exists():
+            raise RuntimeError(f"snapshotScript does not exist: {script_path}")
+        completed = subprocess.run(
+            [sys.executable, str(script_path), "--stdout"],
+            cwd=str(ROOT),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        stdout = completed.stdout.strip()
+        if not stdout:
+            raise RuntimeError(f"snapshotScript returned empty output: {snapshot_doc.snapshot_script}")
+        return json.loads(stdout)
+
     responses = []
     for api in snapshot_doc.snapshot_apis:
         url = api if api.startswith("http://") or api.startswith("https://") else f"{host}{api}"
@@ -195,9 +223,13 @@ def main() -> int:
 
     for doc in docs:
         print(f"\n- {doc.mdx_path.relative_to(ROOT)}")
-        print(f"  snapshotApis: {len(doc.snapshot_apis)} endpoint(s)")
-        for api in doc.snapshot_apis:
-            print(f"    - {api}")
+        print(f"\n- {doc.mdx_path.relative_to(ROOT)}")
+        if doc.snapshot_script:
+            print(f"  snapshotScript: {doc.snapshot_script}")
+        if doc.snapshot_apis:
+            print(f"  snapshotApis: {len(doc.snapshot_apis)} endpoint(s)")
+            for api in doc.snapshot_apis:
+                print(f"    - {api}")
         print(f"  output:      {doc.output_path}")
 
         try:
