@@ -29,6 +29,10 @@ func NewCurrentTimeConfirmedTool() Tool {
 	return NewToolFromDefinition(tooldefs.CurrentTimeConfirmedToolDef)
 }
 
+func NewCurrentTimeConfirmedTestingTool() Tool {
+	return NewToolFromDefinition(tooldefs.CurrentTimeConfirmedTestingToolDef)
+}
+
 func NewRandomNumberTool() Tool {
 	return NewToolFromDefinition(tooldefs.RandomNumberToolDef)
 }
