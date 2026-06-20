@@ -572,6 +572,7 @@ jobs:
   run-pr-ci-tests:
     name: Run PR CI Tests
     runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments]
     if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real')))
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
@@ -1134,8 +1135,19 @@ jobs:
             "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/actions/workflows/tag-python-client-release.yaml/dispatches" \
             -d "$payload"
 
+  wait-for-approved-deploy:
+    name: Wait For Approved Deploy
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments, approve-and-dispatch-deploy]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
+      needs.approve-and-dispatch-deploy.result == 'success'
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
       - name: Wait for dispatched CI deployment workflow
-        id: wait_ci_deploy
         timeout-minutes: 6
         env:
           DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
@@ -1196,8 +1208,6 @@ jobs:
               continue
             fi
 
-            echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
-            echo "ci_run_id=$run_id" >> "$GITHUB_OUTPUT"
             if [ "$run_conclusion" = "success" ]; then
               exit 0
             fi
@@ -1207,12 +1217,6 @@ jobs:
           done
 
           echo "Timed out waiting for dispatched CI deployment workflow."
-          if [ -n "$run_url" ]; then
-            echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
-          fi
-          if [ -n "$run_id" ]; then
-            echo "ci_run_id=$run_id" >> "$GITHUB_OUTPUT"
-          fi
           exit 1
 
   run-pr-ci-ai-real-after-deploy:
