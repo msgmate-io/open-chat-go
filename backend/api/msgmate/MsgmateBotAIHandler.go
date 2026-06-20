@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[str
 	if suggested, exists := confirmation["suggested_inputs"]; exists {
 		action["input"] = suggested
 	}
+	if continueAfterExecute, ok := confirmation["continue_after_execute"].(bool); ok {
+		action["continue_after_execute"] = continueAfterExecute
+	}
 	if title, ok := confirmation["title"].(string); ok && title != "" {
 		action["title"] = title
 	}
@@ -50,6 +54,21 @@ func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[str
 	}
 
 	return action
+}
+
+func parseConfirmActionPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != "confirm-action" {
+		return nil, false
+	}
+	return payload, true
 }
 
 func collectConfirmableActions(toolCalls []interface{}) []interface{} {
@@ -114,6 +133,18 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+
+	if backend == "litellm" {
+		litellmHost := strings.TrimSpace(os.Getenv("LITELLM_API_HOST"))
+		if litellmHost != "" {
+			endpoint = litellmHost
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return fmt.Errorf("missing API host for litellm provider")
+		}
+	}
 
 	// Check for skip-core tag
 	if aih.hasSkipCoreTag(tags) {
@@ -580,13 +611,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						}
 					}
 
-					if tool, found := NewToolByName(toolCall.ToolName); found && tool.GetRequiresConfirmation() {
-						toolCallRepr["requires_confirmation"] = true
-						if toolCall.Result != "" {
-							var confirmationMeta map[string]interface{}
-							if err := json.Unmarshal([]byte(toolCall.Result), &confirmationMeta); err == nil {
-								toolCallRepr["confirmation"] = confirmationMeta
-							}
+					if tool, found := NewToolByName(toolCall.ToolName); found {
+						if tool.GetRequiresConfirmation() {
+							toolCallRepr["requires_confirmation"] = true
+						}
+						if confirmationMeta, ok := parseConfirmActionPayload(toolCall.Result); ok {
+							toolCallRepr["requires_confirmation"] = true
+							toolCallRepr["confirmation"] = confirmationMeta
 						}
 					}
 
