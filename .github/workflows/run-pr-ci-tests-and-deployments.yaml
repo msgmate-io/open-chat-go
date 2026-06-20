@@ -651,8 +651,8 @@ jobs:
           python -m pip install -r development/ci/ai_process_tests/requirements.txt
           python -m pip install -e ./clients/oc_python_client
 
-      - name: Start backend for mocked AI process tests
-        if: steps.context.outputs.should_ai_test_mock != ''
+      - name: Start backend for AI process tests
+        if: steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != ''
         env:
           LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
@@ -664,7 +664,7 @@ jobs:
           for i in $(seq 1 90); do
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
             if [ "$code" != "000" ]; then
-              echo "Mocked test backend is reachable (HTTP $code)."
+              echo "AI test backend is reachable (HTTP $code)."
               exit 0
             fi
             sleep 2
@@ -687,8 +687,8 @@ jobs:
           set -euo pipefail
           ./development/ci/ai_process_tests/run_suite.sh mocked
 
-      - name: Stop backend for mocked AI process tests
-        if: steps.context.outputs.should_ai_test_mock != '' && always()
+      - name: Stop backend for AI process tests
+        if: (steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != '') && always()
         run: |
           set -euo pipefail
           docker compose -f docker-compose.yaml logs backend || true
@@ -699,7 +699,7 @@ jobs:
         if: steps.context.outputs.should_ai_test_real != ''
         continue-on-error: true
         env:
-          OPEN_CHAT_HOST: ${{ env.AI_TEST_API_HOST }}
+          OPEN_CHAT_HOST: http://127.0.0.1:1984
           OPEN_CHAT_USERNAME: admin
           OPEN_CHAT_PASSWORD: password
           AI_TEST_API_HOST: ${{ env.AI_TEST_API_HOST }}
