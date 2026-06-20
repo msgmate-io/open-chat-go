@@ -410,6 +410,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var processedToolCallIds = make(map[string]bool) // Track processed tool call IDs
 	var fullText, thoughtText, thoughtBuffer strings.Builder
 	var isThinking bool
+	var hadToolCall bool
 	var currentBuffer strings.Builder
 	var tokenUsage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -586,6 +587,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if !ok {
 				toolCalls = nil
 			} else {
+				if !hadToolCall {
+					hadToolCall = true
+					fullText.Reset()
+					thoughtText.Reset()
+					thoughtBuffer.Reset()
+					currentBuffer.Reset()
+				}
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
 
 				// Check if we've already processed this tool call ID
