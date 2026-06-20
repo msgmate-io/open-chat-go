@@ -49,6 +49,12 @@ const (
 	// the chat and its messages, and the default bot lookup), so a leaked
 	// sandbox config can only read/post to chats as the minting user.
 	AudienceCoderTUI = "coder-tui"
+	// AudienceCoderMCP marks the per-endpoint credential the msgmate_coder
+	// integration mints for its user-configured MCP endpoints. It is
+	// default-deny and only reaches the agent dispatch/interaction and hive-mind
+	// routes the endpoint's tool allowlist can call; the concrete tool allowlist
+	// is enforced by the integration before it mints the request.
+	AudienceCoderMCP = "coder-mcp"
 
 	ScopeBotsRead         = "bots:read"
 	ScopeBotsWrite        = "bots:write"
