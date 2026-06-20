@@ -17,6 +17,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -39,6 +40,28 @@ const (
 	networkRetryBaseDelay = 300 * time.Millisecond
 
 	fetchUserAgent = "Mozilla/5.0 (compatible; OpenChatBot/1.0; +https://msgmate.io)"
+
+	// notFoundCacheTTL is how long a not-found (404/410) outcome is remembered
+	// per URL, so a repeated fetch of the same dead URL is answered from memory
+	// instead of hitting the network again. ci#789: development agents wasted
+	// whole turns re-fetching the same guessed URL (each time paying a 404
+	// round-trip) because the tool result carried no "this does not exist"
+	// signal.
+	notFoundCacheTTL = 5 * time.Minute
+	// notFoundCacheMax bounds the memory the not-found cache may use; entries
+	// past it are dropped wholesale rather than evicted one by one.
+	notFoundCacheMax = 256
+)
+
+// notFoundEntry is one remembered not-found fetch outcome.
+type notFoundEntry struct {
+	result FetchResult
+	at     time.Time
+}
+
+var (
+	notFoundMu    sync.Mutex
+	notFoundCache = map[string]notFoundEntry{}
 )
 
 // httpClient is shared across web tool requests so connections are pooled and
@@ -182,9 +205,26 @@ func isTransientNetworkError(err error) bool {
 	return false
 }
 
+// ErrNotFound reports that the requested URL does not exist (HTTP 404/410).
+// Callers can test it with errors.Is to tell a dead URL apart from a transient
+// transport failure, which is the difference between "stop guessing this path"
+// and "retry".
+var ErrNotFound = errors.New("url not found")
+
+// ErrBadStatus reports that the server answered with a non-success status that
+// is not a not-found (for example a 500 or a 403). The body is not returned as
+// content: a caller that silently accepted an error page as "the document"
+// spent further turns reasoning about markup that was never the answer (ci#789).
+var ErrBadStatus = errors.New("unexpected http status")
+
 // Fetch retrieves a URL and returns a bounded, readable text representation.
 // HTML documents are converted to plain text; other text content is returned
 // as-is. maxBytes <= 0 uses DefaultMaxBytes.
+//
+// A 404/410 answers with ErrNotFound instead of an empty document, so the model
+// gets an unambiguous "this URL does not exist" signal, and the outcome is
+// remembered for notFoundCacheTTL so a repeated fetch of the same dead URL is
+// answered without another round-trip (ci#789).
 func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error) {
 	target := strings.TrimSpace(rawURL)
 	if target == "" {
@@ -195,6 +235,9 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 	}
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
+	}
+	if cached, ok := cachedNotFound(target); ok {
+		return cached, notFoundError(cached)
 	}
 
 	resp, err := doRequest(ctx, func() (*http.Request, error) {
@@ -210,6 +253,12 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 		return FetchResult{}, err
 	}
 	defer resp.Body.Close()
+
+	if isNotFoundStatus(resp.StatusCode) {
+		rememberNotFound(target)
+		return FetchResult{URL: target, Status: resp.StatusCode},
+			notFoundError(FetchResult{URL: target, Status: resp.StatusCode})
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)+1))
 	if err != nil {
@@ -227,12 +276,70 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 		ContentType: contentType,
 		Truncated:   truncated,
 	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		// A redirect chain that ended on an error page, a 403 from a bot wall or
+		// a 5xx must not be handed back as if it were the document.
+		return result, fmt.Errorf("%w: %s returned %d", ErrBadStatus, target, resp.StatusCode)
+	}
 	if isHTMLContentType(contentType, body) {
 		result.Title, result.Content = htmlToText(string(body))
 	} else {
 		result.Content = string(body)
 	}
 	return result, nil
+}
+
+// isNotFoundStatus reports whether a status means the URL does not exist.
+func isNotFoundStatus(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusGone
+}
+
+// notFoundError builds the actionable error returned for a dead URL. It names
+// the status and says what to do next, so the model does not re-issue the same
+// fetch or try a near-identical guess.
+func notFoundError(result FetchResult) error {
+	return fmt.Errorf("%w: %s returned %d - the page does not exist; do not re-fetch it, "+
+		"use coder_websearch to find the current URL or read the repository instead",
+		ErrNotFound, result.URL, result.Status)
+}
+
+// cachedNotFound returns a remembered not-found outcome for url, if the entry is
+// still fresh.
+func cachedNotFound(url string) (FetchResult, bool) {
+	notFoundMu.Lock()
+	defer notFoundMu.Unlock()
+	entry, ok := notFoundCache[url]
+	if !ok {
+		return FetchResult{}, false
+	}
+	if time.Since(entry.at) > notFoundCacheTTL {
+		delete(notFoundCache, url)
+		return FetchResult{}, false
+	}
+	return entry.result, true
+}
+
+// rememberNotFound records a not-found outcome for url so the next fetch of the
+// same URL does not hit the network again. The cache is dropped wholesale once
+// it grows past notFoundCacheMax: it only ever holds cheap to reproduce misses.
+func rememberNotFound(url string) {
+	notFoundMu.Lock()
+	defer notFoundMu.Unlock()
+	if len(notFoundCache) >= notFoundCacheMax {
+		notFoundCache = map[string]notFoundEntry{}
+	}
+	notFoundCache[url] = notFoundEntry{
+		result: FetchResult{URL: url, Status: http.StatusNotFound},
+		at:     time.Now(),
+	}
+}
+
+// ResetNotFoundCache clears the remembered not-found outcomes. It is used by
+// tests and when a deployment wants a fresh view after a docs move.
+func ResetNotFoundCache() {
+	notFoundMu.Lock()
+	defer notFoundMu.Unlock()
+	notFoundCache = map[string]notFoundEntry{}
 }
 
 // Search runs a web search and returns the top results. It uses a

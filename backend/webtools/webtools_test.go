@@ -251,3 +251,98 @@ func TestSearchSearxNon2xxIsError(t *testing.T) {
 		t.Fatalf("a transport-level status must not be ErrSearchUnavailable: %v", err)
 	}
 }
+
+// countingTransport serves a fixed status/body and records how many requests
+// reached the network, so caching behaviour can be asserted offline.
+type countingTransport struct {
+	status int
+	body   string
+	calls  int
+}
+
+func (c *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	c.calls++
+	hdr := make(http.Header)
+	hdr.Set("Content-Type", "text/plain; charset=utf-8")
+	return &http.Response{
+		StatusCode: c.status,
+		Header:     hdr,
+		Body:       io.NopCloser(strings.NewReader(c.body)),
+	}, nil
+}
+
+func withCountingResponse(t *testing.T, status int, body string) *countingTransport {
+	t.Helper()
+	ResetNotFoundCache()
+	t.Cleanup(ResetNotFoundCache)
+	transport := &countingTransport{status: status, body: body}
+	old := httpClient
+	httpClient = &http.Client{Transport: transport}
+	t.Cleanup(func() { httpClient = old })
+	return transport
+}
+
+func TestFetchNotFoundIsErrorNotDocument(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusNotFound, "<html><body>404 not found</body></html>")
+	result, err := Fetch(context.Background(), "https://example.invalid/missing", 1024)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if result.Status != http.StatusNotFound {
+		t.Fatalf("expected the 404 status to be reported, got %d", result.Status)
+	}
+	if strings.Contains(result.Content, "not found") {
+		t.Fatalf("the error page must not be returned as content, got %q", result.Content)
+	}
+	if !strings.Contains(err.Error(), "do not re-fetch") {
+		t.Fatalf("the error should tell the caller what to do next, got %v", err)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("expected a single network attempt, got %d", transport.calls)
+	}
+}
+
+func TestFetchDeadURLIsCachedAcrossCalls(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusNotFound, "nope")
+	for i := 0; i < 3; i++ {
+		_, err := Fetch(context.Background(), "https://example.invalid/missing", 1024)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("call %d: expected ErrNotFound, got %v", i, err)
+		}
+	}
+	if transport.calls != 1 {
+		t.Fatalf("a repeated dead URL must be served from the not-found cache, got %d network calls", transport.calls)
+	}
+}
+
+func TestFetchGoneIsNotFound(t *testing.T) {
+	withCountingResponse(t, http.StatusGone, "gone")
+	if _, err := Fetch(context.Background(), "https://example.invalid/removed", 1024); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected HTTP 410 to be reported as not found, got %v", err)
+	}
+}
+
+func TestFetchErrorStatusIsNotReturnedAsContent(t *testing.T) {
+	withCountingResponse(t, http.StatusInternalServerError, "boom")
+	result, err := Fetch(context.Background(), "https://example.invalid/boom", 1024)
+	if !errors.Is(err, ErrBadStatus) {
+		t.Fatalf("expected ErrBadStatus, got %v", err)
+	}
+	if result.Content != "" {
+		t.Fatalf("an error page must not be returned as content, got %q", result.Content)
+	}
+}
+
+func TestFetchSuccessReturnsContent(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusOK, "plain body")
+	result, err := Fetch(context.Background(), "https://example.invalid/doc", 1024)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if result.Content != "plain body" {
+		t.Fatalf("unexpected content %q", result.Content)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("expected one attempt, got %d", transport.calls)
+	}
+}

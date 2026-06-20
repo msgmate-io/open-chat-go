@@ -782,7 +782,9 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	// the response.
 	if !unlockRequired {
 		actionStatus, _ := selectedAction["status"].(string)
-		go chats.MaybeDispatchInteractionActionTakenNotification(context.Background(), DB, chat, *user, targetToolName, actionStatus)
+		chats.GoDetachedDBWork(func() {
+			chats.MaybeDispatchInteractionActionTakenNotification(context.Background(), DB, chat, *user, targetToolName, actionStatus)
+		})
 	}
 
 	response.UpdatedAction = selectedAction

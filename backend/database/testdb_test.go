@@ -370,3 +370,205 @@ func containsAll(source string, needles []string) bool {
 	}
 	return true
 }
+
+// asyncDBWriterHandshakeMarkers are the accepted ways a non-test function that
+// outlives its caller may reach a SQLite pool: it registers the work with the
+// shared tracker (database.RegisterDetachedWork, drained by CloseTestDB) or it
+// waits for the pool to go quiescent before using it. Anything else is a bare
+// goroutine the ci#920 pool check cannot see, so the teardown can close the pool
+// and let t.TempDir RemoveAll race a late write (ci#811).
+var asyncDBWriterHandshakeMarkers = []string{
+	"RegisterDetachedWork(",
+	"DrainRegisteredDetachedWork(",
+	"WaitForTestDBQuiescent(",
+}
+
+// knownAsyncDBWriterViolations is the debt list of files whose detached DB work
+// is drained by their own stop function (cancel + <-done) instead of the shared
+// tracker. An entry that stops matching fails the test, so the list cannot rot.
+var knownAsyncDBWriterViolations = map[string]string{
+	"backend/database/session_cleanup.go":  "session sweeper is stopped by its own stop func (cancel + <-done)",
+	"backend/database/session_lifetime.go": "session refresh is stopped by its own stop func (cancel + <-done)",
+}
+
+var asyncDBGoroutinePattern = regexp.MustCompile(`^\s*go\s+\S`)
+
+var dbHandleReferencePattern = regexp.MustCompile(`\bDB\b|gorm\.DB|sql\.DB|\.DB\b|\bdb\b`)
+
+// hasBareDBGoroutine reports whether source starts a goroutine (a `go`
+// statement, not a tracker call) whose statement or closure body mentions a
+// database handle.
+func hasBareDBGoroutine(source string) bool {
+	lines := strings.Split(source, "\n")
+	for i := 0; i < len(lines); i++ {
+		if !asyncDBGoroutinePattern.MatchString(lines[i]) {
+			continue
+		}
+		fragment := lines[i]
+		depth := strings.Count(lines[i], "{") - strings.Count(lines[i], "}")
+		for j := i + 1; depth > 0 && j < len(lines); j++ {
+			fragment += "\n" + lines[j]
+			depth += strings.Count(lines[j], "{") - strings.Count(lines[j], "}")
+		}
+		if dbHandleReferencePattern.MatchString(fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// dirHasTempDirPoolTest reports whether dir holds a test file that points SQLite
+// at t.TempDir(), i.e. a package the ci#811 teardown protects.
+func dirHasTempDirPoolTest(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		source := string(content)
+		if strings.Contains(source, "TempDir") && containsAny(source, poolOpenCalls) {
+			return true
+		}
+	}
+	return false
+}
+
+// scanForTempDirPackagesWithDetachedDBWriters returns the workspace-relative
+// non-test files of every package with a TempDir SQLite pool test that start a
+// goroutine touching a DB handle without an accepted handshake.
+func scanForTempDirPackagesWithDetachedDBWriters(t *testing.T, root string) []string {
+	t.Helper()
+
+	qualified := map[string]bool{}
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		if path != root && strings.HasPrefix(entry.Name(), ".") {
+			return fs.SkipDir
+		}
+		switch entry.Name() {
+		case "node_modules", "vendor", "frontend", "dist", "build", "clients", "ci":
+			return fs.SkipDir
+		}
+		if dirHasTempDirPoolTest(path) {
+			qualified[path] = true
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("failed to scan %s for detached DB writers: %v", root, walkErr)
+	}
+
+	var offenders []string
+	for dir := range qualified {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("failed to list %s: %v", dir, err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			full := filepath.Join(dir, name)
+			content, err := os.ReadFile(full)
+			if err != nil {
+				t.Fatalf("failed to read %s: %v", full, err)
+			}
+			source := string(content)
+			if !hasBareDBGoroutine(source) || containsAny(source, asyncDBWriterHandshakeMarkers) {
+				continue
+			}
+			rel, err := filepath.Rel(root, full)
+			if err != nil {
+				rel = full
+			}
+			offenders = append(offenders, filepath.ToSlash(rel))
+		}
+	}
+	sort.Strings(offenders)
+	return offenders
+}
+
+// TestTempDirPackagesHaveNoUntrackedDBWriters is the ci#811 guard: a package
+// whose tests point SQLite at t.TempDir() must not start DB work in a bare
+// goroutine the teardown cannot drain, because CloseTestDB would close the pool
+// and the t.TempDir RemoveAll would then race the late write ("directory not
+// empty").
+func TestTempDirPackagesHaveNoUntrackedDBWriters(t *testing.T) {
+	offenders := scanForTempDirPackagesWithDetachedDBWriters(t, filepath.Join("..", ".."))
+	found := map[string]bool{}
+	for _, path := range offenders {
+		found[path] = true
+		if _, known := knownAsyncDBWriterViolations[path]; !known {
+			t.Errorf("ci#811: %s starts a goroutine that touches the SQLite pool without registering the work "+
+				"(database.RegisterDetachedWork / WaitForTestDBQuiescent), so the test teardown can close the pool "+
+				"and remove its t.TempDir while the write is still in flight", path)
+		}
+	}
+	for path, owner := range knownAsyncDBWriterViolations {
+		if !found[path] {
+			t.Errorf("knownAsyncDBWriterViolations still lists %s (%s), but it no longer detaches DB work; "+
+				"remove the entry", path, owner)
+		}
+	}
+}
+
+// TestScanForTempDirPackagesWithDetachedDBWritersClassifiesFixtures pins the
+// ci#811 predicate against a synthetic tree so the guard cannot silently stop
+// recognising the shape it was written for.
+func TestScanForTempDirPackagesWithDetachedDBWritersClassifiesFixtures(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both packages below look like a TempDir SQLite pool test package.
+	poolTest := "package pkg\n\n" +
+		"import (\n" +
+		"\t\"path/filepath\"\n" +
+		"\t\"testing\"\n" +
+		")\n\n" +
+		"func newDB(t *testing.T) *gorm.DB {\n" +
+		"\t_ = filepath.Join(t.TempDir(), \"test.sqlite\")\n" +
+		"\treturn SetupDatabase(t)\n" +
+		"}\n"
+	write("leak/leak_test.go", poolTest)
+	write("tracked/tracked_test.go", poolTest)
+	// Leak: bare goroutine writing through the pool, no handshake anywhere.
+	write("leak/handler.go", "package pkg\n\n"+
+		"func handler(DB *gorm.DB) {\n"+
+		"\tgo func() {\n"+
+		"\t\tDB.Exec(\"update chats set name = ?\", \"x\")\n"+
+		"\t}()\n"+
+		"}\n")
+	// Tracked: the goroutine goes through the registered group.
+	write("tracked/handler.go", "package pkg\n\n"+
+		"var detached = RegisterDetachedWork(&DetachedWork{})\n\n"+
+		"func handler(DB *gorm.DB) {\n"+
+		"\tdetached.Go(func() {\n"+
+		"\t\tDB.Exec(\"update chats set name = ?\", \"x\")\n"+
+		"\t})\n"+
+		"}\n")
+
+	offenders := scanForTempDirPackagesWithDetachedDBWriters(t, root)
+	if len(offenders) != 1 || offenders[0] != "leak/handler.go" {
+		t.Fatalf("ci#811: scanner classified %v, want exactly [leak/handler.go]", offenders)
+	}
+}

@@ -160,11 +160,11 @@ func TestSaturationLimiterReportsItsWinningBound(t *testing.T) {
 	policy := ResolveProviderAdmissionConfig(map[string]interface{}{"coder_sandbox_max_agents_per_pool": 1})
 	policy.QueueTimeout = 20 * time.Millisecond
 
-	release, _, err := providerAdmissionLimiterFor("bound-key", policy).acquire(context.Background())
+	release, _, err := providerAdmissionLimiterFor("bound-key", policy).acquire(context.Background(), providerAdmissionSlotMeta{})
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
-	_, _, err = providerAdmissionLimiterFor("bound-key", policy).acquire(context.Background())
+	_, _, err = providerAdmissionLimiterFor("bound-key", policy).acquire(context.Background(), providerAdmissionSlotMeta{})
 	saturation, ok := err.(*ProviderSaturationError)
 	if !ok {
 		t.Fatalf("err = %T (%v), want *ProviderSaturationError", err, err)
@@ -193,7 +193,7 @@ func TestAdmissionLimiterResizesAtRuntime(t *testing.T) {
 
 	release := make([]func(), 0, 4)
 	for i := 0; i < 2; i++ {
-		r, _, err := providerAdmissionLimiterFor("test-key", policy).acquire(context.Background())
+		r, _, err := providerAdmissionLimiterFor("test-key", policy).acquire(context.Background(), providerAdmissionSlotMeta{})
 		if err != nil {
 			t.Fatalf("acquire %d: %v", i, err)
 		}
@@ -202,7 +202,7 @@ func TestAdmissionLimiterResizesAtRuntime(t *testing.T) {
 
 	// A third request queues and reports saturation instead of firing into the
 	// provider's in-flight cap.
-	if _, _, err := providerAdmissionLimiterFor("test-key", policy).acquire(context.Background()); err == nil {
+	if _, _, err := providerAdmissionLimiterFor("test-key", policy).acquire(context.Background(), providerAdmissionSlotMeta{}); err == nil {
 		t.Fatalf("the third acquire at max_concurrency=2 must report saturation")
 	} else if _, ok := err.(*ProviderSaturationError); !ok {
 		t.Fatalf("err = %T (%v), want *ProviderSaturationError", err, err)
@@ -211,7 +211,7 @@ func TestAdmissionLimiterResizesAtRuntime(t *testing.T) {
 	// Raise the cap at runtime: the next acquire is admitted immediately.
 	raised := policy
 	raised.MaxConcurrency = 4
-	extraRelease, _, err := providerAdmissionLimiterFor("test-key", raised).acquire(context.Background())
+	extraRelease, _, err := providerAdmissionLimiterFor("test-key", raised).acquire(context.Background(), providerAdmissionSlotMeta{})
 	if err != nil {
 		t.Fatalf("acquire after raising the cap: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestAdmissionLimiterResizesAtRuntime(t *testing.T) {
 	lowered.MaxConcurrency = 1
 	blocked := lowered
 	blocked.QueueTimeout = 20 * time.Millisecond
-	if _, _, err := providerAdmissionLimiterFor("test-key", blocked).acquire(context.Background()); err == nil {
+	if _, _, err := providerAdmissionLimiterFor("test-key", blocked).acquire(context.Background(), providerAdmissionSlotMeta{}); err == nil {
 		t.Fatalf("acquire at a lowered cap with 3 in flight must report saturation")
 	} else if _, ok := err.(*ProviderSaturationError); !ok {
 		t.Fatalf("err = %T, want *ProviderSaturationError", err)
@@ -261,7 +261,7 @@ func TestAdmissionLimiterAdmitsConfiguredConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			release, _, err := providerAdmissionLimiterFor("kept-key", policy).acquire(context.Background())
+			release, _, err := providerAdmissionLimiterFor("kept-key", policy).acquire(context.Background(), providerAdmissionSlotMeta{})
 			if err != nil {
 				t.Errorf("acquire: %v", err)
 				return
@@ -295,7 +295,7 @@ func TestAdmissionLimiterAdmitsConfiguredConcurrency(t *testing.T) {
 func TestAdmissionDisabledAdmitsEverything(t *testing.T) {
 	resetProviderAdmissionForTest()
 	for i := 0; i < 10; i++ {
-		release, err := admitProviderRequest(context.Background(), "noop", ProviderAdmissionConfig{})
+		release, err := admitProviderRequest(context.Background(), "noop", ProviderAdmissionConfig{}, providerAdmissionSlotMeta{})
 		if err != nil {
 			t.Fatalf("admitProviderRequest: %v", err)
 		}
@@ -343,7 +343,7 @@ func TestProviderAdmissionLogLevels(t *testing.T) {
 	policy := ProviderAdmissionConfig{MaxConcurrency: 1, Source: "test"}
 	limiter := providerAdmissionLimiterFor("log-level-key", policy)
 	routine := limiter.snapshot()
-	release, _, err := limiter.acquire(context.Background())
+	release, _, err := limiter.acquire(context.Background(), providerAdmissionSlotMeta{})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -389,4 +389,309 @@ func TestProviderAdmissionLogLevels(t *testing.T) {
 	if strings.Contains(buf.String(), "level=ERROR") {
 		t.Fatalf("the routine admission change must not log at error level, got %q", buf.String())
 	}
+}
+
+// ci#799: the shared OpenRouter admission key stayed pinned at
+// `in_flight=20` at its cap for 2h+ with no coder sandbox pods and no live
+// generation behind the slots — the development lead could not acquire a slot
+// and only a backend restart cleared the counter. The root cause was that a
+// slot was retained when its request ended without reaching its `defer
+// release()` (cancelled turn, timeout, retry-exhausted task, a stream reader
+// that never returned). These tests pin the per-slot tracking, the defensive
+// release and the reclaim path.
+
+// TestAdmissionSlotReleasedOnContextCancel is the ticket's regression test: a
+// request acquires a slot, its context is cancelled/abandoned (the turn never
+// reaches the release), and in_flight must return to 0 instead of pinning the
+// cap. Previously the slot leaked and the key stayed saturated forever.
+func TestAdmissionSlotReleasedOnContextCancel(t *testing.T) {
+	resetProviderAdmissionForTest()
+	policy := ProviderAdmissionConfig{MaxConcurrency: 1, Source: "test"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	limiter := providerAdmissionLimiterFor("cancel-key", policy)
+	release, _, err := limiter.acquire(ctx, providerAdmissionSlotMeta{
+		RequestID: "provider-request:chat-1#1",
+		ChatID:    "chat-1",
+		Attempt:   1,
+	})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if got := limiter.snapshot().InFlight; got != 1 {
+		t.Fatalf("in_flight after acquire = %d, want 1", got)
+	}
+
+	// The cancelled turn never calls release.
+	cancel()
+	waitForInFlight(t, limiter, 0)
+
+	if got := limiter.snapshot().InFlight; got != 0 {
+		t.Fatalf("in_flight after ctx cancel = %d, want 0 (the ci#799 leak)", got)
+	}
+	// The slot must be gone from the per-slot view too.
+	if len(limiter.snapshot().Slots) != 0 {
+		t.Fatalf("slots after ctx cancel = %+v, want none", limiter.snapshot().Slots)
+	}
+	// The defensive release is idempotent: a late `defer release()` must not
+	// drive the counter negative.
+	release()
+	if got := limiter.snapshot().InFlight; got != 0 {
+		t.Fatalf("in_flight after late release = %d, want 0", got)
+	}
+}
+
+// TestAdmissionSlotReleasedOnRequestTimeout pins the timeout arm of the same
+// regression: a request whose context expired (the HTTP client timeout) must
+// give the slot back even though the caller is still blocked on the stream.
+func TestAdmissionSlotReleasedOnRequestTimeout(t *testing.T) {
+	resetProviderAdmissionForTest()
+	policy := ProviderAdmissionConfig{MaxConcurrency: 1, Source: "test"}
+	limiter := providerAdmissionLimiterFor("timeout-key", policy)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if _, _, err := limiter.acquire(ctx, providerAdmissionSlotMeta{RequestID: "req-timeout", Attempt: 2}); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// Do not release: wait for the deadline to fire.
+	waitForInFlight(t, limiter, 0)
+	if got := limiter.snapshot().InFlight; got != 0 {
+		t.Fatalf("in_flight after request timeout = %d, want 0", got)
+	}
+}
+
+// TestAdmissionSlotAttributedInSnapshot checks the ticket's diagnosability
+// criterion: a stalled holder must be visible in the admin snapshot with its
+// age and its chat/request identity, so an operator can see *who* pins the cap
+// instead of only the aggregate count.
+func TestAdmissionSlotAttributedInSnapshot(t *testing.T) {
+	resetProviderAdmissionForTest()
+	policy := ProviderAdmissionConfig{MaxConcurrency: 2, Source: "test"}
+	limiter := providerAdmissionLimiterFor("attr-key", policy)
+
+	releaseFirst, _, err := limiter.acquire(context.Background(), providerAdmissionSlotMeta{
+		RequestID: providerAdmissionRequestID("chat-alpha", 3),
+		ChatID:    "chat-alpha",
+		Attempt:   3,
+	})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer releaseFirst()
+	releaseSecond, _, err := limiter.acquire(context.Background(), providerAdmissionSlotMeta{
+		RequestID: providerAdmissionRequestID("chat-beta", 1),
+		ChatID:    "chat-beta",
+		Attempt:   1,
+	})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer releaseSecond()
+
+	snapshot := limiter.snapshot()
+	if len(snapshot.Slots) != 2 {
+		t.Fatalf("slots = %+v, want 2 attributed slots", snapshot.Slots)
+	}
+	if snapshot.InFlightMaxAge <= 0 {
+		t.Fatalf("in_flight_max_age = %s, want a positive oldest-slot age", snapshot.InFlightMaxAge)
+	}
+	if snapshot.StaleTimeout != ProviderRequestClientTimeout {
+		t.Fatalf("stale_timeout = %s, want the provider client timeout %s", snapshot.StaleTimeout, ProviderRequestClientTimeout)
+	}
+	// The slots are secret-free: identities only, never key material.
+	seen := map[string]bool{}
+	for _, slot := range snapshot.Slots {
+		if slot.AcquiredAt == "" || slot.Age < 0 || slot.SlotID == 0 {
+			t.Fatalf("slot = %+v, want id/acquired_at/age populated", slot)
+		}
+		if slot.ContextDone || slot.Stale {
+			t.Fatalf("slot = %+v, want a fresh live slot", slot)
+		}
+		seen[slot.ChatID] = true
+	}
+	if !seen["chat-alpha"] || !seen["chat-beta"] {
+		t.Fatalf("slots = %+v, want the chat attribution of both holders", snapshot.Slots)
+	}
+
+	// The saturation log line must name the oldest holder (ci#799), so a stalled
+	// key is diagnosable from the log alone when the api is not reachable.
+	line := providerAdmissionSlotHolderSuffix(snapshot)
+	if !strings.Contains(line, "oldest_holder") || !strings.Contains(line, "chat_id=") {
+		t.Fatalf("holder suffix = %q, want the oldest holder attribution", line)
+	}
+}
+
+// TestAdmissionWatchdogReleasesStaleSlotWithDoneContext is the leak the ticket
+// describes: a slot outlived the provider client timeout with no live
+// generation behind it. The watchdog must reclaim it, so in_flight cannot stay
+// at the cap forever (`stale_timeout` is configurable here instead of waiting
+// the real 300s).
+func TestAdmissionWatchdogReleasesStaleSlotWithDoneContext(t *testing.T) {
+	resetProviderAdmissionForTest()
+	policy := ProviderAdmissionConfig{
+		MaxConcurrency:   1,
+		Source:           "test",
+		StaleTimeout:     20 * time.Millisecond,
+		WatchdogInterval: time.Hour, // drive the sweep explicitly below
+	}
+	limiter := providerAdmissionLimiterFor("stale-key", policy)
+	limiter.mu.Lock()
+	limiter.watchdogEvery = time.Hour
+	limiter.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if _, _, err := limiter.acquire(ctx, providerAdmissionSlotMeta{RequestID: "req-stale", ChatID: "chat-stale", Attempt: 1}); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	// Simulate the leak shape exactly: the context is done but the slot is still
+	// counted (the observer that would have released it is gone), so only the
+	// watchdog can reclaim it.
+	limiter.markContextDone(limiter.slotForTest(1))
+	if got := limiter.snapshot().InFlight; got != 1 {
+		t.Fatalf("in_flight after acquire = %d, want 1", got)
+	}
+
+	ageSlotForTest(limiter, 3*policy.StaleTimeout/2)
+
+	// Before the sweep the stale slot is already visible in the snapshot.
+	staleSnapshot := limiter.snapshot()
+	if staleSnapshot.StaleSlots != 1 {
+		t.Fatalf("stale_slots = %d, want the aged slot flagged (snapshot %+v)", staleSnapshot.StaleSlots, staleSnapshot)
+	}
+	if !staleSnapshot.Slots[0].Stale || !staleSnapshot.Slots[0].ContextDone {
+		t.Fatalf("slot = %+v, want context_done+stale", staleSnapshot.Slots[0])
+	}
+
+	if reclaimed := limiter.sweepStaleSlots(time.Now()); reclaimed != 1 {
+		t.Fatalf("sweep reclaimed %d slots, want 1", reclaimed)
+	}
+	if got := limiter.snapshot().InFlight; got != 0 {
+		t.Fatalf("in_flight after watchdog sweep = %d, want 0", got)
+	}
+	if got := limiter.snapshot().ReclaimedStaleTotal; got != 1 {
+		t.Fatalf("reclaimed_stale_total = %d, want 1", got)
+	}
+	// The watchdog release is idempotent: a late `defer release()` is a no-op.
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+	if got := limiter.snapshot().InFlight; got != 0 {
+		t.Fatalf("in_flight after late release = %d, want 0", got)
+	}
+}
+
+// TestAdmissionWatchdogKeepsLiveLongRequest guards the other side of the
+// watchdog: a genuinely long-but-live request (context not done) must not be
+// reclaimed at the stale threshold, or a legitimately slow generation would be
+// cut off from its own slot accounting. Only a slot that also exceeded a second
+// threshold is reclaimed.
+func TestAdmissionWatchdogKeepsLiveLongRequest(t *testing.T) {
+	resetProviderAdmissionForTest()
+	policy := ProviderAdmissionConfig{
+		MaxConcurrency: 1,
+		Source:         "test",
+		StaleTimeout:   20 * time.Millisecond,
+	}
+	limiter := providerAdmissionLimiterFor("live-key", policy)
+	if _, _, err := limiter.acquire(context.Background(), providerAdmissionSlotMeta{RequestID: "req-live"}); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	// Age the slot deterministically past the stale threshold (1.5x) while its
+	// context stays live.
+	ageSlotForTest(limiter, 3*policy.StaleTimeout/2)
+
+	// Past the stale threshold but with a live context: not reclaimed yet.
+	if reclaimed := limiter.sweepStaleSlots(time.Now()); reclaimed != 0 {
+		t.Fatalf("sweep reclaimed %d live slots, want 0", reclaimed)
+	}
+	if got := limiter.snapshot().InFlight; got != 1 {
+		t.Fatalf("in_flight after sweep = %d, want the live slot kept", got)
+	}
+
+	// Past twice the threshold with still no completed context: this is the
+	// shape of the ci#799 leak (a stream reader that never returns), so the
+	// watchdog finally reclaims it.
+	ageSlotForTest(limiter, 3*policy.StaleTimeout)
+	if reclaimed := limiter.sweepStaleSlots(time.Now()); reclaimed != 1 {
+		t.Fatalf("sweep reclaimed %d slots, want the twice-threshold slot reclaimed", reclaimed)
+	}
+	if got := limiter.snapshot().InFlight; got != 0 {
+		t.Fatalf("in_flight after second sweep = %d, want 0", got)
+	}
+}
+
+// ageSlotForTest backdates every tracked slot by by, so the watchdog threshold
+// can be exercised deterministically instead of sleeping for the real provider
+// client timeout.
+func ageSlotForTest(limiter *providerAdmissionLimiter, by time.Duration) {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	for _, slot := range limiter.slots {
+		slot.acquiredAt = slot.acquiredAt.Add(-by)
+	}
+}
+
+// TestAdmissionSlotsDoNotPinCapAcrossCancels reproduces the ticket's end-to-end
+// symptom at the limiter level: many requests are admitted and then abandoned
+// without a release, and the effective cap must not stay pinned. With the old
+// behaviour the accumulated leaks kept in_flight at max_concurrency and the
+// next acquire timed out (`no slot within 15m0s`).
+func TestAdmissionSlotsDoNotPinCapAcrossCancels(t *testing.T) {
+	resetProviderAdmissionForTest()
+	policy := ProviderAdmissionConfig{MaxConcurrency: 3, Source: "test", QueueTimeout: 200 * time.Millisecond}
+	limiter := providerAdmissionLimiterFor("pin-key", policy)
+
+	for round := 0; round < 3; round++ {
+		cancelable := make([]context.Context, 0, policy.MaxConcurrency)
+		cancels := make([]context.CancelFunc, 0, policy.MaxConcurrency)
+		for i := 0; i < policy.MaxConcurrency; i++ {
+			ctx, cancel := context.WithCancel(context.Background())
+			if _, _, err := limiter.acquire(ctx, providerAdmissionSlotMeta{RequestID: "abandoned", ChatID: "chat-lead", Attempt: round + 1}); err != nil {
+				t.Fatalf("acquire round %d: %v", round, err)
+			}
+			cancelable = append(cancelable, ctx)
+			cancels = append(cancels, cancel)
+		}
+		if got := limiter.snapshot().InFlight; got != policy.MaxConcurrency {
+			t.Fatalf("round %d: in_flight = %d, want %d", round, got, policy.MaxConcurrency)
+		}
+		// Every request is abandoned without reaching its `defer release()`.
+		for _, cancel := range cancels {
+			cancel()
+		}
+		_ = cancelable
+		waitForInFlight(t, limiter, 0)
+	}
+
+	// The cap is free again: the next acquire (what the development lead does)
+	// must succeed without a backend restart.
+	release, _, err := limiter.acquire(context.Background(), providerAdmissionSlotMeta{RequestID: "lead-turn", ChatID: "chat-lead", Attempt: 1})
+	if err != nil {
+		t.Fatalf("the cap stayed pinned after abandoned slots: %v", err)
+	}
+	release()
+}
+
+// waitForInFlight polls a limiter until its in-flight count reaches want or the
+// deadline passes. The defensive release runs on a goroutine, so the test needs
+// a short wait rather than an immediate assertion.
+func waitForInFlight(t *testing.T, limiter *providerAdmissionLimiter, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if limiter.snapshot().InFlight == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// slotForTest resolves the tracked slot with the given id, so a test can
+// simulate a leaked slot (context done, still counted) instead of only the
+// clean release path.
+func (l *providerAdmissionLimiter) slotForTest(id uint64) *providerAdmissionSlot {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.slots[id]
 }

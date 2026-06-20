@@ -468,7 +468,9 @@ jobs:
           # sandbox_provider_failure.sh) so the workflow and its test cannot
           # drift: `account` = drained balance/bad key (HTTP 401/402, never
           # retryable, ci#740); `unreachable` = provider outage, rate limit or
-          # connection-level failure (HTTP 408/429/5xx, transient). Anything else
+          # connection-level failure (HTTP 408/429/5xx, transient). An
+          # in-flight-credit 402 is transient, not an account failure, because it
+          # clears once the concurrent requests drain (ci#769). Anything else
           # is an ordinary failure and keeps the normal verdict.
           provider_classifier="${GITHUB_WORKSPACE}/development/scripts/sandbox_provider_failure.sh"
           if [ -f "$provider_classifier" ]; then
