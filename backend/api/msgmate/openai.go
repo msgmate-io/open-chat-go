@@ -774,7 +774,7 @@ func buildTestBackendStreamingReader(
 		)
 	} else {
 		selectedToolName := ""
-		for _, candidate := range []string{"get_current_time_confirmed", "get_current_time"} {
+		for _, candidate := range []string{"get_current_time_confirmed_testing", "get_current_time_confirmed", "get_current_time"} {
 			if _, exists := toolMap[candidate]; exists {
 				selectedToolName = candidate
 				break

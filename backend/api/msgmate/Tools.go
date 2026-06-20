@@ -26,6 +26,7 @@ var AllTools = []Tool{
 	NewWeatherTool(),
 	NewCurrentTimeTool(),
 	NewCurrentTimeConfirmedTool(),
+	NewCurrentTimeConfirmedTestingTool(),
 	NewRandomNumberTool(),
 	NewLittleWorldChatReplyTool(),
 	NewLittleWorldGetUserStateTool(),
@@ -48,6 +49,8 @@ func NewToolByName(name string) (Tool, bool) {
 		return NewCurrentTimeTool(), true
 	case "get_current_time_confirmed":
 		return NewCurrentTimeConfirmedTool(), true
+	case "get_current_time_confirmed_testing":
+		return NewCurrentTimeConfirmedTestingTool(), true
 	case "get_random_number":
 		return NewRandomNumberTool(), true
 	case "little_world__chat_reply":
