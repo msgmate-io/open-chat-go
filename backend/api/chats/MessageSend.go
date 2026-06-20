@@ -401,7 +401,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	// touches the request after the handler returned.
 	autoContinueClient, _ := util.GetAsynqClient(r)
 	autoContinueInspector, _ := util.GetAsynqInspector(r)
-	go func() {
+	chatsDetachedDBWork.Go(func() {
 		if maybeAutoContinueInteraction(context.Background(), DB, autoContinueClient, autoContinueInspector, chat, *user, receiver, message) {
 			return
 		}
@@ -420,7 +420,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			MaybeRunAutoConsolidation(DB, chat)
 		}
 		maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
-	}()
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 
