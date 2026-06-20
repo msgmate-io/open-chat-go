@@ -49,6 +49,7 @@ func buildConfirmationSuggestion(toolName string, toolInput interface{}, continu
 		"type":                  "confirm-action",
 		"requires_confirmation": true,
 		"tool_name":             toolName,
+		"target_tool_name":      toolName,
 		"tool_input":            toolInput,
 		"status":                "pending_confirmation",
 	}
@@ -516,6 +517,10 @@ func processStreamingRequest(
 	toolChan chan<- ToolCall,
 	errChan chan<- error,
 ) (*toolCallResult, error) {
+	if backend == "testbackend" {
+		return processTestBackendStreamingRequest(messages, toolMap, chunkChan, usageChan, toolChan)
+	}
+
 	requestBody := map[string]interface{}{
 		"model":    model,
 		"messages": messages,
@@ -678,7 +683,7 @@ func processStreamingRequest(
 								if err == nil && isConfirmActionPayload(executedResult) {
 									toolResult = executedResult
 								} else {
-									toolResult = buildConfirmationSuggestion(currentToolCall.name, toolInput, continueAfterExecute)
+									toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
 								}
 
 								modelResult := toolResult
@@ -722,5 +727,121 @@ func processStreamingRequest(
 	// Set the captured AI response
 	result.aiResponse = aiResponseBuilder.String()
 
+	return result, nil
+}
+
+func processTestBackendStreamingRequest(
+	messages []map[string]interface{},
+	toolMap map[string]Tool,
+	chunkChan chan<- string,
+	usageChan chan<- *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	},
+	toolChan chan<- ToolCall,
+) (*toolCallResult, error) {
+	result := &toolCallResult{}
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role != "tool" {
+			continue
+		}
+		toolResult, _ := messages[i]["content"].(string)
+		if strings.TrimSpace(toolResult) == "" {
+			continue
+		}
+		responseText := fmt.Sprintf("The tool returned: %s", strings.TrimSpace(toolResult))
+		for _, chunk := range []string{"The tool returned: ", strings.TrimSpace(toolResult)} {
+			if strings.TrimSpace(chunk) == "" {
+				continue
+			}
+			chunkChan <- chunk
+		}
+		usageChan <- &struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		}{PromptTokens: 32, CompletionTokens: 12, TotalTokens: 44}
+		result.aiResponse = responseText
+		return result, nil
+	}
+
+	var selected Tool
+	for _, toolName := range []string{"get_current_time_confirmed", "get_current_time"} {
+		if tool, ok := toolMap[toolName]; ok {
+			selected = tool
+			break
+		}
+	}
+	if selected == nil {
+		if tool, ok := toolMap["get_current_time"]; ok {
+			selected = tool
+		}
+	}
+
+	if selected == nil {
+		responseText := "testbackend mock response: no tool call required."
+		chunkChan <- responseText
+		usageChan <- &struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		}{PromptTokens: 9, CompletionTokens: 8, TotalTokens: 17}
+		result.aiResponse = responseText
+		return result, nil
+	}
+
+	toolID := fmt.Sprintf("testbackend-tool-%d", time.Now().UnixNano())
+	toolFunctionName := selected.GetToolFunctionName()
+	toolInput, err := selected.ParseArguments("{}")
+	if err != nil {
+		return nil, fmt.Errorf("testbackend failed to parse tool args: %w", err)
+	}
+
+	result.usedTool = true
+	result.id = toolID
+	result.toolName = toolFunctionName
+	result.arguments = "{}"
+
+	var toolResult string
+	if selected.GetRequiresConfirmation() {
+		continueAfterExecute := selected.GetStopOnFirstConfirmableToolCall()
+		executedResult, runErr := selected.RunTool(toolInput)
+		if runErr == nil && isConfirmActionPayload(executedResult) {
+			toolResult = executedResult
+		} else {
+			toolResult = buildConfirmationSuggestion(selected.GetToolName(), toolInput, continueAfterExecute)
+		}
+
+		modelResult := toolResult
+		if blockMessage := strings.TrimSpace(selected.GetConfirmationBlockMessage()); blockMessage != "" {
+			modelResult = blockMessage
+		}
+		result.result = modelResult
+		if selected.GetStopOnFirstConfirmableToolCall() {
+			result.stopAfterTool = true
+		}
+	} else {
+		executedResult, runErr := selected.RunTool(toolInput)
+		if runErr != nil {
+			return nil, fmt.Errorf("testbackend tool execution failed: %w", runErr)
+		}
+		toolResult = executedResult
+		result.result = toolResult
+	}
+
+	toolChan <- ToolCall{
+		ToolName:  toolFunctionName,
+		ToolInput: toolInput,
+		Id:        toolID,
+		Result:    toolResult,
+	}
+	usageChan <- &struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	}{PromptTokens: 24, CompletionTokens: 6, TotalTokens: 30}
 	return result, nil
 }
