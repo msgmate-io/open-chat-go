@@ -501,6 +501,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var isThinking bool
 	var hadToolCall bool
 	var currentBuffer strings.Builder
+	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
 	var tokenUsage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -513,6 +514,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		aih.botContext.WSHandler.MessageHandler.StartPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 		),
 	)
 
@@ -523,6 +525,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			aih.botContext.WSHandler.MessageHandler.EndPartialMessage(
 				message.Content.ChatUUID,
 				message.Content.SenderUUID,
+				partialSessionID,
 			),
 		)
 	}
@@ -602,11 +605,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 							message.Content.ChatUUID,
 							message.Content.SenderUUID,
+							partialSessionID,
 							chunk,
 							[]string{""},
 							&map[string]interface{}{
 								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 								"total_time":    totalTime.Round(time.Millisecond).String(),
+								"partial_phase": "responding",
 							},
 							nil,
 							nil,
@@ -621,11 +626,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 							message.Content.ChatUUID,
 							message.Content.SenderUUID,
+							partialSessionID,
 							"",
 							[]string{chunk},
 							&map[string]interface{}{
 								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 								"total_time":    totalTime.Round(time.Millisecond).String(),
+								"partial_phase": "thinking",
 							},
 							nil,
 							nil,
@@ -642,10 +649,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 					message.Content.ChatUUID,
 					message.Content.SenderUUID,
+					partialSessionID,
 					chunk,
 					[]string{},
 					&map[string]interface{}{
-						"total_time": totalTime.Round(time.Millisecond).String(),
+						"total_time":    totalTime.Round(time.Millisecond).String(),
+						"partial_phase": "responding",
 					},
 					nil,
 					nil,
@@ -724,8 +733,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 
 					totalTime := time.Since(startTime)
 					partialMeta := map[string]interface{}{
-						"total_time": totalTime.Round(time.Millisecond).String(),
-						"tool_call":  toolCall.ToolName,
+						"total_time":    totalTime.Round(time.Millisecond).String(),
+						"tool_call":     toolCall.ToolName,
+						"partial_phase": "tool_call",
 					}
 					confirmableActions := collectConfirmableActions(allToolCalls)
 					if len(confirmableActions) > 0 {
@@ -737,6 +747,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 							message.Content.ChatUUID,
 							message.Content.SenderUUID,
+							partialSessionID,
 							"",
 							[]string{""},
 							&partialMeta,
@@ -777,6 +788,7 @@ func (aih *AIHandlerImpl) hasSkipCoreTag(tags []string) bool {
 // executeToolsOnly executes only the before and after tools without AI completion
 func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.NewMessage, tools []string, toolInit map[string]interface{}) error {
 	startTime := time.Now()
+	partialSessionID := fmt.Sprintf("%s-skip-core-%d", message.Content.ChatUUID, time.Now().UnixNano())
 
 	// Setup tools
 	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit)
@@ -799,19 +811,20 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 		aih.botContext.WSHandler.MessageHandler.StartPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 		),
 	)
 
 	// Execute interaction_start tools
 	for _, toolName := range interactionStartTools {
-		if err := aih.executeTool(ctx, toolName, toolMap, message); err != nil {
+		if err := aih.executeTool(ctx, toolName, toolMap, message, partialSessionID); err != nil {
 			log.Printf("Error executing interaction_start tool %s: %v", toolName, err)
 		}
 	}
 
 	// Execute interaction_complete tools
 	for _, toolName := range interactionCompleteTools {
-		if err := aih.executeTool(ctx, toolName, toolMap, message); err != nil {
+		if err := aih.executeTool(ctx, toolName, toolMap, message, partialSessionID); err != nil {
 			log.Printf("Error executing interaction_complete tool %s: %v", toolName, err)
 		}
 	}
@@ -823,6 +836,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 		aih.botContext.WSHandler.MessageHandler.EndPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 		),
 	)
 
@@ -844,7 +858,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 }
 
 // executeTool executes a single tool
-func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage) error {
+func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage, partialSessionID string) error {
 	// Find the tool in the tool map
 	tool, exists := toolMap[toolName]
 	if !exists {
@@ -876,12 +890,14 @@ func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMa
 		aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 			"",
 			[]string{""},
 			&map[string]interface{}{
-				"total_time": totalTime.Round(time.Millisecond).String(),
-				"tool_call":  toolName,
-				"skip_core":  true,
+				"total_time":    totalTime.Round(time.Millisecond).String(),
+				"tool_call":     toolName,
+				"skip_core":     true,
+				"partial_phase": "tool_call",
 			},
 			&[]interface{}{map[string]interface{}{
 				"id":        toolCall.Id,
