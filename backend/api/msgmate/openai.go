@@ -518,7 +518,11 @@ func processStreamingRequest(
 	errChan chan<- error,
 ) (*toolCallResult, error) {
 	if backend == "testbackend" {
-		return processTestBackendStreamingRequest(messages, toolMap, chunkChan, usageChan, toolChan)
+		reader, err := buildTestBackendStreamingReader(messages, toolMap)
+		if err != nil {
+			return nil, err
+		}
+		return processStreamingResponseReader(reader, toolMap, chunkChan, usageChan, toolChan)
 	}
 
 	requestBody := map[string]interface{}{
@@ -559,11 +563,23 @@ func processStreamingRequest(
 		return nil, fmt.Errorf("non-200 response: %d %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	result := &toolCallResult{}
 	reader := bufio.NewReader(resp.Body)
+	return processStreamingResponseReader(reader, toolMap, chunkChan, usageChan, toolChan)
+}
 
-	// Track the current tool call being built
-	// fullMessage := ""
+func processStreamingResponseReader(
+	reader *bufio.Reader,
+	toolMap map[string]Tool,
+	chunkChan chan<- string,
+	usageChan chan<- *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	},
+	toolChan chan<- ToolCall,
+) (*toolCallResult, error) {
+	result := &toolCallResult{}
+
 	var currentToolCall struct {
 		id        string
 		name      string
@@ -584,9 +600,7 @@ func processStreamingRequest(
 			continue
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
-		data = strings.TrimSpace(data)
-
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
 		if data == "[DONE]" {
 			break
 		}
@@ -613,235 +627,210 @@ func processStreamingRequest(
 			usageChan <- chunk.Usage
 		}
 
-		if len(chunk.Choices) > 0 {
-			delta := chunk.Choices[0].Delta
-
-			// Handle regular content
-			if delta.Content != "" {
-				chunkChan <- delta.Content
-				aiResponseBuilder.WriteString(delta.Content)
-			}
-
-			// Handle tool calls
-			if len(delta.ToolCalls) > 0 {
-				result.usedTool = true
-				for _, tc := range delta.ToolCalls {
-					toolCall, ok := tc.(map[string]interface{})
-					if !ok {
-						continue
-					}
-
-					// Get tool call ID
-					if id, ok := toolCall["id"].(string); ok && id != "" {
-						if id != currentToolCall.id {
-							// New tool call - reset tracking
-							result.id = id
-							currentToolCall = struct {
-								id        string
-								name      string
-								arguments string
-							}{id: id}
-						}
-					}
-
-					// Extract function details
-					if function, ok := toolCall["function"].(map[string]interface{}); ok {
-						// Get tool name
-						if name, ok := function["name"].(string); ok && name != "" {
-							currentToolCall.name = name
-							result.toolName = name
-						}
-						// Accumulate arguments
-						if args, ok := function["arguments"].(string); ok {
-							currentToolCall.arguments += args
-						}
-					}
-
-					// Try to parse complete tool call
-					if currentToolCall.name != "" && currentToolCall.arguments != "" {
-						tool, exists := toolMap[currentToolCall.name]
-						if !exists {
-							log.Printf("Warning: Tool '%s' not found in toolMap", currentToolCall.name)
-							continue
-						}
-
-						if toolInput, err := tool.ParseArguments(currentToolCall.arguments); err == nil {
-							fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", currentToolCall.name)
-							fmt.Printf("Tool ID: %s\n", currentToolCall.id)
-							fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
-
-							// Set the tool call information in the result
-							result.usedTool = true
-							result.id = currentToolCall.id
-							result.toolName = currentToolCall.name
-							result.arguments = currentToolCall.arguments
-
-							var toolResult string
-							if tool.GetRequiresConfirmation() {
-								continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
-								executedResult, err := tool.RunTool(toolInput)
-								if err == nil && isConfirmActionPayload(executedResult) {
-									toolResult = executedResult
-								} else {
-									toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
-								}
-
-								modelResult := toolResult
-								if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
-									modelResult = blockMessage
-								}
-								result.result = modelResult
-								if tool.GetStopOnFirstConfirmableToolCall() {
-									result.stopAfterTool = true
-								}
-							} else {
-								// Execute the tool and get the result
-								executedResult, err := tool.RunTool(toolInput)
-								if err != nil {
-									result.err = err
-									log.Printf("Error executing tool %s: %v", currentToolCall.name, err)
-									break
-								}
-								toolResult = executedResult
-								result.result = toolResult
-							}
-
-							// Send tool call notification with complete information
-							toolChan <- ToolCall{
-								ToolName:  currentToolCall.name,
-								ToolInput: toolInput,
-								Id:        currentToolCall.id,
-								Result:    toolResult,
-							}
-
-							// Important: Break out of the loop after processing a complete tool call
-							// This prevents processing the same tool call multiple times
-							break
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Set the captured AI response
-	result.aiResponse = aiResponseBuilder.String()
-
-	return result, nil
-}
-
-func processTestBackendStreamingRequest(
-	messages []map[string]interface{},
-	toolMap map[string]Tool,
-	chunkChan chan<- string,
-	usageChan chan<- *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	},
-	toolChan chan<- ToolCall,
-) (*toolCallResult, error) {
-	result := &toolCallResult{}
-
-	for i := len(messages) - 1; i >= 0; i-- {
-		role, _ := messages[i]["role"].(string)
-		if role != "tool" {
+		if len(chunk.Choices) == 0 {
 			continue
 		}
-		toolResult, _ := messages[i]["content"].(string)
-		if strings.TrimSpace(toolResult) == "" {
+		delta := chunk.Choices[0].Delta
+
+		if delta.Content != "" {
+			chunkChan <- delta.Content
+			aiResponseBuilder.WriteString(delta.Content)
+		}
+
+		if len(delta.ToolCalls) == 0 {
 			continue
 		}
-		responseText := fmt.Sprintf("The tool returned: %s", strings.TrimSpace(toolResult))
-		for _, chunk := range []string{"The tool returned: ", strings.TrimSpace(toolResult)} {
-			if strings.TrimSpace(chunk) == "" {
+
+		result.usedTool = true
+		for _, tc := range delta.ToolCalls {
+			toolCall, ok := tc.(map[string]interface{})
+			if !ok {
 				continue
 			}
-			chunkChan <- chunk
-		}
-		usageChan <- &struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		}{PromptTokens: 32, CompletionTokens: 12, TotalTokens: 44}
-		result.aiResponse = responseText
-		return result, nil
-	}
 
-	var selected Tool
-	for _, toolName := range []string{"get_current_time_confirmed", "get_current_time"} {
-		if tool, ok := toolMap[toolName]; ok {
-			selected = tool
+			if id, ok := toolCall["id"].(string); ok && id != "" {
+				if id != currentToolCall.id {
+					result.id = id
+					currentToolCall = struct {
+						id        string
+						name      string
+						arguments string
+					}{id: id}
+				}
+			}
+
+			if function, ok := toolCall["function"].(map[string]interface{}); ok {
+				if name, ok := function["name"].(string); ok && name != "" {
+					currentToolCall.name = name
+					result.toolName = name
+				}
+				if args, ok := function["arguments"].(string); ok {
+					currentToolCall.arguments += args
+				}
+			}
+
+			if currentToolCall.name == "" || currentToolCall.arguments == "" {
+				continue
+			}
+
+			tool, exists := toolMap[currentToolCall.name]
+			if !exists {
+				log.Printf("Warning: Tool '%s' not found in toolMap", currentToolCall.name)
+				continue
+			}
+
+			toolInput, parseErr := tool.ParseArguments(currentToolCall.arguments)
+			if parseErr != nil {
+				continue
+			}
+
+			fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", currentToolCall.name)
+			fmt.Printf("Tool ID: %s\n", currentToolCall.id)
+			fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
+
+			result.usedTool = true
+			result.id = currentToolCall.id
+			result.toolName = currentToolCall.name
+			result.arguments = currentToolCall.arguments
+
+			var toolResult string
+			if tool.GetRequiresConfirmation() {
+				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
+				executedResult, runErr := tool.RunTool(toolInput)
+				if runErr == nil && isConfirmActionPayload(executedResult) {
+					toolResult = executedResult
+				} else {
+					toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
+				}
+
+				modelResult := toolResult
+				if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
+					modelResult = blockMessage
+				}
+				result.result = modelResult
+				if tool.GetStopOnFirstConfirmableToolCall() {
+					result.stopAfterTool = true
+				}
+			} else {
+				executedResult, runErr := tool.RunTool(toolInput)
+				if runErr != nil {
+					result.err = runErr
+					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
+					break
+				}
+				toolResult = executedResult
+				result.result = toolResult
+			}
+
+			toolChan <- ToolCall{
+				ToolName:  currentToolCall.name,
+				ToolInput: toolInput,
+				Id:        currentToolCall.id,
+				Result:    toolResult,
+			}
+
 			break
 		}
 	}
-	if selected == nil {
-		if tool, ok := toolMap["get_current_time"]; ok {
-			selected = tool
-		}
-	}
 
-	if selected == nil {
-		responseText := "testbackend mock response: no tool call required."
-		chunkChan <- responseText
-		usageChan <- &struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		}{PromptTokens: 9, CompletionTokens: 8, TotalTokens: 17}
-		result.aiResponse = responseText
-		return result, nil
-	}
-
-	toolID := fmt.Sprintf("testbackend-tool-%d", time.Now().UnixNano())
-	toolFunctionName := selected.GetToolFunctionName()
-	toolInput, err := selected.ParseArguments("{}")
-	if err != nil {
-		return nil, fmt.Errorf("testbackend failed to parse tool args: %w", err)
-	}
-
-	result.usedTool = true
-	result.id = toolID
-	result.toolName = toolFunctionName
-	result.arguments = "{}"
-
-	var toolResult string
-	if selected.GetRequiresConfirmation() {
-		continueAfterExecute := selected.GetStopOnFirstConfirmableToolCall()
-		executedResult, runErr := selected.RunTool(toolInput)
-		if runErr == nil && isConfirmActionPayload(executedResult) {
-			toolResult = executedResult
-		} else {
-			toolResult = buildConfirmationSuggestion(selected.GetToolName(), toolInput, continueAfterExecute)
-		}
-
-		modelResult := toolResult
-		if blockMessage := strings.TrimSpace(selected.GetConfirmationBlockMessage()); blockMessage != "" {
-			modelResult = blockMessage
-		}
-		result.result = modelResult
-		if selected.GetStopOnFirstConfirmableToolCall() {
-			result.stopAfterTool = true
-		}
-	} else {
-		executedResult, runErr := selected.RunTool(toolInput)
-		if runErr != nil {
-			return nil, fmt.Errorf("testbackend tool execution failed: %w", runErr)
-		}
-		toolResult = executedResult
-		result.result = toolResult
-	}
-
-	toolChan <- ToolCall{
-		ToolName:  toolFunctionName,
-		ToolInput: toolInput,
-		Id:        toolID,
-		Result:    toolResult,
-	}
-	usageChan <- &struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	}{PromptTokens: 24, CompletionTokens: 6, TotalTokens: 30}
+	result.aiResponse = aiResponseBuilder.String()
 	return result, nil
+}
+
+func buildTestBackendStreamingReader(
+	messages []map[string]interface{},
+	toolMap map[string]Tool,
+) (*bufio.Reader, error) {
+	toolID := fmt.Sprintf("testbackend-tool-%d", time.Now().UnixNano())
+
+	hasToolResult := false
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role == "tool" {
+			hasToolResult = true
+			break
+		}
+		if role == "user" {
+			break
+		}
+	}
+
+	chunkPayloads := make([]map[string]interface{}, 0)
+	if hasToolResult {
+		chunkPayloads = append(chunkPayloads,
+			map[string]interface{}{
+				"choices": []map[string]interface{}{{
+					"index": 0,
+					"delta": map[string]interface{}{"content": "The tool returned: "},
+				}},
+			},
+			map[string]interface{}{
+				"choices": []map[string]interface{}{{
+					"index": 0,
+					"delta": map[string]interface{}{"content": "Request completed successfully."},
+				}},
+				"usage": map[string]interface{}{"prompt_tokens": 32, "completion_tokens": 12, "total_tokens": 44},
+			},
+		)
+	} else {
+		selectedToolName := ""
+		for _, candidate := range []string{"get_current_time_confirmed", "get_current_time"} {
+			if _, exists := toolMap[candidate]; exists {
+				selectedToolName = candidate
+				break
+			}
+		}
+
+		if selectedToolName == "" {
+			chunkPayloads = append(chunkPayloads,
+				map[string]interface{}{
+					"choices": []map[string]interface{}{{
+						"index": 0,
+						"delta": map[string]interface{}{"content": "testbackend mock response: no tool call required."},
+					}},
+					"usage": map[string]interface{}{"prompt_tokens": 9, "completion_tokens": 8, "total_tokens": 17},
+				},
+			)
+		} else {
+			chunkPayloads = append(chunkPayloads,
+				map[string]interface{}{
+					"choices": []map[string]interface{}{{
+						"index": 0,
+						"delta": map[string]interface{}{
+							"tool_calls": []map[string]interface{}{{
+								"id":   toolID,
+								"type": "function",
+								"function": map[string]interface{}{
+									"name":      selectedToolName,
+									"arguments": "{}",
+								},
+							}},
+						},
+					}},
+				},
+				map[string]interface{}{
+					"choices": []map[string]interface{}{{
+						"index":         0,
+						"delta":         map[string]interface{}{},
+						"finish_reason": "tool_calls",
+					}},
+					"usage": map[string]interface{}{"prompt_tokens": 24, "completion_tokens": 6, "total_tokens": 30},
+				},
+			)
+		}
+	}
+
+	var sseBuilder strings.Builder
+	for _, payload := range chunkPayloads {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("testbackend failed to encode mock stream payload: %w", err)
+		}
+		sseBuilder.WriteString("data: ")
+		sseBuilder.WriteString(string(encoded))
+		sseBuilder.WriteString("\n\n")
+	}
+	sseBuilder.WriteString("data: [DONE]\n\n")
+
+	return bufio.NewReader(strings.NewReader(sseBuilder.String())), nil
 }
