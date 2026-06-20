@@ -85,6 +85,24 @@ var mcpInteractionTokenRoutes = []browserTokenRoute{
 	{Method: http.MethodPost, Pattern: "/mcp", Scope: database.ScopeInteractionsMCP},
 }
 
+// coderMCPTokenRoutes describes the routes the per-endpoint `coder-mcp`
+// audience token may call. The msgmate_coder integration mints it for a
+// user-configured MCP endpoint after checking the endpoint's own tool
+// allowlist; this list is the outer boundary, so a leaked endpoint token cannot
+// reach the wider owner/admin API surface.
+var coderMCPTokenRoutes = []browserTokenRoute{
+	{Method: http.MethodGet, Pattern: "/bots/list"},
+	{Method: http.MethodPost, Pattern: "/agents/dispatch"},
+	{Method: http.MethodGet, Pattern: "/agents/interactions"},
+	{Method: http.MethodGet, Pattern: "/agents/interactions/{chat_uuid}"},
+	{Method: http.MethodPost, Pattern: "/agents/interactions/{chat_uuid}/continue"},
+	{Method: http.MethodPost, Pattern: "/agents/interactions/{chat_uuid}/stop"},
+	{Method: http.MethodGet, Pattern: "/integrations/hive_mind/lookup"},
+	{Method: http.MethodGet, Pattern: "/integrations/hive_mind/observations"},
+	{Method: http.MethodGet, Pattern: "/integrations/hive_mind/observations/{observation_uuid}"},
+	{Method: http.MethodPost, Pattern: "/integrations/hive_mind/influences"},
+}
+
 func normalizeBrowserRoutePath(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -140,6 +158,8 @@ func matchRestrictedTokenRoute(audience, method, path string) (scope string, ok 
 		return matchTokenRouteList(coderTUITokenRoutes, method, path)
 	case database.AudienceMCPInteraction:
 		return matchTokenRouteList(mcpInteractionTokenRoutes, method, path)
+	case database.AudienceCoderMCP:
+		return matchTokenRouteList(coderMCPTokenRoutes, method, path)
 	default:
 		return "", false
 	}
