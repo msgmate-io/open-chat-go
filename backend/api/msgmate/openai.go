@@ -59,6 +59,18 @@ func buildConfirmationSuggestion(toolName string, toolInput interface{}) string 
 	return string(encoded)
 }
 
+func isConfirmActionPayload(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return false
+	}
+	typeValue, _ := payload["type"].(string)
+	return typeValue == "confirm-action"
+}
+
 func toolRequest(host string, model string, backend string, messages []map[string]string, tools []interface{}, apiKey string) (<-chan ToolCallsResult, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -649,7 +661,12 @@ func processStreamingRequest(
 
 							var toolResult string
 							if tool.GetRequiresConfirmation() {
-								toolResult = buildConfirmationSuggestion(currentToolCall.name, toolInput)
+								executedResult, err := tool.RunTool(toolInput)
+								if err == nil && isConfirmActionPayload(executedResult) {
+									toolResult = executedResult
+								} else {
+									toolResult = buildConfirmationSuggestion(currentToolCall.name, toolInput)
+								}
 							} else {
 								// Execute the tool and get the result
 								executedResult, err := tool.RunTool(toolInput)
