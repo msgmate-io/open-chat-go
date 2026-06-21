@@ -1,14 +1,13 @@
 [
-  "/chat/{chat_uuid}",
-  "/chat/new/{contact_token}",
+  "/models",
   "/chat/new",
   "/chat",
   "/docs",
   "/admin/queues",
-  "/admin/{table_name}/{id}",
-  "/admin/{table_name}",
   "/admin",
+  "/tools",
   "/profile/2fa",
+  "/profile/access-tokens",
   "/profile",
   "/test",
   "/login"
