@@ -125,16 +125,16 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	aiHandler := msgmate.NewAIHandler(botContext)
 	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
-		failureMessage := botReplyFailureMessage(err)
-		if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
-			failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
-		}
-
 		if errors.Is(err, context.Canceled) {
-			failure := ToolExecutionResult{Success: false, Error: failureMessage}
+			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(err)}
 			_ = writeResult(task, failure)
 			persistTaskResult(deps.DB, task, failure)
 			return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
+		}
+
+		failureMessage := botReplyFailureMessage(err)
+		if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
+			failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
 		}
 		failure := ToolExecutionResult{Success: false, Error: failureMessage}
 		_ = writeResult(task, failure)
