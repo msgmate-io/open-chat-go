@@ -64,12 +64,26 @@ type ActionTaskCacheRow = { task_key?: string };
 type ActionTasksCacheValue =
   | {
       count?: number;
+      // The paged feed (ci#801) additionally carries the authoritative pending
+      // `total`; the count-only feed does not. Both must be kept in step or the
+      // "N pending" badge drifts from the rows the view holds.
+      total?: number;
+      // Paging metadata of the windowed feed (ci#801); irrelevant to the maths
+      // but declared so a patched entry keeps its shape.
+      limit?: number;
+      offset?: number;
+      has_more?: boolean;
       rows?: ActionTaskCacheRow[];
     }
   | undefined;
 
 const countFromFeed = (current: NonNullable<ActionTasksCacheValue>, rows: ActionTaskCacheRow[]): number =>
   typeof current.count === "number" ? Math.max(0, current.count - 1) : rows.length;
+
+// Decrement `total` only when the feed actually carries it, so the count-only
+// shape is not given a bogus `total` field.
+const totalFromFeed = (current: NonNullable<ActionTasksCacheValue>): number | undefined =>
+  typeof current.total === "number" ? Math.max(0, current.total - 1) : undefined;
 
 // Pure updaters, exported so the optimistic cache maths is unit-testable
 // without a browser or a mounted SWR cache.
@@ -86,7 +100,13 @@ export function applyActionTaskResolution(
     return current;
   }
   const rows = current.rows.filter((row) => row?.task_key !== taskKey);
-  return { ...current, rows, count: countFromFeed(current, rows) };
+  const total = totalFromFeed(current);
+  return {
+    ...current,
+    rows,
+    count: countFromFeed(current, rows),
+    ...(total === undefined ? {} : { total }),
+  };
 }
 
 // Decrement the compact count the sidebar badge renders.
@@ -94,7 +114,12 @@ export function applyActionTaskCountDecrement(current: ActionTasksCacheValue): A
   if (!current || typeof current.count !== "number") {
     return current;
   }
-  return { ...current, count: Math.max(0, current.count - 1) };
+  const total = totalFromFeed(current);
+  return {
+    ...current,
+    count: Math.max(0, current.count - 1),
+    ...(total === undefined ? {} : { total }),
+  };
 }
 
 // The backend keys a pending action by `<chat_uuid>:<message_uuid>` (lowercased,
