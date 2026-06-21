@@ -16,7 +16,7 @@ require (
 	gorm.io/driver/postgres v1.5.11
 )
 
-replace github.com/msgmate-io/go-tool-interface => ../clients/go-tool-interface
+replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
