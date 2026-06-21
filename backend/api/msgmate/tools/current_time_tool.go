@@ -22,11 +22,11 @@ var CurrentTimeToolDef = ToolDefinition{
 var CurrentTimeConfirmedToolDef = ToolDefinition{
 	Name:                           "get_current_time_confirmed",
 	FunctionName:                   "get_current_time",
-	Description:                    "Return the current server time in RFC3339 format after user confirmation.",
+	Description:                    "Return the current server time in RFC3339 format.",
 	RequiresInit:                   false,
 	RequiresConfirmation:           true,
 	StopOnFirstConfirmableToolCall: true,
-	ConfirmationBlockMessage:       "Tool execution is pending user confirmation. Do not assume or fabricate a result.",
+	ConfirmationBlockMessage:       "Confirmation Message was send to user. Tool execution is pending user confirmation. Do not assume or fabricate a result.",
 	InputType:                      CurrentTimeToolInput{},
 	RequiredParams:                 []string{},
 	Parameters:                     map[string]interface{}{},

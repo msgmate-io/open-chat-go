@@ -1252,6 +1252,14 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Print checked-out revisions
+        run: |
+          set -euo pipefail
+          echo "Workflow target ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}"
+          echo "Repository HEAD: $(git rev-parse HEAD)"
+          echo "Submodule revisions:"
+          git submodule status --recursive || true
+
       - name: Install Python AI process test dependencies
         run: |
           set -euo pipefail
@@ -1335,6 +1343,12 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
+          docker compose -f docker-compose.yaml logs -f backend &
+          BACKEND_LOG_PID=$!
+          cleanup() {
+            kill "$BACKEND_LOG_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
           ./development/ci/ai_process_tests/run_suite.sh real
 
       - name: Stop backend for real AI process tests
