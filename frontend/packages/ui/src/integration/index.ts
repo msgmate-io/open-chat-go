@@ -115,6 +115,18 @@ export {
   revalidateChatData,
 } from "./lib/chat-cache";
 
+// --- action-tasks paging (ci#801) -----------------------------------------
+export {
+  ACTION_TASKS_ENDPOINT,
+  ACTION_TASKS_PAGE_SIZE,
+  actionTasksFeedKey,
+  actionTasksPendingTotal,
+  nextActionTasksOffset,
+  shouldReanchorActionTasksOffset,
+  type ActionTasksPageMeta,
+  type NextActionTasksOffset,
+} from "./lib/action-tasks-page";
+
 // --- chat-UI extension seam ----------------------------------------------
 export {
   registerChatUIExtension,
