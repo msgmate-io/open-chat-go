@@ -1265,21 +1265,59 @@ jobs:
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${LITELLM_API_HOST:-}" ]; then
+            echo "::error::AI_TEST_API_HOST/LITELLM_API_HOST is empty for real AI tests."
+            exit 1
+          fi
+          if [ -z "${LITELLM_API_KEY:-}" ]; then
+            echo "::error::AI_TEST_API_KEY/LITELLM_API_KEY is empty for real AI tests."
+            exit 1
+          fi
+
+          echo "Real AI provider host (runner): ${LITELLM_API_HOST}"
+          provider_models_url="${LITELLM_API_HOST%/}/models"
+          provider_http_code="$(curl -sS -o /tmp/provider_models.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${LITELLM_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            "${provider_models_url}" || true)"
+          echo "Provider probe from runner: GET ${provider_models_url} -> HTTP ${provider_http_code}"
+
           docker compose -f docker-compose.yaml up -d redis
           docker compose -f docker-compose.yaml up -d --build --no-deps backend
 
+          backend_ready="0"
           for i in $(seq 1 90); do
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
             if [ "$code" != "000" ]; then
               echo "Real test backend is reachable (HTTP $code)."
-              exit 0
+              backend_ready="1"
+              break
             fi
             sleep 2
           done
 
-          echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
-          docker compose -f docker-compose.yaml logs backend || true
-          exit 1
+          if [ "$backend_ready" != "1" ]; then
+            echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
+            docker compose -f docker-compose.yaml logs backend || true
+            exit 1
+          fi
+
+          echo "Verifying provider env inside backend container..."
+          docker compose -f docker-compose.yaml exec -T backend sh -lc '
+            set -eu
+            if [ -z "${LITELLM_API_HOST:-}" ]; then
+              echo "::error::backend container missing LITELLM_API_HOST"
+              exit 1
+            fi
+            if [ -z "${LITELLM_API_KEY:-}" ]; then
+              echo "::error::backend container missing LITELLM_API_KEY"
+              exit 1
+            fi
+            echo "backend LITELLM_API_HOST=${LITELLM_API_HOST}"
+            echo "backend LITELLM_API_KEY length=${#LITELLM_API_KEY}"
+          '
 
       - name: Run real AI process tests
         id: ai_real_tests
