@@ -1293,6 +1293,8 @@ jobs:
           LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"
+          AI_PROCESS_TESTS_VERBOSE: "1"
+          PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
           ./development/ci/ai_process_tests/run_suite.sh real
