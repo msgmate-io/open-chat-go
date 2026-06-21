@@ -10,3 +10,6 @@
 [submodule "clients/oc_python_client"]
 	path = clients/oc_python_client
 	url = https://github.com/msgmate-io/open-chat-go-python-client
+[submodule "clients/go_tool_interface"]
+	path = clients/go_tool_interface
+	url = https://github.com/msgmate-io/open-chat-go-tool-interface

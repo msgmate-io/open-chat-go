@@ -6,6 +6,8 @@ require github.com/urfave/cli/v3 v3.0.0-alpha9.3
 
 require golang.org/x/crypto v0.45.0
 
+require github.com/msgmate-io/go-tool-interface v0.0.0
+
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/uuid v1.6.0
@@ -13,6 +15,8 @@ require (
 	golang.org/x/term v0.37.0
 	gorm.io/driver/postgres v1.5.11
 )
+
+replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
