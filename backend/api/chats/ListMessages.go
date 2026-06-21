@@ -12,6 +12,7 @@ type ListedMessage struct {
 	UUID       string                  `json:"uuid"`
 	SendAt     string                  `json:"send_at"`
 	SenderUUID string                  `json:"sender_uuid"`
+	DataType   string                  `json:"data_type"`
 	Text       string                  `json:"text"`
 	Reasoning  *[]string               `json:"reasoning"`
 	ToolCalls  *[]interface{}          `json:"tool_calls"`
@@ -35,6 +36,7 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 		UUID:       message.UUID,
 		SendAt:     message.CreatedAt.String(),
 		SenderUUID: message.Sender.UUID,
+		DataType:   message.DataType,
 		Text:       *message.Text,
 		Reasoning:  message.Reasoning,
 		ToolCalls:  &toolCalls,

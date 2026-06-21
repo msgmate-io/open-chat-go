@@ -10,11 +10,12 @@ BOT_CONFIG = {
     "max_tokens": 4096,
     "tools": [
         "get_random_number",
+        "get_current_time",
         "create_confirmable_action_suggestion",
     ],
-    "model": "deepseek-ai/DeepSeek-V4-Flash",
-    "endpoint": "https://api.deepinfra.com/v1/openai",
-    "backend": "deepinfra",
+    "model": "qwen3-8b-instruct_vllm",
+    "endpoint": "https://litellm.t1m.me/v1",
+    "backend": "litellm",
     "context": 10,
     "system_prompt": "You are a helpful assistant.",
 }
@@ -31,12 +32,7 @@ print("Logged in:", user.get("name"))
 
 chat = client.create_interaction(
     message=(
-        "Generate a random number between 10 and 40, "
-        "but do not call get_random_number directly. "
-        "First call create_confirmable_action_suggestion with "
-        "target_tool_name=get_random_number, suggested_inputs={\"min\":10,\"max\":40}, "
-        "title='Generate random number', description='Generate a random number between 10 and 40', "
-        "confirm_label='Confirm', danger_level='low'."
+        "Whats the current time?"
     )
 )
 print("Chat UUID:", chat.get("uuid"))
@@ -44,7 +40,7 @@ print("Chat UUID:", chat.get("uuid"))
 stopped_message = client.interaction_wait_for_stop_signal(wait_seconds=20)
 print("Stop signal:", json.dumps(stopped_message, indent=2))
 
-confirmations = client.get_interaction_confirmation_list(chat.get("uuid"))
+confirmations = client.get_interaction_confirmation_list(chat.get("uuid"), wait_seconds=20)
 print("Confirmations:", json.dumps(confirmations, indent=2))
 
 shared_url = client.get_shared_interaction_url(chat.get("uuid"))

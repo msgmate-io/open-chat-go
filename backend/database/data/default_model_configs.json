@@ -79,7 +79,7 @@
   {
     "title": "deepseek-ai/DeepSeek-V4-Flash",
     "description": "DeepSeek V4 Flash is an efficiency-focused MoE model with 284B total parameters (13B active) and a 1M-token context window. It's tuned for fast inference and high-throughput use cases while still holding up on reasoning and coding tasks.",
-    "bot_usernames": ["bot"],
+    "bot_usernames": [],
     "configuration": {
       "temperature": 0.7,
       "max_tokens": 4096,
@@ -88,6 +88,22 @@
       "model": "deepseek-ai/DeepSeek-V4-Flash",
       "endpoint": "https://api.deepinfra.com/v1/openai",
       "backend": "deepinfra",
+      "context": 10,
+      "system_prompt": "You are a helpful assistant."
+    }
+  },
+  {
+    "title": "qwen3-8b-instruct_vllm",
+    "description": "Qwen3 8B Instruct served through LiteLLM/vLLM.",
+    "bot_usernames": ["bot"],
+    "configuration": {
+      "temperature": 0.7,
+      "max_tokens": 4096,
+      "reasoning": true,
+      "tools": ["get_current_time_confirmed", "get_weather", "get_random_number"],
+      "model": "qwen3-8b-instruct_vllm",
+      "endpoint": "https://litellm.t1m.me/v1",
+      "backend": "litellm",
       "context": 10,
       "system_prompt": "You are a helpful assistant."
     }
