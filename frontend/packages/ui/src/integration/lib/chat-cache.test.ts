@@ -100,6 +100,32 @@ describe("action-task cache keys and optimistic updates (ci#726)", () => {
     expect(patchActionTasksFeed(undefined, "task-1")).toBeUndefined();
   });
 
+  it("keeps the paged feed's authoritative total in step with the rows (ci#801)", () => {
+    // The view windows the feed (`?limit=&offset=`) and shows `total` as the
+    // pending count, so an optimistic resolve must decrement it as well or the
+    // badge keeps claiming a task that is already gone.
+    const feed = {
+      count: 12,
+      total: 12,
+      limit: 5,
+      offset: 0,
+      has_more: true,
+      rows: [{ task_key: "a" }, { task_key: "b" }],
+    };
+    const next = applyActionTaskResolution(feed, "a");
+    expect(next?.total).toBe(11);
+    expect(next?.count).toBe(11);
+    expect(next?.rows?.map((row) => row.task_key)).toEqual(["b"]);
+    // The paging metadata survives the patch untouched.
+    expect(next?.limit).toBe(5);
+    expect(next?.has_more).toBe(true);
+
+    // The count-only badge entry has no `total`; it must not grow a bogus one.
+    const badge = applyActionTaskCountDecrement({ count: 3 });
+    expect(badge).toEqual({ count: 2 });
+    expect("total" in (badge ?? {})).toBe(false);
+  });
+
   it("derives the backend task key the same way the API does", () => {
     // backend/api/chats/ActionTasks.go `actionTaskKey`: lowercase + trim, joined
     // with a colon. A mismatched casing would silently drop the wrong (no) row.
