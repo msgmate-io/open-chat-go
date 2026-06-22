@@ -15,7 +15,35 @@ var LittleWorldChatReplyToolDef = ToolDefinition{
 	Description:  "Send a support response message into a Little World chat conversation.",
 	AdminOnly:    true,
 	RequiresInit: true,
-	InputType:    LittleWorldChatReplyToolInput{},
+	InitSchema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Session cookie value used to authenticate the Little World API request.",
+				"minLength":   1,
+			},
+			"csrf_token": map[string]interface{}{
+				"type":        "string",
+				"description": "CSRF token paired with the session for Little World API calls.",
+				"minLength":   1,
+			},
+			"api_host": map[string]interface{}{
+				"type":        "string",
+				"description": "Base URL of the Little World API host, for example https://app.littleworld.com.",
+				"minLength":   1,
+			},
+			"chat_uuid": map[string]interface{}{
+				"type":        "string",
+				"description": "UUID of the target Little World support chat conversation.",
+				"minLength":   1,
+			},
+		},
+		"required":             []string{"session_id", "csrf_token", "api_host", "chat_uuid"},
+		"additionalProperties": false,
+		"description":          "Initialization data required to authenticate and target the Little World chat API.",
+	},
+	InputType: LittleWorldChatReplyToolInput{},
 	InputSchema: map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{

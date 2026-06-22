@@ -19,6 +19,7 @@ type Tool interface {
 	GetToolName() string
 	GetToolParameters() map[string]interface{}
 	GetToolInputSchema() map[string]interface{}
+	GetToolInitSchema() map[string]interface{}
 	GetAdminOnly() bool
 	GetRequiresInit() bool
 	GetRequiresConfirmation() bool
@@ -143,6 +144,7 @@ type BaseTool struct {
 	ToolDescription                string
 	ToolInput                      interface{}
 	ToolInputSchema                map[string]interface{}
+	ToolInitSchema                 map[string]interface{}
 	ToolInit                       interface{}
 	RequiredParams                 []string
 	Parameters                     map[string]interface{}
@@ -239,6 +241,10 @@ func (t *BaseTool) GetToolInputSchema() map[string]interface{} {
 		"required":    t.RequiredParams,
 		"description": "The parameters for the tool",
 	}
+}
+
+func (t *BaseTool) GetToolInitSchema() map[string]interface{} {
+	return t.ToolInitSchema
 }
 
 func (t *BaseTool) GetRequiredParams() []string {

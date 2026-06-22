@@ -204,6 +204,11 @@ func (h *ToolsHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 				item.Required = parsedRequired
 			}
+			if requiresInit {
+				if explicitInitSchema := tool.GetToolInitSchema(); explicitInitSchema != nil {
+					item.InitSchema = explicitInitSchema
+				}
+			}
 			if item.InitSchema == nil && requiresInit {
 				item.InitSchema = map[string]interface{}{
 					"type":       "object",
