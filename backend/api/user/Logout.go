@@ -4,6 +4,7 @@ import (
 	"backend/database"
 	"gorm.io/gorm"
 	"net/http"
+	"strings"
 )
 
 // Logout a user
@@ -24,13 +25,29 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie("session_id")
-	if err != nil {
+	tokens := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, cookie := range r.Cookies() {
+		if cookie.Name != "session_id" {
+			continue
+		}
+		token := strings.TrimSpace(cookie.Value)
+		if token == "" {
+			continue
+		}
+		if _, exists := seen[token]; exists {
+			continue
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+
+	if len(tokens) == 0 {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	result := DB.Where("token = ?", cookie.Value).Delete(&database.Session{})
+	result := DB.Where("token IN ?", tokens).Delete(&database.Session{})
 	if result.Error != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -41,11 +58,23 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		Name:     "session_id",
 		Value:    "",
 		Path:     "/",
+		Domain:   h.CookieDomain,
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
 	})
+	if h.CookieDomain != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session_id",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteStrictMode,
+		})
+	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Logout successful"))
