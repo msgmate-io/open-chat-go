@@ -72,6 +72,7 @@ func NewToolFromDefinition(def ToolDefinition) Tool {
 		ToolType:                       "function",
 		ToolDescription:                def.Description,
 		ToolInput:                      def.InputType,
+		ToolInputSchema:                def.InputSchema,
 		ToolInit:                       interface{}(nil),
 		RequiredParams:                 def.RequiredParams,
 		Parameters:                     def.Parameters,
