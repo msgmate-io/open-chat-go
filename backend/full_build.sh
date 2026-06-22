@@ -18,8 +18,6 @@ for arg in "$@"; do
             echo ""
             echo "Environment Variables for Build-time Defaults:"
             echo "  BUILD_DEFAULT_BOT                    Default bot credentials (format: username:password)"
-            echo "  BUILD_DEFAULT_NETWORK_CREDENTIALS    Default network credentials (format: username:password)"
-            echo "  BUILD_NETWORK_BOOTSTRAP_PEERS        Bootstrap peers (comma-separated base64 encoded node info)"
             echo ""
             echo "Examples:"
             echo "  $0                                    # Build with frontend (default)"
@@ -93,6 +91,9 @@ else
 fi
 cd backend
 
+echo "Syncing external tool dependencies from tooldeps.json..."
+go run ./scripts/tooldepsgen -manifest ./tooldeps.json -output ./api/msgmate/externaltools/imports_gen.go -sync
+
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.
 TARGET_GOOS="${GOOS:-}"
@@ -153,16 +154,6 @@ LDFLAGS=""
 if [ -n "$BUILD_DEFAULT_BOT" ]; then
     LDFLAGS="$LDFLAGS -X backend/cmd.buildTimeDefaultBot=$BUILD_DEFAULT_BOT"
     echo "Setting build-time default bot: $BUILD_DEFAULT_BOT"
-fi
-
-if [ -n "$BUILD_DEFAULT_NETWORK_CREDENTIALS" ]; then
-    LDFLAGS="$LDFLAGS -X backend/cmd.buildTimeDefaultNetworkCredentials=$BUILD_DEFAULT_NETWORK_CREDENTIALS"
-    echo "Setting build-time default network credentials: $BUILD_DEFAULT_NETWORK_CREDENTIALS"
-fi
-
-if [ -n "$BUILD_NETWORK_BOOTSTRAP_PEERS" ]; then
-    LDFLAGS="$LDFLAGS -X backend/cmd.buildTimeNetworkBootstrapPeers=$BUILD_NETWORK_BOOTSTRAP_PEERS"
-    echo "Setting build-time bootstrap peers: $BUILD_NETWORK_BOOTSTRAP_PEERS"
 fi
 
 # Build with ldflags

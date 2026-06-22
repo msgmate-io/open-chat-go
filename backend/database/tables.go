@@ -118,6 +118,25 @@ func (FileUploadMigration) Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(&UploadedFile{}, &FileAccess{})
 }
 
+type GrantDefaultPermissionsMigration struct{}
+
+func (GrantDefaultPermissionsMigration) Migrate(db *gorm.DB) error {
+	var users []User
+	if err := db.Find(&users).Error; err != nil {
+		return err
+	}
+	for _, user := range users {
+		permission := Permission{UserId: user.ID, Permission: PermissionCreateAPITokens}
+		if err := db.Where("user_id = ? AND permission = ?", user.ID, PermissionCreateAPITokens).FirstOrCreate(&permission).Error; err != nil {
+			return err
+		}
+		if err := EnsureDefaultAccessTokenForUser(db, user.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var Tabels []interface{} = []interface{}{
 	&User{},
 	&TwoFactorRecoveryCode{},
@@ -133,6 +152,8 @@ var Tabels []interface{} = []interface{}{
 	&FileAccess{},
 	&TaskResult{},
 	&ModelConfig{},
+	&Permission{},
+	&AccessToken{},
 }
 
 var Migrations []Migration = []Migration{
@@ -148,4 +169,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ToolInitData{}},
 	TableMigration{&TaskResult{}},
 	TableMigration{&ModelConfig{}},
+	TableMigration{&Permission{}},
+	TableMigration{&AccessToken{}},
+	GrantDefaultPermissionsMigration{},
 }

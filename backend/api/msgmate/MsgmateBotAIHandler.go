@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[str
 	if suggested, exists := confirmation["suggested_inputs"]; exists {
 		action["input"] = suggested
 	}
+	if continueAfterExecute, ok := confirmation["continue_after_execute"].(bool); ok {
+		action["continue_after_execute"] = continueAfterExecute
+	}
 	if title, ok := confirmation["title"].(string); ok && title != "" {
 		action["title"] = title
 	}
@@ -50,6 +54,21 @@ func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[str
 	}
 
 	return action
+}
+
+func parseConfirmActionPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != "confirm-action" {
+		return nil, false
+	}
+	return payload, true
 }
 
 func collectConfirmableActions(toolCalls []interface{}) []interface{} {
@@ -114,6 +133,18 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+
+	if backend == "litellm" {
+		litellmHost := strings.TrimSpace(os.Getenv("LITELLM_API_HOST"))
+		if litellmHost != "" {
+			endpoint = litellmHost
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return fmt.Errorf("missing API host for litellm provider")
+		}
+	}
 
 	// Check for skip-core tag
 	if aih.hasSkipCoreTag(tags) {
@@ -198,6 +229,15 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	for i := len(paginatedMessages.Rows) - 1; i >= 0; i-- {
 		msg := paginatedMessages.Rows[i]
 
+		if msg.DataType == "event" {
+			continue
+		}
+		if msg.MetaData != nil {
+			if eventType, ok := (*msg.MetaData)["event_type"].(string); ok && eventType == "confirmable_action_execute" {
+				continue
+			}
+		}
+
 		// Check if message has attachments
 		var attachments []interface{}
 		if msg.MetaData != nil {
@@ -209,7 +249,84 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 		}
 
 		if msg.SenderUUID == aih.botContext.Client.User.UUID {
-			openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
+			if msg.ToolCalls != nil && len(*msg.ToolCalls) > 0 {
+				toolCallsPayload := make([]map[string]interface{}, 0, len(*msg.ToolCalls))
+				for _, rawToolCall := range *msg.ToolCalls {
+					toolCallMap, ok := rawToolCall.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					toolCallID, _ := toolCallMap["id"].(string)
+					toolName, _ := toolCallMap["name"].(string)
+					if toolCallID == "" || toolName == "" {
+						continue
+					}
+
+					argumentsText := "{}"
+					switch typedArguments := toolCallMap["arguments"].(type) {
+					case string:
+						if strings.TrimSpace(typedArguments) != "" {
+							argumentsText = typedArguments
+						}
+					default:
+						if encodedArguments, err := json.Marshal(typedArguments); err == nil {
+							argumentsText = string(encodedArguments)
+						}
+					}
+
+					toolCallsPayload = append(toolCallsPayload, map[string]interface{}{
+						"type": "function",
+						"id":   toolCallID,
+						"function": map[string]interface{}{
+							"name":      toolName,
+							"arguments": argumentsText,
+						},
+					})
+				}
+
+				if len(toolCallsPayload) > 0 {
+					openAiMessages = append(openAiMessages, map[string]interface{}{
+						"role":       "assistant",
+						"content":    "",
+						"tool_calls": toolCallsPayload,
+					})
+
+					for _, rawToolCall := range *msg.ToolCalls {
+						toolCallMap, ok := rawToolCall.(map[string]interface{})
+						if !ok {
+							continue
+						}
+						toolCallID, _ := toolCallMap["id"].(string)
+						if toolCallID == "" {
+							continue
+						}
+
+						resultText := ""
+						switch typedResult := toolCallMap["result"].(type) {
+						case string:
+							resultText = typedResult
+						default:
+							if encodedResult, err := json.Marshal(typedResult); err == nil {
+								resultText = string(encodedResult)
+							}
+						}
+
+						if strings.TrimSpace(resultText) == "" {
+							continue
+						}
+
+						openAiMessages = append(openAiMessages, map[string]interface{}{
+							"role":         "tool",
+							"tool_call_id": toolCallID,
+							"content":      resultText,
+						})
+					}
+				}
+			}
+
+			if strings.TrimSpace(msg.Text) != "" {
+				openAiMessages = append(openAiMessages, map[string]interface{}{"role": "assistant", "content": msg.Text})
+			}
 		} else {
 			// Handle user messages with potential attachments
 			contentArray := aih.processMessageAttachments(msg.Text, attachments, backend)
@@ -235,11 +352,13 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 				})
 			}
 		}
-		contentArray := aih.processCurrentMessageAttachments(message.Content.Text, attachments, backend)
-		openAiMessages = append(openAiMessages, map[string]interface{}{
-			"role":    "user",
-			"content": contentArray,
-		})
+		if strings.TrimSpace(message.Content.Text) != "" || len(attachments) > 0 {
+			contentArray := aih.processCurrentMessageAttachments(message.Content.Text, attachments, backend)
+			openAiMessages = append(openAiMessages, map[string]interface{}{
+				"role":    "user",
+				"content": contentArray,
+			})
+		}
 	}
 
 	return openAiMessages
@@ -347,6 +466,7 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 					}
 					toolsData = append(toolsData, tool.ConstructTool())
 					toolMap[toolName] = tool
+					toolMap[tool.GetToolFunctionName()] = tool
 					if tool.GetRequiresInit() {
 						if _, ok := toolInit[toolName]; ok {
 							log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
@@ -379,7 +499,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var processedToolCallIds = make(map[string]bool) // Track processed tool call IDs
 	var fullText, thoughtText, thoughtBuffer strings.Builder
 	var isThinking bool
+	var hadToolCall bool
 	var currentBuffer strings.Builder
+	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
 	var tokenUsage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -392,6 +514,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		aih.botContext.WSHandler.MessageHandler.StartPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 		),
 	)
 
@@ -402,6 +525,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			aih.botContext.WSHandler.MessageHandler.EndPartialMessage(
 				message.Content.ChatUUID,
 				message.Content.SenderUUID,
+				partialSessionID,
 			),
 		)
 	}
@@ -481,11 +605,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 							message.Content.ChatUUID,
 							message.Content.SenderUUID,
+							partialSessionID,
 							chunk,
 							[]string{""},
 							&map[string]interface{}{
 								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 								"total_time":    totalTime.Round(time.Millisecond).String(),
+								"partial_phase": "responding",
 							},
 							nil,
 							nil,
@@ -500,11 +626,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 							message.Content.ChatUUID,
 							message.Content.SenderUUID,
+							partialSessionID,
 							"",
 							[]string{chunk},
 							&map[string]interface{}{
 								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
 								"total_time":    totalTime.Round(time.Millisecond).String(),
+								"partial_phase": "thinking",
 							},
 							nil,
 							nil,
@@ -521,10 +649,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 					message.Content.ChatUUID,
 					message.Content.SenderUUID,
+					partialSessionID,
 					chunk,
 					[]string{},
 					&map[string]interface{}{
-						"total_time": totalTime.Round(time.Millisecond).String(),
+						"total_time":    totalTime.Round(time.Millisecond).String(),
+						"partial_phase": "responding",
 					},
 					nil,
 					nil,
@@ -555,6 +685,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if !ok {
 				toolCalls = nil
 			} else {
+				if !hadToolCall {
+					hadToolCall = true
+					fullText.Reset()
+					thoughtText.Reset()
+					thoughtBuffer.Reset()
+					currentBuffer.Reset()
+				}
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
 
 				// Check if we've already processed this tool call ID
@@ -580,13 +717,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						}
 					}
 
-					if tool, found := NewToolByName(toolCall.ToolName); found && tool.GetRequiresConfirmation() {
-						toolCallRepr["requires_confirmation"] = true
-						if toolCall.Result != "" {
-							var confirmationMeta map[string]interface{}
-							if err := json.Unmarshal([]byte(toolCall.Result), &confirmationMeta); err == nil {
-								toolCallRepr["confirmation"] = confirmationMeta
-							}
+					if tool, found := NewToolByName(toolCall.ToolName); found {
+						if tool.GetRequiresConfirmation() {
+							toolCallRepr["requires_confirmation"] = true
+						}
+						if confirmationMeta, ok := parseConfirmActionPayload(toolCall.Result); ok {
+							toolCallRepr["requires_confirmation"] = true
+							toolCallRepr["confirmation"] = confirmationMeta
 						}
 					}
 
@@ -596,8 +733,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 
 					totalTime := time.Since(startTime)
 					partialMeta := map[string]interface{}{
-						"total_time": totalTime.Round(time.Millisecond).String(),
-						"tool_call":  toolCall.ToolName,
+						"total_time":    totalTime.Round(time.Millisecond).String(),
+						"tool_call":     toolCall.ToolName,
+						"partial_phase": "tool_call",
 					}
 					confirmableActions := collectConfirmableActions(allToolCalls)
 					if len(confirmableActions) > 0 {
@@ -609,6 +747,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 							message.Content.ChatUUID,
 							message.Content.SenderUUID,
+							partialSessionID,
 							"",
 							[]string{""},
 							&partialMeta,
@@ -649,6 +788,7 @@ func (aih *AIHandlerImpl) hasSkipCoreTag(tags []string) bool {
 // executeToolsOnly executes only the before and after tools without AI completion
 func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.NewMessage, tools []string, toolInit map[string]interface{}) error {
 	startTime := time.Now()
+	partialSessionID := fmt.Sprintf("%s-skip-core-%d", message.Content.ChatUUID, time.Now().UnixNano())
 
 	// Setup tools
 	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit)
@@ -671,19 +811,20 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 		aih.botContext.WSHandler.MessageHandler.StartPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 		),
 	)
 
 	// Execute interaction_start tools
 	for _, toolName := range interactionStartTools {
-		if err := aih.executeTool(ctx, toolName, toolMap, message); err != nil {
+		if err := aih.executeTool(ctx, toolName, toolMap, message, partialSessionID); err != nil {
 			log.Printf("Error executing interaction_start tool %s: %v", toolName, err)
 		}
 	}
 
 	// Execute interaction_complete tools
 	for _, toolName := range interactionCompleteTools {
-		if err := aih.executeTool(ctx, toolName, toolMap, message); err != nil {
+		if err := aih.executeTool(ctx, toolName, toolMap, message, partialSessionID); err != nil {
 			log.Printf("Error executing interaction_complete tool %s: %v", toolName, err)
 		}
 	}
@@ -695,6 +836,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 		aih.botContext.WSHandler.MessageHandler.EndPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 		),
 	)
 
@@ -716,7 +858,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 }
 
 // executeTool executes a single tool
-func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage) error {
+func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage, partialSessionID string) error {
 	// Find the tool in the tool map
 	tool, exists := toolMap[toolName]
 	if !exists {
@@ -748,12 +890,14 @@ func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMa
 		aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
+			partialSessionID,
 			"",
 			[]string{""},
 			&map[string]interface{}{
-				"total_time": totalTime.Round(time.Millisecond).String(),
-				"tool_call":  toolName,
-				"skip_core":  true,
+				"total_time":    totalTime.Round(time.Millisecond).String(),
+				"tool_call":     toolName,
+				"skip_core":     true,
+				"partial_phase": "tool_call",
 			},
 			&[]interface{}{map[string]interface{}{
 				"id":        toolCall.Id,

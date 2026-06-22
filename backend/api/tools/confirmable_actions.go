@@ -4,6 +4,7 @@ import (
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/server/util"
+	"backend/workqueue"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,17 +14,20 @@ import (
 )
 
 type ConfirmableActionExecuteRequest struct {
-	Input map[string]interface{} `json:"input,omitempty"`
+	Input                map[string]interface{} `json:"input,omitempty"`
+	ContinueAfterExecute *bool                  `json:"continue_after_execute,omitempty"`
 }
 
 type ConfirmableActionExecuteResponse struct {
-	Success       bool                   `json:"success"`
-	Status        string                 `json:"status"`
-	ActionID      string                 `json:"action_id"`
-	TargetTool    string                 `json:"target_tool_name"`
-	ToolResult    string                 `json:"tool_result,omitempty"`
-	Error         string                 `json:"error,omitempty"`
-	UpdatedAction map[string]interface{} `json:"updated_action,omitempty"`
+	Success              bool                   `json:"success"`
+	Status               string                 `json:"status"`
+	ActionID             string                 `json:"action_id"`
+	TargetTool           string                 `json:"target_tool_name"`
+	ToolResult           string                 `json:"tool_result,omitempty"`
+	Error                string                 `json:"error,omitempty"`
+	ContinueAfterExecute bool                   `json:"continue_after_execute"`
+	ContinuationQueued   bool                   `json:"continuation_queued,omitempty"`
+	UpdatedAction        map[string]interface{} `json:"updated_action,omitempty"`
 }
 
 func getToolInitForChat(chat database.Chat, toolName string) map[string]interface{} {
@@ -66,6 +70,51 @@ func findBotAndReceiver(chat database.Chat, user database.User) (uint, uint) {
 		return chat.User2.ID, chat.User1.ID
 	}
 	return chat.User1.ID, chat.User2.ID
+}
+
+func updateSourceMessageToolCallResult(tx *gorm.DB, sourceMessage database.Message, actionID, toolResult string) error {
+	if sourceMessage.ToolCalls == nil || len(*sourceMessage.ToolCalls) == 0 {
+		return nil
+	}
+
+	updatedToolCalls := make([]json.RawMessage, 0, len(*sourceMessage.ToolCalls))
+	updated := false
+	for _, rawToolCall := range *sourceMessage.ToolCalls {
+		var toolCall map[string]interface{}
+		if err := json.Unmarshal(rawToolCall, &toolCall); err != nil {
+			updatedToolCalls = append(updatedToolCalls, rawToolCall)
+			continue
+		}
+
+		toolCallID, _ := toolCall["id"].(string)
+		if toolCallID == actionID {
+			toolCall["result"] = toolResult
+			if confirmationMeta, ok := toolCall["confirmation"].(map[string]interface{}); ok {
+				confirmationMeta["status"] = "executed"
+				confirmationMeta["executed"] = true
+				toolCall["confirmation"] = confirmationMeta
+			}
+			updated = true
+		}
+
+		encoded, err := json.Marshal(toolCall)
+		if err != nil {
+			updatedToolCalls = append(updatedToolCalls, rawToolCall)
+			continue
+		}
+		updatedToolCalls = append(updatedToolCalls, encoded)
+	}
+
+	if !updated {
+		return nil
+	}
+
+	encodedToolCalls, err := json.Marshal(updatedToolCalls)
+	if err != nil {
+		return err
+	}
+
+	return tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("tool_calls", string(encodedToolCalls)).Error
 }
 
 func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +201,14 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 		inputParams = req.Input
 	}
 
+	continueAfterExecute := false
+	if configuredContinue, ok := selectedAction["continue_after_execute"].(bool); ok {
+		continueAfterExecute = configuredContinue
+	}
+	if req.ContinueAfterExecute != nil {
+		continueAfterExecute = *req.ContinueAfterExecute
+	}
+
 	toolInitData := getToolInitForChat(chat, targetToolName)
 	toolInstance := msgmate.GetNewToolInstanceByName(targetToolName, toolInitData)
 	if toolInstance == nil {
@@ -171,11 +228,13 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	selectedAction["approved_by"] = user.UUID
 	selectedAction["approved_at"] = now
 	selectedAction["input"] = inputParams
+	selectedAction["continue_after_execute"] = continueAfterExecute
 
 	response := ConfirmableActionExecuteResponse{
-		Success:    execErr == nil,
-		ActionID:   actionID,
-		TargetTool: targetToolName,
+		Success:              execErr == nil,
+		ActionID:             actionID,
+		TargetTool:           targetToolName,
+		ContinueAfterExecute: continueAfterExecute,
 	}
 
 	if execErr != nil {
@@ -195,29 +254,99 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	messageMeta["confirmable_actions"] = actionsRaw
 	updatedMetaBytes, _ := json.Marshal(messageMeta)
 
+	botUserID, humanUserID := findBotAndReceiver(chat, *user)
+	continuationMessageUUID := ""
+
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
 			return err
 		}
+		if execErr == nil {
+			if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolResult); err != nil {
+				return err
+			}
+		}
+
+		eventRequestedMeta := map[string]interface{}{
+			"finished":    true,
+			"event_type":  "confirmable_action_execute",
+			"event_phase": "requested",
+			"confirmable_action_execution": map[string]interface{}{
+				"action_id":              actionID,
+				"target_tool_name":       targetToolName,
+				"approved_by":            user.UUID,
+				"approved_at":            now,
+				"source_message_uuid":    sourceMessage.UUID,
+				"continue_after_execute": continueAfterExecute,
+			},
+		}
+		eventRequestedMetaBytes, _ := json.Marshal(eventRequestedMeta)
+		eventRequestedText := ""
+		eventRequestedMessage := database.Message{
+			ChatId:     chat.ID,
+			SenderId:   humanUserID,
+			ReceiverId: botUserID,
+			DataType:   "event",
+			Text:       &eventRequestedText,
+			MetaData:   eventRequestedMetaBytes,
+		}
+		if err := tx.Create(&eventRequestedMessage).Error; err != nil {
+			return err
+		}
+		if continueAfterExecute && execErr == nil {
+			continuationMessageUUID = eventRequestedMessage.UUID
+		}
 
 		if execErr != nil {
+			eventFailedMeta := map[string]interface{}{
+				"finished":    true,
+				"event_type":  "confirmable_action_execute",
+				"event_phase": "failed",
+				"confirmable_action_execution": map[string]interface{}{
+					"action_id":              actionID,
+					"target_tool_name":       targetToolName,
+					"approved_by":            user.UUID,
+					"approved_at":            now,
+					"source_message_uuid":    sourceMessage.UUID,
+					"continue_after_execute": continueAfterExecute,
+					"error":                  execErr.Error(),
+				},
+			}
+			eventFailedMetaBytes, _ := json.Marshal(eventFailedMeta)
+			eventFailedText := fmt.Sprintf("Confirmed action `%s` failed.", targetToolName)
+			eventFailedMessage := database.Message{
+				ChatId:     chat.ID,
+				SenderId:   botUserID,
+				ReceiverId: humanUserID,
+				DataType:   "event",
+				Text:       &eventFailedText,
+				MetaData:   eventFailedMetaBytes,
+			}
+			if err := tx.Create(&eventFailedMessage).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&chat).Update("latest_message_id", eventFailedMessage.ID).Error; err != nil {
+				return err
+			}
 			return nil
 		}
 
-		senderID, receiverID := findBotAndReceiver(chat, *user)
 		messageText := fmt.Sprintf("Confirmed action `%s` executed.", targetToolName)
 		if toolResult != "" {
 			messageText = fmt.Sprintf("Confirmed action `%s` executed.\n\n%s", targetToolName, toolResult)
 		}
 
 		execMeta := map[string]interface{}{
-			"finished": true,
+			"finished":    true,
+			"event_type":  "confirmable_action_execute",
+			"event_phase": "completed",
 			"confirmable_action_execution": map[string]interface{}{
-				"action_id":           actionID,
-				"target_tool_name":    targetToolName,
-				"approved_by":         user.UUID,
-				"approved_at":         now,
-				"source_message_uuid": sourceMessage.UUID,
+				"action_id":              actionID,
+				"target_tool_name":       targetToolName,
+				"approved_by":            user.UUID,
+				"approved_at":            now,
+				"source_message_uuid":    sourceMessage.UUID,
+				"continue_after_execute": continueAfterExecute,
 			},
 		}
 		execMetaBytes, _ := json.Marshal(execMeta)
@@ -234,8 +363,9 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 
 		msg := database.Message{
 			ChatId:     chat.ID,
-			SenderId:   senderID,
-			ReceiverId: receiverID,
+			SenderId:   botUserID,
+			ReceiverId: humanUserID,
+			DataType:   "event",
 			Text:       &messageText,
 			MetaData:   execMetaBytes,
 			ToolCalls:  &toolCalls,
@@ -252,6 +382,20 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	if err != nil {
 		http.Error(w, "Failed to persist confirmable action state", http.StatusInternalServerError)
 		return
+	}
+
+	if continueAfterExecute && execErr == nil && continuationMessageUUID != "" {
+		queueClient, clientErr := util.GetAsynqClient(r)
+		queueInspector, inspectorErr := util.GetAsynqInspector(r)
+		if clientErr == nil && inspectorErr == nil {
+			if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+				ChatUUID:    chatUUID,
+				MessageUUID: continuationMessageUUID,
+				BotUserID:   botUserID,
+			}); enqueueErr == nil {
+				response.ContinuationQueued = true
+			}
+		}
 	}
 
 	response.UpdatedAction = selectedAction
