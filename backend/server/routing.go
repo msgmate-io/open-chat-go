@@ -141,6 +141,9 @@ func pathValuesFromRoute(route string, r *http.Request) map[string]string {
 func trimPageContextSuffix(value string) string {
 	value = strings.TrimSuffix(value, "/index.pageContext.json")
 	value = strings.TrimSuffix(value, ".pageContext.json")
+	if strings.HasSuffix(value, "/") && value != "/" {
+		value = strings.TrimSuffix(value, "/")
+	}
 	return value
 }
 
@@ -191,6 +194,9 @@ func tryServeFrontendPageContext(routes []string, w http.ResponseWriter, r *http
 
 	logicalPath := strings.TrimSuffix(requestPath, ".pageContext.json")
 	logicalPath = strings.TrimSuffix(logicalPath, "/index")
+	if strings.HasSuffix(logicalPath, "/") && logicalPath != "/" {
+		logicalPath = strings.TrimSuffix(logicalPath, "/")
+	}
 	if logicalPath == "" {
 		logicalPath = "/"
 	}
@@ -282,6 +288,40 @@ func isRouteMoreSpecific(a string, b string) bool {
 	}
 
 	return a < b
+}
+
+func tryServeFrontendHTMLRoute(routes []string, w http.ResponseWriter, r *http.Request) bool {
+	logicalPath := r.URL.Path
+	if logicalPath == "" {
+		logicalPath = "/"
+	}
+	if strings.HasSuffix(logicalPath, "/") && logicalPath != "/" {
+		logicalPath = strings.TrimSuffix(logicalPath, "/")
+	}
+
+	type routeCandidate struct {
+		route      string
+		pathValues map[string]string
+	}
+
+	best := routeCandidate{}
+	found := false
+	for _, route := range routes {
+		pathValues, ok := matchRequestPathToRoute(route, logicalPath)
+		if !ok {
+			continue
+		}
+		if !found || isRouteMoreSpecific(route, best.route) {
+			best = routeCandidate{route: route, pathValues: pathValues}
+			found = true
+		}
+	}
+
+	if !found {
+		return false
+	}
+
+	return serveFrontendRouteFile(best.route, "/index.html", best.pathValues, w, r)
 }
 
 func BackendRouting(
@@ -424,6 +464,8 @@ func BackendRouting(
 			if r.URL.Path == "/" {
 				ServeFrontendRoute("/", "index.html")(w, r)
 			} else if tryServeFrontendPageContext(routes, w, r) {
+				return
+			} else if tryServeFrontendHTMLRoute(routes, w, r) {
 				return
 			} else {
 				ServeFrontendRoute("/404", ".html")(w, r)
