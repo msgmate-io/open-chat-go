@@ -11,14 +11,27 @@ type LittleWorldChatReplyToolInput struct {
 }
 
 var LittleWorldChatReplyToolDef = ToolDefinition{
-	Name:           "little_world__chat_reply",
-	Description:    "Reply to a user's message in a Little World support chat.",
-	AdminOnly:      true,
-	RequiresInit:   true,
-	InputType:      LittleWorldChatReplyToolInput{},
+	Name:         "little_world__chat_reply",
+	Description:  "Send a support response message into a Little World chat conversation.",
+	AdminOnly:    true,
+	RequiresInit: true,
+	InputType:    LittleWorldChatReplyToolInput{},
+	InputSchema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"message": map[string]interface{}{
+				"type":        "string",
+				"description": "The exact chat response text to send to the Little World user.",
+				"minLength":   1,
+			},
+		},
+		"required":             []string{"message"},
+		"additionalProperties": false,
+		"description":          "Payload for sending one support response message.",
+	},
 	RequiredParams: []string{"message"},
 	Parameters: map[string]interface{}{
-		"message": map[string]interface{}{"type": "string", "description": "The message to reply with"},
+		"message": map[string]interface{}{"type": "string", "description": "The exact message to send"},
 	},
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
 		toolInput := input.(LittleWorldChatReplyToolInput)
