@@ -94,22 +94,54 @@ func getFrontendRoutes() ([]string, error) {
 }
 
 func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWriter, *http.Request) {
+	fsys, err := fs.Sub(frontendFS, "frontend")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fileServer := http.FileServer(http.FS(fsys))
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		// e.g.: route = "/star-wars/{id}" and pathEnding = "/index.html"
-		// we serve `star-wars/{id}/index.html` and replace `{id}` with the path value.
-		regMatch := regexp.MustCompile(`{(.*?)}`)
-		pathValues := make(map[string]string)
-		matches := regMatch.FindAllStringSubmatch(route, -1)
-		for _, match := range matches {
-			if val := r.PathValue(match[1]); val != "" {
-				pathValues[match[1]] = val
-			} else {
-				log.Printf("Warning: No value found for path parameter %s", match[1])
-				pathValues[match[1]] = match[1]
+		if !strings.HasSuffix(pathEnding, ".json") && strings.HasSuffix(r.URL.Path, ".pageContext.json") {
+			pathValues := pathValuesFromRoute(route, r)
+			for key, value := range pathValues {
+				pathValues[key] = trimPageContextSuffix(value)
+			}
+			serveFrontendRouteFile(route, "/index.pageContext.json", pathValues, w, r)
+			return
+		}
+
+		if !strings.HasSuffix(pathEnding, ".json") {
+			accept := r.Header.Get("Accept")
+			if !strings.Contains(accept, "text/html") {
+				fileServer.ServeHTTP(w, r)
+				return
 			}
 		}
+
+		pathValues := pathValuesFromRoute(route, r)
 		serveFrontendRouteFile(route, pathEnding, pathValues, w, r)
 	}
+}
+
+func pathValuesFromRoute(route string, r *http.Request) map[string]string {
+	regMatch := regexp.MustCompile(`{(.*?)}`)
+	pathValues := make(map[string]string)
+	matches := regMatch.FindAllStringSubmatch(route, -1)
+	for _, match := range matches {
+		if val := r.PathValue(match[1]); val != "" {
+			pathValues[match[1]] = val
+		} else {
+			log.Printf("Warning: No value found for path parameter %s", match[1])
+			pathValues[match[1]] = match[1]
+		}
+	}
+	return pathValues
+}
+
+func trimPageContextSuffix(value string) string {
+	value = strings.TrimSuffix(value, "/index.pageContext.json")
+	value = strings.TrimSuffix(value, ".pageContext.json")
+	return value
 }
 
 func serveFrontendRouteFile(route string, pathEnding string, pathValues map[string]string, w http.ResponseWriter, r *http.Request) bool {
