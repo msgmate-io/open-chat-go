@@ -24,6 +24,28 @@ docker compose up
 docker compose --profile storybook up
 ```
 
+### External Go Tools (build-time)
+
+- Tool dependencies are declared in `backend/tooldeps.json`.
+- During backend builds, `backend/full_build.sh` runs `go run ./scripts/tooldepsgen` to:
+  - sync dependencies into `backend/go.mod`
+  - generate `backend/api/msgmate/externaltools/imports_gen.go` with side-effect imports
+- External packages should register tools in `init()` using the SDK at `clients/go_tool_interface/`.
+
+Manifest example:
+
+```json
+{
+  "dependencies": [
+    {
+      "module": "github.com/example/open-chat-tools",
+      "version": "v1.2.3",
+      "import": "github.com/example/open-chat-tools/mytool"
+    }
+  ]
+}
+```
+
 ### Production
 
 ```bash
@@ -39,3 +61,8 @@ We release all versions always ( after admin confirmation ):
 - PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
+
+### TODO:
+
+- Make default bot creatds `random`
+DEFAULT_BOT_CREDENTIALScurrent: bo••••rd

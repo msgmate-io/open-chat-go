@@ -61,10 +61,12 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	log.Printf("  ChatType: %s", data.ChatType)
 	log.Printf("  SharedConfig length: %d", len(data.SharedConfig))
 
-	// Security check: Only allow custom chat types for admin users
-	// For regular users, force "conversation" type
-	if data.ChatType != "" && data.ChatType != "conversation" && !user.IsAdmin {
-		data.ChatType = "conversation" // Override with default for non-admin users
+	// Security check: Only allow known public chat types for non-admin users.
+	// Admins may use custom chat types.
+	if !user.IsAdmin {
+		if data.ChatType != "" && data.ChatType != "conversation" && data.ChatType != "interaction" {
+			data.ChatType = "conversation"
+		}
 	}
 
 	// If no chat type is specified, use the default

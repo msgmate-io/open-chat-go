@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import re
 import sys
 
 
@@ -19,6 +20,14 @@ def main() -> int:
     for key, value in os.environ.items():
         if key.startswith("TPL_"):
             text = text.replace("{{" + key[4:] + "}}", value)
+
+    unresolved = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", text)))
+    if unresolved:
+        print(
+            "template rendering failed; unresolved placeholders: " + ", ".join(unresolved),
+            file=sys.stderr,
+        )
+        return 1
 
     sys.stdout.write(text)
     return 0

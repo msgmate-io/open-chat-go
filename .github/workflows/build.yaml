@@ -19,6 +19,10 @@ on:
         description: Source branch name (for metadata)
         required: false
         default: ""
+      source_run_url:
+        description: Source orchestration run URL for PR progress comment
+        required: false
+        default: ""
       deploy_url:
         description: Deployment URL for final PR progress comment
         required: false
@@ -288,18 +292,32 @@ jobs:
             exit 1
           fi
 
-          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          SOURCE_RUN_URL="${{ github.event.inputs.source_run_url || '' }}"
+          if [ -n "$SOURCE_RUN_URL" ]; then
+            TPL_RUN_URL="$SOURCE_RUN_URL"
+          else
+            TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
+          fi
           TPL_RELEASE_TAG="$RELEASE_TAG"
           TPL_CLIENT_REPOSITORY="$CLIENT_REPOSITORY"
           TPL_SOURCE_REPOSITORY="$SOURCE_REPOSITORY"
           TPL_BINARY_NAME="$BINARY_NAME"
           DEPLOY_URL="${{ github.event.inputs.deploy_url || '' }}"
-          if [ -n "$DEPLOY_URL" ]; then
-            TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
-          else
-            TPL_DEPLOY_STEP="- [x] \`(3) deploy\`"
+          if [ -z "$DEPLOY_URL" ]; then
+            DEPLOY_URL="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // ""' <<< "$comments_json" | sed -n 's/.*`(3) deploy` \[`url=[^`]*`\](\(https:[^)]*\)).*/\1/p')"
           fi
-          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "::error::deploy_url is required to generate the dynamic Go tests docs link."
+            exit 1
+          fi
+          TPL_DEPLOY_STEP="- [x] \`(3) deploy\` [\`url=${DEPLOY_URL}\`](${DEPLOY_URL})"
+          existing_step_test="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(4) test`"))) | .[0] // ""' <<< "$comments_json")"
+          if [ -n "$existing_step_test" ]; then
+            TPL_STEP_TEST="$existing_step_test"
+          else
+            TPL_STEP_TEST="- [x] \`(4) test\` [\`passed\`](${DEPLOY_URL}/docs#go-tests?test_status=passed&pr_id=${SOURCE_PR_NUMBER})"
+          fi
+          export TPL_RUN_URL TPL_RELEASE_TAG TPL_CLIENT_REPOSITORY TPL_SOURCE_REPOSITORY TPL_BINARY_NAME TPL_DEPLOY_STEP TPL_STEP_TEST
           python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/007-release-complete.md > /tmp/pr_comment_body.md
 
           payload="$(jq -Rs '{body: .}' < /tmp/pr_comment_body.md)"
