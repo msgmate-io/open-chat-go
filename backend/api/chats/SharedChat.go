@@ -17,10 +17,13 @@ type SharedChatPublishResponse struct {
 }
 
 type PublicInteractionChat struct {
-	UUID     string      `json:"uuid"`
-	ChatType string      `json:"chat_type"`
-	Partner  interface{} `json:"partner"`
-	Config   interface{} `json:"config"`
+	UUID               string                 `json:"uuid"`
+	ChatShareUUID      string                 `json:"chat_share_uuid"`
+	ChatType           string                 `json:"chat_type"`
+	PublishedAt        string                 `json:"published_at"`
+	Partner            interface{}            `json:"partner"`
+	Config             interface{}            `json:"config"`
+	InteractionDetails map[string]interface{} `json:"interaction_details,omitempty"`
 }
 
 func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
@@ -109,14 +112,18 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	chat, _, err := getSharedChatByUUID(DB, shareUUID)
+	chat, share, err := getSharedChatByUUID(DB, shareUUID)
 	if err != nil {
 		http.Error(w, "Shared chat not found", http.StatusNotFound)
 		return
 	}
 
 	partner := chat.User2
-	if partner.ID == 0 {
+	if chat.User1.IsAutomated {
+		partner = chat.User1
+	} else if chat.User2.IsAutomated {
+		partner = chat.User2
+	} else if partner.ID == 0 {
 		partner = chat.User1
 	}
 
@@ -125,16 +132,28 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		_ = json.Unmarshal(chat.SharedConfig.ConfigData, &config)
 	}
 
+	interactionDetails := map[string]interface{}{}
+	if configMap, ok := config.(map[string]interface{}); ok {
+		for _, key := range []string{"model", "backend", "max_tokens", "temperature", "context", "tools", "tool_init", "system_prompt"} {
+			if value, exists := configMap[key]; exists {
+				interactionDetails[key] = value
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(PublicInteractionChat{
-		UUID:     chat.UUID,
-		ChatType: chat.ChatType,
+		UUID:          chat.UUID,
+		ChatShareUUID: share.ChatShareUUID,
+		ChatType:      chat.ChatType,
+		PublishedAt:   share.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		Partner: map[string]interface{}{
 			"name":         partner.Name,
 			"is_automated": partner.IsAutomated,
 			"uuid":         partner.UUID,
 		},
-		Config: config,
+		Config:             config,
+		InteractionDetails: interactionDetails,
 	})
 }
 

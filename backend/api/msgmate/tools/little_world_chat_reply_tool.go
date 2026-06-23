@@ -11,14 +11,55 @@ type LittleWorldChatReplyToolInput struct {
 }
 
 var LittleWorldChatReplyToolDef = ToolDefinition{
-	Name:           "little_world__chat_reply",
-	Description:    "Reply to a user's message in a Little World support chat.",
-	AdminOnly:      true,
-	RequiresInit:   true,
-	InputType:      LittleWorldChatReplyToolInput{},
+	Name:         "little_world__chat_reply",
+	Description:  "Send a support response message into a Little World chat conversation.",
+	AdminOnly:    true,
+	RequiresInit: true,
+	InitSchema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Session cookie value used to authenticate the Little World API request.",
+				"minLength":   1,
+			},
+			"csrf_token": map[string]interface{}{
+				"type":        "string",
+				"description": "CSRF token paired with the session for Little World API calls.",
+				"minLength":   1,
+			},
+			"api_host": map[string]interface{}{
+				"type":        "string",
+				"description": "Base URL of the Little World API host, for example https://app.littleworld.com.",
+				"minLength":   1,
+			},
+			"chat_uuid": map[string]interface{}{
+				"type":        "string",
+				"description": "UUID of the target Little World support chat conversation.",
+				"minLength":   1,
+			},
+		},
+		"required":             []string{"session_id", "csrf_token", "api_host", "chat_uuid"},
+		"additionalProperties": false,
+		"description":          "Initialization data required to authenticate and target the Little World chat API.",
+	},
+	InputType: LittleWorldChatReplyToolInput{},
+	InputSchema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"message": map[string]interface{}{
+				"type":        "string",
+				"description": "The exact chat response text to send to the Little World user.",
+				"minLength":   1,
+			},
+		},
+		"required":             []string{"message"},
+		"additionalProperties": false,
+		"description":          "Payload for sending one support response message.",
+	},
 	RequiredParams: []string{"message"},
 	Parameters: map[string]interface{}{
-		"message": map[string]interface{}{"type": "string", "description": "The message to reply with"},
+		"message": map[string]interface{}{"type": "string", "description": "The exact message to send"},
 	},
 	RunFunction: func(input interface{}, initData map[string]interface{}) (string, error) {
 		toolInput := input.(LittleWorldChatReplyToolInput)
