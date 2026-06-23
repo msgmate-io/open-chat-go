@@ -41,6 +41,10 @@ func NewLittleWorldChatReplyTool() Tool {
 	return NewToolFromDefinition(tooldefs.LittleWorldChatReplyToolDef)
 }
 
+func NewLittleWorldGenerateMessageReplySuggestionTool() Tool {
+	return NewToolFromDefinition(tooldefs.LittleWorldGenerateMessageReplySuggestionToolDef)
+}
+
 func NewLittleWorldGetUserStateTool() Tool {
 	return NewToolFromDefinition(tooldefs.LittleWorldGetUserStateToolDef)
 }
@@ -88,6 +92,7 @@ func registerBuiltinTools() {
 	registerToolConstructor("get_current_time_confirmed_testing", nil, NewCurrentTimeConfirmedTestingTool)
 	registerToolConstructor("get_random_number", nil, NewRandomNumberTool)
 	registerToolConstructor("little_world__chat_reply", nil, NewLittleWorldChatReplyTool)
+	registerToolConstructor("little_world__generate_message_reply_suggestion", nil, NewLittleWorldGenerateMessageReplySuggestionTool)
 	registerToolConstructor("little_world__get_user_state", nil, NewLittleWorldGetUserStateTool)
 	registerToolConstructor("little_world__set_user_searching_state", nil, NewLittleWorldSetUserSearchingStateTool)
 	registerToolConstructor("little_world__get_past_messages", nil, NewLittleWorldGetPastMessagesWithUserTool)
