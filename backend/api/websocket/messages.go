@@ -79,6 +79,17 @@ func (m *Messages) SendMessage(ch *WebSocketHandler, receiverUUID string, EncMes
 		EncMessage,
 		receiverUUID,
 	)
+
+	var envelope struct {
+		Content struct {
+			ChatUUID string `json:"chat_uuid"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(EncMessage, &envelope); err == nil {
+		if envelope.Content.ChatUUID != "" {
+			ch.PublishInChatChannel(EncMessage, envelope.Content.ChatUUID)
+		}
+	}
 }
 
 func (m *Messages) StartPartialMessage(ChatUUID, SenderUUID, SessionID string) []byte {

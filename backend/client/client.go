@@ -37,7 +37,7 @@ type Client struct {
 // @doc:open-chat-provider-env-vars
 // Provider credentials used by bot/tool execution are resolved from environment.
 // Supported keys are OPENAI_API_KEY, DEEPINFRA_API_KEY, GROQ_API_KEY,
-// and LITELLM_API_KEY.
+// LITELLM_API_KEY, and ANTHROPIC_API_KEY.
 // OPEN_CHAT_SEAL_KEY is also read for payload sealing/encryption flows.
 func NewClient(host string) *Client {
 	sealKey := os.Getenv("OPEN_CHAT_SEAL_KEY")
@@ -49,6 +49,7 @@ func NewClient(host string) *Client {
 		"openai":    os.Getenv("OPENAI_API_KEY"),
 		"groq":      os.Getenv("GROQ_API_KEY"),
 		"litellm":   os.Getenv("LITELLM_API_KEY"),
+		"anthropic": os.Getenv("ANTHROPIC_API_KEY"),
 	}
 	return &Client{
 		host:      host,
