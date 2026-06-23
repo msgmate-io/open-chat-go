@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"gorm.io/gorm"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -147,6 +148,79 @@ func resolveValidSessionFromRequest(DB *gorm.DB, r *http.Request) (*database.Ses
 	return nil, false, nil
 }
 
+func cookieSecureFromRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on") {
+		return true
+	}
+	return false
+}
+
+func cookieDomainFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return ""
+	}
+
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return ""
+	}
+	if host == "localhost" {
+		return ""
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ""
+	}
+
+	return host
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	secure := cookieSecureFromRequest(r)
+
+	hostOnlyCookie := &http.Cookie{
+		Name:     "session_id",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+	}
+	http.SetCookie(w, hostOnlyCookie)
+
+	if domain := cookieDomainFromRequest(r); domain != "" {
+		domainCookie := &http.Cookie{
+			Name:     "session_id",
+			Value:    "",
+			Path:     "/",
+			Domain:   domain,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteStrictMode,
+		}
+		http.SetCookie(w, domainCookie)
+	}
+}
+
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		DB, ok := r.Context().Value("db").(*gorm.DB)
@@ -174,6 +248,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !found {
+			clearSessionCookie(w, r)
 			http.Error(w, "Invalid token", http.StatusForbidden)
 			return
 		}
