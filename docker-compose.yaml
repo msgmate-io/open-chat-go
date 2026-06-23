@@ -20,8 +20,6 @@ services:
       LITELLM_API_KEY: ${LITELLM_API_KEY}
       LITELLM_API_HOST: ${LITELLM_API_HOST}
       FRONTEND_PROXY: "http://frontend:3000"
-      # Dev-only: proxy Storybook under /storybook/ (see storybook service).
-      STORYBOOK_FRONTEND_PROXY: "http://storybook:6006"
       ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
       PORT: 1984
