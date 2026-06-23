@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -511,11 +512,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 }, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
 	var allToolCalls []interface{}
 	var processedToolCallIds = make(map[string]bool) // Track processed tool call IDs
-	var fullText, thoughtText, thoughtBuffer strings.Builder
+	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
+	var reasoningEntries []string
+	var thinkingSteps []map[string]string
 	var isThinking bool
+	const thinkStartTag = "<think>"
+	const thinkEndTag = "</think>"
 	var hadToolCall bool
 	var currentBuffer strings.Builder
 	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
+	thinkTagPattern := regexp.MustCompile(`(?is)<think>(.*?)</think>`)
 	var tokenUsage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -544,6 +550,91 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		)
 	}
 
+	appendThoughtEntries := func(entries []string) {
+		for _, entry := range entries {
+			trimmed := strings.TrimSpace(entry)
+			if trimmed == "" {
+				continue
+			}
+			alreadyExists := false
+			for _, existing := range reasoningEntries {
+				if existing == trimmed {
+					alreadyExists = true
+					break
+				}
+			}
+			if !alreadyExists {
+				reasoningEntries = append(reasoningEntries, trimmed)
+			}
+		}
+	}
+
+	finalizeThinkingStep := func(duration time.Duration) {
+		stepText := strings.TrimSpace(currentThoughtStep.String())
+		if stepText == "" {
+			currentThoughtStep.Reset()
+			return
+		}
+		appendThoughtEntries([]string{stepText})
+		thinkingSteps = append(thinkingSteps, map[string]string{
+			"text":     stepText,
+			"duration": duration.Round(time.Millisecond).String(),
+		})
+		currentThoughtStep.Reset()
+	}
+
+	extractThinkSections := func(raw string) (string, []string) {
+		if strings.TrimSpace(raw) == "" {
+			return "", nil
+		}
+
+		matches := thinkTagPattern.FindAllStringSubmatchIndex(raw, -1)
+		if len(matches) == 0 {
+			if strings.Contains(raw, thinkEndTag) {
+				parts := strings.Split(raw, thinkEndTag)
+				if len(parts) > 1 {
+					orphanThought := strings.ReplaceAll(parts[0], thinkStartTag, "")
+					cleanTail := strings.Join(parts[1:], thinkEndTag)
+					cleanTail = strings.ReplaceAll(cleanTail, thinkStartTag, "")
+					cleanTail = strings.ReplaceAll(cleanTail, thinkEndTag, "")
+					for strings.Contains(cleanTail, "\n\n\n") {
+						cleanTail = strings.ReplaceAll(cleanTail, "\n\n\n", "\n\n")
+					}
+					return strings.TrimSpace(cleanTail), []string{orphanThought}
+				}
+			}
+			clean := raw
+			clean = strings.ReplaceAll(clean, thinkStartTag, "")
+			clean = strings.ReplaceAll(clean, thinkEndTag, "")
+			for strings.Contains(clean, "\n\n\n") {
+				clean = strings.ReplaceAll(clean, "\n\n\n", "\n\n")
+			}
+			return strings.TrimSpace(clean), nil
+		}
+
+		thoughts := make([]string, 0, len(matches))
+		var cleanBuilder strings.Builder
+		lastIdx := 0
+		for _, match := range matches {
+			startIdx, endIdx := match[0], match[1]
+			contentStart, contentEnd := match[2], match[3]
+			if startIdx > lastIdx {
+				cleanBuilder.WriteString(raw[lastIdx:startIdx])
+			}
+			thoughts = append(thoughts, raw[contentStart:contentEnd])
+			lastIdx = endIdx
+		}
+		if lastIdx < len(raw) {
+			cleanBuilder.WriteString(raw[lastIdx:])
+		}
+
+		clean := cleanBuilder.String()
+		for strings.Contains(clean, "\n\n\n") {
+			clean = strings.ReplaceAll(clean, "\n\n\n", "\n\n")
+		}
+		return strings.TrimSpace(clean), thoughts
+	}
+
 	// Helper function to send final message and cleanup
 	sendFinalMessage := func(isCancelled bool) {
 		// If we're still thinking when finishing, add the final thinking time
@@ -551,12 +642,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 
 		finalizePartial()
 
-		text := fullText.String()
+		text, extractedThoughts := extractThinkSections(fullText.String())
+		appendThoughtEntries(extractedThoughts)
 		if isCancelled {
 			text += "\nI paused this response. Send another message when you want me to continue."
 			if reasoning {
-				thoughtText.WriteString(thoughtBuffer.String())
-				thoughtText.WriteString("\nResponse paused.")
+				reasoningEntries = append(reasoningEntries, "Response paused.")
 			}
 		}
 
@@ -574,12 +665,15 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 		if reasoning {
 			metadata["thinking_time"] = thinkingTime.Round(time.Millisecond).String()
+			if len(thinkingSteps) > 0 {
+				metadata["thinking_steps"] = thinkingSteps
+			}
 		}
 
-		if reasoning {
+		if len(reasoningEntries) > 0 {
 			aih.botContext.Client.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
 				Text:      text,
-				Reasoning: []string{thoughtText.String()},
+				Reasoning: reasoningEntries,
 				MetaData:  &metadata,
 				ToolCalls: &allToolCalls,
 			})
@@ -592,71 +686,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 	}
 
-	processChunk := func(chunk string) {
-		if reasoning {
-			currentBuffer.WriteString(chunk)
-			bufferStr := currentBuffer.String()
+	currentThinkingDuration := func() time.Duration {
+		if !isThinking {
+			return thinkingTime
+		}
+		return thinkingTime + time.Since(thinkingStart)
+	}
 
-			// Check for thinking tags
-			if strings.Contains(bufferStr, "<think>") && !isThinking {
-				isThinking = true
-				thinkingStart = time.Now()
-				currentBuffer.Reset()
-			} else if strings.Contains(bufferStr, "</think>") && isThinking {
-				isThinking = false
-				thinkingTime = time.Since(thinkingStart)
-				// Extract thought content (everything before </think>)
-				thought := bufferStr[:strings.Index(bufferStr, "</think>")]
-				thoughtText.WriteString(thought)
-				currentBuffer.Reset()
-			} else {
-				totalTime := time.Since(startTime)
-				if !isThinking {
-					fullText.WriteString(chunk)
-					aih.botContext.WSHandler.MessageHandler.SendMessage(
-						aih.botContext.WSHandler,
-						message.Content.SenderUUID,
-						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
-							message.Content.SenderUUID,
-							partialSessionID,
-							chunk,
-							[]string{""},
-							&map[string]interface{}{
-								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
-								"total_time":    totalTime.Round(time.Millisecond).String(),
-								"partial_phase": "responding",
-							},
-							nil,
-							nil,
-						),
-					)
-				} else {
-					thinkingTime = time.Since(thinkingStart)
-					thoughtBuffer.WriteString(chunk)
-					aih.botContext.WSHandler.MessageHandler.SendMessage(
-						aih.botContext.WSHandler,
-						message.Content.SenderUUID,
-						aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
-							message.Content.ChatUUID,
-							message.Content.SenderUUID,
-							partialSessionID,
-							"",
-							[]string{chunk},
-							&map[string]interface{}{
-								"thinking_time": thinkingTime.Round(time.Millisecond).String(),
-								"total_time":    totalTime.Round(time.Millisecond).String(),
-								"partial_phase": "thinking",
-							},
-							nil,
-							nil,
-						),
-					)
-				}
-			}
-		} else {
-			fullText.WriteString(chunk)
-			totalTime := time.Since(startTime)
+	sendRespondingChunk := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+		fullText.WriteString(chunk)
+		totalTime := time.Since(startTime)
+		if reasoning {
+			thinkingElapsed := currentThinkingDuration()
 			aih.botContext.WSHandler.MessageHandler.SendMessage(
 				aih.botContext.WSHandler,
 				message.Content.SenderUUID,
@@ -665,8 +709,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					message.Content.SenderUUID,
 					partialSessionID,
 					chunk,
-					[]string{},
+					[]string{""},
 					&map[string]interface{}{
+						"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
 						"total_time":    totalTime.Round(time.Millisecond).String(),
 						"partial_phase": "responding",
 					},
@@ -674,7 +719,111 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					nil,
 				),
 			)
+			return
 		}
+
+		aih.botContext.WSHandler.MessageHandler.SendMessage(
+			aih.botContext.WSHandler,
+			message.Content.SenderUUID,
+			aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
+				message.Content.ChatUUID,
+				message.Content.SenderUUID,
+				partialSessionID,
+				chunk,
+				[]string{},
+				&map[string]interface{}{
+					"total_time":    totalTime.Round(time.Millisecond).String(),
+					"partial_phase": "responding",
+				},
+				nil,
+				nil,
+			),
+		)
+	}
+
+	sendThinkingChunk := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+		thoughtBuffer.WriteString(chunk)
+		currentThoughtStep.WriteString(chunk)
+		totalTime := time.Since(startTime)
+		thinkingElapsed := currentThinkingDuration()
+		aih.botContext.WSHandler.MessageHandler.SendMessage(
+			aih.botContext.WSHandler,
+			message.Content.SenderUUID,
+			aih.botContext.WSHandler.MessageHandler.NewPartialMessage(
+				message.Content.ChatUUID,
+				message.Content.SenderUUID,
+				partialSessionID,
+				"",
+				[]string{chunk},
+				&map[string]interface{}{
+					"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
+					"total_time":    totalTime.Round(time.Millisecond).String(),
+					"partial_phase": "thinking",
+				},
+				nil,
+				nil,
+			),
+		)
+	}
+
+	processChunk := func(chunk string) {
+		if !reasoning {
+			sendRespondingChunk(chunk)
+			return
+		}
+
+		currentBuffer.WriteString(chunk)
+		bufferStr := currentBuffer.String()
+
+		for {
+			if !isThinking {
+				startIdx := strings.Index(bufferStr, thinkStartTag)
+				if startIdx == -1 {
+					keepSuffix := len(thinkStartTag) - 1
+					if len(bufferStr) <= keepSuffix {
+						break
+					}
+					sendRespondingChunk(bufferStr[:len(bufferStr)-keepSuffix])
+					bufferStr = bufferStr[len(bufferStr)-keepSuffix:]
+					break
+				}
+
+				if startIdx > 0 {
+					sendRespondingChunk(bufferStr[:startIdx])
+				}
+				isThinking = true
+				thinkingStart = time.Now()
+				bufferStr = bufferStr[startIdx+len(thinkStartTag):]
+				continue
+			}
+
+			endIdx := strings.Index(bufferStr, thinkEndTag)
+			if endIdx == -1 {
+				keepSuffix := len(thinkEndTag) - 1
+				if len(bufferStr) <= keepSuffix {
+					break
+				}
+				sendThinkingChunk(bufferStr[:len(bufferStr)-keepSuffix])
+				bufferStr = bufferStr[len(bufferStr)-keepSuffix:]
+				break
+			}
+
+			if endIdx > 0 {
+				sendThinkingChunk(bufferStr[:endIdx])
+			}
+			isThinking = false
+			stepDuration := time.Since(thinkingStart)
+			thinkingTime += stepDuration
+			finalizeThinkingStep(stepDuration)
+			thinkingStart = time.Time{}
+			bufferStr = bufferStr[endIdx+len(thinkEndTag):]
+		}
+
+		currentBuffer.Reset()
+		currentBuffer.WriteString(bufferStr)
 	}
 
 	for {
@@ -701,9 +850,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			} else {
 				if !hadToolCall {
 					hadToolCall = true
+					_, extractedThoughts := extractThinkSections(fullText.String())
+					appendThoughtEntries(extractedThoughts)
 					fullText.Reset()
-					thoughtText.Reset()
-					thoughtBuffer.Reset()
 					currentBuffer.Reset()
 				}
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
@@ -780,8 +929,27 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			errs = nil
 		}
 
-		if chunks == nil && usage == nil && toolCalls == nil && errs == nil {
+	if chunks == nil && usage == nil && toolCalls == nil && errs == nil {
 			break
+		}
+	}
+
+	if reasoning {
+		remaining := currentBuffer.String()
+		if remaining != "" {
+			if isThinking {
+				sendThinkingChunk(remaining)
+			} else {
+				sendRespondingChunk(remaining)
+			}
+			currentBuffer.Reset()
+		}
+		if isThinking {
+			stepDuration := time.Since(thinkingStart)
+			thinkingTime += stepDuration
+			finalizeThinkingStep(stepDuration)
+			isThinking = false
+			thinkingStart = time.Time{}
 		}
 	}
 
