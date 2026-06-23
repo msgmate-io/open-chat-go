@@ -288,9 +288,7 @@ func streamChatCompletion(
 		retryCount := 0
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
-
-		// Track message content to avoid duplicate messages
-		sentMessages := make(map[string]bool)
+		executedToolSignatures := make(map[string]bool)
 		aiResponseComplete := false
 
 		for {
@@ -305,6 +303,7 @@ func streamChatCompletion(
 			fmt.Printf("Current retry count: %d/%d\n", retryCount, maxRetries)
 			toolCallResult, err := processStreamingRequest(
 				host, model, backend, currentMessages, tools, toolMap, apiKey,
+				executedToolSignatures,
 				chunkChan, usageChan, toolChan, errChan,
 			)
 			if err != nil {
@@ -320,6 +319,11 @@ func streamChatCompletion(
 			// If we encountered an error, we're done
 			if toolCallResult.err != nil {
 				log.Printf("Error: %v", toolCallResult.err)
+				return
+			}
+
+			if toolCallResult.duplicateToolCall {
+				log.Printf("Stopping response after duplicate tool call request for %s", toolCallResult.toolName)
 				return
 			}
 
@@ -395,21 +399,6 @@ func streamChatCompletion(
 					}
 				}
 				return
-			}
-
-			// Check for duplicate tool calls by content
-			if toolCallResult.arguments != "" {
-				// Create a content signature based on tool name and arguments
-				contentSignature := fmt.Sprintf("%s:%s", toolCallResult.toolName, toolCallResult.arguments)
-
-				if sentMessages[contentSignature] {
-					log.Printf("Warning: Duplicate tool call detected with content signature: %s, skipping", contentSignature)
-					// Don't increment retry counter for duplicates
-					continue
-				}
-
-				// Mark this content as sent
-				sentMessages[contentSignature] = true
 			}
 
 			// Check if we've already processed this tool ID
@@ -491,15 +480,16 @@ func streamChatCompletion(
 }
 
 type toolCallResult struct {
-	usedTool        bool
-	stopAfterTool   bool
-	id              string
-	toolName        string
-	toolCallMessage map[string]string
-	result          string
-	arguments       string
-	err             error
-	aiResponse      string
+	usedTool          bool
+	stopAfterTool     bool
+	duplicateToolCall bool
+	id                string
+	toolName          string
+	toolCallMessage   map[string]string
+	result            string
+	arguments         string
+	err               error
+	aiResponse        string
 }
 
 func processStreamingRequest(
@@ -508,6 +498,7 @@ func processStreamingRequest(
 	tools []interface{},
 	toolMap map[string]Tool,
 	apiKey string,
+	executedToolSignatures map[string]bool,
 	chunkChan chan<- string,
 	usageChan chan<- *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -522,7 +513,7 @@ func processStreamingRequest(
 		if err != nil {
 			return nil, err
 		}
-		return processStreamingResponseReader(reader, toolMap, chunkChan, usageChan, toolChan)
+		return processStreamingResponseReader(reader, toolMap, executedToolSignatures, chunkChan, usageChan, toolChan)
 	}
 
 	requestBody := map[string]interface{}{
@@ -564,12 +555,13 @@ func processStreamingRequest(
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	return processStreamingResponseReader(reader, toolMap, chunkChan, usageChan, toolChan)
+	return processStreamingResponseReader(reader, toolMap, executedToolSignatures, chunkChan, usageChan, toolChan)
 }
 
 func processStreamingResponseReader(
 	reader *bufio.Reader,
 	toolMap map[string]Tool,
+	executedToolSignatures map[string]bool,
 	chunkChan chan<- string,
 	usageChan chan<- *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -688,6 +680,14 @@ func processStreamingResponseReader(
 			fmt.Printf("Tool ID: %s\n", currentToolCall.id)
 			fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
 
+			contentSignature := fmt.Sprintf("%s:%s", currentToolCall.name, strings.TrimSpace(currentToolCall.arguments))
+			if executedToolSignatures[contentSignature] {
+				log.Printf("Warning: Duplicate tool call detected with content signature: %s, skipping", contentSignature)
+				result.usedTool = false
+				result.duplicateToolCall = true
+				break
+			}
+
 			result.usedTool = true
 			result.id = currentToolCall.id
 			result.toolName = currentToolCall.name
@@ -728,6 +728,7 @@ func processStreamingResponseReader(
 				Id:        currentToolCall.id,
 				Result:    toolResult,
 			}
+			executedToolSignatures[contentSignature] = true
 
 			break
 		}
