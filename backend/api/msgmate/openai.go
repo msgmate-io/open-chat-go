@@ -66,6 +66,17 @@ func buildConfirmationSuggestion(toolName string, toolInput interface{}, continu
 	return string(encoded)
 }
 
+func buildToolErrorPlaceholder(toolName string, runErr error) string {
+	if runErr == nil {
+		return fmt.Sprintf("Tool %s failed. Please continue without tool output.", toolName)
+	}
+	return fmt.Sprintf(
+		"Tool %s failed with error: %s. Please continue and provide the best possible response without this tool result.",
+		toolName,
+		runErr.Error(),
+	)
+}
+
 func isConfirmActionPayload(raw string) bool {
 	if strings.TrimSpace(raw) == "" {
 		return false
@@ -714,12 +725,13 @@ func processStreamingResponseReader(
 			} else {
 				executedResult, runErr := tool.RunTool(toolInput)
 				if runErr != nil {
-					result.err = runErr
 					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
-					break
+					toolResult = buildToolErrorPlaceholder(currentToolCall.name, runErr)
+					result.result = toolResult
+				} else {
+					toolResult = executedResult
+					result.result = toolResult
 				}
-				toolResult = executedResult
-				result.result = toolResult
 			}
 
 			toolChan <- ToolCall{
