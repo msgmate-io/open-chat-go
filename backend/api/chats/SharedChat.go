@@ -207,7 +207,7 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 //	@Param        chat_share_uuid path string true "Shared chat UUID"
 //	@Param        page query int false "Page number" default(1)
 //	@Param        limit query int false "Page size" default(40)
-//	@Success      200 {object} database.Pagination "Paginated list of shared messages"
+//	@Success      200 {object} chats.ListedMessagesPage "Paginated list of shared messages"
 //	@Failure      400 {string} string "Invalid shared chat UUID"
 //	@Failure      404 {string} string "Shared chat not found"
 //	@Failure      500 {string} string "Couldn't list shared messages"
@@ -258,10 +258,15 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 	for i, message := range messages {
 		listed[i] = convertMessageToListedMessage(message)
 	}
-	pagination.Rows = listed
+	response := ListedMessagesPage{
+		Limit:      pagination.Limit,
+		Page:       pagination.Page,
+		TotalPages: pagination.TotalPages,
+		Rows:       listed,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(pagination)
+	json.NewEncoder(w).Encode(response)
 }
 
 func findOwnedChat(DB *gorm.DB, userID uint, chatUUID string) (database.Chat, error) {

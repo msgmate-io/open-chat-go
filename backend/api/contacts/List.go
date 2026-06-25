@@ -74,8 +74,10 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 }
 
 type PaginatedContacts struct {
-	database.Pagination
-	Rows []ListedContact `json:"rows"`
+	Limit      int             `json:"limit"`
+	Page       int             `json:"page"`
+	TotalPages int             `json:"total_pages"`
+	Rows       []ListedContact `json:"rows"`
 }
 
 // List Contacts
@@ -135,10 +137,15 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination.Rows = contactToContactListed(DB, ch, contacts, user.ID)
+	response := PaginatedContacts{
+		Limit:      pagination.Limit,
+		Page:       pagination.Page,
+		TotalPages: pagination.TotalPages,
+		Rows:       contactToContactListed(DB, ch, contacts, user.ID),
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(pagination)
+	json.NewEncoder(w).Encode(response)
 }
 
 // GetContactByToken

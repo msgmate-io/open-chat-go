@@ -204,7 +204,7 @@
                     "200": {
                         "description": "Paginated list of shared messages",
                         "schema": {
-                            "$ref": "#/definitions/database.Pagination"
+                            "$ref": "#/definitions/chats.ListedMessagesPage"
                         }
                     },
                     "400": {
@@ -318,7 +318,7 @@
                     "200": {
                         "description": "Paginated list of chats",
                         "schema": {
-                            "$ref": "#/definitions/database.Pagination"
+                            "$ref": "#/definitions/chats.ListedChatsPage"
                         }
                     },
                     "400": {
@@ -469,7 +469,7 @@
                     "200": {
                         "description": "Paginated list of messages",
                         "schema": {
-                            "$ref": "#/definitions/database.Pagination"
+                            "$ref": "#/definitions/chats.ListedMessagesPage"
                         }
                     },
                     "400": {
@@ -1409,10 +1409,8 @@
                     "type": "string"
                 },
                 "shared_config": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
+                    "type": "object",
+                    "additionalProperties": true
                 }
             }
         },
@@ -1457,6 +1455,89 @@
                 },
                 "uuid": {
                     "type": "string"
+                }
+            }
+        },
+        "chats.ListedChatsPage": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chats.ListedChat"
+                    }
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "chats.ListedMessage": {
+            "type": "object",
+            "properties": {
+                "data_type": {
+                    "type": "string"
+                },
+                "meta_data": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "reasoning": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "receiver_id": {
+                    "type": "integer"
+                },
+                "send_at": {
+                    "type": "string"
+                },
+                "sender_id": {
+                    "type": "integer"
+                },
+                "sender_is_automated": {
+                    "type": "boolean"
+                },
+                "sender_uuid": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {}
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.ListedMessagesPage": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chats.ListedMessage"
+                    }
+                },
+                "total_pages": {
+                    "type": "integer"
                 }
             }
         },
@@ -1569,9 +1650,6 @@
                         "$ref": "#/definitions/contacts.ListedContact"
                     }
                 },
-                "sort": {
-                    "type": "string"
-                },
                 "total_pages": {
                     "type": "integer"
                 }
@@ -1612,24 +1690,6 @@
                 },
                 "uuid": {
                     "type": "string"
-                }
-            }
-        },
-        "database.Pagination": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer"
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "rows": {},
-                "sort": {
-                    "type": "string"
-                },
-                "total_pages": {
-                    "type": "integer"
                 }
             }
         },
