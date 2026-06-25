@@ -18,7 +18,8 @@ type AddContact struct {
 // @Tags         contacts
 // @Accept       json
 // @Produce      json
-// @Param        contact_token body string true "Contact token"
+// @Param        request body AddContact true "Contact token payload"
+// @Security     SessionAuth
 // @Success      200  {string}  string	"Contact added"
 // @Failure      400  {string}  string	"Invalid contact token"
 // @Failure      500  {object}  string	"Internal server error"

@@ -56,7 +56,7 @@ func convertMessageToListedMessage(message database.Message) ListedMessage {
 //	@Param        page  query  int  false  "Page number"  default(1)
 //	@Param        limit query  int  false  "Page size"     default(10)
 //	@Param        chat_uuid path string true "Chat UUID"
-//	@Success      200 {array}  database.Message "List of chats"
+//	@Success      200 {object} database.Pagination "Paginated list of messages"
 //	@Failure      400 {string} string "Invalid user ID"
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/{chat_uuid}/messages/list [get]
