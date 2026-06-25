@@ -20,31 +20,17 @@
 docker compose build
 # frontend + backend ( sqite + hot-reload )
 docker compose up
-# design system
+# or design system
 docker compose --profile storybook up
 ```
 
-### External Go Tools (build-time)
+### Bake in your own go-tools
 
 - Tool dependencies are declared in `backend/tooldeps.json`.
 - During backend builds, `backend/full_build.sh` runs `go run ./scripts/tooldepsgen` to:
   - sync dependencies into `backend/go.mod`
   - generate `backend/api/msgmate/externaltools/imports_gen.go` with side-effect imports
-- External packages should register tools in `init()` using the SDK at `clients/go_tool_interface/`.
-
-Manifest example:
-
-```json
-{
-  "dependencies": [
-    {
-      "module": "github.com/example/open-chat-tools",
-      "version": "v1.2.3",
-      "import": "github.com/example/open-chat-tools/mytool"
-    }
-  ]
-}
-```
+- External packages should register tools in `init()` using the SDK at [`clients/go_tool_interface/`](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
 ### Production
 
