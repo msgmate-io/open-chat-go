@@ -17,11 +17,11 @@ services:
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_API_HOST: ${ANTHROPIC_API_HOST}
       LITELLM_API_KEY: ${LITELLM_API_KEY}
       LITELLM_API_HOST: ${LITELLM_API_HOST}
       FRONTEND_PROXY: "http://frontend:3000"
-      # Dev-only: proxy Storybook under /storybook/ (see storybook service).
-      STORYBOOK_FRONTEND_PROXY: "http://storybook:6006"
       ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
       PORT: 1984
