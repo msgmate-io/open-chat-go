@@ -8,13 +8,12 @@ import (
 )
 
 // FrontendProxy describes a reverse-proxy target that owns one or more path
-// prefixes. It lets the backend front several dev servers (e.g. the app frontend
-// and a Storybook dev server) behind a single origin.
+// prefixes. It lets the backend front one or more dev servers behind a single origin.
 type FrontendProxy struct {
 	Name     string
 	Target   string   // upstream base URL, e.g. http://frontend:3000
 	Prefixes []string // path prefixes this proxy owns ("/" is the catch-all)
-	Public   bool     // skip the login redirect (for dev tooling like Storybook)
+	Public   bool     // skip the login redirect for public proxy paths
 }
 
 func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
@@ -52,20 +51,4 @@ func registerFrontendProxies(mux *http.ServeMux, proxies []FrontendProxy, common
 		}
 	}
 	return nil
-}
-
-// storybookProxyPrefixes are the path prefixes a Storybook dev server needs when
-// hosted behind this backend. The preview's Vite assets live under /storybook/
-// (Storybook is started with base=/storybook/); the remaining entries are the
-// manager's hardcoded root paths, none of which collide with the app frontend.
-var storybookProxyPrefixes = []string{
-	"/storybook",
-	"/storybook/",
-	"/sb-manager/",
-	"/sb-addons/",
-	"/sb-common-assets/",
-	"/sb-preview/",
-	"/index.json",
-	"/iframe.html",
-	"/storybook-server-channel",
 }
