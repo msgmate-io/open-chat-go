@@ -26,6 +26,20 @@ type PublicInteractionChat struct {
 	InteractionDetails map[string]interface{} `json:"interaction_details,omitempty"`
 }
 
+// Publish creates (or returns) a public share UUID for a chat.
+//
+//	@Summary      Publish chat
+//	@Description  Publish a chat and return its share UUID
+//	@Tags         chats
+//	@Accept       json
+//	@Produce      json
+//	@Security     SessionAuth
+//	@Param        chat_uuid path string true "Chat UUID"
+//	@Success      200 {object} SharedChatPublishResponse "Published chat info"
+//	@Failure      400 {string} string "Invalid chat UUID"
+//	@Failure      404 {string} string "Chat not found"
+//	@Failure      500 {string} string "Failed to publish chat"
+//	@Router       /api/chat/{chat_uuid}/publish [post]
 func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -71,6 +85,20 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(SharedChatPublishResponse{ChatUUID: chat.UUID, ChatShareUUID: share.ChatShareUUID})
 }
 
+// Unpublish removes the public share UUID for a chat.
+//
+//	@Summary      Unpublish chat
+//	@Description  Remove public chat sharing
+//	@Tags         chats
+//	@Accept       json
+//	@Produce      json
+//	@Security     SessionAuth
+//	@Param        chat_uuid path string true "Chat UUID"
+//	@Success      200 {object} map[string]bool "Unpublish result"
+//	@Failure      400 {string} string "Invalid chat UUID"
+//	@Failure      404 {string} string "Chat not found"
+//	@Failure      500 {string} string "Failed to unpublish chat"
+//	@Router       /api/chat/{chat_uuid}/unpublish [post]
 func (h *ChatsHandler) Unpublish(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -99,6 +127,18 @@ func (h *ChatsHandler) Unpublish(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// GetSharedInteraction returns a public view of a published interaction.
+//
+//	@Summary      Get shared interaction
+//	@Description  Retrieve a published interaction chat by share UUID
+//	@Tags         chats
+//	@Accept       json
+//	@Produce      json
+//	@Param        chat_share_uuid path string true "Shared chat UUID"
+//	@Success      200 {object} PublicInteractionChat "Public interaction chat"
+//	@Failure      400 {string} string "Invalid shared chat UUID"
+//	@Failure      404 {string} string "Shared chat not found"
+//	@Router       /api/interaction/{chat_share_uuid} [get]
 func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {
@@ -157,6 +197,21 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// ListSharedInteractionMessages returns paginated public messages for a shared interaction.
+//
+//	@Summary      List shared interaction messages
+//	@Description  Retrieve paginated messages for a shared interaction chat
+//	@Tags         messages
+//	@Accept       json
+//	@Produce      json
+//	@Param        chat_share_uuid path string true "Shared chat UUID"
+//	@Param        page query int false "Page number" default(1)
+//	@Param        limit query int false "Page size" default(40)
+//	@Success      200 {object} database.Pagination "Paginated list of shared messages"
+//	@Failure      400 {string} string "Invalid shared chat UUID"
+//	@Failure      404 {string} string "Shared chat not found"
+//	@Failure      500 {string} string "Couldn't list shared messages"
+//	@Router       /api/interaction/{chat_share_uuid}/messages [get]
 func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {
