@@ -71,7 +71,7 @@ var LittleWorldChatReplyToolDef = ToolDefinition{
 		if err := json.NewEncoder(body).Encode(map[string]interface{}{"text": toolInput.Message}); err != nil {
 			return "", fmt.Errorf("error encoding request body: %w", err)
 		}
-		fullURL := fmt.Sprintf("%s/api/messages/%s/send/", apiHost, chatUUID)
+		fullURL := buildAPIURL(apiHost, fmt.Sprintf("/api/messages/%s/send/", chatUUID))
 		if _, err := makeAPIRequest("POST", fullURL, body, sessionID, csrfToken); err != nil {
 			return fmt.Sprintf("error sending message: %s", err), err
 		}

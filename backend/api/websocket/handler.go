@@ -15,6 +15,7 @@ import (
 type Subscriber struct {
 	msgs      chan []byte
 	UserUUID  string
+	ChatUUID  string
 	closeSlow func()
 }
 
@@ -57,6 +58,21 @@ func (cs *WebSocketHandler) PublishInChannel(msg []byte, receiverUUID string) {
 
 	for s := range cs.subscribers {
 		if s.UserUUID == receiverUUID {
+			select {
+			case s.msgs <- msg:
+			default:
+				go s.closeSlow()
+			}
+		}
+	}
+}
+
+func (cs *WebSocketHandler) PublishInChatChannel(msg []byte, chatUUID string) {
+	cs.subscribersMu.Lock()
+	defer cs.subscribersMu.Unlock()
+
+	for s := range cs.subscribers {
+		if s.ChatUUID == chatUUID {
 			select {
 			case s.msgs <- msg:
 			default:
@@ -136,6 +152,55 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 
 	ctx := c.CloseRead(context.Background())
 	cs.logf("new connection")
+
+	for {
+		select {
+		case msg := <-s.msgs:
+			err := writeTimeout(ctx, time.Second*200, c, msg)
+			if err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.Request, chatUUID string) error {
+	var mu sync.Mutex
+	var c *websocket.Conn
+	var closed bool
+	s := &Subscriber{
+		ChatUUID: chatUUID,
+		msgs:     make(chan []byte, cs.subscriberMessageBuffer),
+		closeSlow: func() {
+			mu.Lock()
+			defer mu.Unlock()
+			closed = true
+			if c != nil {
+				c.Close(websocket.StatusPolicyViolation, "connection too slow TBS to keep up with messages")
+			}
+		},
+	}
+	cs.addSubscriber(s)
+	defer cs.deleteSubscriber(s)
+
+	c2, err := websocket.Accept(w, r, nil)
+	cs.logf("accept shared interaction connection")
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	if closed {
+		mu.Unlock()
+		return net.ErrClosed
+	}
+	c = c2
+	mu.Unlock()
+	defer c.CloseNow()
+
+	ctx := c.CloseRead(context.Background())
+	cs.logf("new shared interaction connection for chat %s", chatUUID)
 
 	for {
 		select {

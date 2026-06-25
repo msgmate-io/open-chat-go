@@ -3,6 +3,8 @@ package websocket
 import (
 	"backend/database"
 	"net/http"
+
+	"gorm.io/gorm"
 )
 
 func (ws *WebSocketHandler) Connect(w http.ResponseWriter, r *http.Request) {
@@ -24,4 +26,43 @@ func (ws *WebSocketHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	// jsonMessage := messagesHandler.UserWentOnline(user.UUID)
 	// fetch the users contacts and send UserWentOnline to all of them
 	//ws.PublishInChannel(jsonMessage, userId)
+}
+
+func (ws *WebSocketHandler) ConnectSharedInteraction(w http.ResponseWriter, r *http.Request) {
+	DB, ok := r.Context().Value("db").(*gorm.DB)
+	if !ok || DB == nil {
+		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		return
+	}
+
+	shareUUID := r.PathValue("chat_share_uuid")
+	if shareUUID == "" {
+		http.Error(w, "Invalid shared chat UUID", http.StatusBadRequest)
+		return
+	}
+
+	var share database.SharedChatInstance
+	if err := DB.Where("chat_share_uuid = ?", shareUUID).First(&share).Error; err != nil {
+		statusCode := http.StatusInternalServerError
+		if err == gorm.ErrRecordNotFound {
+			statusCode = http.StatusNotFound
+		}
+		http.Error(w, "Shared chat not found", statusCode)
+		return
+	}
+
+	var chat database.Chat
+	if err := DB.Where("id = ?", share.ChatId).First(&chat).Error; err != nil {
+		statusCode := http.StatusInternalServerError
+		if err == gorm.ErrRecordNotFound {
+			statusCode = http.StatusNotFound
+		}
+		http.Error(w, "Shared chat not found", statusCode)
+		return
+	}
+
+	if err := ws.SubscribeChatChannel(w, r, chat.UUID); err != nil {
+		ws.logf("error shared interaction socket connection error: %v", err)
+		return
+	}
 }
