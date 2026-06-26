@@ -2600,26 +2600,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "create_confirmable_action_suggestion",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2629,7 +2610,9 @@
                 "summary": "Validate create_confirmable_action_suggestion call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "create_confirmable_action_suggestion"
             }
         },
         "/api/v1/tools/typing/create_confirmable_action_suggestion/init/validate": {
@@ -2656,26 +2639,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "create_confirmable_action_suggestion",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2685,7 +2649,9 @@
                 "summary": "Validate create_confirmable_action_suggestion init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "create_confirmable_action_suggestion"
             }
         },
         "/api/v1/tools/typing/get_current_time/call/validate": {
@@ -2712,26 +2678,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "get_current_time",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2741,7 +2688,9 @@
                 "summary": "Validate get_current_time call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "get_current_time"
             }
         },
         "/api/v1/tools/typing/get_current_time_confirmed/call/validate": {
@@ -2768,26 +2717,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "get_current_time_confirmed",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2797,7 +2727,9 @@
                 "summary": "Validate get_current_time_confirmed call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "get_current_time_confirmed"
             }
         },
         "/api/v1/tools/typing/get_current_time_confirmed_testing/call/validate": {
@@ -2824,26 +2756,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "get_current_time_confirmed_testing",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2853,7 +2766,9 @@
                 "summary": "Validate get_current_time_confirmed_testing call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "get_current_time_confirmed_testing"
             }
         },
         "/api/v1/tools/typing/get_random_number/call/validate": {
@@ -2880,26 +2795,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "get_random_number",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2909,7 +2805,9 @@
                 "summary": "Validate get_random_number call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "get_random_number"
             }
         },
         "/api/v1/tools/typing/get_weather/call/validate": {
@@ -2936,26 +2834,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "get_weather",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -2965,7 +2844,9 @@
                 "summary": "Validate get_weather call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "get_weather"
             }
         },
         "/api/v1/tools/typing/little_world__chat_reply/call/validate": {
@@ -2992,26 +2873,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__chat_reply",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3021,7 +2883,9 @@
                 "summary": "Validate little_world__chat_reply call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__chat_reply"
             }
         },
         "/api/v1/tools/typing/little_world__chat_reply/init/validate": {
@@ -3048,26 +2912,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__chat_reply",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3077,7 +2922,9 @@
                 "summary": "Validate little_world__chat_reply init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__chat_reply"
             }
         },
         "/api/v1/tools/typing/little_world__generate_message_reply_suggestion/call/validate": {
@@ -3104,26 +2951,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__generate_message_reply_suggestion",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3133,7 +2961,9 @@
                 "summary": "Validate little_world__generate_message_reply_suggestion call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__generate_message_reply_suggestion"
             }
         },
         "/api/v1/tools/typing/little_world__generate_message_reply_suggestion/init/validate": {
@@ -3160,26 +2990,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__generate_message_reply_suggestion",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3189,7 +3000,9 @@
                 "summary": "Validate little_world__generate_message_reply_suggestion init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__generate_message_reply_suggestion"
             }
         },
         "/api/v1/tools/typing/little_world__get_past_messages/call/validate": {
@@ -3216,26 +3029,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__get_past_messages",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3245,7 +3039,9 @@
                 "summary": "Validate little_world__get_past_messages call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__get_past_messages"
             }
         },
         "/api/v1/tools/typing/little_world__get_past_messages/init/validate": {
@@ -3272,26 +3068,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__get_past_messages",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3301,7 +3078,9 @@
                 "summary": "Validate little_world__get_past_messages init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__get_past_messages"
             }
         },
         "/api/v1/tools/typing/little_world__get_user_state/call/validate": {
@@ -3328,26 +3107,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__get_user_state",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3357,7 +3117,9 @@
                 "summary": "Validate little_world__get_user_state call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__get_user_state"
             }
         },
         "/api/v1/tools/typing/little_world__get_user_state/init/validate": {
@@ -3384,26 +3146,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__get_user_state",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3413,7 +3156,9 @@
                 "summary": "Validate little_world__get_user_state init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__get_user_state"
             }
         },
         "/api/v1/tools/typing/little_world__resolve_match/call/validate": {
@@ -3440,26 +3185,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__resolve_match",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3469,7 +3195,9 @@
                 "summary": "Validate little_world__resolve_match call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__resolve_match"
             }
         },
         "/api/v1/tools/typing/little_world__resolve_match/init/validate": {
@@ -3496,26 +3224,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__resolve_match",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3525,7 +3234,9 @@
                 "summary": "Validate little_world__resolve_match init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__resolve_match"
             }
         },
         "/api/v1/tools/typing/little_world__retrieve_match_overview/call/validate": {
@@ -3552,26 +3263,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__retrieve_match_overview",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3581,7 +3273,9 @@
                 "summary": "Validate little_world__retrieve_match_overview call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__retrieve_match_overview"
             }
         },
         "/api/v1/tools/typing/little_world__retrieve_match_overview/init/validate": {
@@ -3608,26 +3302,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__retrieve_match_overview",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3637,7 +3312,9 @@
                 "summary": "Validate little_world__retrieve_match_overview init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__retrieve_match_overview"
             }
         },
         "/api/v1/tools/typing/little_world__set_user_searching_state/call/validate": {
@@ -3664,26 +3341,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__set_user_searching_state",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3693,7 +3351,9 @@
                 "summary": "Validate little_world__set_user_searching_state call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "little_world__set_user_searching_state"
             }
         },
         "/api/v1/tools/typing/little_world__set_user_searching_state/init/validate": {
@@ -3720,26 +3380,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "little_world__set_user_searching_state",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3749,7 +3390,9 @@
                 "summary": "Validate little_world__set_user_searching_state init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "little_world__set_user_searching_state"
             }
         },
         "/api/v1/tools/typing/n8n_trigger_workflow_webhook/call/validate": {
@@ -3776,26 +3419,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "n8n_trigger_workflow_webhook",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3805,7 +3429,9 @@
                 "summary": "Validate n8n_trigger_workflow_webhook call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "n8n_trigger_workflow_webhook"
             }
         },
         "/api/v1/tools/typing/n8n_trigger_workflow_webhook/init/validate": {
@@ -3832,26 +3458,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "n8n_trigger_workflow_webhook",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3861,7 +3468,9 @@
                 "summary": "Validate n8n_trigger_workflow_webhook init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "n8n_trigger_workflow_webhook"
             }
         },
         "/api/v1/tools/typing/run_callback_function/call/validate": {
@@ -3888,26 +3497,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "run_callback_function",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3917,7 +3507,9 @@
                 "summary": "Validate run_callback_function call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "run_callback_function"
             }
         },
         "/api/v1/tools/typing/run_callback_function/init/validate": {
@@ -3944,26 +3536,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "run_callback_function",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -3973,7 +3546,9 @@
                 "summary": "Validate run_callback_function init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "run_callback_function"
             }
         },
         "/api/v1/tools/typing/rwth_aachen_seminar_tims_auto_paper_include_exclude/call/validate": {
@@ -4000,26 +3575,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "rwth_aachen_seminar_tims_auto_paper_include_exclude",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -4029,7 +3585,9 @@
                 "summary": "Validate rwth_aachen_seminar_tims_auto_paper_include_exclude call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "rwth_aachen_seminar_tims_auto_paper_include_exclude"
             }
         },
         "/api/v1/tools/typing/rwth_aachen_seminar_tims_auto_paper_include_exclude/init/validate": {
@@ -4056,26 +3614,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "rwth_aachen_seminar_tims_auto_paper_include_exclude",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -4085,7 +3624,9 @@
                 "summary": "Validate rwth_aachen_seminar_tims_auto_paper_include_exclude init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "rwth_aachen_seminar_tims_auto_paper_include_exclude"
             }
         },
         "/api/v1/tools/typing/tool_init_test_tool_pass_through/call/validate": {
@@ -4112,26 +3653,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "call",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "tool_init_test_tool_pass_through",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -4141,7 +3663,9 @@
                 "summary": "Validate tool_init_test_tool_pass_through call payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "call",
+                "x-tool-name": "tool_init_test_tool_pass_through"
             }
         },
         "/api/v1/tools/typing/tool_init_test_tool_pass_through/init/validate": {
@@ -4168,26 +3692,7 @@
                     "200": {
                         "description": "Payload is valid",
                         "schema": {
-                            "properties": {
-                                "kind": {
-                                    "example": "init",
-                                    "type": "string"
-                                },
-                                "tool_name": {
-                                    "example": "tool_init_test_tool_pass_through",
-                                    "type": "string"
-                                },
-                                "valid": {
-                                    "example": true,
-                                    "type": "boolean"
-                                }
-                            },
-                            "required": [
-                                "valid",
-                                "tool_name",
-                                "kind"
-                            ],
-                            "type": "object"
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
                         }
                     },
                     "400": {
@@ -4197,7 +3702,9 @@
                 "summary": "Validate tool_init_test_tool_pass_through init payload",
                 "tags": [
                     "tools"
-                ]
+                ],
+                "x-tool-kind": "init",
+                "x-tool-name": "tool_init_test_tool_pass_through"
             }
         },
         "/api/v1/tools/typing/{tool_name}/call/validate": {

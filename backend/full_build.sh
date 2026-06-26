@@ -136,11 +136,6 @@ $SWAG_PATH init --parseDependency --parseInternal --output ./docs --generalInfo 
 echo "Copying swagger files for embedding..."
 cp ./docs/swagger.json ./server/
 
-# Add per-tool typed validation endpoints to swagger
-echo "Augmenting swagger with per-tool typed endpoints..."
-python3 ../development/scripts/augment_swagger_with_tool_typed_endpoints.py --swagger-path ./docs/swagger.json
-cp ./docs/swagger.json ./server/
-
 # Step 4: Build the Go backend
 if [ "$FRONTEND" = true ]; then
     echo "Step 4: Building Go backend..."
