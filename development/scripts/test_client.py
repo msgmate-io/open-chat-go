@@ -17,6 +17,12 @@ client = OpenChatClient(
 user = client.login()
 print("Logged in:", user.name)
 
+tool_names = client.list_tool_names()
+ToolNameDynamic = client.get_tool_name_enum()
+print("Tool names count:", len(tool_names))
+print("First 5 tools:", tool_names[:5])
+print("Example enum member:", getattr(ToolNameDynamic, "GET_CURRENT_TIME", "n/a"))
+
 bot = client.get_bot("bot")
 interaction = bot.create_interaction(
     message="Whats the current time?",

@@ -68,6 +68,7 @@ func (h *UserHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	permissionsSet := map[string]struct{}{}
 	if user.IsAdmin {
 		permissionsSet[string(database.PermissionCreateAPITokens)] = struct{}{}
+		permissionsSet[string(database.PermissionCreateBots)] = struct{}{}
 	}
 
 	var rows []database.Permission

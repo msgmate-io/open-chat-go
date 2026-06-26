@@ -1,38 +1,1228 @@
 {
-    "swagger": "2.0",
+    "definitions": {
+        "bots.BotDTO": {
+            "properties": {
+                "bot_contact_token": {
+                    "type": "string"
+                },
+                "bot_user_uuid": {
+                    "type": "string"
+                },
+                "default_shared_config": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "bots.BotInteractionResponse": {
+            "properties": {
+                "chat_uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "bots.CreateBotInteractionRequest": {
+            "properties": {
+                "config_overrides": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "tool_init": {
+                    "additionalProperties": true,
+                    "type": "object"
+                }
+            },
+            "type": "object"
+        },
+        "bots.CreateBotRequest": {
+            "properties": {
+                "default_shared_config": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "bots.CreateBotResponse": {
+            "properties": {
+                "bot": {
+                    "$ref": "#/definitions/bots.BotDTO"
+                },
+                "generated_password": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "bots.ListedBotsPage": {
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/bots.BotDTO"
+                    },
+                    "type": "array"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            },
+            "type": "object"
+        },
+        "bots.UpdateBotRequest": {
+            "properties": {
+                "default_shared_config": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "chats.CreateChat": {
+            "properties": {
+                "attachments": {
+                    "items": {
+                        "$ref": "#/definitions/chats.FileAttachment"
+                    },
+                    "type": "array"
+                },
+                "chat_type": {
+                    "type": "string"
+                },
+                "contact_token": {
+                    "type": "string"
+                },
+                "first_message": {
+                    "type": "string"
+                },
+                "shared_config": {
+                    "additionalProperties": true,
+                    "type": "object"
+                }
+            },
+            "type": "object"
+        },
+        "chats.FileAttachment": {
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "file_id": {
+                    "type": "string"
+                },
+                "file_name": {
+                    "type": "string"
+                },
+                "file_size": {
+                    "type": "integer"
+                },
+                "mime_type": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "chats.ListedChat": {
+            "properties": {
+                "chat_share_uuid": {
+                    "type": "string"
+                },
+                "chat_type": {
+                    "type": "string"
+                },
+                "config": {},
+                "latest_message": {
+                    "$ref": "#/definitions/database.Message"
+                },
+                "partner": {
+                    "$ref": "#/definitions/database.User"
+                },
+                "shared_interaction_url": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "chats.ListedChatsPage": {
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/chats.ListedChat"
+                    },
+                    "type": "array"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            },
+            "type": "object"
+        },
+        "chats.ListedMessage": {
+            "properties": {
+                "data_type": {
+                    "type": "string"
+                },
+                "meta_data": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "reasoning": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "receiver_id": {
+                    "type": "integer"
+                },
+                "send_at": {
+                    "type": "string"
+                },
+                "sender_id": {
+                    "type": "integer"
+                },
+                "sender_is_automated": {
+                    "type": "boolean"
+                },
+                "sender_uuid": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "items": {},
+                    "type": "array"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "chats.ListedMessagesPage": {
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/chats.ListedMessage"
+                    },
+                    "type": "array"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            },
+            "type": "object"
+        },
+        "chats.PublicInteractionChat": {
+            "properties": {
+                "chat_share_uuid": {
+                    "type": "string"
+                },
+                "chat_type": {
+                    "type": "string"
+                },
+                "config": {},
+                "interaction_details": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "partner": {},
+                "published_at": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "chats.SendMessage": {
+            "properties": {
+                "attachments": {
+                    "items": {
+                        "$ref": "#/definitions/chats.FileAttachment"
+                    },
+                    "type": "array"
+                },
+                "meta_data": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "reasoning": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "items": {},
+                    "type": "array"
+                }
+            },
+            "type": "object"
+        },
+        "chats.SharedChatPublishResponse": {
+            "properties": {
+                "chat_share_uuid": {
+                    "type": "string"
+                },
+                "chat_uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "contacts.AddContact": {
+            "properties": {
+                "contact_token": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "contacts.ListedContact": {
+            "properties": {
+                "contact_token": {
+                    "type": "string"
+                },
+                "is_automated": {
+                    "type": "boolean"
+                },
+                "is_online": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "profile_data": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "user_uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "contacts.PaginatedContacts": {
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/contacts.ListedContact"
+                    },
+                    "type": "array"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            },
+            "type": "object"
+        },
+        "database.Message": {
+            "properties": {
+                "data_type": {
+                    "type": "string"
+                },
+                "meta_data": {
+                    "items": {
+                        "type": "integer"
+                    },
+                    "type": "array"
+                },
+                "read_at": {
+                    "type": "string"
+                },
+                "reasoning": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "items": {
+                        "items": {
+                            "type": "integer"
+                        },
+                        "type": "array"
+                    },
+                    "type": "array"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "database.User": {
+            "properties": {
+                "contact_token": {
+                    "type": "string"
+                },
+                "is_admin": {
+                    "type": "boolean"
+                },
+                "is_automated": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "two_factor_enabled": {
+                    "type": "boolean"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "models.ModelListItem": {
+            "properties": {
+                "bots": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "configuration": {
+                    "items": {
+                        "type": "integer"
+                    },
+                    "type": "array"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "hoster": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "model_id": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "models.ModelsListResponse": {
+            "properties": {
+                "filters": {
+                    "$ref": "#/definitions/models.modelsFilters"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/models.ModelListItem"
+                    },
+                    "type": "array"
+                },
+                "total_pages": {
+                    "type": "integer"
+                },
+                "total_rows": {
+                    "type": "integer"
+                }
+            },
+            "type": "object"
+        },
+        "models.botOption": {
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "models.modelsFilters": {
+            "properties": {
+                "bots": {
+                    "items": {
+                        "$ref": "#/definitions/models.botOption"
+                    },
+                    "type": "array"
+                },
+                "hosters": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "sources": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                }
+            },
+            "type": "object"
+        },
+        "tools.CreateConfirmableActionSuggestionCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "confirm_label": {
+                    "description": "Optional confirm button label",
+                    "type": "string"
+                },
+                "continue_after_execute": {
+                    "description": "Optional: if true, continue the interaction after this action executes",
+                    "type": "boolean"
+                },
+                "danger_level": {
+                    "description": "Optional risk level hint: low|medium|high",
+                    "type": "string"
+                },
+                "description": {
+                    "description": "Optional explanation shown to the user before confirmation",
+                    "type": "string"
+                },
+                "suggested_inputs": {
+                    "description": "Json encoded action input suggestion (editable)",
+                    "type": "string"
+                },
+                "target_tool_name": {
+                    "description": "Name of the tool that should run after user confirmation",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "Optional UI title for the confirmation widget",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "target_tool_name",
+                "suggested_inputs"
+            ],
+            "title": "CreateConfirmableActionSuggestionCall",
+            "type": "object"
+        },
+        "tools.CreateConfirmableActionSuggestionInit": {
+            "properties": {},
+            "required": [],
+            "title": "CreateConfirmableActionSuggestionInit",
+            "type": "object"
+        },
+        "tools.GetCurrentTimeCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "GetCurrentTimeCall",
+            "type": "object"
+        },
+        "tools.GetCurrentTimeConfirmedCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "GetCurrentTimeConfirmedCall",
+            "type": "object"
+        },
+        "tools.GetCurrentTimeConfirmedTestingCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "GetCurrentTimeConfirmedTestingCall",
+            "type": "object"
+        },
+        "tools.GetRandomNumberCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "max": {
+                    "description": "The maximum value (inclusive)",
+                    "type": "integer"
+                },
+                "min": {
+                    "description": "The minimum value (inclusive)",
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "min",
+                "max"
+            ],
+            "title": "GetRandomNumberCall",
+            "type": "object"
+        },
+        "tools.GetWeatherCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "location": {
+                    "description": "The location to get weather for",
+                    "type": "string"
+                },
+                "unit": {
+                    "description": "The unit of temperature (C or F)",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "location",
+                "unit"
+            ],
+            "title": "GetWeatherCall",
+            "type": "object"
+        },
+        "tools.LittleWorldChatReplyCall": {
+            "additionalProperties": false,
+            "description": "Payload for sending one support response message.",
+            "properties": {
+                "message": {
+                    "description": "The exact chat response text to send to the Little World user.",
+                    "minLength": 1,
+                    "type": "string"
+                }
+            },
+            "required": [
+                "message"
+            ],
+            "title": "LittleWorldChatReplyCall",
+            "type": "object"
+        },
+        "tools.LittleWorldChatReplyInit": {
+            "additionalProperties": false,
+            "description": "Initialization data required to authenticate and target the Little World chat API.",
+            "properties": {
+                "api_host": {
+                    "description": "Base URL of the Little World API host, for example https://app.littleworld.com.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "chat_uuid": {
+                    "description": "UUID of the target Little World support chat conversation.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "csrf_token": {
+                    "description": "CSRF token paired with the session for Little World API calls.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "session_id": {
+                    "description": "Session cookie value used to authenticate the Little World API request.",
+                    "minLength": 1,
+                    "type": "string"
+                }
+            },
+            "required": [
+                "session_id",
+                "csrf_token",
+                "api_host",
+                "chat_uuid"
+            ],
+            "title": "LittleWorldChatReplyInit",
+            "type": "object"
+        },
+        "tools.LittleWorldGenerateMessageReplySuggestionCall": {
+            "additionalProperties": false,
+            "description": "Payload for persisting the support action message suggestion; calling this tool performs the save.",
+            "properties": {
+                "message": {
+                    "description": "Final draft support reply text that will be persisted when this tool is called.",
+                    "minLength": 1,
+                    "type": "string"
+                }
+            },
+            "required": [
+                "message"
+            ],
+            "title": "LittleWorldGenerateMessageReplySuggestionCall",
+            "type": "object"
+        },
+        "tools.LittleWorldGenerateMessageReplySuggestionInit": {
+            "additionalProperties": false,
+            "description": "Initialization data required to authenticate and target one specific Little World support task action.",
+            "properties": {
+                "action_id": {
+                    "description": "Identifier of the open support task action to update.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "api_host": {
+                    "description": "Base URL of the Little World API host, for example https://app.littleworld.com.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "csrf_token": {
+                    "description": "CSRF token paired with the session for Little World API calls.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "mock_run": {
+                    "description": "Optional testing flag. If true, skip the API request and return a mocked success result.",
+                    "type": "boolean"
+                },
+                "session_id": {
+                    "description": "Session cookie value used to authenticate the Little World API request.",
+                    "minLength": 1,
+                    "type": "string"
+                },
+                "task_pk": {
+                    "description": "Primary key of the support task that owns the action draft.",
+                    "minLength": 1,
+                    "type": "string"
+                }
+            },
+            "required": [
+                "session_id",
+                "csrf_token",
+                "api_host",
+                "task_pk",
+                "action_id"
+            ],
+            "title": "LittleWorldGenerateMessageReplySuggestionInit",
+            "type": "object"
+        },
+        "tools.LittleWorldGetPastMessagesCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldGetPastMessagesCall",
+            "type": "object"
+        },
+        "tools.LittleWorldGetPastMessagesInit": {
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldGetPastMessagesInit",
+            "type": "object"
+        },
+        "tools.LittleWorldGetUserStateCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldGetUserStateCall",
+            "type": "object"
+        },
+        "tools.LittleWorldGetUserStateInit": {
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldGetUserStateInit",
+            "type": "object"
+        },
+        "tools.LittleWorldResolveMatchCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "match_id": {
+                    "description": "The numeric ID of the match to resolve.",
+                    "type": "integer"
+                }
+            },
+            "required": [
+                "match_id"
+            ],
+            "title": "LittleWorldResolveMatchCall",
+            "type": "object"
+        },
+        "tools.LittleWorldResolveMatchInit": {
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldResolveMatchInit",
+            "type": "object"
+        },
+        "tools.LittleWorldRetrieveMatchOverviewCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldRetrieveMatchOverviewCall",
+            "type": "object"
+        },
+        "tools.LittleWorldRetrieveMatchOverviewInit": {
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldRetrieveMatchOverviewInit",
+            "type": "object"
+        },
+        "tools.LittleWorldSetUserSearchingStateCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "searching": {
+                    "description": "Whether the user should be searching",
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "searching"
+            ],
+            "title": "LittleWorldSetUserSearchingStateCall",
+            "type": "object"
+        },
+        "tools.LittleWorldSetUserSearchingStateInit": {
+            "properties": {},
+            "required": [],
+            "title": "LittleWorldSetUserSearchingStateInit",
+            "type": "object"
+        },
+        "tools.MCPError": {
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "data": {},
+                "message": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "tools.MCPResponse": {
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/tools.MCPError"
+                },
+                "id": {},
+                "jsonrpc": {
+                    "type": "string"
+                },
+                "result": {}
+            },
+            "type": "object"
+        },
+        "tools.N8nTriggerWorkflowWebhookCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "input_parameters": {
+                    "description": "The input parameters to send to the n8n webhook as a JSON object",
+                    "type": "object"
+                }
+            },
+            "required": [
+                "input_parameters"
+            ],
+            "title": "N8nTriggerWorkflowWebhookCall",
+            "type": "object"
+        },
+        "tools.N8nTriggerWorkflowWebhookInit": {
+            "properties": {},
+            "required": [],
+            "title": "N8nTriggerWorkflowWebhookInit",
+            "type": "object"
+        },
+        "tools.RunCallbackFunctionCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "RunCallbackFunctionCall",
+            "type": "object"
+        },
+        "tools.RunCallbackFunctionInit": {
+            "properties": {},
+            "required": [],
+            "title": "RunCallbackFunctionInit",
+            "type": "object"
+        },
+        "tools.RwthAachenSeminarTimsAutoPaperIncludeExcludeCall": {
+            "description": "The parameters for the tool",
+            "properties": {
+                "include": {
+                    "description": "Whether to include the paper",
+                    "type": "boolean"
+                },
+                "reason": {
+                    "description": "The reason for the decision",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "include"
+            ],
+            "title": "RwthAachenSeminarTimsAutoPaperIncludeExcludeCall",
+            "type": "object"
+        },
+        "tools.RwthAachenSeminarTimsAutoPaperIncludeExcludeInit": {
+            "properties": {},
+            "required": [],
+            "title": "RwthAachenSeminarTimsAutoPaperIncludeExcludeInit",
+            "type": "object"
+        },
+        "tools.StoreToolInitDataRequest": {
+            "properties": {
+                "expires_at": {
+                    "description": "ISO 8601 timestamp",
+                    "type": "string"
+                },
+                "init_data": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "tool_name": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolExecutionRequest": {
+            "properties": {
+                "input_parameters": {
+                    "additionalProperties": true,
+                    "type": "object"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolExecutionResponse": {
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "result": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                },
+                "tool_info": {
+                    "additionalProperties": true,
+                    "type": "object"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolInitTestToolPassThroughCall": {
+            "description": "The parameters for the tool",
+            "properties": {},
+            "required": [],
+            "title": "ToolInitTestToolPassThroughCall",
+            "type": "object"
+        },
+        "tools.ToolInitTestToolPassThroughInit": {
+            "properties": {},
+            "required": [],
+            "title": "ToolInitTestToolPassThroughInit",
+            "type": "object"
+        },
+        "tools.ToolListItem": {
+            "properties": {
+                "call_schema": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "confirmation_block_message": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "function_name": {
+                    "type": "string"
+                },
+                "init_schema": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "required": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "requires_confirmation": {
+                    "type": "boolean"
+                },
+                "requires_init": {
+                    "type": "boolean"
+                },
+                "source_line": {
+                    "type": "integer"
+                },
+                "source_path": {
+                    "type": "string"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "stop_on_first_confirmable_tool_call": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolTypeDefinition": {
+            "properties": {
+                "call_schema": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "call_type_name": {
+                    "type": "string"
+                },
+                "function_name": {
+                    "type": "string"
+                },
+                "init_schema": {
+                    "additionalProperties": true,
+                    "type": "object"
+                },
+                "init_type_name": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "requires_confirmation": {
+                    "type": "boolean"
+                },
+                "requires_init": {
+                    "type": "boolean"
+                },
+                "tool_init_config_path_hint": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolValidatePayloadResponse": {
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "tool_name": {
+                    "type": "string"
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolsListResponse": {
+            "properties": {
+                "filters": {
+                    "$ref": "#/definitions/tools.toolsFilters"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/tools.ToolListItem"
+                    },
+                    "type": "array"
+                },
+                "total_pages": {
+                    "type": "integer"
+                },
+                "total_rows": {
+                    "type": "integer"
+                }
+            },
+            "type": "object"
+        },
+        "tools.ToolsTypingResponse": {
+            "properties": {
+                "rows": {
+                    "items": {
+                        "$ref": "#/definitions/tools.ToolTypeDefinition"
+                    },
+                    "type": "array"
+                }
+            },
+            "type": "object"
+        },
+        "tools.toolsFilters": {
+            "properties": {
+                "types": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                }
+            },
+            "type": "object"
+        },
+        "user.TwoFactorConfirmRequest": {
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "user.TwoFactorRecoveryCodesResponse": {
+            "properties": {
+                "codes": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                }
+            },
+            "type": "object"
+        },
+        "user.TwoFactorSetupResponse": {
+            "properties": {
+                "qr_code_url": {
+                    "type": "string"
+                },
+                "secret": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "user.UserLogin": {
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "recovery_code": {
+                    "type": "string"
+                },
+                "two_factor_code": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "user.UserRegister": {
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        }
+    },
     "info": {
+        "contact": {},
         "description": "API for Open Chat application",
         "title": "Open Chat API",
-        "contact": {},
         "version": "1.0"
     },
     "paths": {
         "/api/chat/{chat_uuid}/publish": {
             "post": {
-                "security": [
-                    {
-                        "SessionAuth": []
-                    }
-                ],
-                "description": "Publish a chat and return its share UUID",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "chats"
-                ],
-                "summary": "Publish chat",
+                "description": "Publish a chat and return its share UUID",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -59,44 +1249,44 @@
                             "type": "string"
                         }
                     }
-                }
-            }
-        },
-        "/api/chat/{chat_uuid}/unpublish": {
-            "post": {
+                },
                 "security": [
                     {
                         "SessionAuth": []
                     }
                 ],
-                "description": "Remove public chat sharing",
+                "summary": "Publish chat",
+                "tags": [
+                    "chats"
+                ]
+            }
+        },
+        "/api/chat/{chat_uuid}/unpublish": {
+            "post": {
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "chats"
-                ],
-                "summary": "Unpublish chat",
+                "description": "Remove public chat sharing",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
                         "description": "Unpublish result",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "boolean"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "400": {
@@ -117,30 +1307,35 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Unpublish chat",
+                "tags": [
+                    "chats"
+                ]
             }
         },
         "/api/interaction/{chat_share_uuid}": {
             "get": {
-                "description": "Retrieve a published interaction chat by share UUID",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "chats"
-                ],
-                "summary": "Get shared interaction",
+                "description": "Retrieve a published interaction chat by share UUID",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Shared chat UUID",
-                        "name": "chat_share_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_share_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -161,44 +1356,44 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Get shared interaction",
+                "tags": [
+                    "chats"
+                ]
             }
         },
         "/api/interaction/{chat_share_uuid}/messages": {
             "get": {
-                "description": "Retrieve paginated messages for a shared interaction chat",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "messages"
-                ],
-                "summary": "List shared interaction messages",
+                "description": "Retrieve paginated messages for a shared interaction chat",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Shared chat UUID",
-                        "name": "chat_share_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_share_uuid",
+                        "required": true,
+                        "type": "string"
                     },
                     {
-                        "type": "integer",
                         "default": 1,
                         "description": "Page number",
+                        "in": "query",
                         "name": "page",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "integer",
                         "default": 40,
                         "description": "Page size",
+                        "in": "query",
                         "name": "limit",
-                        "in": "query"
+                        "type": "integer"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -225,37 +1420,325 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "List shared interaction messages",
+                "tags": [
+                    "messages"
+                ]
             }
         },
-        "/api/v1/chats/create": {
+        "/api/v1/bots": {
             "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Create an owner-scoped automated bot user with default runtime config",
+                "parameters": [
+                    {
+                        "description": "Bot creation request",
+                        "in": "body",
+                        "name": "request",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/bots.CreateBotRequest"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bots.CreateBotResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Missing permission",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "Bot name already exists for owner",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
                 "security": [
                     {
                         "SessionAuth": []
                     }
                 ],
-                "description": "Create a new chat with another user, optionally including a first message and attachments",
+                "summary": "Create bot",
+                "tags": [
+                    "bots"
+                ]
+            }
+        },
+        "/api/v1/bots/list": {
+            "get": {
                 "consumes": [
                     "application/json"
+                ],
+                "description": "List owner bots, optionally including public bots from other owners",
+                "parameters": [
+                    {
+                        "default": 1,
+                        "description": "Page number",
+                        "in": "query",
+                        "name": "page",
+                        "type": "integer"
+                    },
+                    {
+                        "default": 40,
+                        "description": "Page size",
+                        "in": "query",
+                        "name": "limit",
+                        "type": "integer"
+                    },
+                    {
+                        "description": "Include public bots",
+                        "in": "query",
+                        "name": "include_public",
+                        "type": "boolean"
+                    }
                 ],
                 "produces": [
                     "application/json"
                 ],
-                "tags": [
-                    "chats"
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bots.ListedBotsPage"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
                 ],
-                "summary": "Create a chat",
+                "summary": "List bots",
+                "tags": [
+                    "bots"
+                ]
+            }
+        },
+        "/api/v1/bots/{identifier}": {
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Soft-disable a bot",
+                "parameters": [
+                    {
+                        "description": "Bot UUID or owner-scoped name",
+                        "in": "path",
+                        "name": "identifier",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bots.BotDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Bot not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Delete bot",
+                "tags": [
+                    "bots"
+                ]
+            },
+            "get": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Get a bot by UUID or owner-scoped name",
+                "parameters": [
+                    {
+                        "description": "Bot UUID or owner-scoped name",
+                        "in": "path",
+                        "name": "identifier",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bots.BotDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Bot not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Get bot",
+                "tags": [
+                    "bots"
+                ]
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Update owner bot metadata and runtime defaults",
+                "parameters": [
+                    {
+                        "description": "Bot UUID or owner-scoped name",
+                        "in": "path",
+                        "name": "identifier",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "description": "Bot patch request",
+                        "in": "body",
+                        "name": "request",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/bots.UpdateBotRequest"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bots.BotDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Bot not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Update bot",
+                "tags": [
+                    "bots"
+                ]
+            }
+        },
+        "/api/v1/bots/{identifier}/interactions": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Create an interaction chat for the specified bot using default config + overrides",
+                "parameters": [
+                    {
+                        "description": "Bot UUID or owner-scoped name",
+                        "in": "path",
+                        "name": "identifier",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "description": "Interaction request",
+                        "in": "body",
+                        "name": "request",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/bots.CreateBotInteractionRequest"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/bots.BotInteractionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Bot not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Create bot interaction",
+                "tags": [
+                    "bots"
+                ]
+            }
+        },
+        "/api/v1/chats/create": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Create a new chat with another user, optionally including a first message and attachments",
                 "parameters": [
                     {
                         "description": "Chat creation request",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/chats.CreateChat"
                         }
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -276,43 +1759,48 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Create a chat",
+                "tags": [
+                    "chats"
+                ]
             }
         },
         "/api/v1/chats/list": {
             "get": {
-                "description": "Retrieve a list of chats for the authenticated user",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "chats"
-                ],
-                "summary": "Get user chats",
+                "description": "Retrieve a list of chats for the authenticated user",
                 "parameters": [
                     {
-                        "type": "integer",
                         "default": 1,
                         "description": "Page number",
+                        "in": "query",
                         "name": "page",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "integer",
                         "default": 40,
                         "description": "Page size",
+                        "in": "query",
                         "name": "limit",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "string",
                         "description": "Chat types to filter by",
+                        "in": "query",
                         "name": "chat_types",
-                        "in": "query"
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -333,35 +1821,30 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Get user chats",
+                "tags": [
+                    "chats"
+                ]
             }
         },
         "/api/v1/chats/{chat_uuid}": {
             "get": {
-                "security": [
-                    {
-                        "SessionAuth": []
-                    }
-                ],
-                "description": "Retrieve a single chat by UUID for the authenticated user",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "chats"
-                ],
-                "summary": "Get chat details",
+                "description": "Retrieve a single chat by UUID for the authenticated user",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -376,30 +1859,35 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Get chat details",
+                "tags": [
+                    "chats"
+                ]
             }
         },
         "/api/v1/chats/{chat_uuid}/contact": {
             "get": {
-                "description": "Retrieve a single contact based on a chat UUID",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "contacts"
-                ],
-                "summary": "Get contact by chat UUID",
+                "description": "Retrieve a single contact based on a chat UUID",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -426,44 +1914,44 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Get contact by chat UUID",
+                "tags": [
+                    "contacts"
+                ]
             }
         },
         "/api/v1/chats/{chat_uuid}/messages/list": {
             "get": {
-                "description": "Retrieve a list of messages associated with a specific chat UUID",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "messages"
-                ],
-                "summary": "Get Chat messages",
+                "description": "Retrieve a list of messages associated with a specific chat UUID",
                 "parameters": [
                     {
-                        "type": "integer",
                         "default": 1,
                         "description": "Page number",
+                        "in": "query",
                         "name": "page",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "integer",
                         "default": 10,
                         "description": "Page size",
+                        "in": "query",
                         "name": "limit",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -484,71 +1972,66 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Get Chat messages",
+                "tags": [
+                    "messages"
+                ]
             }
         },
         "/api/v1/chats/{chat_uuid}/messages/send": {
             "post": {
-                "description": "Send a message to a chat",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "messages"
-                ],
-                "summary": "Send a message",
+                "description": "Send a message to a chat",
                 "parameters": [
                     {
                         "description": "Message content",
-                        "name": "text",
                         "in": "body",
+                        "name": "text",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/chats.SendMessage"
                         }
                     },
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
-                ],
-                "responses": {}
-            }
-        },
-        "/api/v1/contacts/add": {
-            "post": {
-                "security": [
-                    {
-                        "SessionAuth": []
-                    }
-                ],
-                "description": "Add a contact",
-                "consumes": [
-                    "application/json"
                 ],
                 "produces": [
                     "application/json"
                 ],
+                "responses": {},
+                "summary": "Send a message",
                 "tags": [
-                    "contacts"
+                    "messages"
+                ]
+            }
+        },
+        "/api/v1/contacts/add": {
+            "post": {
+                "consumes": [
+                    "application/json"
                 ],
-                "summary": "Add a contact",
+                "description": "Add a contact",
                 "parameters": [
                     {
                         "description": "Contact token payload",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/contacts.AddContact"
                         }
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -569,42 +2052,42 @@
                             "type": "string"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/contacts/list": {
-            "get": {
+                },
                 "security": [
                     {
                         "SessionAuth": []
                     }
                 ],
-                "description": "Retrieve a list of contacts associated with a specific user ID",
+                "summary": "Add a contact",
+                "tags": [
+                    "contacts"
+                ]
+            }
+        },
+        "/api/v1/contacts/list": {
+            "get": {
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "contacts"
-                ],
-                "summary": "Get user contacts",
+                "description": "Retrieve a list of contacts associated with a specific user ID",
                 "parameters": [
                     {
-                        "type": "integer",
                         "default": 1,
                         "description": "Page number",
+                        "in": "query",
                         "name": "page",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "integer",
                         "default": 10,
                         "description": "Page size",
+                        "in": "query",
                         "name": "limit",
-                        "in": "query"
+                        "type": "integer"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -625,35 +2108,35 @@
                             "type": "string"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/contacts/{contact_token}": {
-            "get": {
+                },
                 "security": [
                     {
                         "SessionAuth": []
                     }
                 ],
-                "description": "Retrieve a single contact by their contact token",
+                "summary": "Get user contacts",
+                "tags": [
+                    "contacts"
+                ]
+            }
+        },
+        "/api/v1/contacts/{contact_token}": {
+            "get": {
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "contacts"
-                ],
-                "summary": "Get contact by token",
+                "description": "Retrieve a single contact by their contact token",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Contact token",
-                        "name": "contact_token",
                         "in": "path",
-                        "required": true
+                        "name": "contact_token",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -680,30 +2163,35 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "summary": "Get contact by token",
+                "tags": [
+                    "contacts"
+                ]
             }
         },
         "/api/v1/interactions/{chat_uuid}/mcp": {
             "post": {
-                "description": "Handle Model Context Protocol streaming JSON-RPC requests for tool discovery and execution (bot users only)",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/x-ndjson"
-                ],
-                "tags": [
-                    "tools"
-                ],
-                "summary": "Handle MCP JSON-RPC streaming requests",
+                "description": "Handle Model Context Protocol streaming JSON-RPC requests for tool discovery and execution (bot users only)",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/x-ndjson"
                 ],
                 "responses": {
                     "200": {
@@ -730,174 +2218,174 @@
                             "$ref": "#/definitions/tools.MCPResponse"
                         }
                     }
-                }
+                },
+                "summary": "Handle MCP JSON-RPC streaming requests",
+                "tags": [
+                    "tools"
+                ]
             }
         },
         "/api/v1/interactions/{chat_uuid}/tools": {
             "get": {
                 "description": "Get the list of available tools for a specific chat (bot users only)",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tools"
-                ],
-                "summary": "Get available tools",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "additionalProperties": true,
+                            "type": "object"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     }
-                }
+                },
+                "summary": "Get available tools",
+                "tags": [
+                    "tools"
+                ]
             }
         },
         "/api/v1/interactions/{chat_uuid}/tools/init": {
             "post": {
-                "description": "Store tool initialization data for a specific chat and tool (bot users only)",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tools"
-                ],
-                "summary": "Store tool initialization data",
+                "description": "Store tool initialization data for a specific chat and tool (bot users only)",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     },
                     {
                         "description": "Tool init data request",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/tools.StoreToolInitDataRequest"
                         }
                     }
                 ],
+                "produces": [
+                    "application/json"
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     }
-                }
+                },
+                "summary": "Store tool initialization data",
+                "tags": [
+                    "tools"
+                ]
             }
         },
         "/api/v1/interactions/{chat_uuid}/tools/{tool_name}": {
             "post": {
-                "description": "Execute a tool for a specific chat interaction (bot users only)",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tools"
-                ],
-                "summary": "Execute a tool",
+                "description": "Execute a tool for a specific chat interaction (bot users only)",
                 "parameters": [
                     {
-                        "type": "string",
                         "description": "Chat UUID",
-                        "name": "chat_uuid",
                         "in": "path",
-                        "required": true
+                        "name": "chat_uuid",
+                        "required": true,
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Tool Name",
-                        "name": "tool_name",
                         "in": "path",
-                        "required": true
+                        "name": "tool_name",
+                        "required": true,
+                        "type": "string"
                     },
                     {
                         "description": "Tool execution request",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/tools.ToolExecutionRequest"
                         }
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -909,89 +2397,89 @@
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "type": "object",
                             "additionalProperties": {
                                 "type": "string"
-                            }
+                            },
+                            "type": "object"
                         }
                     }
-                }
+                },
+                "summary": "Execute a tool",
+                "tags": [
+                    "tools"
+                ]
             }
         },
         "/api/v1/models/list": {
             "get": {
                 "description": "List model configurations with pagination and filters. Guests receive restricted fields, admins receive extended metadata.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "models"
-                ],
-                "summary": "List models",
                 "parameters": [
                     {
-                        "minimum": 1,
-                        "type": "integer",
                         "description": "Page number",
+                        "in": "query",
+                        "minimum": 1,
                         "name": "page",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
+                        "description": "Page size",
+                        "in": "query",
                         "maximum": 100,
                         "minimum": 1,
-                        "type": "integer",
-                        "description": "Page size",
                         "name": "page_size",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "string",
                         "description": "Filter by backend hoster",
+                        "in": "query",
                         "name": "hoster",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Filter by model source prefix",
+                        "in": "query",
                         "name": "source",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Search by title/model/description",
+                        "in": "query",
                         "name": "q",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Admin only: filter by assigned bot name",
+                        "in": "query",
                         "name": "bot",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Admin only: filter by assigned bot UUID",
+                        "in": "query",
                         "name": "bot_uuid",
-                        "in": "query"
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -1000,59 +2488,59 @@
                             "$ref": "#/definitions/models.ModelsListResponse"
                         }
                     }
-                }
+                },
+                "summary": "List models",
+                "tags": [
+                    "models"
+                ]
             }
         },
         "/api/v1/tools/list": {
             "get": {
                 "description": "List callable tools with pagination and filters. Admin-only tools are only visible to admin users.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tools"
-                ],
-                "summary": "List tools",
                 "parameters": [
                     {
-                        "minimum": 1,
-                        "type": "integer",
                         "description": "Page number",
+                        "in": "query",
+                        "minimum": 1,
                         "name": "page",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
+                        "description": "Page size",
+                        "in": "query",
                         "maximum": 100,
                         "minimum": 1,
-                        "type": "integer",
-                        "description": "Page size",
                         "name": "page_size",
-                        "in": "query"
+                        "type": "integer"
                     },
                     {
-                        "type": "string",
                         "description": "Filter by tool type",
+                        "in": "query",
                         "name": "type",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Search by tool name or description",
+                        "in": "query",
                         "name": "q",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Authenticated only: true/false filter",
+                        "in": "query",
                         "name": "requires_init",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Authenticated only: true/false filter",
+                        "in": "query",
                         "name": "requires_confirmation",
-                        "in": "query"
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -1061,32 +2549,1819 @@
                             "$ref": "#/definitions/tools.ToolsListResponse"
                         }
                     }
-                }
+                },
+                "summary": "List tools",
+                "tags": [
+                    "tools"
+                ]
             }
         },
-        "/api/v1/user/2fa/confirm": {
+        "/api/v1/tools/typing": {
+            "get": {
+                "description": "List visible tools with JSON Schemas for call payload and init payload so SDKs can auto-generate typed helpers.",
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolsTypingResponse"
+                        }
+                    }
+                },
+                "summary": "List tool typing schemas",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/create_confirmable_action_suggestion/call/validate": {
             "post": {
-                "description": "Verify the 2FA code and enable 2FA for the user",
                 "consumes": [
                     "application/json"
+                ],
+                "description": "Validate payload for tool `create_confirmable_action_suggestion` call arguments.",
+                "operationId": "post_api_v1_tools_typing_create_confirmable_action_suggestion_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.CreateConfirmableActionSuggestionCall"
+                        }
+                    }
                 ],
                 "produces": [
                     "application/json"
                 ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "create_confirmable_action_suggestion",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate create_confirmable_action_suggestion call payload",
                 "tags": [
-                    "user"
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/create_confirmable_action_suggestion/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
                 ],
-                "summary": "Confirm Two-Factor Authentication",
+                "description": "Validate payload for tool `create_confirmable_action_suggestion` init configuration.",
+                "operationId": "post_api_v1_tools_typing_create_confirmable_action_suggestion_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.CreateConfirmableActionSuggestionInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "create_confirmable_action_suggestion",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate create_confirmable_action_suggestion init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/get_current_time/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `get_current_time` call arguments.",
+                "operationId": "post_api_v1_tools_typing_get_current_time_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.GetCurrentTimeCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "get_current_time",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate get_current_time call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/get_current_time_confirmed/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `get_current_time_confirmed` call arguments.",
+                "operationId": "post_api_v1_tools_typing_get_current_time_confirmed_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.GetCurrentTimeConfirmedCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "get_current_time_confirmed",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate get_current_time_confirmed call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/get_current_time_confirmed_testing/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `get_current_time_confirmed_testing` call arguments.",
+                "operationId": "post_api_v1_tools_typing_get_current_time_confirmed_testing_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.GetCurrentTimeConfirmedTestingCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "get_current_time_confirmed_testing",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate get_current_time_confirmed_testing call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/get_random_number/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `get_random_number` call arguments.",
+                "operationId": "post_api_v1_tools_typing_get_random_number_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.GetRandomNumberCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "get_random_number",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate get_random_number call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/get_weather/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `get_weather` call arguments.",
+                "operationId": "post_api_v1_tools_typing_get_weather_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.GetWeatherCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "get_weather",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate get_weather call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__chat_reply/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__chat_reply` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_chat_reply_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldChatReplyCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__chat_reply",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__chat_reply call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__chat_reply/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__chat_reply` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_chat_reply_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldChatReplyInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__chat_reply",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__chat_reply init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__generate_message_reply_suggestion/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__generate_message_reply_suggestion` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_generate_message_reply_suggestion_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldGenerateMessageReplySuggestionCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__generate_message_reply_suggestion",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__generate_message_reply_suggestion call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__generate_message_reply_suggestion/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__generate_message_reply_suggestion` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_generate_message_reply_suggestion_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldGenerateMessageReplySuggestionInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__generate_message_reply_suggestion",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__generate_message_reply_suggestion init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__get_past_messages/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__get_past_messages` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_get_past_messages_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldGetPastMessagesCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__get_past_messages",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__get_past_messages call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__get_past_messages/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__get_past_messages` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_get_past_messages_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldGetPastMessagesInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__get_past_messages",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__get_past_messages init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__get_user_state/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__get_user_state` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_get_user_state_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldGetUserStateCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__get_user_state",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__get_user_state call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__get_user_state/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__get_user_state` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_get_user_state_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldGetUserStateInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__get_user_state",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__get_user_state init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__resolve_match/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__resolve_match` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_resolve_match_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldResolveMatchCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__resolve_match",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__resolve_match call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__resolve_match/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__resolve_match` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_resolve_match_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldResolveMatchInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__resolve_match",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__resolve_match init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__retrieve_match_overview/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__retrieve_match_overview` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_retrieve_match_overview_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldRetrieveMatchOverviewCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__retrieve_match_overview",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__retrieve_match_overview call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__retrieve_match_overview/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__retrieve_match_overview` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_retrieve_match_overview_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldRetrieveMatchOverviewInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__retrieve_match_overview",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__retrieve_match_overview init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__set_user_searching_state/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__set_user_searching_state` call arguments.",
+                "operationId": "post_api_v1_tools_typing_little_world_set_user_searching_state_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldSetUserSearchingStateCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__set_user_searching_state",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__set_user_searching_state call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/little_world__set_user_searching_state/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `little_world__set_user_searching_state` init configuration.",
+                "operationId": "post_api_v1_tools_typing_little_world_set_user_searching_state_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.LittleWorldSetUserSearchingStateInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "little_world__set_user_searching_state",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate little_world__set_user_searching_state init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/n8n_trigger_workflow_webhook/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `n8n_trigger_workflow_webhook` call arguments.",
+                "operationId": "post_api_v1_tools_typing_n8n_trigger_workflow_webhook_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.N8nTriggerWorkflowWebhookCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "n8n_trigger_workflow_webhook",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate n8n_trigger_workflow_webhook call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/n8n_trigger_workflow_webhook/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `n8n_trigger_workflow_webhook` init configuration.",
+                "operationId": "post_api_v1_tools_typing_n8n_trigger_workflow_webhook_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.N8nTriggerWorkflowWebhookInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "n8n_trigger_workflow_webhook",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate n8n_trigger_workflow_webhook init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/run_callback_function/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `run_callback_function` call arguments.",
+                "operationId": "post_api_v1_tools_typing_run_callback_function_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.RunCallbackFunctionCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "run_callback_function",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate run_callback_function call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/run_callback_function/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `run_callback_function` init configuration.",
+                "operationId": "post_api_v1_tools_typing_run_callback_function_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.RunCallbackFunctionInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "run_callback_function",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate run_callback_function init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/rwth_aachen_seminar_tims_auto_paper_include_exclude/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `rwth_aachen_seminar_tims_auto_paper_include_exclude` call arguments.",
+                "operationId": "post_api_v1_tools_typing_rwth_aachen_seminar_tims_auto_paper_include_exclude_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.RwthAachenSeminarTimsAutoPaperIncludeExcludeCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "rwth_aachen_seminar_tims_auto_paper_include_exclude",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate rwth_aachen_seminar_tims_auto_paper_include_exclude call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/rwth_aachen_seminar_tims_auto_paper_include_exclude/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `rwth_aachen_seminar_tims_auto_paper_include_exclude` init configuration.",
+                "operationId": "post_api_v1_tools_typing_rwth_aachen_seminar_tims_auto_paper_include_exclude_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.RwthAachenSeminarTimsAutoPaperIncludeExcludeInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "rwth_aachen_seminar_tims_auto_paper_include_exclude",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate rwth_aachen_seminar_tims_auto_paper_include_exclude init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/tool_init_test_tool_pass_through/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `tool_init_test_tool_pass_through` call arguments.",
+                "operationId": "post_api_v1_tools_typing_tool_init_test_tool_pass_through_call_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolInitTestToolPassThroughCall"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "call",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "tool_init_test_tool_pass_through",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate tool_init_test_tool_pass_through call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/tool_init_test_tool_pass_through/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate payload for tool `tool_init_test_tool_pass_through` init configuration.",
+                "operationId": "post_api_v1_tools_typing_tool_init_test_tool_pass_through_init_validate",
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolInitTestToolPassThroughInit"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Payload is valid",
+                        "schema": {
+                            "properties": {
+                                "kind": {
+                                    "example": "init",
+                                    "type": "string"
+                                },
+                                "tool_name": {
+                                    "example": "tool_init_test_tool_pass_through",
+                                    "type": "string"
+                                },
+                                "valid": {
+                                    "example": true,
+                                    "type": "boolean"
+                                }
+                            },
+                            "required": [
+                                "valid",
+                                "tool_name",
+                                "kind"
+                            ],
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload"
+                    }
+                },
+                "summary": "Validate tool_init_test_tool_pass_through init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/{tool_name}/call/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate a JSON object payload for a tool call by tool name.",
+                "parameters": [
+                    {
+                        "description": "Tool name",
+                        "in": "path",
+                        "name": "tool_name",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "description": "Tool call payload",
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "additionalProperties": true,
+                            "type": "object"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Tool not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "summary": "Validate tool call payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/typing/{tool_name}/init/validate": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Validate a JSON object payload for a tool init config by tool name.",
+                "parameters": [
+                    {
+                        "description": "Tool name",
+                        "in": "path",
+                        "name": "tool_name",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "description": "Tool init payload",
+                        "in": "body",
+                        "name": "payload",
+                        "required": true,
+                        "schema": {
+                            "additionalProperties": true,
+                            "type": "object"
+                        }
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolValidatePayloadResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid payload",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Tool not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "summary": "Validate tool init payload",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/tools/{tool_name}/typing": {
+            "get": {
+                "description": "Get a single visible tool typing schema by tool name.",
+                "parameters": [
+                    {
+                        "description": "Tool name",
+                        "in": "path",
+                        "name": "tool_name",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/tools.ToolTypeDefinition"
+                        }
+                    },
+                    "404": {
+                        "description": "Tool not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "summary": "Get tool typing schema",
+                "tags": [
+                    "tools"
+                ]
+            }
+        },
+        "/api/v1/user/2fa/confirm": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "description": "Verify the 2FA code and enable 2FA for the user",
                 "parameters": [
                     {
                         "description": "2FA confirmation data",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/user.TwoFactorConfirmRequest"
                         }
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -1107,22 +4382,22 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Confirm Two-Factor Authentication",
+                "tags": [
+                    "user"
+                ]
             }
         },
         "/api/v1/user/2fa/disable": {
             "post": {
-                "description": "Disable 2FA for the user and remove recovery codes",
                 "consumes": [
                     "application/json"
                 ],
+                "description": "Disable 2FA for the user and remove recovery codes",
                 "produces": [
                     "application/json"
                 ],
-                "tags": [
-                    "user"
-                ],
-                "summary": "Disable Two-Factor Authentication",
                 "responses": {
                     "200": {
                         "description": "2FA disabled successfully",
@@ -1142,22 +4417,22 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Disable Two-Factor Authentication",
+                "tags": [
+                    "user"
+                ]
             }
         },
         "/api/v1/user/2fa/recovery-codes": {
             "post": {
-                "description": "Generate new recovery codes for 2FA (invalidates old ones)",
                 "consumes": [
                     "application/json"
                 ],
+                "description": "Generate new recovery codes for 2FA (invalidates old ones)",
                 "produces": [
                     "application/json"
                 ],
-                "tags": [
-                    "user"
-                ],
-                "summary": "Generate New Recovery Codes",
                 "responses": {
                     "200": {
                         "description": "New recovery codes",
@@ -1177,22 +4452,22 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Generate New Recovery Codes",
+                "tags": [
+                    "user"
+                ]
             }
         },
         "/api/v1/user/2fa/setup": {
             "post": {
-                "description": "Generate a new 2FA secret and QR code URL for the user",
                 "consumes": [
                     "application/json"
                 ],
+                "description": "Generate a new 2FA secret and QR code URL for the user",
                 "produces": [
                     "application/json"
                 ],
-                "tags": [
-                    "user"
-                ],
-                "summary": "Setup Two-Factor Authentication",
                 "responses": {
                     "200": {
                         "description": "2FA setup data",
@@ -1212,44 +4487,44 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Setup Two-Factor Authentication",
+                "tags": [
+                    "user"
+                ]
             }
         },
         "/api/v1/user/login": {
             "post": {
-                "description": "Authenticate and login a user with email and password",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "user"
-                ],
-                "summary": "Login a user",
+                "description": "Authenticate and login a user with email and password",
                 "parameters": [
                     {
                         "description": "Login credentials",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/user.UserLogin"
                         }
                     },
                     {
-                        "type": "string",
                         "description": "Optional: cookie origin URL (e.g. https://app.example.com) used to derive the session cookie Domain",
+                        "in": "query",
                         "name": "cookie_origin",
-                        "in": "query"
+                        "type": "string"
                     },
                     {
-                        "type": "string",
                         "description": "Optional: cookie domain (e.g. app.example.com) used for the session cookie Domain",
+                        "in": "query",
                         "name": "cookie_domain",
-                        "in": "query"
+                        "type": "string"
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "200": {
@@ -1270,22 +4545,22 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Login a user",
+                "tags": [
+                    "user"
+                ]
             }
         },
         "/api/v1/user/logout": {
             "post": {
-                "description": "Invalidates the user's session token",
                 "consumes": [
                     "application/json"
                 ],
+                "description": "Invalidates the user's session token",
                 "produces": [
                     "application/json"
                 ],
-                "tags": [
-                    "accounts"
-                ],
-                "summary": "Logout a user",
                 "responses": {
                     "200": {
                         "description": "Logout successful",
@@ -1305,32 +4580,32 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Logout a user",
+                "tags": [
+                    "accounts"
+                ]
             }
         },
         "/api/v1/user/register": {
             "post": {
-                "description": "Register a user",
                 "consumes": [
                     "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "accounts"
-                ],
-                "summary": "Register a user",
+                "description": "Register a user",
                 "parameters": [
                     {
                         "description": "User registration request",
-                        "name": "request",
                         "in": "body",
+                        "name": "request",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/user.UserRegister"
                         }
                     }
+                ],
+                "produces": [
+                    "application/json"
                 ],
                 "responses": {
                     "201": {
@@ -1351,27 +4626,22 @@
                             "type": "string"
                         }
                     }
-                }
+                },
+                "summary": "Register a user",
+                "tags": [
+                    "accounts"
+                ]
             }
         },
         "/api/v1/user/self": {
             "get": {
-                "security": [
-                    {
-                        "SessionAuth": []
-                    }
-                ],
-                "description": "Retrieve the current user's information",
                 "consumes": [
                     "application/json"
                 ],
+                "description": "Retrieve the current user's information",
                 "produces": [
                     "application/json"
                 ],
-                "tags": [
-                    "users"
-                ],
-                "summary": "Get current user",
                 "responses": {
                     "200": {
                         "description": "Current user details",
@@ -1385,666 +4655,28 @@
                             "type": "string"
                         }
                     }
-                }
-            }
-        }
-    },
-    "definitions": {
-        "chats.CreateChat": {
-            "type": "object",
-            "properties": {
-                "attachments": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/chats.FileAttachment"
+                },
+                "security": [
+                    {
+                        "SessionAuth": []
                     }
-                },
-                "chat_type": {
-                    "type": "string"
-                },
-                "contact_token": {
-                    "type": "string"
-                },
-                "first_message": {
-                    "type": "string"
-                },
-                "shared_config": {
-                    "type": "object",
-                    "additionalProperties": true
-                }
-            }
-        },
-        "chats.FileAttachment": {
-            "type": "object",
-            "properties": {
-                "display_name": {
-                    "type": "string"
-                },
-                "file_id": {
-                    "type": "string"
-                },
-                "file_name": {
-                    "type": "string"
-                },
-                "file_size": {
-                    "type": "integer"
-                },
-                "mime_type": {
-                    "type": "string"
-                }
-            }
-        },
-        "chats.ListedChat": {
-            "type": "object",
-            "properties": {
-                "chat_share_uuid": {
-                    "type": "string"
-                },
-                "chat_type": {
-                    "type": "string"
-                },
-                "config": {},
-                "latest_message": {
-                    "$ref": "#/definitions/database.Message"
-                },
-                "partner": {
-                    "$ref": "#/definitions/database.User"
-                },
-                "shared_interaction_url": {
-                    "type": "string"
-                },
-                "uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "chats.ListedChatsPage": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer"
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/chats.ListedChat"
-                    }
-                },
-                "total_pages": {
-                    "type": "integer"
-                }
-            }
-        },
-        "chats.ListedMessage": {
-            "type": "object",
-            "properties": {
-                "data_type": {
-                    "type": "string"
-                },
-                "meta_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "reasoning": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "receiver_id": {
-                    "type": "integer"
-                },
-                "send_at": {
-                    "type": "string"
-                },
-                "sender_id": {
-                    "type": "integer"
-                },
-                "sender_is_automated": {
-                    "type": "boolean"
-                },
-                "sender_uuid": {
-                    "type": "string"
-                },
-                "text": {
-                    "type": "string"
-                },
-                "tool_calls": {
-                    "type": "array",
-                    "items": {}
-                },
-                "uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "chats.ListedMessagesPage": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer"
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/chats.ListedMessage"
-                    }
-                },
-                "total_pages": {
-                    "type": "integer"
-                }
-            }
-        },
-        "chats.PublicInteractionChat": {
-            "type": "object",
-            "properties": {
-                "chat_share_uuid": {
-                    "type": "string"
-                },
-                "chat_type": {
-                    "type": "string"
-                },
-                "config": {},
-                "interaction_details": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "partner": {},
-                "published_at": {
-                    "type": "string"
-                },
-                "uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "chats.SendMessage": {
-            "type": "object",
-            "properties": {
-                "attachments": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/chats.FileAttachment"
-                    }
-                },
-                "meta_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "reasoning": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "text": {
-                    "type": "string"
-                },
-                "tool_calls": {
-                    "type": "array",
-                    "items": {}
-                }
-            }
-        },
-        "chats.SharedChatPublishResponse": {
-            "type": "object",
-            "properties": {
-                "chat_share_uuid": {
-                    "type": "string"
-                },
-                "chat_uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "contacts.AddContact": {
-            "type": "object",
-            "properties": {
-                "contact_token": {
-                    "type": "string"
-                }
-            }
-        },
-        "contacts.ListedContact": {
-            "type": "object",
-            "properties": {
-                "contact_token": {
-                    "type": "string"
-                },
-                "is_automated": {
-                    "type": "boolean"
-                },
-                "is_online": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "profile_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "user_uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "contacts.PaginatedContacts": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer"
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/contacts.ListedContact"
-                    }
-                },
-                "total_pages": {
-                    "type": "integer"
-                }
-            }
-        },
-        "database.Message": {
-            "type": "object",
-            "properties": {
-                "data_type": {
-                    "type": "string"
-                },
-                "meta_data": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "read_at": {
-                    "type": "string"
-                },
-                "reasoning": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "text": {
-                    "type": "string"
-                },
-                "tool_calls": {
-                    "type": "array",
-                    "items": {
-                        "type": "array",
-                        "items": {
-                            "type": "integer"
-                        }
-                    }
-                },
-                "uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "database.User": {
-            "type": "object",
-            "properties": {
-                "contact_token": {
-                    "type": "string"
-                },
-                "is_admin": {
-                    "type": "boolean"
-                },
-                "is_automated": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "two_factor_enabled": {
-                    "type": "boolean"
-                },
-                "uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.ModelListItem": {
-            "type": "object",
-            "properties": {
-                "bots": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "configuration": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "description": {
-                    "type": "string"
-                },
-                "hoster": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "model_id": {
-                    "type": "string"
-                },
-                "source": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.ModelsListResponse": {
-            "type": "object",
-            "properties": {
-                "filters": {
-                    "$ref": "#/definitions/models.modelsFilters"
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.ModelListItem"
-                    }
-                },
-                "total_pages": {
-                    "type": "integer"
-                },
-                "total_rows": {
-                    "type": "integer"
-                }
-            }
-        },
-        "models.botOption": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "uuid": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.modelsFilters": {
-            "type": "object",
-            "properties": {
-                "bots": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.botOption"
-                    }
-                },
-                "hosters": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "sources": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "tools.MCPError": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "data": {},
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "tools.MCPResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "$ref": "#/definitions/tools.MCPError"
-                },
-                "id": {},
-                "jsonrpc": {
-                    "type": "string"
-                },
-                "result": {}
-            }
-        },
-        "tools.StoreToolInitDataRequest": {
-            "type": "object",
-            "properties": {
-                "expires_at": {
-                    "description": "ISO 8601 timestamp",
-                    "type": "string"
-                },
-                "init_data": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "tool_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "tools.ToolExecutionRequest": {
-            "type": "object",
-            "properties": {
-                "input_parameters": {
-                    "type": "object",
-                    "additionalProperties": true
-                }
-            }
-        },
-        "tools.ToolExecutionResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "type": "string"
-                },
-                "result": {
-                    "type": "string"
-                },
-                "success": {
-                    "type": "boolean"
-                },
-                "tool_info": {
-                    "type": "object",
-                    "additionalProperties": true
-                }
-            }
-        },
-        "tools.ToolListItem": {
-            "type": "object",
-            "properties": {
-                "call_schema": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "confirmation_block_message": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "function_name": {
-                    "type": "string"
-                },
-                "init_schema": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "name": {
-                    "type": "string"
-                },
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "required": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "requires_confirmation": {
-                    "type": "boolean"
-                },
-                "requires_init": {
-                    "type": "boolean"
-                },
-                "source_line": {
-                    "type": "integer"
-                },
-                "source_path": {
-                    "type": "string"
-                },
-                "source_url": {
-                    "type": "string"
-                },
-                "stop_on_first_confirmable_tool_call": {
-                    "type": "boolean"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "tools.ToolsListResponse": {
-            "type": "object",
-            "properties": {
-                "filters": {
-                    "$ref": "#/definitions/tools.toolsFilters"
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "page_size": {
-                    "type": "integer"
-                },
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/tools.ToolListItem"
-                    }
-                },
-                "total_pages": {
-                    "type": "integer"
-                },
-                "total_rows": {
-                    "type": "integer"
-                }
-            }
-        },
-        "tools.toolsFilters": {
-            "type": "object",
-            "properties": {
-                "types": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "user.TwoFactorConfirmRequest": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "secret": {
-                    "type": "string"
-                }
-            }
-        },
-        "user.TwoFactorRecoveryCodesResponse": {
-            "type": "object",
-            "properties": {
-                "codes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "user.TwoFactorSetupResponse": {
-            "type": "object",
-            "properties": {
-                "qr_code_url": {
-                    "type": "string"
-                },
-                "secret": {
-                    "type": "string"
-                }
-            }
-        },
-        "user.UserLogin": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                },
-                "recovery_code": {
-                    "type": "string"
-                },
-                "two_factor_code": {
-                    "type": "string"
-                }
-            }
-        },
-        "user.UserRegister": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                }
+                ],
+                "summary": "Get current user",
+                "tags": [
+                    "users"
+                ]
             }
         }
     },
     "securityDefinitions": {
         "SessionAuth": {
             "description": "Session cookie obtained from login endpoint",
-            "type": "apiKey",
+            "in": "cookie",
             "name": "session_id",
-            "in": "cookie"
+            "type": "apiKey"
         }
     },
+    "swagger": "2.0",
     "tags": [
         {
             "description": "Chats hold a collection of messages and files or meta-data, they are central to how open-chat works and are used to hold information for interactions and integratins",
@@ -2057,6 +4689,10 @@
         {
             "description": "Everything user management related, users are also used to abstract access permissions. Chats have users as participants, only users share each others contact may create a shared chat.",
             "name": "users"
+        },
+        {
+            "description": "Owner-scoped automated bot management and interaction creation.",
+            "name": "bots"
         }
     ]
 }
