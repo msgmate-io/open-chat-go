@@ -68,18 +68,12 @@ def _build_validate_operation(
         "responses": {
             "200": {
                 "description": "Payload is valid",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "valid": {"type": "boolean", "example": True},
-                        "tool_name": {"type": "string", "example": tool_name},
-                        "kind": {"type": "string", "example": kind},
-                    },
-                    "required": ["valid", "tool_name", "kind"],
-                },
+                "schema": {"$ref": "#/definitions/tools.ToolValidatePayloadResponse"},
             },
             "400": {"description": "Invalid payload"},
         },
+        "x-tool-name": tool_name,
+        "x-tool-kind": kind,
     }
 
 
@@ -99,11 +93,8 @@ def augment_swagger(swagger: dict, manifest: dict) -> dict:
         if not tool_name:
             continue
 
-        call_type_name = str(row.get("call_type_name", "")).strip()
+        call_type_name = str(row.get("call_type_name", "")).strip() or "ToolCall"
         call_schema = row.get("call_schema") if isinstance(row.get("call_schema"), dict) else {"type": "object"}
-        if not call_type_name:
-            call_type_name = "ToolCall"
-
         call_ref = _ensure_definition(swagger, call_type_name, call_schema)
 
         suffix = _sanitize_operation_suffix(tool_name)
