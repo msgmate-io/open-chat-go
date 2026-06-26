@@ -35,10 +35,12 @@ RUN bash full_build.sh --no-frontend
 
 FROM scratch AS prod
 COPY --from=builder /backend/backend /backend
+COPY --from=builder /backend/little_world_default_bots /backend/little_world_default_bots
 
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS prod-alpine
 WORKDIR /backend
 COPY --from=builder /backend/backend /usr/local/bin/backend
 COPY --from=builder /backend/server/routes.json /backend/routes.json
+COPY --from=builder /backend/little_world_default_bots /backend/little_world_default_bots
 
 CMD ["backend", "server"]
