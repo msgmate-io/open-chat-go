@@ -23,6 +23,9 @@ services:
       LITELLM_API_HOST: ${LITELLM_API_HOST}
       FRONTEND_PROXY: "http://frontend:3000"
       ROOT_CREDENTIALS: "admin:password"
+      CREATE_EXTRA_USER: "littleworld:Test123!"
+      CREATE_EXTRA_BOT: "little_world_support_chat_bot:Test123!,little_world_reply_suggestion_bot:Test123!"
+      ADD_BOT_FROM_CONFIG: "/backend/little_world_default_bots/little_world_support_chat.json,/backend/little_world_default_bots/little_world_reply_suggestion.json"
       HOST: "0.0.0.0"
       PORT: 1984
       REDIS_URL: "redis://redis:6379/0"

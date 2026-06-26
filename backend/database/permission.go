@@ -4,11 +4,14 @@ type PermissionName string
 
 const (
 	PermissionCreateAPITokens PermissionName = "create_api_tokens"
+	PermissionCreateBots      PermissionName = "create_bots"
 )
 
 func IsValidPermissionName(value string) bool {
 	switch PermissionName(value) {
 	case PermissionCreateAPITokens:
+		return true
+	case PermissionCreateBots:
 		return true
 	default:
 		return false

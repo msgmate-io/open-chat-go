@@ -183,6 +183,16 @@ func GetServerFlags() []cli.Flag {
 			Name:    "create-extra-user",
 			Usage:   "optional extra users in username:password format; can be repeated",
 		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("CREATE_EXTRA_BOT"),
+			Name:    "create-extra-bot",
+			Usage:   "optional extra automated bot users in username:password format; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_BOT_FROM_CONFIG"),
+			Name:    "add-bot-from-config",
+			Usage:   "path(s) to JSON files defining additional bots; can be repeated",
+		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("FRONTEND_PROXY"),
 			Name:    "frontend-proxy",
@@ -320,31 +330,33 @@ func ServerCli() *cli.Command {
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
 			runtimecfg.SetAll(map[string]runtimecfg.Value{
-				"DB_BACKEND":               {Value: c.String("db-backend"), Sensitive: false},
-				"DB_PATH":                  {Value: c.String("db-path"), Sensitive: false},
-				"DEBUG":                    {Value: fmt.Sprintf("%t", c.Bool("debug")), Sensitive: false},
-				"SETUP_TEST_USERS":         {Value: fmt.Sprintf("%t", c.Bool("setup-test-users")), Sensitive: false},
-				"RESET_DB":                 {Value: fmt.Sprintf("%t", c.Bool("reset-db")), Sensitive: false},
-				"HOST":                     {Value: c.String("host"), Sensitive: false},
-				"PORT":                     {Value: fmt.Sprintf("%d", c.Int("port")), Sensitive: false},
-				"ROOT_CREDENTIALS":         {Value: c.String("root-credentials"), Sensitive: true},
-				"DEFAULT_BOT_CREDENTIALS":  {Value: c.String("default-bot"), Sensitive: true},
-				"CREATE_EXTRA_USER":        {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
-				"FRONTEND_PROXY":           {Value: c.String("frontend-proxy"), Sensitive: false},
-				"START_WORKER":             {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
-				"ASYNQ_CONCURRENCY":        {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
-				"REDIS_URL":                {Value: c.String("redis-url"), Sensitive: true},
-				"REDIS_ADDR":               {Value: c.String("redis-addr"), Sensitive: false},
-				"REDIS_PASSWORD":           {Value: c.String("redis-password"), Sensitive: true},
-				"REDIS_DB":                 {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
-				"OPENAI_API_KEY":           {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_KEY":        {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_HOST":       {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
-				"DEEPINFRA_API_KEY":        {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
-				"GROQ_API_KEY":             {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
-				"LITELLM_API_KEY":          {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
-				"LITELLM_API_HOST":         {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
-				"OPEN_CHAT_SEAL_KEY":       {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+				"DB_BACKEND":              {Value: c.String("db-backend"), Sensitive: false},
+				"DB_PATH":                 {Value: c.String("db-path"), Sensitive: false},
+				"DEBUG":                   {Value: fmt.Sprintf("%t", c.Bool("debug")), Sensitive: false},
+				"SETUP_TEST_USERS":        {Value: fmt.Sprintf("%t", c.Bool("setup-test-users")), Sensitive: false},
+				"RESET_DB":                {Value: fmt.Sprintf("%t", c.Bool("reset-db")), Sensitive: false},
+				"HOST":                    {Value: c.String("host"), Sensitive: false},
+				"PORT":                    {Value: fmt.Sprintf("%d", c.Int("port")), Sensitive: false},
+				"ROOT_CREDENTIALS":        {Value: c.String("root-credentials"), Sensitive: true},
+				"DEFAULT_BOT_CREDENTIALS": {Value: c.String("default-bot"), Sensitive: true},
+				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
+				"CREATE_EXTRA_BOT":        {Value: strings.Join(c.StringSlice("create-extra-bot"), ","), Sensitive: true},
+				"ADD_BOT_FROM_CONFIG":     {Value: strings.Join(c.StringSlice("add-bot-from-config"), ","), Sensitive: false},
+				"FRONTEND_PROXY":          {Value: c.String("frontend-proxy"), Sensitive: false},
+				"START_WORKER":            {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
+				"ASYNQ_CONCURRENCY":       {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
+				"REDIS_URL":               {Value: c.String("redis-url"), Sensitive: true},
+				"REDIS_ADDR":              {Value: c.String("redis-addr"), Sensitive: false},
+				"REDIS_PASSWORD":          {Value: c.String("redis-password"), Sensitive: true},
+				"REDIS_DB":                {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+				"OPENAI_API_KEY":          {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_KEY":       {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_HOST":      {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
+				"DEEPINFRA_API_KEY":       {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
+				"GROQ_API_KEY":            {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
+				"LITELLM_API_KEY":         {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
+				"LITELLM_API_HOST":        {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
+				"OPEN_CHAT_SEAL_KEY":      {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 			})
 
 			redisConnOpt, err := resolveRedisConnOpt(c)
@@ -435,6 +447,26 @@ func ServerCli() *cli.Command {
 				}); err != nil {
 					return err
 				}
+			}
+
+			for i, extra := range c.StringSlice("create-extra-bot") {
+				if strings.TrimSpace(extra) == "" {
+					continue
+				}
+				extraLabel := fmt.Sprintf("create-extra-bot[%d]", i)
+				if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+					Label:            extraLabel,
+					Credentials:      extra,
+					IsAdmin:          false,
+					IsAutomated:      true,
+					ValidateStrength: !c.Bool("debug"),
+				}); err != nil {
+					return err
+				}
+			}
+
+			if err := applyBotBootstrapConfigFiles(DB, c.StringSlice("add-bot-from-config"), !c.Bool("debug")); err != nil {
+				return err
 			}
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {

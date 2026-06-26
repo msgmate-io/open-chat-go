@@ -368,7 +368,7 @@ func (c *Client) ListContacts(page int64, limit int64) (error, contacts.Paginate
 }
 
 // CreateChatWithAttachments creates a new chat with the specified contact and attachments
-func (c *Client) CreateChatWithAttachments(contactToken string, firstMessage string, attachments []chats.FileAttachment, sharedConfig json.RawMessage, chatType string) (error, chats.ListedChat) {
+func (c *Client) CreateChatWithAttachments(contactToken string, firstMessage string, attachments []chats.FileAttachment, sharedConfig map[string]interface{}, chatType string) (error, chats.ListedChat) {
 	log.Printf("=== Client.CreateChatWithAttachments START ===")
 	log.Printf("ContactToken: %s", contactToken)
 	log.Printf("FirstMessage: %s", firstMessage)
