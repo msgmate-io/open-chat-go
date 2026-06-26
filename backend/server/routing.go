@@ -2,6 +2,7 @@ package server
 
 import (
 	"backend/api/admin"
+	"backend/api/bots"
 	"backend/api/chats"
 	"backend/api/contacts"
 	"backend/api/files"
@@ -349,6 +350,7 @@ func BackendRouting(
 	toolsHandler := &tools.ToolsHandler{}
 	mcpHandler := &tools.MCPHandler{}
 	modelsHandler := &models.ModelsHandler{}
+	botsHandler := &bots.BotsHandler{}
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
@@ -358,6 +360,12 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", toolsHandler.ExecuteConfirmableAction)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/signals/{signal}", chatsHandler.SignalSendMessage)
 	v1PrivateApis.HandleFunc("POST /chats/create", chatsHandler.Create)
+	v1PrivateApis.HandleFunc("POST /bots", botsHandler.Create)
+	v1PrivateApis.HandleFunc("GET /bots/list", botsHandler.List)
+	v1PrivateApis.HandleFunc("GET /bots/{identifier}", botsHandler.Get)
+	v1PrivateApis.HandleFunc("PATCH /bots/{identifier}", botsHandler.Update)
+	v1PrivateApis.HandleFunc("DELETE /bots/{identifier}", botsHandler.Delete)
+	v1PrivateApis.HandleFunc("POST /bots/{identifier}/interactions", botsHandler.CreateInteraction)
 
 	// Tool execution endpoints (bot users only)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}", toolsHandler.ExecuteTool)
@@ -426,6 +434,10 @@ func BackendRouting(
 	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
 	mux.Handle("GET /api/v1/models/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
 	mux.Handle("GET /api/v1/tools/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
+	mux.Handle("GET /api/v1/tools/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ListTyping)))))
+	mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
+	mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
+	mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
 	mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
 	mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
 	mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
