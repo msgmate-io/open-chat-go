@@ -3,8 +3,10 @@ package server
 import (
 	"backend/api/websocket"
 	"backend/database"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
@@ -33,10 +35,19 @@ func BackendServer(
 
 func SetupBaseConnections(
 	DB *gorm.DB,
-	_ uint, baseBotId uint,
+	adminUserId uint, baseBotId uint,
 ) error {
+	var adminUser database.User
+	if err := DB.First(&adminUser, "id = ?", adminUserId).Error; err != nil {
+		return err
+	}
+
 	var botUser database.User
 	if err := DB.First(&botUser, "id = ?", baseBotId).Error; err != nil {
+		return err
+	}
+
+	if err := ensureAdminOwnsDefaultBotRuntime(DB, adminUser, botUser); err != nil {
 		return err
 	}
 
@@ -52,6 +63,103 @@ func SetupBaseConnections(
 	}
 
 	return nil
+}
+
+func runtimeNameAvailableForOwner(DB *gorm.DB, ownerUserID uint, name string, excludeBotUserID uint) (bool, error) {
+	var count int64
+	q := DB.Model(&database.BotRuntimeConfig{}).
+		Where("owner_user_id = ? AND name = ?", ownerUserID, name)
+	if excludeBotUserID != 0 {
+		q = q.Where("bot_user_id <> ?", excludeBotUserID)
+	}
+	if err := q.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+func uniqueRuntimeNameForOwner(DB *gorm.DB, ownerUserID uint, baseName string, excludeBotUserID uint) (string, error) {
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" {
+		baseName = "default_bot"
+	}
+
+	available, err := runtimeNameAvailableForOwner(DB, ownerUserID, baseName, excludeBotUserID)
+	if err != nil {
+		return "", err
+	}
+	if available {
+		return baseName, nil
+	}
+
+	for i := 2; i <= 1000; i++ {
+		candidate := fmt.Sprintf("%s_%d", baseName, i)
+		isAvailable, availErr := runtimeNameAvailableForOwner(DB, ownerUserID, candidate, excludeBotUserID)
+		if availErr != nil {
+			return "", availErr
+		}
+		if isAvailable {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to resolve unique default bot runtime name for owner %d", ownerUserID)
+}
+
+func ensureAdminOwnsDefaultBotRuntime(DB *gorm.DB, adminUser database.User, botUser database.User) error {
+	emptyConfig := json.RawMessage("{}")
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var runtime database.BotRuntimeConfig
+		err := tx.Where("bot_user_id = ?", botUser.ID).First(&runtime).Error
+		if err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return err
+			}
+
+			name, nameErr := uniqueRuntimeNameForOwner(tx, adminUser.ID, botUser.Name, botUser.ID)
+			if nameErr != nil {
+				return nameErr
+			}
+
+			runtime = database.BotRuntimeConfig{
+				BotUserId:           botUser.ID,
+				OwnerUserId:         adminUser.ID,
+				Name:                name,
+				Description:         "Default platform bot",
+				DefaultSharedConfig: emptyConfig,
+				IsPublic:            true,
+				IsActive:            true,
+			}
+			return tx.Create(&runtime).Error
+		}
+
+		updates := map[string]interface{}{}
+		if runtime.OwnerUserId != adminUser.ID {
+			updates["owner_user_id"] = adminUser.ID
+		}
+		if strings.TrimSpace(runtime.Name) == "" {
+			name, nameErr := uniqueRuntimeNameForOwner(tx, adminUser.ID, botUser.Name, botUser.ID)
+			if nameErr != nil {
+				return nameErr
+			}
+			updates["name"] = name
+		}
+		if len(runtime.DefaultSharedConfig) == 0 {
+			updates["default_shared_config"] = emptyConfig
+		}
+		if !runtime.IsActive {
+			updates["is_active"] = true
+		}
+		if !runtime.IsPublic {
+			updates["is_public"] = true
+		}
+
+		if len(updates) == 0 {
+			return nil
+		}
+		return tx.Model(&runtime).Updates(updates).Error
+	})
 }
 
 func ensureUserConnectedToDefaultBot(DB *gorm.DB, user database.User, botUser database.User) error {

@@ -364,6 +364,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /bots/list", botsHandler.List)
 	v1PrivateApis.HandleFunc("GET /bots/{identifier}", botsHandler.Get)
 	v1PrivateApis.HandleFunc("PATCH /bots/{identifier}", botsHandler.Update)
+	v1PrivateApis.HandleFunc("PUT /bots/{identifier}/config", botsHandler.SaveConfig)
 	v1PrivateApis.HandleFunc("DELETE /bots/{identifier}", botsHandler.Delete)
 	v1PrivateApis.HandleFunc("POST /bots/{identifier}/interactions", botsHandler.CreateInteraction)
 
