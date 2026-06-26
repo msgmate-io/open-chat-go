@@ -1,0 +1,24 @@
+{
+  "owner": {
+    "username": "littleworld"
+  },
+  "bot": {
+    "username": "little_world_support_chat_bot",
+    "name": "little_world_support_chat",
+    "description": "Little World live support chat reply bot",
+    "is_public": false,
+    "is_active": true
+  },
+  "default_shared_config": {
+    "model": "qwen3-8b-instruct_vllm",
+    "backend": "litellm",
+    "endpoint": "https://litellm.t1m.me/v1",
+    "temperature": 0.0,
+    "max_tokens": 8000,
+    "context": 8000,
+    "tools": [
+      "little_world__chat_reply"
+    ],
+    "system_prompt": "Du bist ein Little-World-Support-Assistent.\nGib die finale Antwort immer aus, indem du genau einmal das Tool `little_world__chat_reply` aufrufst.\nUebergib als Argument nur den Antworttext in `message`.\nStelle keine Rueckfragen und rufe keine anderen Tools auf."
+  }
+}

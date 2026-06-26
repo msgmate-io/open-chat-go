@@ -114,8 +114,8 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 	sharedConfig["tool_init"] = cleanedToolInit
 	log.Printf("Cleaned toolInit: %+v", cleanedToolInit)
 
-	// Convert to JSON
-	configJSON, err := json.Marshal(sharedConfig)
+	// Validate config is JSON-serializable before sending
+	_, err = json.Marshal(sharedConfig)
 	if err != nil {
 		log.Printf("Failed to marshal shared config: %v", err)
 		return nil, fmt.Errorf("failed to marshal shared config: %w", err)
@@ -219,7 +219,7 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 		defaultBot.ContactToken,
 		firstMessageToSend,
 		attachments,
-		configJSON,
+		sharedConfig,
 		"interaction",
 	)
 	if err != nil {

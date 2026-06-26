@@ -87,12 +87,12 @@ def _extract_public_methods(source: str) -> list[tuple[str, str]]:
     tree = ast.parse(source)
     target_class: ast.ClassDef | None = None
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "OpenChatPythonClient":
+        if isinstance(node, ast.ClassDef) and node.name in {"OpenChatPythonClient", "OpenChatClient"}:
             target_class = node
             break
 
     if target_class is None:
-        raise RuntimeError("OpenChatPythonClient class not found")
+        raise RuntimeError("OpenChatPythonClient/OpenChatClient class not found")
 
     methods: list[tuple[str, str]] = []
     for node in target_class.body:
