@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 type BotDTO struct {
 	UUID                string                 `json:"uuid"`
 	BotUserUUID         string                 `json:"bot_user_uuid"`
+	BotUsername         string                 `json:"bot_username"`
 	BotContactToken     string                 `json:"bot_contact_token"`
 	Name                string                 `json:"name"`
 	Description         string                 `json:"description"`
@@ -90,6 +92,7 @@ func toDTO(runtime database.BotRuntimeConfig) BotDTO {
 	return BotDTO{
 		UUID:                runtime.UUID,
 		BotUserUUID:         runtime.BotUser.UUID,
+		BotUsername:         runtime.BotUser.Name,
 		BotContactToken:     runtime.BotUser.ContactToken,
 		Name:                runtime.Name,
 		Description:         runtime.Description,
@@ -97,6 +100,142 @@ func toDTO(runtime database.BotRuntimeConfig) BotDTO {
 		IsPublic:            runtime.IsPublic,
 		IsActive:            runtime.IsActive,
 	}
+}
+
+func getString(config map[string]interface{}, key string) (string, bool) {
+	raw, ok := config[key]
+	if !ok {
+		return "", false
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(value), true
+}
+
+func getNumber(config map[string]interface{}, key string) (float64, bool) {
+	raw, ok := config[key]
+	if !ok {
+		return 0, false
+	}
+	value, ok := raw.(float64)
+	if !ok {
+		return 0, false
+	}
+	return value, true
+}
+
+func validateStringArray(config map[string]interface{}, key string) error {
+	raw, exists := config[key]
+	if !exists {
+		return nil
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return fmt.Errorf("%s must be an array of strings", key)
+	}
+	for idx, item := range items {
+		value, ok := item.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s[%d] must be a non-empty string", key, idx)
+		}
+	}
+	return nil
+}
+
+func validateSharedConfigStructure(config map[string]interface{}) error {
+	if config == nil {
+		return fmt.Errorf("default_shared_config is required")
+	}
+
+	model, ok := getString(config, "model")
+	if !ok || model == "" {
+		return fmt.Errorf("default_shared_config.model is required and must be a non-empty string")
+	}
+
+	backend, ok := getString(config, "backend")
+	if !ok || backend == "" {
+		return fmt.Errorf("default_shared_config.backend is required and must be a non-empty string")
+	}
+
+	for _, key := range []string{"endpoint", "system_prompt"} {
+		if _, exists := config[key]; exists {
+			if value, isString := config[key].(string); !isString || strings.TrimSpace(value) == "" {
+				return fmt.Errorf("default_shared_config.%s must be a non-empty string when provided", key)
+			}
+		}
+	}
+
+	for _, key := range []string{"temperature", "top_p", "presence_penalty", "frequency_penalty"} {
+		if value, exists := getNumber(config, key); exists {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("default_shared_config.%s must be a finite number", key)
+			}
+		} else if _, provided := config[key]; provided {
+			return fmt.Errorf("default_shared_config.%s must be a number", key)
+		}
+	}
+
+	for _, key := range []string{"max_tokens", "context"} {
+		if value, exists := getNumber(config, key); exists {
+			if value < 1 || math.Trunc(value) != value {
+				return fmt.Errorf("default_shared_config.%s must be a positive integer", key)
+			}
+		} else if _, provided := config[key]; provided {
+			return fmt.Errorf("default_shared_config.%s must be a number", key)
+		}
+	}
+
+	if raw, exists := config["reasoning"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("default_shared_config.reasoning must be a boolean")
+		}
+	}
+
+	if raw, exists := config["tool_init"]; exists {
+		if _, ok := raw.(map[string]interface{}); !ok {
+			return fmt.Errorf("default_shared_config.tool_init must be an object")
+		}
+	}
+
+	if err := validateStringArray(config, "tools"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func resolveByBotUsername(DB *gorm.DB, user *database.User, username string) (database.BotRuntimeConfig, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
+	}
+
+	baseQuery := DB.Model(&database.BotRuntimeConfig{}).
+		Preload("BotUser").
+		Joins("JOIN users ON users.id = bot_runtime_configs.bot_user_id").
+		Where("users.name = ? AND bot_runtime_configs.is_active = ?", username, true)
+
+	if user.IsAdmin {
+		var matches []database.BotRuntimeConfig
+		if err := baseQuery.Find(&matches).Error; err != nil {
+			return database.BotRuntimeConfig{}, err
+		}
+		if len(matches) == 0 {
+			return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
+		}
+		if len(matches) > 1 {
+			return database.BotRuntimeConfig{}, errAmbiguousIdentifier
+		}
+		return matches[0], nil
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := baseQuery.Where("bot_runtime_configs.owner_user_id = ?", user.ID).First(&runtime).Error; err != nil {
+		return database.BotRuntimeConfig{}, err
+	}
+	return runtime, nil
 }
 
 func parsePagination(r *http.Request, defaultLimit int) (int, int) {
@@ -152,7 +291,10 @@ func resolveReadableBot(DB *gorm.DB, user *database.User, identifier string) (da
 		return matches[0], nil
 	}
 	if err := query.First(&runtime).Error; err != nil {
-		return database.BotRuntimeConfig{}, err
+		if err != gorm.ErrRecordNotFound {
+			return database.BotRuntimeConfig{}, err
+		}
+		return resolveByBotUsername(DB, user, identifier)
 	}
 	return runtime, nil
 }
@@ -250,6 +392,10 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DefaultSharedConfig == nil {
 		http.Error(w, "default_shared_config is required", http.StatusBadRequest)
+		return
+	}
+	if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -453,6 +599,12 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	if req.DefaultSharedConfig != nil {
+		if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]interface{}{}
@@ -500,6 +652,68 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "Failed to update bot", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toDTO(runtime))
+}
+
+// Save bot config
+// @Summary      Save bot config
+// @Description  Replace bot default_shared_config after strict structure validation
+// @Tags         bots
+// @Accept       json
+// @Produce      json
+// @Security     SessionAuth
+// @Param        identifier path string true "Bot UUID, owner-scoped name, or bot username"
+// @Param        request body map[string]interface{} true "Full default_shared_config JSON"
+// @Success      200 {object} bots.BotDTO
+// @Failure      400 {string} string "Invalid config"
+// @Failure      404 {string} string "Bot not found"
+// @Router       /api/v1/bots/{identifier}/config [put]
+func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	identifier := strings.TrimSpace(r.PathValue("identifier"))
+	runtime, err := resolveOwnedBot(DB, user, identifier)
+	if err != nil {
+		if errors.Is(err, errAmbiguousIdentifier) {
+			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			return
+		}
+		http.Error(w, "Bot not found", http.StatusNotFound)
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	config := map[string]interface{}{}
+	if err := decoder.Decode(&config); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := validateSharedConfigStructure(config); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		http.Error(w, "Failed to encode config", http.StatusBadRequest)
+		return
+	}
+
+	if err := DB.Model(&runtime).Update("default_shared_config", configJSON).Error; err != nil {
+		http.Error(w, "Failed to save bot config", http.StatusInternalServerError)
+		return
+	}
+	if err := DB.Preload("BotUser").First(&runtime, runtime.ID).Error; err != nil {
+		http.Error(w, "Failed to load bot", http.StatusInternalServerError)
 		return
 	}
 

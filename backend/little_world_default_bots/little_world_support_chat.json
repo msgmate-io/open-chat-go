@@ -1,10 +1,9 @@
 {
   "owner": {
-    "username": "existing_owner_username"
+    "username": "littleworld"
   },
   "bot": {
     "username": "little_world_support_chat_bot",
-    "password": "BotPass1!",
     "name": "little_world_support_chat",
     "description": "Little World live support chat reply bot",
     "is_public": false,
