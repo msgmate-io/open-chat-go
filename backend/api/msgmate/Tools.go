@@ -37,7 +37,6 @@ var (
 	toolConstructors = map[string]ToolConstructor{}
 	toolAliases      = map[string]string{}
 	toolNames        []string
-	dynamicToolNames = map[string]struct{}{}
 	registryMu       sync.RWMutex
 )
 
@@ -133,63 +132,6 @@ func NewToolByName(name string) (Tool, bool) {
 		}
 	}
 	return nil, false
-}
-
-func RegisterOrReplaceDynamicTool(name string, constructor ToolConstructor) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
-	}
-	if constructor == nil {
-		return nil
-	}
-
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	if _, exists := toolConstructors[name]; exists {
-		if _, dynamic := dynamicToolNames[name]; !dynamic {
-			return nil
-		}
-		toolConstructors[name] = constructor
-		refreshAllToolsLocked()
-		return nil
-	}
-
-	toolConstructors[name] = constructor
-	toolNames = append(toolNames, name)
-	dynamicToolNames[name] = struct{}{}
-	refreshAllToolsLocked()
-	return nil
-}
-
-func ReplaceAllDynamicTools(constructors map[string]ToolConstructor) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-
-	for name := range dynamicToolNames {
-		delete(toolConstructors, name)
-	}
-
-	filtered := make([]string, 0, len(toolNames))
-	for _, name := range toolNames {
-		if _, dynamic := dynamicToolNames[name]; dynamic {
-			continue
-		}
-		filtered = append(filtered, name)
-	}
-	toolNames = filtered
-	dynamicToolNames = map[string]struct{}{}
-
-	for name, constructor := range constructors {
-		trimmed := strings.TrimSpace(name)
-		if trimmed == "" || constructor == nil {
-			continue
-		}
-		toolConstructors[trimmed] = constructor
-		toolNames = append(toolNames, trimmed)
-		dynamicToolNames[trimmed] = struct{}{}
-	}
-	refreshAllToolsLocked()
 }
 
 func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool {

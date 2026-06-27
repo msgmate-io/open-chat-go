@@ -43,8 +43,23 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
+	dynamicTools := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		configData := map[string]interface{}{}
+		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
+			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
+				dynamicTools = raw
+			}
+		}
+	}
 
-	toolInstance := msgmate.GetNewToolInstanceByName(payload.ToolName, toolInitData)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(payload.ToolName, toolInitData, dynamicTools)
+	if dynamicErr != nil {
+		failure := ToolExecutionResult{Success: false, Error: dynamicErr.Error()}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("invalid dynamic tool definition: %w", dynamicErr)
+	}
 	if toolInstance == nil {
 		failure := ToolExecutionResult{
 			Success: false,
