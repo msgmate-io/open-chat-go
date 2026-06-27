@@ -5,6 +5,7 @@ import (
 	tooldefs "backend/api/msgmate/tools"
 	"encoding/json"
 	"strings"
+	"sync"
 
 	extiface "github.com/msgmate-io/go-tool-interface/toolinterface"
 )
@@ -36,6 +37,8 @@ var (
 	toolConstructors = map[string]ToolConstructor{}
 	toolAliases      = map[string]string{}
 	toolNames        []string
+	dynamicToolNames = map[string]struct{}{}
+	registryMu       sync.RWMutex
 )
 
 func init() {
@@ -45,6 +48,13 @@ func init() {
 }
 
 func registerToolConstructor(name string, aliases []string, constructor ToolConstructor) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registerToolConstructorLocked(name, aliases, constructor)
+	refreshAllToolsLocked()
+}
+
+func registerToolConstructorLocked(name string, aliases []string, constructor ToolConstructor) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		panic("tool name cannot be empty")
@@ -95,6 +105,12 @@ func registerExternalTools() {
 }
 
 func refreshAllTools() {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	refreshAllToolsLocked()
+}
+
+func refreshAllToolsLocked() {
 	AllTools = make([]Tool, 0, len(toolNames))
 	for _, name := range toolNames {
 		if constructor, exists := toolConstructors[name]; exists {
@@ -105,6 +121,8 @@ func refreshAllTools() {
 
 // NewToolByName maps tool names to their constructor functions
 func NewToolByName(name string) (Tool, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	name = strings.TrimSpace(name)
 	if constructor, found := toolConstructors[name]; found {
 		return constructor(), true
@@ -115,6 +133,63 @@ func NewToolByName(name string) (Tool, bool) {
 		}
 	}
 	return nil, false
+}
+
+func RegisterOrReplaceDynamicTool(name string, constructor ToolConstructor) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if constructor == nil {
+		return nil
+	}
+
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, exists := toolConstructors[name]; exists {
+		if _, dynamic := dynamicToolNames[name]; !dynamic {
+			return nil
+		}
+		toolConstructors[name] = constructor
+		refreshAllToolsLocked()
+		return nil
+	}
+
+	toolConstructors[name] = constructor
+	toolNames = append(toolNames, name)
+	dynamicToolNames[name] = struct{}{}
+	refreshAllToolsLocked()
+	return nil
+}
+
+func ReplaceAllDynamicTools(constructors map[string]ToolConstructor) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	for name := range dynamicToolNames {
+		delete(toolConstructors, name)
+	}
+
+	filtered := make([]string, 0, len(toolNames))
+	for _, name := range toolNames {
+		if _, dynamic := dynamicToolNames[name]; dynamic {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	toolNames = filtered
+	dynamicToolNames = map[string]struct{}{}
+
+	for name, constructor := range constructors {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" || constructor == nil {
+			continue
+		}
+		toolConstructors[trimmed] = constructor
+		toolNames = append(toolNames, trimmed)
+		dynamicToolNames[trimmed] = struct{}{}
+	}
+	refreshAllToolsLocked()
 }
 
 func GetNewToolInstanceByName(name string, initData map[string]interface{}) Tool {
