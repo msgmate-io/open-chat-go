@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"backend/api/msgmate"
 	"backend/database"
 	"backend/queue"
 	"context"
@@ -63,10 +62,6 @@ func WorkerCli() *cli.Command {
 				Debug:    c.Bool("debug"),
 				ResetDB:  false,
 			})
-			if err := msgmate.LoadDynamicRESTTools(DB); err != nil {
-				return err
-			}
-
 			processor := &queue.Processor{
 				DB:          DB,
 				BackendHost: c.String("backend-host"),

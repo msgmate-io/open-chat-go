@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+type ToolResolver func(toolName string) (Tool, bool, error)
+
 func NormalizeConfiguredToolName(toolName string) string {
 	trimmed := strings.TrimSpace(toolName)
 	if !strings.Contains(trimmed, ":") {
@@ -18,6 +20,10 @@ func NormalizeConfiguredToolName(toolName string) string {
 }
 
 func ValidateToolsAndInitConfig(toolsRaw interface{}, toolInitRaw interface{}) error {
+	return ValidateToolsAndInitConfigWithResolver(toolsRaw, toolInitRaw, nil)
+}
+
+func ValidateToolsAndInitConfigWithResolver(toolsRaw interface{}, toolInitRaw interface{}, resolver ToolResolver) error {
 	toolNames, err := parseToolNames(toolsRaw)
 	if err != nil {
 		return err
@@ -30,7 +36,10 @@ func ValidateToolsAndInitConfig(toolsRaw interface{}, toolInitRaw interface{}) e
 	knownToolInitKeys := map[string]struct{}{}
 	for idx, configuredName := range toolNames {
 		actualName := NormalizeConfiguredToolName(configuredName)
-		tool, found := NewToolByName(actualName)
+		tool, found, err := resolveToolByName(actualName, resolver)
+		if err != nil {
+			return fmt.Errorf("tools[%d] lookup failed for %q: %w", idx, configuredName, err)
+		}
 		if !found || tool == nil {
 			return fmt.Errorf("tools[%d] references unknown tool %q", idx, configuredName)
 		}
@@ -61,6 +70,20 @@ func ValidateToolsAndInitConfig(toolsRaw interface{}, toolInitRaw interface{}) e
 	}
 
 	return nil
+}
+
+func resolveToolByName(toolName string, resolver ToolResolver) (Tool, bool, error) {
+	if tool, found := NewToolByName(toolName); found && tool != nil {
+		return tool, true, nil
+	}
+	if resolver == nil {
+		return nil, false, nil
+	}
+	tool, found, err := resolver(toolName)
+	if err != nil {
+		return nil, false, err
+	}
+	return tool, found, nil
 }
 
 func parseToolNames(toolsRaw interface{}) ([]string, error) {

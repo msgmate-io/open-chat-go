@@ -103,13 +103,26 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
+	dynamicTools := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		configData := map[string]interface{}{}
+		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
+			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
+				dynamicTools = raw
+			}
+		}
+	}
 
 	if len(toolInitData) == 0 {
 		log.Printf("[ToolExecution] No init data found for tool %s in chat %s", toolName, chatUuid)
 	}
 
 	// Get the tool instance
-	toolInstance := msgmate.GetNewToolInstanceByName(toolName, toolInitData)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools)
+	if dynamicErr != nil {
+		http.Error(w, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), http.StatusBadRequest)
+		return
+	}
 	if toolInstance == nil {
 		http.Error(w, fmt.Sprintf("Tool '%s' not found", toolName), http.StatusNotFound)
 		return
@@ -366,8 +379,22 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	toolInstance, found := msgmate.NewToolByName(request.ToolName)
-	if !found || toolInstance == nil {
+	dynamicTools := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		configData := map[string]interface{}{}
+		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
+			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
+				dynamicTools = raw
+			}
+		}
+	}
+
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(request.ToolName, map[string]interface{}{}, dynamicTools)
+	if dynamicErr != nil {
+		http.Error(w, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), http.StatusBadRequest)
+		return
+	}
+	if toolInstance == nil {
 		http.Error(w, "Unknown tool", http.StatusBadRequest)
 		return
 	}

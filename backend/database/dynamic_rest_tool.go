@@ -6,7 +6,9 @@ import "encoding/json"
 // loaded without recompiling the backend.
 type DynamicRESTTool struct {
 	Model
-	Name                           string          `json:"name" gorm:"size:160;uniqueIndex"`
+	OwnerUserId                    uint            `json:"owner_user_id" gorm:"index;uniqueIndex:idx_dynamic_rest_tool_owner_name"`
+	OwnerUser                      User            `json:"-" gorm:"foreignKey:OwnerUserId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Name                           string          `json:"name" gorm:"size:160;uniqueIndex:idx_dynamic_rest_tool_owner_name"`
 	FunctionName                   string          `json:"function_name" gorm:"size:160"`
 	Description                    string          `json:"description" gorm:"type:text"`
 	AdminOnly                      bool            `json:"admin_only" gorm:"default:false"`

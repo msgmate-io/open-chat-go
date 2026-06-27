@@ -55,30 +55,138 @@ type dynamicRESTToolSpec struct {
 	Safety   restToolSafetyPolicy
 }
 
-func LoadDynamicRESTTools(db *gorm.DB) error {
+func ResolveUserDynamicRESTToolByName(db *gorm.DB, ownerUserID uint, toolName string) (*database.DynamicRESTTool, error) {
 	if db == nil {
-		return fmt.Errorf("database is required")
+		return nil, fmt.Errorf("database is required")
+	}
+	if ownerUserID == 0 {
+		return nil, fmt.Errorf("owner user id is required")
+	}
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return nil, fmt.Errorf("tool name is required")
 	}
 
-	var rows []database.DynamicRESTTool
-	if err := db.Where("enabled = ?", true).Find(&rows).Error; err != nil {
-		return err
+	var row database.DynamicRESTTool
+	if err := db.Where("owner_user_id = ? AND name = ? AND enabled = ?", ownerUserID, toolName, true).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func BuildDynamicRESTToolSnapshot(row database.DynamicRESTTool) map[string]interface{} {
+	return map[string]interface{}{
+		"name":                               row.Name,
+		"function_name":                      row.FunctionName,
+		"description":                        row.Description,
+		"admin_only":                         row.AdminOnly,
+		"requires_confirmation":              row.RequiresConfirmation,
+		"stop_on_first_confirmable_tool_call": row.StopOnFirstConfirmableToolCall,
+		"confirmation_block_message":         row.ConfirmationBlockMessage,
+		"openapi_source_type":                row.OpenAPISourceType,
+		"openapi_source":                     row.OpenAPISource,
+		"operation_id":                       row.OperationID,
+		"http_method":                        row.HTTPMethod,
+		"path":                               row.Path,
+		"param_bindings":                     parseJSONArrayOrEmpty(row.ParamBindings),
+		"safety_policy":                      parseJSONObjectOrEmpty(row.SafetyPolicy),
+	}
+}
+
+func NewDynamicRESTToolFromSnapshot(toolName string, dynamicToolsRaw interface{}) (Tool, bool, error) {
+	dynamicToolsMap, ok := dynamicToolsRaw.(map[string]interface{})
+	if !ok || dynamicToolsMap == nil {
+		return nil, false, nil
+	}
+	rawDef, exists := dynamicToolsMap[toolName]
+	if !exists {
+		return nil, false, nil
+	}
+	defMap, ok := rawDef.(map[string]interface{})
+	if !ok {
+		return nil, false, fmt.Errorf("dynamic tool %q definition must be an object", toolName)
 	}
 
-	constructors := map[string]ToolConstructor{}
-	for _, row := range rows {
-		def, err := BuildDynamicRESTToolDefinition(row)
-		if err != nil {
-			return fmt.Errorf("invalid dynamic rest tool %q: %w", row.Name, err)
+	row, err := dynamicRESTToolFromMap(defMap)
+	if err != nil {
+		return nil, false, err
+	}
+	if strings.TrimSpace(row.Name) == "" {
+		row.Name = toolName
+	}
+	def, err := BuildDynamicRESTToolDefinition(row)
+	if err != nil {
+		return nil, false, err
+	}
+	return NewToolFromDefinition(def), true, nil
+}
+
+func GetNewToolInstanceByNameOrSnapshot(toolName string, initData map[string]interface{}, dynamicToolsRaw interface{}) (Tool, error) {
+	if tool, found := NewToolByName(toolName); found && tool != nil {
+		if tool.GetRequiresInit() {
+			tool.SetInitData(initData)
 		}
-		definition := def
-		constructors[row.Name] = func() Tool {
-			return NewToolFromDefinition(definition)
-		}
+		return tool, nil
 	}
 
-	ReplaceAllDynamicTools(constructors)
-	return nil
+	dynamicTool, found, err := NewDynamicRESTToolFromSnapshot(toolName, dynamicToolsRaw)
+	if err != nil {
+		return nil, err
+	}
+	if !found || dynamicTool == nil {
+		return nil, nil
+	}
+	if dynamicTool.GetRequiresInit() {
+		dynamicTool.SetInitData(initData)
+	}
+	return dynamicTool, nil
+}
+
+func dynamicRESTToolFromMap(input map[string]interface{}) (database.DynamicRESTTool, error) {
+	row := database.DynamicRESTTool{}
+	row.Name, _ = input["name"].(string)
+	row.FunctionName, _ = input["function_name"].(string)
+	row.Description, _ = input["description"].(string)
+	row.AdminOnly, _ = input["admin_only"].(bool)
+	row.RequiresConfirmation, _ = input["requires_confirmation"].(bool)
+	row.StopOnFirstConfirmableToolCall, _ = input["stop_on_first_confirmable_tool_call"].(bool)
+	row.ConfirmationBlockMessage, _ = input["confirmation_block_message"].(string)
+	row.OpenAPISourceType, _ = input["openapi_source_type"].(string)
+	row.OpenAPISource, _ = input["openapi_source"].(string)
+	row.OperationID, _ = input["operation_id"].(string)
+	row.HTTPMethod, _ = input["http_method"].(string)
+	row.Path, _ = input["path"].(string)
+
+	paramBindingsJSON, err := json.Marshal(input["param_bindings"])
+	if err != nil {
+		return row, fmt.Errorf("invalid param_bindings: %w", err)
+	}
+	row.ParamBindings = paramBindingsJSON
+
+	safetyPolicyJSON, err := json.Marshal(input["safety_policy"])
+	if err != nil {
+		return row, fmt.Errorf("invalid safety_policy: %w", err)
+	}
+	row.SafetyPolicy = safetyPolicyJSON
+	return row, nil
+}
+
+func parseJSONArrayOrEmpty(raw json.RawMessage) []map[string]interface{} {
+	if len(raw) == 0 {
+		return []map[string]interface{}{}
+	}
+	out := []map[string]interface{}{}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func parseJSONObjectOrEmpty(raw json.RawMessage) map[string]interface{} {
+	if len(raw) == 0 {
+		return map[string]interface{}{}
+	}
+	out := map[string]interface{}{}
+	_ = json.Unmarshal(raw, &out)
+	return out
 }
 
 func BuildDynamicRESTToolDefinition(row database.DynamicRESTTool) (tools.ToolDefinition, error) {
