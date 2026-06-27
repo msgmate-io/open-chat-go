@@ -3,11 +3,13 @@ package chats
 import (
 	wsapi "backend/api/websocket"
 	"backend/database"
-	"backend/workqueue"
 	"backend/server/util"
+	"backend/workqueue"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,6 +20,7 @@ type SendMessage struct {
 	Text        string                  `json:"text"`
 	Reasoning   *[]string               `json:"reasoning,omitempty"`
 	MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolInit    map[string]interface{}  `json:"tool_init,omitempty"`
 	ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
 	Attachments *[]FileAttachment       `json:"attachments,omitempty"`
 }
@@ -26,6 +29,7 @@ type SendMessageWithReasoning struct {
 	Text        string                  `json:"text"`
 	Reasoning   []string                `json:"reasoning"`
 	MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
+	ToolInit    map[string]interface{}  `json:"tool_init,omitempty"`
 	ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
 	Attachments *[]FileAttachment       `json:"attachments,omitempty"`
 }
@@ -131,6 +135,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	var chat database.Chat
 	result := DB.Preload("User1").
 		Preload("User2").
+		Preload("SharedConfig").
 		Preload("LatestMessage").
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
 		First(&chat)
@@ -154,6 +159,15 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		SenderId:   user.ID,
 		ReceiverId: receiverId,
 		Text:       &data.Text,
+	}
+
+	var effectiveToolInit map[string]interface{}
+	if data.ToolInit != nil {
+		effectiveToolInit, err = applyMessageToolInitUpdate(DB, &chat, data.ToolInit)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid tool_init update: %v", err), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Only set Reasoning if it's not nil
@@ -249,6 +263,18 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		message.ToolCalls = &toolCalls
 	}
 
+	if data.ToolInit != nil {
+		metadata := map[string]interface{}{}
+		if message.MetaData != nil {
+			_ = json.Unmarshal(message.MetaData, &metadata)
+		}
+		metadata["tool_init_update"] = data.ToolInit
+		metadata["tool_init_effective"] = effectiveToolInit
+		if encoded, marshalErr := json.Marshal(metadata); marshalErr == nil {
+			message.MetaData = encoded
+		}
+	}
+
 	// Wrap message creation and chat update in a transaction
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		// Create the message
@@ -334,6 +360,107 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 func isAutomatedUserFromDB(DB *gorm.DB, receiver database.User) bool {
 	_ = DB
 	return receiver.IsAutomated
+}
+
+func applyMessageToolInitUpdate(DB *gorm.DB, chat *database.Chat, update map[string]interface{}) (map[string]interface{}, error) {
+	if chat == nil {
+		return nil, fmt.Errorf("chat is required")
+	}
+
+	toolInitManager := database.NewToolInitDataManager(DB)
+	effective := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		config := map[string]interface{}{}
+		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err == nil {
+			if rawMap, ok := config["tool_init"].(map[string]interface{}); ok {
+				for key, val := range rawMap {
+					effective[key] = val
+				}
+			}
+		}
+	}
+	if dbInit, err := toolInitManager.GetAllToolInitData(chat.ID); err == nil {
+		for key, val := range dbInit {
+			effective[key] = val
+		}
+	}
+
+	for key, rawValue := range update {
+		payload, ok := rawValue.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("tool_init[%q] must be an object", key)
+		}
+		effective[key] = payload
+	}
+
+	if err := validateToolInitUpdateAgainstConfiguredTools(chat, update); err != nil {
+		return nil, err
+	}
+
+	for key, rawValue := range update {
+		payload, _ := rawValue.(map[string]interface{})
+		if err := toolInitManager.StoreToolInitDataForChat(chat, key, payload); err != nil {
+			return nil, err
+		}
+	}
+
+	return effective, nil
+}
+
+func extractToolsFromChatConfig(chat *database.Chat) interface{} {
+	if chat == nil || chat.SharedConfig == nil || len(chat.SharedConfig.ConfigData) == 0 {
+		return nil
+	}
+	config := map[string]interface{}{}
+	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
+		return nil
+	}
+	return config["tools"]
+}
+
+func validateToolInitUpdateAgainstConfiguredTools(chat *database.Chat, update map[string]interface{}) error {
+	toolsRaw := extractToolsFromChatConfig(chat)
+	if toolsRaw == nil {
+		if len(update) > 0 {
+			for key := range update {
+				return fmt.Errorf("tool_init contains unknown tool key %q", key)
+			}
+		}
+		return nil
+	}
+
+	allowed := map[string]struct{}{}
+	if list, ok := toolsRaw.([]interface{}); ok {
+		for _, raw := range list {
+			if name, ok := raw.(string); ok {
+				trimmed := strings.TrimSpace(name)
+				if trimmed == "" {
+					continue
+				}
+				allowed[trimmed] = struct{}{}
+				if strings.Contains(trimmed, ":") {
+					parts := strings.SplitN(trimmed, ":", 2)
+					if len(parts) == 2 {
+						canonical := strings.TrimSpace(parts[1])
+						if canonical != "" {
+							allowed[canonical] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for key := range update {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" {
+			return fmt.Errorf("tool_init keys must be non-empty")
+		}
+		if _, ok := allowed[trimmed]; !ok {
+			return fmt.Errorf("tool_init contains unknown tool key %q", key)
+		}
+	}
+	return nil
 }
 
 func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request) {

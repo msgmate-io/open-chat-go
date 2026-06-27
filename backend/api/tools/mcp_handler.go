@@ -284,22 +284,7 @@ func (h *MCPHandler) handleToolsCall(w http.ResponseWriter, request *MCPRequest,
 		return
 	}
 
-	// Get tool initialization data from chat configuration
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
-		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			if toolInit, exists := configData["tool_init"]; exists {
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					if initData, exists := toolInitMap[toolName]; exists {
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					}
-				}
-			}
-		}
-	}
+	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(*chat, toolName)
 
 	// Get the tool instance
 	toolInstance := msgmate.GetNewToolInstanceByName(toolName, toolInitData)
@@ -359,8 +344,6 @@ func (h *MCPHandler) handleToolsCall(w http.ResponseWriter, request *MCPRequest,
 
 // handleToolsCallStreamable handles the tools/call MCP method for streaming transport
 func (h *MCPHandler) handleToolsCallStreamable(w http.ResponseWriter, request *MCPRequest, chat *database.Chat, DB *gorm.DB, user *database.User) {
-	_ = DB // Parameter reserved for future use
-
 	// Extract tool name and arguments from params
 	params, ok := request.Params["name"]
 	if !ok {
@@ -397,22 +380,7 @@ func (h *MCPHandler) handleToolsCallStreamable(w http.ResponseWriter, request *M
 		return
 	}
 
-	// Get tool initialization data from chat configuration
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
-		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			if toolInit, exists := configData["tool_init"]; exists {
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					if initData, exists := toolInitMap[toolName]; exists {
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					}
-				}
-			}
-		}
-	}
+	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(*chat, toolName)
 
 	// Get the tool instance
 	toolInstance := msgmate.GetNewToolInstanceByName(toolName, toolInitData)

@@ -102,34 +102,7 @@ func (h *ToolsHandler) ExecuteTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get tool initialization data from chat configuration
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
-		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			log.Printf("[ToolExecution] Chat config data: %+v", configData)
-			if toolInit, exists := configData["tool_init"]; exists {
-				log.Printf("[ToolExecution] Tool init data found: %+v", toolInit)
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					log.Printf("[ToolExecution] Looking for tool %s in tool init map", toolName)
-					if initData, exists := toolInitMap[toolName]; exists {
-						log.Printf("[ToolExecution] Found init data for tool %s: %+v", toolName, initData)
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					} else {
-						log.Printf("[ToolExecution] Tool %s not found in tool init map. Available tools: %v", toolName, getKeys(toolInitMap))
-					}
-				}
-			} else {
-				log.Printf("[ToolExecution] No tool_init key found in chat config")
-			}
-		} else {
-			log.Printf("[ToolExecution] Failed to unmarshal chat config: %v", err)
-		}
-	} else {
-		log.Printf("[ToolExecution] Chat has no SharedConfig or ConfigData")
-	}
+	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
 
 	if len(toolInitData) == 0 {
 		log.Printf("[ToolExecution] No init data found for tool %s in chat %s", toolName, chatUuid)
@@ -393,9 +366,26 @@ func (h *ToolsHandler) StoreToolInitData(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	toolInstance, found := msgmate.NewToolByName(request.ToolName)
+	if !found || toolInstance == nil {
+		http.Error(w, "Unknown tool", http.StatusBadRequest)
+		return
+	}
+	if !toolInstance.GetRequiresInit() {
+		http.Error(w, "Tool does not accept init data", http.StatusBadRequest)
+		return
+	}
+	if request.InitData == nil {
+		request.InitData = map[string]interface{}{}
+	}
+	if err := msgmate.ValidatePayloadAgainstSchema(request.InitData, toolInstance.GetToolInitSchema(), true); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid init_data: %v", err), http.StatusBadRequest)
+		return
+	}
+
 	// Store tool initialization data
 	toolInitManager := database.NewToolInitDataManager(DB)
-	err = toolInitManager.StoreToolInitData(chat.ID, request.ToolName, request.InitData)
+	err = toolInitManager.StoreToolInitDataForChat(&chat, request.ToolName, request.InitData)
 	if err != nil {
 		log.Printf("[ToolInitData] Failed to store init data for tool %s in chat %s: %v", request.ToolName, chatUuid, err)
 		http.Error(w, "Failed to store tool init data", http.StatusInternalServerError)
