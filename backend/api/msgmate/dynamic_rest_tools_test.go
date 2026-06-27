@@ -95,3 +95,60 @@ func TestDynamicRESTToolCanCallBackendMeEndpoint(t *testing.T) {
 		t.Fatalf("unexpected tool result: %s", result)
 	}
 }
+
+func TestDynamicRESTToolCanOverrideBaseURLFromInit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/user/self" {
+			t.Fatalf("expected /api/v1/user/self, got %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	openAPISource := `{
+		"openapi":"3.0.3",
+		"info":{"title":"OpenChat API","version":"1.0.0"},
+		"servers":[{"url":"https://example.invalid"}],
+		"paths":{
+			"/api/v1/user/self":{
+				"get":{
+					"operationId":"getUserSelf",
+					"responses":{"200":{"description":"ok"}}
+				}
+			}
+		}
+	}`
+
+	safetyJSON, err := json.Marshal(map[string]interface{}{
+		"allow_private_ips": true,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal safety policy: %v", err)
+	}
+
+	row := database.DynamicRESTTool{
+		Name:              "rest_get_user_self_base_url_override",
+		Description:       "Calls backend user self endpoint with base URL override",
+		OpenAPISourceType: "inline",
+		OpenAPISource:     openAPISource,
+		OperationID:       "getUserSelf",
+		BaseURLSource:     "init",
+		BaseURLInputName:  "api_host",
+		SafetyPolicy:      safetyJSON,
+	}
+
+	def, err := BuildDynamicRESTToolDefinition(row)
+	if err != nil {
+		t.Fatalf("failed to build dynamic rest tool definition: %v", err)
+	}
+	tool := NewToolFromDefinition(def)
+	tool.SetInitData(map[string]interface{}{"api_host": server.URL})
+
+	result, err := tool.RunTool(map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("tool call failed: %v", err)
+	}
+	if result != `{"ok":true}` {
+		t.Fatalf("unexpected result: %s", result)
+	}
+}
