@@ -470,33 +470,33 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 			}
 			log.Printf("====> Processing tool registration for %s, with actual tool name %s", toolName, actualToolName)
 
-			// Find the tool in AllTools
-			toolFound := false
-			for _, tool := range AllTools {
-				if tool.GetToolName() == actualToolName {
-					toolFound = true
-					log.Printf("====> Found tool %s in AllTools (RequiresInit: %v)", actualToolName, tool.GetRequiresInit())
-					if tool.GetToolName() == "run_callback_function" {
-						tool = NewRunCallbackFunctionTool()
-					}
-					toolsData = append(toolsData, tool.ConstructTool())
-					toolMap[toolName] = tool
-					toolMap[tool.GetToolFunctionName()] = tool
-					if tool.GetRequiresInit() {
-						if _, ok := toolInit[toolName]; ok {
-							log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-							tool.SetInitData(toolInit[toolName])
-							log.Printf("Init data set for tool %s", tool.GetToolName())
-						} else {
-							log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-							tool.SetInitData(map[string]interface{}{})
-						}
-					}
-					break
-				}
+			// Always instantiate a fresh tool per interaction. Mutating entries from AllTools
+			// would share tool_init (e.g. task_pk) across concurrent interactions.
+			tool, toolFound := NewToolByName(actualToolName)
+			if actualToolName == "run_callback_function" {
+				tool = NewRunCallbackFunctionTool()
+				toolFound = true
 			}
-			if !toolFound {
-				log.Printf("====> WARNING: Tool %s NOT FOUND in AllTools!", actualToolName)
+			if !toolFound || tool == nil {
+				log.Printf("====> WARNING: Tool %s NOT FOUND!", actualToolName)
+				continue
+			}
+			log.Printf("====> Registered tool instance %s (RequiresInit: %v)", actualToolName, tool.GetRequiresInit())
+			toolsData = append(toolsData, tool.ConstructTool())
+			toolMap[toolName] = tool
+			toolMap[tool.GetToolFunctionName()] = tool
+			if tool.GetRequiresInit() {
+				initData, ok := toolInit[toolName]
+				if !ok {
+					initData, ok = toolInit[actualToolName]
+				}
+				if ok {
+					log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+					tool.SetInitData(initData)
+				} else {
+					log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+					tool.SetInitData(map[string]interface{}{})
+				}
 			}
 		}
 	}
