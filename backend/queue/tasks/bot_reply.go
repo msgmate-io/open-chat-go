@@ -125,6 +125,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	aiHandler := msgmate.NewAIHandler(botContext)
 	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
+		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if errors.Is(err, context.Canceled) {
 			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(err)}
 			_ = writeResult(task, failure)
@@ -133,8 +134,13 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 
 		failureMessage := botReplyFailureMessage(err)
-		if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
-			failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
+		if !responseAlreadySent {
+			if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
+				failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
+			}
+		}
+		if responseAlreadySent {
+			failureMessage = fmt.Sprintf("%s (response already sent)", failureMessage)
 		}
 		failure := ToolExecutionResult{Success: false, Error: failureMessage}
 		_ = writeResult(task, failure)

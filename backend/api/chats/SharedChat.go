@@ -26,6 +26,28 @@ type PublicInteractionChat struct {
 	InteractionDetails map[string]interface{} `json:"interaction_details,omitempty"`
 }
 
+func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint) (database.SharedChatInstance, error) {
+	var share database.SharedChatInstance
+	err := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, owningUserID).First(&share).Error
+	if err == nil {
+		return share, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return database.SharedChatInstance{}, err
+	}
+
+	share = database.SharedChatInstance{
+		ChatId:        chat.ID,
+		OwningUserId:  owningUserID,
+		ChatShareUUID: uuid.NewString(),
+	}
+	if err := DB.Create(&share).Error; err != nil {
+		return database.SharedChatInstance{}, err
+	}
+
+	return share, nil
+}
+
 // Publish creates (or returns) a public share UUID for a chat.
 //
 //	@Summary      Publish chat
@@ -59,24 +81,8 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var share database.SharedChatInstance
-	err = DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, user.ID).First(&share).Error
-	if err == nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(SharedChatPublishResponse{ChatUUID: chat.UUID, ChatShareUUID: share.ChatShareUUID})
-		return
-	}
-	if err != gorm.ErrRecordNotFound {
-		http.Error(w, "Failed to publish chat", http.StatusInternalServerError)
-		return
-	}
-
-	share = database.SharedChatInstance{
-		ChatId:        chat.ID,
-		OwningUserId:  user.ID,
-		ChatShareUUID: uuid.NewString(),
-	}
-	if err := DB.Create(&share).Error; err != nil {
+	share, err := ensureOwnedChatShare(DB, chat, user.ID)
+	if err != nil {
 		http.Error(w, "Failed to publish chat", http.StatusInternalServerError)
 		return
 	}

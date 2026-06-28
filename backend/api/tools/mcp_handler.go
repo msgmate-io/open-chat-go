@@ -193,7 +193,7 @@ func (h *MCPHandler) handleToolsList(w http.ResponseWriter, request *MCPRequest,
 	mcpTools := make([]MCPTool, 0, len(toolsList))
 
 	for _, toolName := range toolsList {
-		toolInstance := msgmate.GetNewToolInstanceByName(toolName, map[string]interface{}{})
+		toolInstance, _ := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{})
 		if toolInstance != nil {
 			toolInfo := toolInstance.ConstructTool().(map[string]interface{})
 
@@ -224,7 +224,7 @@ func (h *MCPHandler) handleToolsListStreamable(w http.ResponseWriter, request *M
 	mcpTools := make([]MCPTool, 0, len(toolsList))
 
 	for _, toolName := range toolsList {
-		toolInstance := msgmate.GetNewToolInstanceByName(toolName, map[string]interface{}{})
+		toolInstance, _ := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{})
 		if toolInstance != nil {
 			toolInfo := toolInstance.ConstructTool().(map[string]interface{})
 
@@ -284,25 +284,27 @@ func (h *MCPHandler) handleToolsCall(w http.ResponseWriter, request *MCPRequest,
 		return
 	}
 
-	// Get tool initialization data from chat configuration
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
+	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(*chat, toolName)
+	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			if toolInit, exists := configData["tool_init"]; exists {
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					if initData, exists := toolInitMap[toolName]; exists {
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					}
-				}
+			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
+				dynamicTools = raw
+			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
 			}
 		}
 	}
 
 	// Get the tool instance
-	toolInstance := msgmate.GetNewToolInstanceByName(toolName, toolInitData)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools, mcpTools)
+	if dynamicErr != nil {
+		h.sendMCPError(w, request.ID, MCPErrorInvalidParams, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), nil)
+		return
+	}
 	if toolInstance == nil {
 		h.sendMCPError(w, request.ID, MCPErrorInternal, fmt.Sprintf("Tool '%s' not found", toolName), nil)
 		return
@@ -359,8 +361,6 @@ func (h *MCPHandler) handleToolsCall(w http.ResponseWriter, request *MCPRequest,
 
 // handleToolsCallStreamable handles the tools/call MCP method for streaming transport
 func (h *MCPHandler) handleToolsCallStreamable(w http.ResponseWriter, request *MCPRequest, chat *database.Chat, DB *gorm.DB, user *database.User) {
-	_ = DB // Parameter reserved for future use
-
 	// Extract tool name and arguments from params
 	params, ok := request.Params["name"]
 	if !ok {
@@ -397,25 +397,27 @@ func (h *MCPHandler) handleToolsCallStreamable(w http.ResponseWriter, request *M
 		return
 	}
 
-	// Get tool initialization data from chat configuration
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
+	toolInitData := database.NewToolInitDataManager(DB).ResolveToolInitData(*chat, toolName)
+	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			if toolInit, exists := configData["tool_init"]; exists {
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					if initData, exists := toolInitMap[toolName]; exists {
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					}
-				}
+			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
+				dynamicTools = raw
+			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
 			}
 		}
 	}
 
 	// Get the tool instance
-	toolInstance := msgmate.GetNewToolInstanceByName(toolName, toolInitData)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(toolName, toolInitData, dynamicTools, mcpTools)
+	if dynamicErr != nil {
+		h.sendMCPErrorNDJSON(w, request.ID, MCPErrorInvalidParams, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), nil)
+		return
+	}
 	if toolInstance == nil {
 		h.sendMCPErrorNDJSON(w, request.ID, MCPErrorInternal, fmt.Sprintf("Tool '%s' not found", toolName), nil)
 		return

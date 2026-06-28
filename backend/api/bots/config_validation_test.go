@@ -10,7 +10,7 @@ func TestValidateSharedConfigStructureValid(t *testing.T) {
 		"temperature": 0.0,
 		"max_tokens":  8000.0,
 		"context":     8000.0,
-		"tools":       []interface{}{"little_world__chat_reply"},
+		"tools":       []interface{}{"get_weather"},
 	}
 
 	if err := validateSharedConfigStructure(config); err != nil {
