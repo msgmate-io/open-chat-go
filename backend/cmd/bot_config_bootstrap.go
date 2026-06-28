@@ -29,6 +29,7 @@ type botBootstrapConfig struct {
 	Owner               ownerBotConfig         `json:"owner"`
 	Bot                 botIdentityConfig      `json:"bot"`
 	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
+	OverwriteIfExists   bool                   `json:"overwrite_if_exists,omitempty"`
 }
 
 func loadBotBootstrapConfig(path string) (botBootstrapConfig, error) {
@@ -182,6 +183,17 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 				IsActive:            isActive,
 			}
 			if err := tx.Create(&runtime).Error; err != nil {
+				return err
+			}
+		} else if cfg.OverwriteIfExists {
+			updates := map[string]interface{}{
+				"bot_user_id":           botUser.ID,
+				"description":           cfg.Bot.Description,
+				"default_shared_config": configData,
+				"is_public":             isPublic,
+				"is_active":             isActive,
+			}
+			if err := tx.Model(&runtime).Updates(updates).Error; err != nil {
 				return err
 			}
 		}
