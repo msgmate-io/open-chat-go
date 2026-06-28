@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Append/update Python client function docs in the docs MDX page.
 
-This script reads method docstrings from `OpenChatPythonClient` and writes an
+This script reads method docstrings from `OpenChatClient` and writes an
 auto-generated API reference section into:
 `frontend/pages/docs/content/python-client.mdx`.
 """
@@ -87,12 +87,12 @@ def _extract_public_methods(source: str) -> list[tuple[str, str]]:
     tree = ast.parse(source)
     target_class: ast.ClassDef | None = None
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name in {"OpenChatPythonClient", "OpenChatClient"}:
+        if isinstance(node, ast.ClassDef) and node.name == "OpenChatClient":
             target_class = node
             break
 
     if target_class is None:
-        raise RuntimeError("OpenChatPythonClient/OpenChatClient class not found")
+        raise RuntimeError("OpenChatClient class not found")
 
     methods: list[tuple[str, str]] = []
     for node in target_class.body:
@@ -110,7 +110,7 @@ def _build_generated_block(methods: list[tuple[str, str]]) -> str:
     lines = [
         "## Python Client API Reference",
         "",
-        "The list below is auto-generated from `OpenChatPythonClient` docstrings in `clients/oc_python_client/client/client.py`.",
+        "The list below is auto-generated from `OpenChatClient` docstrings in `clients/oc_python_client/client/client.py`.",
         "",
         START_MARKER,
     ]
@@ -147,7 +147,7 @@ def main() -> int:
     client_source = CLIENT_FILE.read_text(encoding="utf-8")
     methods = _extract_public_methods(client_source)
     if not methods:
-        raise RuntimeError("No public methods found in OpenChatPythonClient")
+        raise RuntimeError("No public methods found in OpenChatClient")
 
     docs_source = DOC_FILE.read_text(encoding="utf-8")
     generated = _build_generated_block(methods)

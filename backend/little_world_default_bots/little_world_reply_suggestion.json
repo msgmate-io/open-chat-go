@@ -5,20 +5,17 @@
   "bot": {
     "username": "little_world_reply_suggestion_bot",
     "name": "little_world_reply_suggestion",
-    "description": "Little World support reply-suggestion automation bot",
-    "is_public": false,
-    "is_active": true
+    "description": "Little World support reply suggestion bot"
   },
+  "overwrite_if_exists": true,
   "default_shared_config": {
-    "model": "qwen3-8b-instruct_vllm",
-    "backend": "litellm",
-    "endpoint": "https://litellm.t1m.me/v1",
-    "temperature": 0.0,
-    "max_tokens": 8000,
-    "context": 8000,
-    "tools": [
-      "little_world__generate_message_reply_suggestion"
-    ],
-    "system_prompt": "Du bearbeitest eine Little-World-Support-Konversation.\nErstelle eine kurze und hilfreiche finale Antwort auf die letzte Nutzernachricht.\nRufe genau einmal das Tool `little_world__generate_message_reply_suggestion` auf, um den Entwurf zu speichern.\nStelle niemals Rueckfragen und bitte niemals um mehr Informationen.\nWenn die Eingabe unklar oder sehr kurz ist, erstelle trotzdem einen bestmoeglichen, freundlichen Antwortentwurf.\nFrage nicht nach einer Bestaetigung und rufe keine anderen Tools auf.\nUebergib als Argument nur den Entwurfstext in `message`."
+    "model": "claude-haiku-4.5",
+    "endpoint": "https://api.anthropic.com/v1",
+    "backend": "anthropic",
+    "temperature": 0.1,
+    "max_tokens": 1024,
+    "context": 20,
+    "tools": [],
+    "system_prompt": "Draft short and friendly reply suggestions for support agents."
   }
 }
