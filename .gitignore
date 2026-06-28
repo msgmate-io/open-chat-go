@@ -38,3 +38,4 @@ profile_default/
 ipython_config.py
 CREDS.md
 venv/
+backend/data.db-journal
