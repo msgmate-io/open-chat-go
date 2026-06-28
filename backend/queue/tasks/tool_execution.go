@@ -44,16 +44,20 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 
 	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
 	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
 		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
 			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
 				dynamicTools = raw
 			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
+			}
 		}
 	}
 
-	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(payload.ToolName, toolInitData, dynamicTools)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(payload.ToolName, toolInitData, dynamicTools, mcpTools)
 	if dynamicErr != nil {
 		failure := ToolExecutionResult{Success: false, Error: dynamicErr.Error()}
 		_ = writeResult(task, failure)

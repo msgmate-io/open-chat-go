@@ -78,22 +78,22 @@ func ResolveUserDynamicRESTToolByName(db *gorm.DB, ownerUserID uint, toolName st
 
 func BuildDynamicRESTToolSnapshot(row database.DynamicRESTTool) map[string]interface{} {
 	return map[string]interface{}{
-		"name":                               row.Name,
-		"function_name":                      row.FunctionName,
-		"description":                        row.Description,
-		"admin_only":                         row.AdminOnly,
-		"requires_confirmation":              row.RequiresConfirmation,
+		"name":                                row.Name,
+		"function_name":                       row.FunctionName,
+		"description":                         row.Description,
+		"admin_only":                          row.AdminOnly,
+		"requires_confirmation":               row.RequiresConfirmation,
 		"stop_on_first_confirmable_tool_call": row.StopOnFirstConfirmableToolCall,
-		"confirmation_block_message":         row.ConfirmationBlockMessage,
-		"openapi_source_type":                row.OpenAPISourceType,
-		"openapi_source":                     row.OpenAPISource,
-		"operation_id":                       row.OperationID,
-		"http_method":                        row.HTTPMethod,
-		"path":                               row.Path,
-		"base_url_source":                    row.BaseURLSource,
-		"base_url_input_name":                row.BaseURLInputName,
-		"param_bindings":                     parseJSONArrayOrEmpty(row.ParamBindings),
-		"safety_policy":                      parseJSONObjectOrEmpty(row.SafetyPolicy),
+		"confirmation_block_message":          row.ConfirmationBlockMessage,
+		"openapi_source_type":                 row.OpenAPISourceType,
+		"openapi_source":                      row.OpenAPISource,
+		"operation_id":                        row.OperationID,
+		"http_method":                         row.HTTPMethod,
+		"path":                                row.Path,
+		"base_url_source":                     row.BaseURLSource,
+		"base_url_input_name":                 row.BaseURLInputName,
+		"param_bindings":                      parseJSONArrayOrEmpty(row.ParamBindings),
+		"safety_policy":                       parseJSONObjectOrEmpty(row.SafetyPolicy),
 	}
 }
 
@@ -125,7 +125,7 @@ func NewDynamicRESTToolFromSnapshot(toolName string, dynamicToolsRaw interface{}
 	return NewToolFromDefinition(def), true, nil
 }
 
-func GetNewToolInstanceByNameOrSnapshot(toolName string, initData map[string]interface{}, dynamicToolsRaw interface{}) (Tool, error) {
+func GetNewToolInstanceByNameOrSnapshot(toolName string, initData map[string]interface{}, dynamicToolsRaw interface{}, mcpToolsRaw interface{}) (Tool, error) {
 	if tool, found := NewToolByName(toolName); found && tool != nil {
 		if tool.GetRequiresInit() {
 			tool.SetInitData(initData)
@@ -138,7 +138,17 @@ func GetNewToolInstanceByNameOrSnapshot(toolName string, initData map[string]int
 		return nil, err
 	}
 	if !found || dynamicTool == nil {
-		return nil, nil
+		mcpTool, mcpFound, mcpErr := NewMCPToolFromSnapshot(toolName, mcpToolsRaw)
+		if mcpErr != nil {
+			return nil, mcpErr
+		}
+		if !mcpFound || mcpTool == nil {
+			return nil, nil
+		}
+		if mcpTool.GetRequiresInit() {
+			mcpTool.SetInitData(initData)
+		}
+		return mcpTool, nil
 	}
 	if dynamicTool.GetRequiresInit() {
 		dynamicTool.SetInitData(initData)

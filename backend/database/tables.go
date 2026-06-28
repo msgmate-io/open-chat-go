@@ -158,6 +158,7 @@ var Tabels []interface{} = []interface{}{
 	&ModelConfig{},
 	&BotRuntimeConfig{},
 	&DynamicRESTTool{},
+	&MCPIntegrationConfig{},
 	&Permission{},
 	&AccessToken{},
 }
@@ -177,6 +178,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ModelConfig{}},
 	TableMigration{&BotRuntimeConfig{}},
 	TableMigration{&DynamicRESTTool{}},
+	TableMigration{&MCPIntegrationConfig{}},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
 	GrantDefaultPermissionsMigration{},

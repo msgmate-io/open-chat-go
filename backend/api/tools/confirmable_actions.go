@@ -186,15 +186,19 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 
 	toolInitData := getToolInitForChat(DB, chat, targetToolName)
 	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
 		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
 			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
 				dynamicTools = raw
 			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
+			}
 		}
 	}
-	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(targetToolName, toolInitData, dynamicTools)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(targetToolName, toolInitData, dynamicTools, mcpTools)
 	if dynamicErr != nil {
 		http.Error(w, fmt.Sprintf("Invalid dynamic tool: %v", dynamicErr), http.StatusBadRequest)
 		return
