@@ -5,6 +5,7 @@ import (
 	tooldefs "backend/api/msgmate/tools"
 	"encoding/json"
 	"strings"
+	"sync"
 
 	extiface "github.com/msgmate-io/go-tool-interface/toolinterface"
 )
@@ -36,6 +37,7 @@ var (
 	toolConstructors = map[string]ToolConstructor{}
 	toolAliases      = map[string]string{}
 	toolNames        []string
+	registryMu       sync.RWMutex
 )
 
 func init() {
@@ -45,6 +47,13 @@ func init() {
 }
 
 func registerToolConstructor(name string, aliases []string, constructor ToolConstructor) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registerToolConstructorLocked(name, aliases, constructor)
+	refreshAllToolsLocked()
+}
+
+func registerToolConstructorLocked(name string, aliases []string, constructor ToolConstructor) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		panic("tool name cannot be empty")
@@ -95,6 +104,12 @@ func registerExternalTools() {
 }
 
 func refreshAllTools() {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	refreshAllToolsLocked()
+}
+
+func refreshAllToolsLocked() {
 	AllTools = make([]Tool, 0, len(toolNames))
 	for _, name := range toolNames {
 		if constructor, exists := toolConstructors[name]; exists {
@@ -105,6 +120,8 @@ func refreshAllTools() {
 
 // NewToolByName maps tool names to their constructor functions
 func NewToolByName(name string) (Tool, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	name = strings.TrimSpace(name)
 	if constructor, found := toolConstructors[name]; found {
 		return constructor(), true

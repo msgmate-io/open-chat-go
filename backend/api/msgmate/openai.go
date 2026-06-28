@@ -471,13 +471,6 @@ func streamChatCompletion(
 			}
 			currentMessages = append(currentMessages, toolResultMsg)
 
-			// Add a final assistant message to indicate completion
-			finalMessage := map[string]interface{}{
-				"role":    "assistant",
-				"content": "I've processed your request using the " + toolCallResult.toolName + " tool.",
-			}
-			currentMessages = append(currentMessages, finalMessage)
-
 			currentMessagesIndented, _ := json.MarshalIndent(currentMessages, "", "    ")
 			fmt.Println("Current messages: ", string(currentMessagesIndented))
 
@@ -527,9 +520,11 @@ func processStreamingRequest(
 		return processStreamingResponseReader(reader, toolMap, executedToolSignatures, chunkChan, usageChan, toolChan)
 	}
 
+	normalizedMessages := normalizeMessagesForBackend(messages, backend)
+
 	requestBody := map[string]interface{}{
 		"model":    model,
-		"messages": messages,
+		"messages": normalizedMessages,
 		"stream":   true,
 	}
 	if len(tools) > 0 {
@@ -567,6 +562,34 @@ func processStreamingRequest(
 
 	reader := bufio.NewReader(resp.Body)
 	return processStreamingResponseReader(reader, toolMap, executedToolSignatures, chunkChan, usageChan, toolChan)
+}
+
+func normalizeMessagesForBackend(messages []map[string]interface{}, backend string) []map[string]interface{} {
+	if backend != "anthropic" {
+		return messages
+	}
+
+	if len(messages) == 0 {
+		return messages
+	}
+
+	normalized := make([]map[string]interface{}, len(messages))
+	copy(normalized, messages)
+
+	for len(normalized) > 0 {
+		last := normalized[len(normalized)-1]
+		lastRole, _ := last["role"].(string)
+		if lastRole != "assistant" {
+			break
+		}
+		normalized = normalized[:len(normalized)-1]
+	}
+
+	if len(normalized) == 0 {
+		return messages
+	}
+
+	return normalized
 }
 
 func processStreamingResponseReader(
