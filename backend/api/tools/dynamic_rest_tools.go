@@ -5,9 +5,12 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 type DynamicRESTToolUpsertRequest struct {
@@ -96,6 +99,27 @@ func buildDynamicRESTToolRowFromRequest(user *database.User, req DynamicRESTTool
 	}, nil
 }
 
+func applyDynamicRESTToolRow(target *database.DynamicRESTTool, row database.DynamicRESTTool) {
+	target.OwnerUserId = row.OwnerUserId
+	target.Name = row.Name
+	target.FunctionName = row.FunctionName
+	target.Description = row.Description
+	target.AdminOnly = row.AdminOnly
+	target.RequiresConfirmation = row.RequiresConfirmation
+	target.StopOnFirstConfirmableToolCall = row.StopOnFirstConfirmableToolCall
+	target.ConfirmationBlockMessage = row.ConfirmationBlockMessage
+	target.Enabled = row.Enabled
+	target.OpenAPISourceType = row.OpenAPISourceType
+	target.OpenAPISource = row.OpenAPISource
+	target.OperationID = row.OperationID
+	target.HTTPMethod = row.HTTPMethod
+	target.Path = row.Path
+	target.BaseURLSource = row.BaseURLSource
+	target.BaseURLInputName = row.BaseURLInputName
+	target.ParamBindings = row.ParamBindings
+	target.SafetyPolicy = row.SafetyPolicy
+}
+
 func (h *ToolsHandler) CreateDynamicRESTTool(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -124,15 +148,27 @@ func (h *ToolsHandler) CreateDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var existingCount int64
-	if err := DB.Model(&database.DynamicRESTTool{}).
+	var existing database.DynamicRESTTool
+	lookupErr := DB.Unscoped().
 		Where("owner_user_id = ? AND name = ?", user.ID, row.Name).
-		Count(&existingCount).Error; err != nil {
-		http.Error(w, "failed to check existing dynamic rest tool", http.StatusInternalServerError)
+		First(&existing).Error
+	if lookupErr == nil {
+		if existing.DeletedAt.Valid {
+			applyDynamicRESTToolRow(&existing, row)
+			existing.DeletedAt = gorm.DeletedAt{}
+			if err := DB.Unscoped().Save(&existing).Error; err != nil {
+				http.Error(w, "failed to restore dynamic rest tool", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "name": existing.Name})
+			return
+		}
+		http.Error(w, "tool already exists", http.StatusConflict)
 		return
 	}
-	if existingCount > 0 {
-		http.Error(w, "tool already exists", http.StatusConflict)
+	if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+		http.Error(w, "failed to check existing dynamic rest tool", http.StatusInternalServerError)
 		return
 	}
 
@@ -230,7 +266,7 @@ func (h *ToolsHandler) DeleteDynamicRESTTool(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "tool_name is required", http.StatusBadRequest)
 		return
 	}
-	if err := DB.Where("owner_user_id = ? AND name = ?", user.ID, toolName).Delete(&database.DynamicRESTTool{}).Error; err != nil {
+	if err := DB.Unscoped().Where("owner_user_id = ? AND name = ?", user.ID, toolName).Delete(&database.DynamicRESTTool{}).Error; err != nil {
 		http.Error(w, "failed to delete dynamic rest tool", http.StatusInternalServerError)
 		return
 	}
