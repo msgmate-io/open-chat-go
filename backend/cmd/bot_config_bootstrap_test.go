@@ -256,6 +256,85 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 	}
 }
 
+func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	initialPath := writeBotConfigFile(t, map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": "owner_user",
+		},
+		"bot": map[string]interface{}{
+			"username":    "owner_support_bot",
+			"password":    "BotPass1!",
+			"name":        "support_bot",
+			"description": "Initial description",
+			"is_public":   false,
+			"is_active":   true,
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "qwen3-8b-instruct_vllm",
+		},
+	})
+
+	overwritePath := writeBotConfigFile(t, map[string]interface{}{
+		"owner": map[string]interface{}{
+			"username": "owner_user",
+		},
+		"bot": map[string]interface{}{
+			"username":    "owner_support_bot",
+			"password":    "BotPass1!",
+			"name":        "support_bot",
+			"description": "Updated description",
+			"is_public":   true,
+			"is_active":   false,
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "claude-opus-4-8",
+		},
+		"overwrite_if_exists": true,
+	})
+
+	if err := applyBotBootstrapConfigFiles(DB, []string{initialPath}, false); err != nil {
+		t.Fatalf("first apply failed: %v", err)
+	}
+	if err := applyBotBootstrapConfigFiles(DB, []string{overwritePath}, false); err != nil {
+		t.Fatalf("second apply failed: %v", err)
+	}
+
+	owner, err := findUserByUsername(DB, "owner_user")
+	if err != nil {
+		t.Fatalf("failed to resolve owner user: %v", err)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("owner_user_id = ? AND name = ?", owner.ID, "support_bot").First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load bot runtime config: %v", err)
+	}
+
+	if runtime.Description != "Updated description" {
+		t.Fatalf("expected description to be overwritten, got %q", runtime.Description)
+	}
+	if !runtime.IsPublic {
+		t.Fatalf("expected is_public=true after overwrite")
+	}
+	if runtime.IsActive {
+		t.Fatalf("expected is_active=false after overwrite")
+	}
+
+	var shared map[string]interface{}
+	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
+		t.Fatalf("failed to decode default_shared_config: %v", err)
+	}
+	if shared["model"] != "claude-opus-4-8" {
+		t.Fatalf("expected model to be overwritten, got %v", shared["model"])
+	}
+}
+
 func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *testing.T) {
 	config := setupBotConfigTestDB(t)
 	DB := database.SetupDatabase(*config)

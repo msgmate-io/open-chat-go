@@ -7,10 +7,11 @@
     "name": "little_world_support_chat",
     "description": "Little World live support chat bot"
   },
+  "overwrite_if_exists": true,
   "default_shared_config": {
-    "model": "qwen3-8b-instruct_vllm",
-    "endpoint": "https://litellm.t1m.me/v1",
-    "backend": "litellm",
+    "model": "claude-opus-4-8",
+    "endpoint": "https://api.anthropic.com/v1",
+    "backend": "anthropic",
     "temperature": 0.2,
     "max_tokens": 2048,
     "context": 20,
