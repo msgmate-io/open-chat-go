@@ -228,6 +228,56 @@
                 }
             }
         },
+        "/api/interaction/{chat_share_uuid}/status": {
+            "get": {
+                "description": "Retrieve deterministic active/finished status for a shared interaction chat",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Get shared interaction status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Shared chat UUID",
+                        "name": "chat_share_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Interaction status",
+                        "schema": {
+                            "$ref": "#/definitions/chats.InteractionStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid shared chat UUID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Shared chat not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to resolve interaction status",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/bots": {
             "post": {
                 "security": [
@@ -934,6 +984,61 @@
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chats/{chat_uuid}/status": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Retrieve deterministic active/finished status for an interaction chat",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Get interaction status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Interaction status",
+                        "schema": {
+                            "$ref": "#/definitions/chats.InteractionStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid chat UUID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Chat not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to resolve interaction status",
                         "schema": {
                             "type": "string"
                         }
@@ -2169,6 +2274,29 @@
                     "type": "integer"
                 },
                 "mime_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.InteractionStatusResponse": {
+            "type": "object",
+            "properties": {
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "latest_message_finished": {
+                    "type": "boolean"
+                },
+                "latest_message_uuid": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "state": {
                     "type": "string"
                 }
             }

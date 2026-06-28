@@ -348,7 +348,12 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		UUID:       message.UUID,
 		SendAt:     message.CreatedAt.String(),
 		SenderUUID: user.UUID,
-		Text:       *message.Text,
+		Text: func() string {
+			if message.Text == nil {
+				return ""
+			}
+			return *message.Text
+		}(),
 		Reasoning:  message.Reasoning,
 		ToolCalls:  &toolCalls,
 		MetaData:   &messageMetaData,
