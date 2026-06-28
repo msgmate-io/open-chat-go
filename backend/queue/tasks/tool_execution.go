@@ -42,23 +42,28 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("%w: chat not found or access denied", asynq.SkipRetry)
 	}
 
-	toolInitData := make(map[string]interface{})
-	if chat.SharedConfig != nil && chat.SharedConfig.ConfigData != nil {
-		var configData map[string]interface{}
+	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
+	dynamicTools := map[string]interface{}{}
+	mcpTools := map[string]interface{}{}
+	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
+		configData := map[string]interface{}{}
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err == nil {
-			if toolInit, exists := configData["tool_init"]; exists {
-				if toolInitMap, ok := toolInit.(map[string]interface{}); ok {
-					if initData, exists := toolInitMap[payload.ToolName]; exists {
-						if initDataMap, ok := initData.(map[string]interface{}); ok {
-							toolInitData = initDataMap
-						}
-					}
-				}
+			if raw, ok := configData["dynamic_tools"].(map[string]interface{}); ok {
+				dynamicTools = raw
+			}
+			if raw, ok := configData["mcp_tools"].(map[string]interface{}); ok {
+				mcpTools = raw
 			}
 		}
 	}
 
-	toolInstance := msgmate.GetNewToolInstanceByName(payload.ToolName, toolInitData)
+	toolInstance, dynamicErr := msgmate.GetNewToolInstanceByNameOrSnapshot(payload.ToolName, toolInitData, dynamicTools, mcpTools)
+	if dynamicErr != nil {
+		failure := ToolExecutionResult{Success: false, Error: dynamicErr.Error()}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("invalid dynamic tool definition: %w", dynamicErr)
+	}
 	if toolInstance == nil {
 		failure := ToolExecutionResult{
 			Success: false,
