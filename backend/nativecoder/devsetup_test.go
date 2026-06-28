@@ -230,3 +230,25 @@ func TestResolveDevSetupExplicit(t *testing.T) {
 		t.Fatal("values outside the profile charset must be rejected")
 	}
 }
+
+// TestDevSetupEmptyConfiguredScriptDoesNotDisablePlan pins that a deliberate or
+// accidental empty `coder_sandbox_setup_commands` value (JSON null / "" / spaces)
+// does not silently switch the ci#756 preparation off: only a real script wins.
+func TestDevSetupEmptyConfiguredScriptDoesNotDisablePlan(t *testing.T) {
+	for _, value := range []interface{}{nil, "", "   "} {
+		cfg := map[string]interface{}{"coder_sandbox_template": "full-development", SandboxSetupCommandsConfigKey: value}
+		out := WithDevSetup(cfg, "msgmate-io/open-chat-go", "")
+		got := out[SandboxSetupCommandsConfigKey]
+		if got == nil {
+			t.Fatalf("an empty configured script (%#v) must not disable the dev-set-up plan", value)
+		}
+		if s, ok := got.(string); !ok || s == "" {
+			t.Fatalf("expected a generated script, got %#v", got)
+		}
+	}
+	// A malformed non-string value is an operator error and stays untouched.
+	keep := map[string]interface{}{SandboxSetupCommandsConfigKey: []string{"echo hi"}}
+	if got := WithDevSetup(keep, "msgmate-io/open-chat-go", "")[SandboxSetupCommandsConfigKey]; got == nil {
+		t.Fatal("a malformed coder_sandbox_setup_commands value must be left untouched")
+	}
+}

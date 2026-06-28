@@ -120,10 +120,18 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var contacts []database.Contact
-	q := DB.Scopes(database.Paginate(&contacts, &pagination, DB)).
+	// The caller-scoped filter must exist BEFORE pagination runs: Paginate counts
+	// the rows to derive TotalPages, and the count used to run against the
+	// unscoped handle (the Where clauses were chained after Scopes), so
+	// TotalPages reflected every contact in the database instead of the caller's
+	// (ci#747). Build the filtered query first - the same shape
+	// backend/api/chats/List.go uses - and paginate that.
+	query := DB.
 		Where("owning_user_id = ?", user.ID).
-		Where("deleted_at IS NULL").
+		Where("deleted_at IS NULL")
+
+	var contacts []database.Contact
+	q := query.Scopes(database.Paginate(&contacts, &pagination, query)).
 		Preload("ContactUser").
 		Find(&contacts)
 
@@ -132,10 +140,15 @@ func (h *ContactsHander) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(contacts) == 0 && pagination.Page > 1 {
-		http.Error(w, "Page not found", http.StatusNotFound)
-		return
-	}
+	// A page past the end is NOT an error (ci#747). The python client's
+	// get_bot(identifier) GETs /api/v1/bots/<identifier> first and, when that
+	// answers 404/409 (unknown, duplicated or not-owned bot), falls back to
+	// GET /api/v1/contacts/list. Answering 404 for the out-of-range page turned
+	// that fallback into `RuntimeError: get_bot fallback failed with status
+	// 404`, so a bot that simply has no contact row looked like a broken
+	// backend. Return an empty page (200) instead: `contacts` stays empty, so
+	// contactToContactListed yields a non-nil empty slice and `rows` serialises
+	// as [] rather than null.
 
 	response := PaginatedContacts{
 		Limit:      pagination.Limit,

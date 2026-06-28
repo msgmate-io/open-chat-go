@@ -303,17 +303,34 @@ func notFoundError(result FetchResult) error {
 		ErrNotFound, result.URL, result.Status)
 }
 
+// notFoundKey canonicalises a URL for the not-found cache so trivial variants of
+// the same dead URL share one remembered miss. Agents regularly guess
+// near-identical spellings of a missing page (a #fragment, a trailing slash,
+// padding whitespace); with a raw-string key each spelling was a fresh cache miss
+// and paid another 404 round-trip, which is exactly the noise ci#789 reports.
+func notFoundKey(rawURL string) string {
+	key := strings.TrimSpace(rawURL)
+	if i := strings.IndexByte(key, '#'); i >= 0 {
+		key = key[:i]
+	}
+	if len(key) > 10 && strings.HasSuffix(key, "/") {
+		key = key[:len(key)-1]
+	}
+	return key
+}
+
 // cachedNotFound returns a remembered not-found outcome for url, if the entry is
 // still fresh.
 func cachedNotFound(url string) (FetchResult, bool) {
+	key := notFoundKey(url)
 	notFoundMu.Lock()
 	defer notFoundMu.Unlock()
-	entry, ok := notFoundCache[url]
+	entry, ok := notFoundCache[key]
 	if !ok {
 		return FetchResult{}, false
 	}
 	if time.Since(entry.at) > notFoundCacheTTL {
-		delete(notFoundCache, url)
+		delete(notFoundCache, key)
 		return FetchResult{}, false
 	}
 	return entry.result, true
@@ -323,13 +340,14 @@ func cachedNotFound(url string) (FetchResult, bool) {
 // same URL does not hit the network again. The cache is dropped wholesale once
 // it grows past notFoundCacheMax: it only ever holds cheap to reproduce misses.
 func rememberNotFound(url string) {
+	key := notFoundKey(url)
 	notFoundMu.Lock()
 	defer notFoundMu.Unlock()
 	if len(notFoundCache) >= notFoundCacheMax {
 		notFoundCache = map[string]notFoundEntry{}
 	}
-	notFoundCache[url] = notFoundEntry{
-		result: FetchResult{URL: url, Status: http.StatusNotFound},
+	notFoundCache[key] = notFoundEntry{
+		result: FetchResult{URL: key, Status: http.StatusNotFound},
 		at:     time.Now(),
 	}
 }

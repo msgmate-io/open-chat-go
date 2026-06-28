@@ -679,6 +679,13 @@ python3 -m venv .venv
   coder set-up script retries `full-ci` when the manifest does not know
   `full-development` yet (see *Coding-agent and sandbox documentation is
   private* above).
+- The per-repo default is configurable per bot or interaction: a
+  `coder_dev_setup` map may carry a `profiles` table next to its `profile`
+  default (`profiles: {msgmate-io/open-chat-go: full-development,
+  msgmate-io/open-chat-go-mobile: full-android}`). The longest matching
+  repository prefix wins and a repository outside the table keeps the declared
+  default, so one bot config can serve several repositories with different
+  development set-ups instead of forcing every interaction onto the same one.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
@@ -1056,6 +1063,18 @@ mitigation names no shipped tool, or a *closed* gap still carries a workaround
 keeps ci#394 honest in both directions: the registry says what is missing, the
 fallback table says how the coder copes until it is added.
 
+Gap 1 (`todo_list`) is being closed from the core side first:
+`backend/nativecoder/todoplan.go` holds the per-chat plan state behind
+opencode's `todowrite`/`todoread` (`CoderTodoStore.Write`/`Read`/`Clear`),
+mirroring the opencode contract - four statuses, at most one step in progress,
+stable positional ids, a plan cap, a revision that increments per accepted
+write, structured metadata (`Metadata`) and a deterministic markdown renderer
+(`RenderCoderTodoPlan`) for the chat view. `NormalizeCoderTodoItems` is the
+single validator, so a rejected write is classified by error value rather than
+by parsing a message. The gap is `partial` until the `coder_todo_write` /
+`coder_todo_read` tools on top of this state ship: the registry only reports the
+surface the agent can actually call.
+
 Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
@@ -1202,6 +1221,19 @@ deployment never disagree. The read-only job
 (`--format=markdown`, `--format=json`) or the flip delta (`--format=delta`) for a
 ticket comment; `--require-ready` turns the gate into a non-zero exit for a
 scripted check.
+
+The last step of the umbrella (ci#585) removes the integration itself:
+`backend/nativecoder/opencoderetirestop.go` renders the *stop delta* -
+`OpencodeRetireStopDelta`, `OpencodeRetireStopDeltaJSON` - which disables the
+`opencode` chat backend, removes its dev bots and then removes the integration,
+in that order, through the same vault-sync path. `ValidateOpencodeRetireStopDelta`
+rejects drift: unknown kinds, missing targets/reasons, duplicates, a native
+runtime named as a stop target, or a bot the registry knows but the delta forgets.
+A stop is only reported as complete once `OpencodeRetireStopRecord` (date,
+operator, `retired` mode, stopped bots) is present *and* the retirement gate is
+open, so the umbrella's final checkbox cannot be ticked while a bot still
+resolves to the opencode backend. The report job exposes the same evidence with
+`--format=stop` and `--require-stopped` (non-zero exit while it is incomplete).
 
 ## Decoupled integration builds (ci#423)
 
