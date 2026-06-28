@@ -380,6 +380,10 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
+	// ci#819 part A (prompt half): a native coder is told the workspace root up
+	// front, so it stops rediscovering it with a `cd` prefix on every
+	// `coder_bash` call. Non-coder configs are untouched.
+	systemPrompt = coderWorkspaceSystemPrompt(systemPrompt, configMap)
 	// context_summary is a compacted summary of earlier turns persisted by the
 	// native coder agent (msgmate_coder/coder_compact, ci#394). It is injected
 	// as a leading system message so the dropped history survives in context.

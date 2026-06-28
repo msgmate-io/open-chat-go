@@ -119,6 +119,32 @@ func contains(haystack, needle string) bool {
 	return len(haystack) >= 0 && len(needle) > 0 && stringsContains(haystack, needle)
 }
 
+func TestMaskSecretsJSONKeepsShapeButMasksCredentials(t *testing.T) {
+	raw := []byte(`{"content":{"text":"run kubectl with ghp_abcdefghijklmnopqrstuvwxyz012345",
+		"meta_data":{"state":"running","api_key":"plain","cookie":"session=abc"},
+		"tool_calls":[{"name":"run_command","arguments":{"command":"ls"},"result":"ok"}],
+		"authorization":"Bearer abcdefghijklmnopqrstuvwxyz"}}`)
+	masked := string(MaskSecretsJSON(raw))
+	for _, leaked := range []string{"ghp_", "Bearer abc", `"api_key":"plain"`, "session=abc", `"authorization":"Bearer`} {
+		if contains(masked, leaked) {
+			t.Fatalf("unsecure mask leaked %q: %s", leaked, masked)
+		}
+	}
+	// Free-form content and the interaction state stay visible so the gist of the
+	// interaction is still readable.
+	for _, kept := range []string{"run kubectl with", `"state":"running"`, "run_command"} {
+		if !contains(masked, kept) {
+			t.Fatalf("unsecure mask dropped %q: %s", kept, masked)
+		}
+	}
+	if string(MaskSecretsJSON([]byte("not json"))) != "not json" {
+		t.Fatal("non-json payloads must pass through untouched")
+	}
+	if !LooksLikeSecret("-----BEGIN OPENSSH PRIVATE KEY-----") || LooksLikeSecret("hello world") {
+		t.Fatal("LooksLikeSecret misclassifies credential material")
+	}
+}
+
 func stringsContains(haystack, needle string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {
