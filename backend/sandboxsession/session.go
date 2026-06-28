@@ -28,8 +28,27 @@ import (
 // DefaultFileMode is used when FileInjection.Mode is zero.
 const DefaultFileMode os.FileMode = 0o600
 
-// DefaultWorkDir is the working directory a shell session starts in.
+// DefaultWorkDir is the working directory a shell session starts in: the
+// sandbox workspace root every provider clones into.
 const DefaultWorkDir = "/workspace"
+
+// ResolveWorkDir resolves the effective working directory of a shell session:
+// the explicit request value when one is set, otherwise the sandbox-agnostic
+// workspace root default. Providers and consumers call this instead of each
+// hard-coding DefaultWorkDir, so a sandbox with a non-default root overrides the
+// root in exactly one place. An all-whitespace value is treated as unset. The
+// result is cleaned of a trailing separator so it matches the path the session
+// actually starts in.
+func ResolveWorkDir(workDir string) string {
+	trimmed := strings.TrimSpace(workDir)
+	if trimmed == "" {
+		return DefaultWorkDir
+	}
+	if trimmed != "/" {
+		trimmed = strings.TrimRight(trimmed, "/")
+	}
+	return trimmed
+}
 
 // DefaultSessionTTL bounds how long an unattended admin shell may live.
 const DefaultSessionTTL = time.Hour
@@ -245,9 +264,7 @@ func Normalize(req *Request) error {
 			return fmt.Errorf("%w: shell.command[%d] is empty", ErrInvalidRequest, i)
 		}
 	}
-	if strings.TrimSpace(req.Shell.WorkDir) == "" {
-		req.Shell.WorkDir = DefaultWorkDir
-	}
+	req.Shell.WorkDir = ResolveWorkDir(req.Shell.WorkDir)
 	if req.Shell.TTL <= 0 {
 		req.Shell.TTL = DefaultSessionTTL
 	}

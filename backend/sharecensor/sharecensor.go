@@ -8,7 +8,8 @@
 //     reasoning and file attachments are stripped, so a shared view can never
 //     leak secrets, tokens, kubeconfigs or user data.
 //   - "unsecure": the full payload is exposed. It must be selected explicitly
-//     by the owner.
+//     by the owner; hard-secret-looking keys and values are still masked so a
+//     share can never emit credentials, tokens or kubeconfig material.
 //
 // Anything that is not an explicit "unsecure" is treated as censored, which
 // keeps the system fail-closed for legacy rows and unknown input.
@@ -16,6 +17,7 @@ package sharecensor
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -240,7 +242,7 @@ func reduceForShare(v interface{}) interface{} {
 		}
 		return out
 	default:
-		return v
+		return maskSecretValue(v)
 	}
 }
 
@@ -296,12 +298,131 @@ func isShareDeniedKey(lk string) bool {
 		"tool_result", "tool_output", "env", "environment", "config_data", "credentials":
 		return true
 	}
-	for _, needle := range []string{"token", "secret", "password", "api_key", "apikey",
-		"credential", "kubeconfig", "kube_config", "authorization", "cookie", "email",
-		"private_key", "ssh_key", "passwd"} {
+	for _, needle := range secretKeyNeedles {
 		if strings.Contains(lk, needle) {
 			return true
 		}
 	}
 	return false
+}
+
+// secretKeyNeedles are key substrings whose values are credential material and
+// must never be rendered on any shared surface.
+var secretKeyNeedles = []string{"token", "secret", "password", "api_key", "apikey",
+	"credential", "kubeconfig", "kube_config", "authorization", "cookie", "email",
+	"private_key", "ssh_key", "passwd"}
+
+// hardSecretKeyNeedles is the credential-only subset of secretKeyNeedles that is
+// masked even in the "unsecure" content mode. Free-form user data keys (email,
+// ...) are only stripped by the censored reduction, because "unsecure" is an
+// explicit owner opt-in to expose the chat content.
+var hardSecretKeyNeedles = []string{"token", "secret", "password", "api_key", "apikey",
+	"credential", "kubeconfig", "kube_config", "authorization", "private_key",
+	"ssh_key", "passwd", "cookie", "session_id", "set-cookie"}
+
+// isHardSecretKey reports whether a lower-cased key names credential material
+// that must never be shared, not even on an "unsecure" share.
+func isHardSecretKey(lk string) bool {
+	for _, needle := range hardSecretKeyNeedles {
+		if strings.Contains(lk, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// secretValuePrefixes are the well-known credential value shapes that are masked
+// wherever they appear, even inside free text.
+var secretValuePrefixes = []string{"-----begin ", "ghp_", "github_pat_", "glpat-",
+	"xoxb-", "xoxp-", "sk-", "akia", "aiza", "bearer ", "eyj", "basic "}
+
+// secretValuePattern matches credential material embedded anywhere inside a
+// string (provider tokens, private key headers, bearer headers, JWTs).
+var secretValuePattern = regexp.MustCompile(`(?i)` + strings.Join([]string{
+	`ghp_[a-z0-9]{16,}`,
+	`github_pat_[a-z0-9_]{16,}`,
+	`glpat-[a-z0-9_\-]{16,}`,
+	`xox[bpasr]-[a-z0-9\-]{10,}`,
+	`sk-[a-z0-9]{16,}`,
+	`akia[0-9a-z]{16}`,
+	`aiza[0-9a-z_\-]{20,}`,
+	`bearer\s+[a-z0-9\-._~+/]{12,}`,
+	`basic\s+[a-z0-9+/]{16,}=*`,
+	`eyj[a-z0-9_\-]{8,}\.[a-z0-9_\-]{8,}\.[a-z0-9_\-]{4,}`,
+	`-----begin [a-z ]*private key-----`,
+}, "|"))
+
+// LooksLikeSecret reports whether a raw string looks like credential material
+// (private key block, provider token, JWT or bearer header).
+func LooksLikeSecret(value string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" {
+		return false
+	}
+	for _, prefix := range secretValuePrefixes {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(trimmed, "-----begin ") && strings.Contains(trimmed, "private key")
+}
+
+// redactEmbeddedSecrets replaces credential-shaped substrings inside free text
+// with the redaction placeholder while keeping the surrounding text readable.
+func redactEmbeddedSecrets(value string) string {
+	return secretValuePattern.ReplaceAllString(value, RedactedPlaceholder)
+}
+
+// maskSecretValue replaces credential-shaped strings with the redaction
+// placeholder and scrubs credentials embedded in free text; other values pass
+// through untouched.
+func maskSecretValue(v interface{}) interface{} {
+	s, ok := v.(string)
+	if !ok {
+		return v
+	}
+	if LooksLikeSecret(s) {
+		return RedactedPlaceholder
+	}
+	return redactEmbeddedSecrets(s)
+}
+
+// MaskSecretsJSON rewrites an encoded JSON document so credential-shaped keys
+// and values are replaced by RedactedPlaceholder. Unlike CensorSharedJSON it
+// keeps the document shape, so it can also be applied to the "unsecure" content
+// mode: no share may ever emit tokens, passwords, kubeconfig material or private
+// keys. Non-JSON input is returned unchanged.
+func MaskSecretsJSON(raw []byte) []byte {
+	var doc interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw
+	}
+	out, err := json.Marshal(maskSecretsDeep(doc))
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func maskSecretsDeep(v interface{}) interface{} {
+	switch typed := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for k, val := range typed {
+			if isHardSecretKey(strings.ToLower(k)) {
+				out[k] = RedactedPlaceholder
+				continue
+			}
+			out[k] = maskSecretsDeep(val)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, maskSecretsDeep(item))
+		}
+		return out
+	default:
+		return maskSecretValue(v)
+	}
 }
