@@ -3570,7 +3570,7 @@ jobs:
     # holds the per-branch job concurrency group and starves the fresh dispatch.
     # This job explicitly cancels every superseded merged-deployment run for this
     # repository so the fresh dispatch can proceed.
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
@@ -3617,7 +3617,7 @@ jobs:
   resolve-merged-deployment:
     name: Resolve Merged Deployment
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -3638,17 +3638,37 @@ jobs:
             TARGET_REF="$BASE_REF"
           fi
 
-          if [ "$BASE_REF" = "production" ]; then
-            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
-            DEPLOYMENT_URL="https://msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
-          else
-            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
-            DEPLOYMENT_URL="https://stage.msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
-          fi
+          # ci#833: the deploy target is derived from the merge base ref and is
+          # correctness-critical. `dev` is the integration trunk: a merge to it
+          # is verified by PR CI only and dispatches NO deployment. `main`
+          # deploys the CI environment (ci.msgmate.io); `production` deploys
+          # msgmate.io. An unknown base ref is a hard error - never guess.
+          case "$BASE_REF" in
+            dev)
+              SHOULD_DEPLOY="false"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
+              DEPLOYMENT_URL="https://stage.msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
+              ;;
+            main)
+              SHOULD_DEPLOY="true"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
+              DEPLOYMENT_URL="https://stage.msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
+              ;;
+            production)
+              SHOULD_DEPLOY="true"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
+              DEPLOYMENT_URL="https://msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
+              ;;
+            *)
+              echo "::error::Unknown merge base ref '${BASE_REF}': refusing to guess a deployment target (ci#833)."
+              exit 1
+              ;;
+          esac
 
-          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
           echo "ci_deployment_name=${{ env.DEPLOYMENT_CI }}" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
@@ -3759,6 +3779,107 @@ jobs:
             -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android","slow-android-build-test"]}'
 
           echo "Production promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
+
+  open-dev-to-main-promotion-pr:
+    name: Open Dev To Main Promotion PR
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment]
+    # ci#833: `main <- dev` is the ONLY PR that carries the deploy/sandbox
+    # labels and the only one whose merge deploys ci.msgmate.io. A merge to
+    # `dev` refreshes this PR in place (never delete/recreate: closing it would
+    # cancel its labelled CI run) and attaches the automatic label set.
+    if: |
+      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    env:
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Open or refresh dev to main promotion PR
+        env:
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
+          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
+          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          compare_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/repos/${REPOSITORY}/compare/main...dev")"
+          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          if [ "$ahead_by" = "0" ]; then
+            echo "dev is not ahead of main; skipping the dev to main promotion PR."
+            exit 0
+          fi
+
+          title="[Dev promotion] Promote dev -> main - merging deploys ci.msgmate.io (ci#833)"
+          body="$(cat <<EOF
+          <!-- open-chat-dev-promotion -->
+
+          This pull request is maintained automatically (ci#833): every merge to \`dev\` refreshes it in place.
+
+          **Merging this PR promotes \`dev\` to \`main\` and deploys the change to [ci.msgmate.io](https://ci.msgmate.io).**
+
+          | | |
+          | --- | --- |
+          | Head | \`dev\` |
+          | Base | \`main\` |
+          | Labels (automated, never toggled) | \`test\`, \`e2e\`, \`deploy\`, \`sandbox-test\` |
+          | Latest dev merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) - ${MERGED_PR_TITLE} |
+          | Dev commit | \`${DEV_HEAD_SHA}\` |
+
+          Label policy: feature PRs target \`dev\` with \`test\` only; consolidation PRs (\`chore/consolidate-*\`) target \`dev\` with \`test\`,\`e2e\`; this promotion PR is the only one carrying \`deploy\` and \`sandbox-test\`.
+          EOF
+          )"
+          labels_payload='{"labels":["test","e2e","deploy","sandbox-test"]}'
+
+          existing_pr_number="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
+              | jq -r '.[0].number // ""'
+          )"
+
+          if [ -n "$existing_pr_number" ]; then
+            echo "Refreshing the existing promotion PR #${existing_pr_number} in place."
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
+              -d "$(jq -n --arg title "$title" '{title: $title}')" >/dev/null
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
+              -d "$labels_payload" >/dev/null
+            echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
+            exit 0
+          fi
+
+          echo "Creating the dev to main promotion PR."
+          pr_number="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls" \
+              -d "$(jq -n --arg title "$title" --arg body "$body" --arg head "dev" --arg base "main" '{title: $title, body: $body, head: $head, base: $base}')" \
+              | jq -r '.number'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
+            -d "$labels_payload" >/dev/null
+          echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link
