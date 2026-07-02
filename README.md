@@ -10,8 +10,7 @@
 
 ### TL;DR
 
-- Production Docker: `docker build -f Dockerfile -t open-chat:latest .`
-- Go Linux Binary: `wget -O open-chat "https://github.com/msgmate-io/open-chat-go/releases/latest/download/open-chat-linux-amd64"`
+- [Latest Open-Chat-Go Linux Binary](https://github.com/msgmate-io/open-chat-go/releases/latest/download/open-chat-linux-amd64)
 - Python Client: `pip install git+https://github.com/msgmate-io/open-chat-go-python-client.git`
 
 ### Development
@@ -24,13 +23,10 @@ docker compose up
 docker compose --profile storybook up
 ```
 
-### Bake in your own go-tools
+### Infuse Open-Chat Tools & Integrations
 
-- Tool dependencies are declared in `backend/tooldeps.json`.
-- During backend builds, `backend/full_build.sh` runs `go run ./scripts/tooldepsgen` to:
-  - sync dependencies into `backend/go.mod`
-  - generate `backend/api/msgmate/externaltools/imports_gen.go` with side-effect imports
-- External packages should register tools in `init()` using the SDK at [`clients/go_tool_interface/`](https://github.com/msgmate-io/open-chat-go-tool-interface)
+- Use the [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface) and include your tool in `backend/tooldeps.json`
+- Or the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and place integrations in `backend/integrationdeps.json`
 
 ### Production
 
