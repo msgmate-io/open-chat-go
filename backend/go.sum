@@ -233,8 +233,8 @@ github.com/sv-tools/openapi v0.4.0 h1:UhD9DVnGox1hfTePNclpUzUFgos57FvzT2jmcAuTOJ
 github.com/sv-tools/openapi v0.4.0/go.mod h1:kD/dG+KP0+Fom1r6nvcj/ORtLus8d8enXT6dyRZDirE=
 github.com/swaggo/swag/v2 v2.0.0-rc5 h1:fK7d6ET9rrEsdB8IyuwXREWMcyQN3N7gawGFbbrjgHk=
 github.com/swaggo/swag/v2 v2.0.0-rc5/go.mod h1:kCL8Fu4Zl8d5tB2Bgj96b8wRowwrwk175bZHXfuGVFI=
-github.com/urfave/cli/v3 v3.0.0-alpha9.3 h1:RfQlgUHMRxDMwEEmGsrHd+mXYJpWpXlcJM8w86cpjGs=
-github.com/urfave/cli/v3 v3.0.0-alpha9.3/go.mod h1:FnIeEMYu+ko8zP1F9Ypr3xkZMIDqW3DR92yUtY39q1Y=
+github.com/urfave/cli/v3 v3.10.1 h1:7Kx9H50hrHbRbyxgO1KP6/BcbiGRz0uYh5YyQ30JEEY=
+github.com/urfave/cli/v3 v3.10.1/go.mod h1:ysVLtOEmg2tOy6PknnYVhDoouyC/6N42TMeoMzskhso=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 go.uber.org/goleak v0.10.0/go.mod h1:VCZuO8V8mFPlL0F5J5GK1rtHV3DrFcQ1R8ryq7FK0aI=

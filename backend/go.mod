@@ -2,7 +2,7 @@ module backend
 
 go 1.25.10
 
-require github.com/urfave/cli/v3 v3.0.0-alpha9.3
+require github.com/urfave/cli/v3 v3.10.1
 
 require golang.org/x/crypto v0.45.0
 

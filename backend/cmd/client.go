@@ -134,7 +134,7 @@ func GetClientCmd(action string) *cli.Command {
 			Name:  "chats",
 			Usage: "List all chats",
 			Flags: append(defaultFlags, []cli.Flag{
-				&cli.IntFlag{
+				&cli.Int64Flag{
 					Name:  "page",
 					Usage: "The page number to return",
 					Value: 1,
@@ -153,7 +153,7 @@ func GetClientCmd(action string) *cli.Command {
 				fmt.Printf("DEBUG: Final host value: %s\n", host)
 				ocClient := client.NewClient(host)
 				ocClient.SetSessionId(c.String("session-id"))
-				err, paginatedChats := ocClient.GetChats(c.Int("page"), c.Int("limit"))
+				err, paginatedChats := ocClient.GetChats(c.Int64("page"), c.Int64("limit"))
 				if err != nil {
 					return fmt.Errorf("failed to get chats: %w", err)
 				}
