@@ -496,12 +496,41 @@ func BackendRouting(
 
 	mux.HandleFunc("/api/version", reference.VersionHandler)
 
+	integrationFrontendWrapper := func(handler http.Handler, isPublic bool) http.Handler {
+		if isPublic {
+			return commonMiddlewares(handler)
+		}
+		return commonMiddlewares(FrontendAuthMiddleware(handler))
+	}
+	if err := integrations.RegisterFrontendRoutes(mux, integrationFrontendWrapper); err != nil {
+		log.Fatalf("failed to register integration frontend routes: %v", err)
+	}
+
 	if frontendProxy == "" {
 		routes, err := getFrontendRoutes()
 		if err != nil {
 			log.Printf("Warning: Failed to load routes from routes.json: %v", err)
 			routes = []string{}
 		}
+
+		integrationFrontendRoutes := map[string]struct{}{}
+		for _, integrationDef := range integrations.List() {
+			for _, frontendRoute := range integrationDef.FrontendRoutes {
+				integrationFrontendRoutes[frontendRoute.Route] = struct{}{}
+			}
+			for _, frontendPage := range integrationDef.FrontendPages {
+				integrationFrontendRoutes[frontendPage.Route] = struct{}{}
+			}
+		}
+
+		filteredRoutes := make([]string, 0, len(routes))
+		for _, route := range routes {
+			if _, reserved := integrationFrontendRoutes[route]; reserved {
+				continue
+			}
+			filteredRoutes = append(filteredRoutes, route)
+		}
+		routes = filteredRoutes
 
 		for _, route := range routes {
 			fmt.Printf("Serving route: %s\n", route)

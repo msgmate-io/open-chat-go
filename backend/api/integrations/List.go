@@ -11,6 +11,7 @@ type IntegrationListRow struct {
 	Name               string `json:"name"`
 	HasRouteRegistrar  bool   `json:"has_route_registrar"`
 	APIRouteCount      int    `json:"api_route_count"`
+	FrontendRouteCount int    `json:"frontend_route_count"`
 	ModelProviderCount int    `json:"model_provider_count"`
 	FunctionCount      int    `json:"function_count"`
 }
@@ -35,6 +36,7 @@ func (h *IntegrationsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Name:               def.Name,
 			HasRouteRegistrar:  def.RouteRegistrar != nil,
 			APIRouteCount:      len(def.APIRoutes),
+			FrontendRouteCount: len(def.FrontendRoutes) + len(def.FrontendPages),
 			ModelProviderCount: len(def.ModelProviders),
 			FunctionCount:      len(def.Functions),
 		})
