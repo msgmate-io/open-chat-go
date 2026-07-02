@@ -16,17 +16,20 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     GOBIN="/dev_bin" go install -mod=mod github.com/githubnemo/CompileDaemon
 
 # Pre-download modules first; this layer only re-runs when go.mod/go.sum change.
-# Baked into the image (no cache mount) so the module cache survives to runtime.
 COPY ./backend/go.mod ./backend/go.sum ./
-COPY ./clients/go_tool_interface /clients/go_tool_interface
-COPY ./clients/go_integration_interface /clients/go_integration_interface
-COPY ./clients/integrations/mcp_integration /clients/integrations/mcp_integration
+COPY ./clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
+COPY ./clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
+COPY ./clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
+COPY ./clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
 RUN go mod download
 
 # Copy the source and pre-compile once at build time. The resulting module cache
 # (/go/pkg/mod) and build cache (/root/.cache/go-build) are baked into the image
 # and survive the runtime bind-mount of ./backend (which only shadows /backend),
 # so the first `docker compose up` compile is incremental instead of from scratch.
+ADD ./clients/go_tool_interface /clients/go_tool_interface
+ADD ./clients/go_integration_interface /clients/go_integration_interface
+ADD ./clients/integrations/mcp_integration /clients/integrations/mcp_integration
 ADD ./backend /backend
 RUN go build
 
