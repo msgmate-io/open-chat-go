@@ -33,6 +33,8 @@ FROM basebuilder AS builder
 COPY backend/ ./
 COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
+COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
+COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
