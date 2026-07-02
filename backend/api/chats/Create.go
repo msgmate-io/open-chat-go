@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // TODO: should also supply user Id
@@ -18,6 +21,89 @@ type CreateChat struct {
 	SharedConfig map[string]interface{} `json:"shared_config,omitempty"`
 	ChatType     string                 `json:"chat_type,omitempty"`
 	AutoShare    bool                   `json:"auto_share,omitempty"`
+}
+
+func mergeJSONMaps(base map[string]interface{}, overrides map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		if baseMap, ok := out[k].(map[string]interface{}); ok {
+			if overrideMap, ok := v.(map[string]interface{}); ok {
+				out[k] = mergeJSONMaps(baseMap, overrideMap)
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func applyModelConfigBindingForUser(DB *gorm.DB, ownerUserID uint, config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	modelID, _ := config["model"].(string)
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return config
+	}
+
+	var modelCfg database.ModelConfig
+	err := DB.Where("owner_user_id = ? AND model_id = ?", ownerUserID, modelID).Order("id desc").First(&modelCfg).Error
+	if err != nil {
+		err = DB.Where("owner_user_id IS NULL AND model_id = ?", modelID).Order("id desc").First(&modelCfg).Error
+		if err != nil {
+			return config
+		}
+	}
+
+	cfgData := map[string]interface{}{}
+	if len(modelCfg.Configuration) == 0 {
+		return config
+	}
+	if err := json.Unmarshal(modelCfg.Configuration, &cfgData); err != nil {
+		return config
+	}
+	if backend, ok := cfgData["backend"].(string); ok && backend != "" {
+		config["backend"] = backend
+	}
+	if endpoint, ok := cfgData["endpoint"].(string); ok && endpoint != "" {
+		config["endpoint"] = endpoint
+	}
+	return config
+}
+
+func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestSharedConfig map[string]interface{}) map[string]interface{} {
+	if !botUser.IsAutomated {
+		if requestSharedConfig == nil {
+			return nil
+		}
+		return requestSharedConfig
+	}
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error; err != nil {
+		if requestSharedConfig == nil {
+			return nil
+		}
+		return requestSharedConfig
+	}
+	runtimeConfig := map[string]interface{}{}
+	if len(runtime.DefaultSharedConfig) > 0 {
+		_ = json.Unmarshal(runtime.DefaultSharedConfig, &runtimeConfig)
+	}
+	if requestSharedConfig == nil {
+		if len(runtimeConfig) == 0 {
+			return nil
+		}
+		return runtimeConfig
+	}
+	if len(runtimeConfig) == 0 {
+		return applyModelConfigBindingForUser(DB, runtime.OwnerUserId, requestSharedConfig)
+	}
+	merged := mergeJSONMaps(runtimeConfig, requestSharedConfig)
+	return applyModelConfigBindingForUser(DB, runtime.OwnerUserId, merged)
 }
 
 // Create a chat
@@ -62,7 +148,6 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	log.Printf("  ChatType: %s", data.ChatType)
 	log.Printf("  AutoShare: %v", data.AutoShare)
 	log.Printf("  SharedConfig keys: %d", len(data.SharedConfig))
-
 
 	// Security check: Only allow known public chat types for non-admin users.
 	// Admins may use custom chat types.
@@ -179,8 +264,9 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if data.SharedConfig != nil {
-		configData, err := json.Marshal(data.SharedConfig)
+	resolvedSharedConfig := resolveSharedConfigForChat(DB, otherUser, data.SharedConfig)
+	if resolvedSharedConfig != nil {
+		configData, err := json.Marshal(resolvedSharedConfig)
 		if err != nil {
 			http.Error(w, "Invalid shared_config JSON", http.StatusBadRequest)
 			return
@@ -193,19 +279,6 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		chat.SharedConfigId = &sharedConfig.ID
 		chat.SharedConfig = &sharedConfig
 		DB.Save(&chat)
-	} else if otherUser.IsAutomated {
-		var runtime database.BotRuntimeConfig
-		if err := DB.Where("bot_user_id = ? AND is_active = ?", otherUser.ID, true).Order("id desc").First(&runtime).Error; err == nil && len(runtime.DefaultSharedConfig) > 0 {
-			sharedConfig := database.SharedChatConfig{
-				ChatId:     chat.ID,
-				ConfigData: runtime.DefaultSharedConfig,
-			}
-			if err := DB.Create(&sharedConfig).Error; err == nil {
-				chat.SharedConfigId = &sharedConfig.ID
-				chat.SharedConfig = &sharedConfig
-				DB.Save(&chat)
-			}
-		}
 	}
 
 	if data.FirstMessage != "" {
