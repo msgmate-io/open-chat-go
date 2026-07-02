@@ -18,12 +18,33 @@ request; `slow-android-build-test` only on an explicit maintainer request).
 Two of them stand apart: `deploy` and `sandbox-test` spin up a deployment and
 run the expensive post-deploy suites, so they touch an environment.
 
+The `dev` branch is the **integration trunk** (ci#833). Labels follow the hop
+they belong to:
+
+| PR shape | Base | Labels | Deploys? |
+| --- | --- | --- | --- |
+| feature / bugfix / docs / chore | `dev` | `test` only | no |
+| consolidation (`chore/consolidate-*`) | `dev` | `test`, `e2e` only | no |
+| promotion (`dev` → `main`, titled `[Dev promotion]`) | `main` | `test`, `e2e`, `deploy`, `sandbox-test` | yes → ci.msgmate.io |
+| production promotion (`main` → `production`) | `production` | keeps the production labels | yes → msgmate.io |
+
 Policy:
 
-- Use `deploy` and `sandbox-test` **only on dedicated consolidation PRs
-  targeting `main`** (the `chore/consolidate-*` PRs) — the single place where a
-  batch of ready changes is verified as a whole. Feature, bugfix, docs and
-  chore PRs carry the ordinary code-change labels only.
+- Use `deploy` and `sandbox-test` **only on the release hops**: the
+  `dev` → `main` promotion PR and the `main` → `production` promotion PR.
+  Feature, bugfix, docs and chore PRs carry the ordinary code-change labels
+  only; a consolidation PR targeting `dev` carries `test,e2e` and never a
+  deployment label. `Auto-approve consolidation PRs` refuses to merge a
+  `dev`-based consolidation PR that carries `deploy`/`sandbox-test`.
+- The `dev` → `main` promotion PR is created and refreshed **automatically** by
+  `Run PR CI Tests and Deployments` (job `open-dev-to-main-promotion-pr`) on
+  every merge to `dev`. It is refreshed in place — never closed and recreated,
+  which would cancel its labelled CI run — and its label set is applied by the
+  automation. Do not toggle the labels by hand.
+- Deployment is decided by the merge *base ref* (job
+  `resolve-merged-deployment`), and an unknown base ref is a hard error:
+  `dev` dispatches **no** deployment, `main` deploys the CI environment
+  (ci.msgmate.io), `production` deploys msgmate.io.
 - A same-repository PR targeting `main` is the CI-environment case: its
   deploy/test gate uses the **unprotected** `msgmate-io-ci` GitHub environment,
   so the full suite — including the post-deploy sandbox and real-AI suites —
@@ -35,6 +56,23 @@ Policy:
   admin-protected `msgmate-io-production` environment.
 - Maintainers may make rare, deliberate exceptions (for example to validate an
   infrastructure change); the risk is theirs and they should say so on the PR.
+
+#### The dev integration trunk
+
+Feature work lands on `dev` (protected by the `Dev (Integration) Merge
+Protection` ruleset, whose only requirement is the green `Run PR CI Tests and
+Deployments` check). `main` is then promoted from `dev` through the automatic
+`[Dev promotion]` PR, so `main` only ever receives a batch that already passed
+PR CI on `dev` plus the `deploy`/`sandbox-test` verification of the promotion
+run. The chain is:
+
+```text
+feature/* --(test)--> dev --(test,e2e, consolidation)--> dev
+                     |
+                     auto-refreshed [Dev promotion] PR (test,e2e,deploy,sandbox-test)
+                     v
+                    main --(main -> production promotion)--> production
+```
 
 ### One leaf issue per pull request
 
@@ -163,8 +201,10 @@ approve its own PR, so `.github/workflows/auto-approve-consolidation.yaml`
 approves **and merges** it once it is provably green:
 
 - It triggers on completion of the required **Run PR CI Tests and Deployments**
-  workflow and only considers `chore/consolidate-*` PRs targeting `main` in this
-  repository (open, not a draft, no conflicts).
+  workflow, and accepts exactly two PR shapes in this repository (open, not a
+  draft, no conflicts): `chore/consolidate-*` → `dev` or `main`, and
+  `dev` → `main` (the promotion PR). A `closes`-linked automation identity still
+  cannot approve its own PR, which is why this workflow exists.
 - Before merging it re-reads the PR from the API and refuses to merge unless the
   required CI check concluded `success` and every other check on the PR finished
   green — a red or pending check stops the merge even though the workflow is
@@ -181,8 +221,14 @@ The preferred configuration is a dedicated reviewer identity (GitHub App or a
 fine-grained token with `pull_requests: write`) stored as the repository secret
 `CONSOLIDATE_APPROVER_TOKEN`; alternatively add a ruleset bypass actor for the
 consolidation automation. With neither, the run warns and leaves the human
-approval in place. All of this is only wired for consolidation PRs — feature,
-bugfix, chore and docs PRs still need a human approval and merge.
+approval in place. All of this is only wired for consolidation PRs and the
+`dev` → `main` promotion PR — feature, bugfix, chore and docs PRs still need a
+human approval and merge.
+
+The promotion hop is the one that deploys: merging the `dev` → `main` PR
+triggers `resolve-merged-deployment` with `merge_target=main`, which dispatches
+the ci.msgmate.io deployment (`msgmate-io-ci`) and opens the `main` →
+`production` promotion PR in turn.
 
 #### A cancelled (superseded) CI run is not a failed gate (ci#659)
 
