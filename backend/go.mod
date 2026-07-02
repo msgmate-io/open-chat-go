@@ -8,6 +8,10 @@ require golang.org/x/crypto v0.45.0
 
 require github.com/msgmate-io/go-tool-interface v0.0.0
 
+require github.com/msgmate-io/go-integration-interface v0.0.0
+
+require github.com/msgmate-io/mcp-integration v0.0.0
+
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/uuid v1.6.0
@@ -17,6 +21,10 @@ require (
 )
 
 replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
+
+replace github.com/msgmate-io/go-integration-interface => ../clients/go_integration_interface
+
+replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect

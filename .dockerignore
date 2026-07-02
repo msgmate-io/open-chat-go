@@ -4,3 +4,6 @@
 !frontend
 !clients
 !clients/go_tool_interface
+!clients/go_integration_interface
+!clients/integrations
+!clients/integrations/mcp_integration

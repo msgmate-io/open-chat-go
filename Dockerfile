@@ -21,6 +21,11 @@ RUN apk add --no-cache gcc musl-dev bash libc6-compat
 COPY backend/go.mod ./
 COPY backend/go.sum ./
 COPY clients/go_tool_interface /clients/go_tool_interface
+COPY clients/go_integration_interface /clients/go_integration_interface
+COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
+RUN test -f /clients/go_tool_interface/go.mod
+RUN test -f /clients/go_integration_interface/go.mod
+RUN test -f /clients/integrations/mcp_integration/go.mod
 RUN CGO_ENABLED=1 go mod download
 
 FROM basebuilder AS builder

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"backend/database"
+	"backend/integrations"
 	"backend/queue"
 	"context"
 	"fmt"
@@ -51,6 +52,9 @@ func WorkerCli() *cli.Command {
 			},
 		}, GetRedisFlags()...),
 		Action: func(_ context.Context, c *cli.Command) error {
+			integrations.EnsureLoaded()
+			database.RegisterExternalModels(integrations.AdditionalModels()...)
+
 			redisConnOpt, err := resolveRedisConnOpt(c)
 			if err != nil {
 				return err
