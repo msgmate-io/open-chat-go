@@ -315,6 +315,75 @@ func TestFetchDeadURLIsCachedAcrossCalls(t *testing.T) {
 	}
 }
 
+func TestCanonicalNotFoundKey(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain url is unchanged", "https://example.invalid/page", "https://example.invalid/page"},
+		{"whitespace is trimmed", "  https://example.invalid/page\n", "https://example.invalid/page"},
+		{"trailing slash is collapsed", "https://example.invalid/page/", "https://example.invalid/page"},
+		{"fragment is dropped", "https://example.invalid/page#section", "https://example.invalid/page"},
+		{"fragment also drops the trailing slash", "https://example.invalid/page/#top", "https://example.invalid/page"},
+		{"all three variants agree", "  https://example.invalid/page/#top ", "https://example.invalid/page"},
+		{"query string is preserved", "https://example.invalid/search?q=a#hit", "https://example.invalid/search?q=a"},
+		{"host root collapses to the bare host", "https://example.invalid/", "https://example.invalid"},
+		{"bare host stays as it is", "https://example.invalid", "https://example.invalid"},
+		{"bare scheme stays untouched", "https://", "https://"},
+		{"double trailing slash is left alone", "https://example.invalid/a//", "https://example.invalid/a//"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := canonicalNotFoundKey(tc.in); got != tc.want {
+				t.Fatalf("canonicalNotFoundKey(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFetchDeadURLVariantsShareTheCache is the ci#828 regression: a trivial
+// spelling variant of an already-remembered dead path must be answered from the
+// cache instead of paying another 404 round-trip.
+func TestFetchDeadURLVariantsShareTheCache(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusNotFound, "nope")
+	variants := []string{
+		"https://example.invalid/missing",
+		"https://example.invalid/missing/",
+		"https://example.invalid/missing#anchor",
+		"  https://example.invalid/missing/ \n",
+	}
+	for i, variant := range variants {
+		result, err := Fetch(context.Background(), variant, 1024)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("variant %d (%q): expected ErrNotFound, got %v", i, variant, err)
+		}
+		if result.Status != http.StatusNotFound {
+			t.Fatalf("variant %d (%q): expected the 404 status, got %d", i, variant, result.Status)
+		}
+		// A cache hit must still report the URL the caller asked for, not the
+		// canonical key of the entry it was served from.
+		if want := strings.TrimSpace(variant); result.URL != want {
+			t.Fatalf("variant %d (%q): expected the requested URL %q to be reported, got %q", i, variant, want, result.URL)
+		}
+	}
+	if transport.calls != 1 {
+		t.Fatalf("variants of one dead URL must share the not-found cache, got %d network calls", transport.calls)
+	}
+}
+
+func TestFetchDeadURLVariantsDoNotCollideAcrossPaths(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusNotFound, "nope")
+	for _, dead := range []string{"https://example.invalid/a", "https://example.invalid/b"} {
+		if _, err := Fetch(context.Background(), dead, 1024); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for %s, got %v", dead, err)
+		}
+	}
+	if transport.calls != 2 {
+		t.Fatalf("distinct dead paths must not share a cache entry, got %d network calls", transport.calls)
+	}
+}
+
 func TestFetchGoneIsNotFound(t *testing.T) {
 	withCountingResponse(t, http.StatusGone, "gone")
 	if _, err := Fetch(context.Background(), "https://example.invalid/removed", 1024); !errors.Is(err, ErrNotFound) {
