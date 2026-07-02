@@ -25,6 +25,7 @@ require (
 	github.com/hibiken/asynqmon v0.7.2
 	github.com/swaggo/swag/v2 v2.0.0-rc5
 	golang.org/x/term v0.37.0
+	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.5.11
 )
 
@@ -73,7 +74,6 @@ require (
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.49.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
