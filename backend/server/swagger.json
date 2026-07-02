@@ -1208,51 +1208,234 @@
                 }
             }
         },
-        "/api/v1/interactions/{chat_uuid}/mcp": {
-            "post": {
-                "description": "Handle Model Context Protocol streaming JSON-RPC requests for tool discovery and execution (bot users only)",
-                "consumes": [
-                    "application/json"
-                ],
+        "/api/v1/integrations/list": {
+            "get": {
+                "description": "Returns integration modules compiled into the running backend binary.",
                 "produces": [
-                    "application/x-ndjson"
+                    "application/json"
                 ],
                 "tags": [
                     "tools"
                 ],
-                "summary": "Handle MCP JSON-RPC streaming requests",
+                "summary": "List compiled integrations",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrations.IntegrationsListResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "List owner-scoped MCP servers registered via the MCP integration.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "List MCP servers",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrations.MCPServerListResponseDoc"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Create an owner-scoped MCP server registration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Create MCP server",
+                "parameters": [
+                    {
+                        "description": "MCP server config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/integrations.MCPServerUpsertRequestDoc"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers/{server_name}": {
+            "put": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Update an owner-scoped MCP server registration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Update MCP server",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Chat UUID",
-                        "name": "chat_uuid",
+                        "description": "Server name",
+                        "name": "server_name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated MCP server config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/integrations.MCPServerUpsertRequestDoc"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Delete an owner-scoped MCP server registration.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Delete MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "server_name",
                         "in": "path",
                         "required": true
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Streaming NDJSON responses",
+                        "description": "OK",
                         "schema": {
-                            "type": "string"
+                            "type": "object",
+                            "additionalProperties": true
                         }
-                    },
-                    "400": {
-                        "description": "Bad Request",
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/mcp/servers/{server_name}/discover": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Calls tools/list on a registered MCP server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Discover MCP server tools",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server name",
+                        "name": "server_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/tools.MCPResponse"
+                            "type": "object",
+                            "additionalProperties": true
                         }
-                    },
-                    "403": {
-                        "description": "Forbidden",
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/{integration_name}/overview": {
+            "get": {
+                "description": "Returns API routes, registered model types and function names for a compiled integration.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tools"
+                ],
+                "summary": "Get integration overview",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Integration name",
+                        "name": "integration_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/tools.MCPResponse"
+                            "$ref": "#/definitions/integrations.IntegrationOverviewResponse"
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "integration not found",
                         "schema": {
-                            "$ref": "#/definitions/tools.MCPResponse"
+                            "type": "string"
                         }
                     }
                 }
@@ -2610,6 +2793,180 @@
                 }
             }
         },
+        "integrations.IntegrationAPIParameterOverview": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "in": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrations.IntegrationAPIRouteOverview": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationAPIParameterOverview"
+                    }
+                },
+                "required_auth": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "route": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrations.IntegrationListRow": {
+            "type": "object",
+            "properties": {
+                "api_route_count": {
+                    "type": "integer"
+                },
+                "function_count": {
+                    "type": "integer"
+                },
+                "has_route_registrar": {
+                    "type": "boolean"
+                },
+                "model_provider_count": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrations.IntegrationModelOverview": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "type_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrations.IntegrationOverviewResponse": {
+            "type": "object",
+            "properties": {
+                "api_routes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "api_routes_overview": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationAPIRouteOverview"
+                    }
+                },
+                "functions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationModelOverview"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrations.IntegrationsListResponse": {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationListRow"
+                    }
+                }
+            }
+        },
+        "integrations.MCPServerListResponseDoc": {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.MCPServerRowDoc"
+                    }
+                }
+            }
+        },
+        "integrations.MCPServerRowDoc": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "created_at_unix": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "has_auth_data": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at_unix": {
+                    "type": "integer"
+                }
+            }
+        },
+        "integrations.MCPServerUpsertRequestDoc": {
+            "type": "object",
+            "properties": {
+                "auth_data": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "models.ModelListItem": {
             "type": "object",
             "properties": {
@@ -2703,31 +3060,6 @@
                         "type": "string"
                     }
                 }
-            }
-        },
-        "tools.MCPError": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "integer"
-                },
-                "data": {},
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "tools.MCPResponse": {
-            "type": "object",
-            "properties": {
-                "error": {
-                    "$ref": "#/definitions/tools.MCPError"
-                },
-                "id": {},
-                "jsonrpc": {
-                    "type": "string"
-                },
-                "result": {}
             }
         },
         "tools.StoreToolInitDataRequest": {

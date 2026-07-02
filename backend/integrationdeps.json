@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    {
+      "module": "github.com/msgmate-io/mcp-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/mcp-integration"
+    }
+  ]
+}
