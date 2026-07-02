@@ -19,6 +19,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Baked into the image (no cache mount) so the module cache survives to runtime.
 COPY ./backend/go.mod ./backend/go.sum ./
 COPY ./clients/go_tool_interface /clients/go_tool_interface
+COPY ./clients/go_integration_interface /clients/go_integration_interface
+COPY ./clients/integrations/mcp_integration /clients/integrations/mcp_integration
 RUN go mod download
 
 # Copy the source and pre-compile once at build time. The resulting module cache
@@ -28,4 +30,4 @@ RUN go mod download
 ADD ./backend /backend
 RUN go build
 
-ENTRYPOINT /dev_bin/CompileDaemon --build="/dev_bin/swag init --parseDependency --parseInternal && go build" --command="./backend server --fpx http://frontend:3000 --host 0.0.0.0 --port 1984" --exclude-dir=docs
+ENTRYPOINT /dev_bin/CompileDaemon --build="bash ./scripts/dev_rebuild.sh" --command="./.devbin/backend server --fpx http://frontend:3000 --host 0.0.0.0 --port 1984" --exclude-dir=docs --exclude-dir=.devbin

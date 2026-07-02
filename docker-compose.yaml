@@ -14,6 +14,8 @@ services:
     volumes:
       - ./backend:/backend
       - ./clients/go_tool_interface:/clients/go_tool_interface
+      - ./clients/go_integration_interface:/clients/go_integration_interface
+      - ./clients/integrations/mcp_integration:/clients/integrations/mcp_integration
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
