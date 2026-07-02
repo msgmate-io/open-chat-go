@@ -372,6 +372,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("PUT /bots/{identifier}/config", botsHandler.SaveConfig)
 	v1PrivateApis.HandleFunc("DELETE /bots/{identifier}", botsHandler.Delete)
 	v1PrivateApis.HandleFunc("POST /bots/{identifier}/interactions", botsHandler.CreateInteraction)
+	v1PrivateApis.HandleFunc("POST /models", modelsHandler.Create)
+	v1PrivateApis.HandleFunc("PATCH /models/{model_uuid}", modelsHandler.Patch)
+	v1PrivateApis.HandleFunc("DELETE /models/{model_uuid}", modelsHandler.Delete)
 
 	// Tool execution endpoints (bot users only)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}", toolsHandler.ExecuteTool)
@@ -442,8 +445,10 @@ func BackendRouting(
 
 	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
 	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
-	mux.Handle("GET /api/v1/models/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
-	mux.Handle("GET /api/v1/tools/list", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
+	mux.Handle("GET /api/v1/models", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
+	mux.Handle("GET /api/v1/models/{model_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.Get)))))
+	mux.Handle("GET /api/v1/tools", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
+	mux.Handle("GET /api/v1/tools/{tool_name}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.Get)))))
 	mux.Handle("GET /api/v1/tools/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ListTyping)))))
 	mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
