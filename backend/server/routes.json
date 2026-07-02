@@ -3,6 +3,8 @@
   "/chat/{chat_uuid}",
   "/chat/new/{contact_token}",
   "/chat/new",
+  "/chats/bots/create",
+  "/chats/bots",
   "/chat",
   "/interaction/{chat_share_uuid}",
   "/docs",
