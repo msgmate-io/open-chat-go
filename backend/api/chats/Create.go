@@ -44,6 +44,12 @@ func applyModelConfigBindingForUser(DB *gorm.DB, ownerUserID uint, config map[st
 	if config == nil {
 		return nil
 	}
+	if configuredBackend, _ := config["backend"].(string); strings.EqualFold(strings.TrimSpace(configuredBackend), "testbackend") {
+		return config
+	}
+	if endpoint, _ := config["endpoint"].(string); strings.Contains(strings.ToLower(strings.TrimSpace(endpoint)), "testbackend.local") {
+		return config
+	}
 	modelID, _ := config["model"].(string)
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
