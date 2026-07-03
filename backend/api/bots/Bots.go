@@ -234,7 +234,7 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 		}
 	}
 
-	for _, key := range []string{"max_tokens", "context"} {
+	for _, key := range []string{"max_tokens", "context", "tool_call_max_total", "tool_call_max_failed"} {
 		if value, exists := getNumber(config, key); exists {
 			if value < 1 || math.Trunc(value) != value {
 				return fmt.Errorf("default_shared_config.%s must be a positive integer", key)
