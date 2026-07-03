@@ -10,16 +10,19 @@ import (
 
 // BotProfileConfig represents the configuration for a bot model
 type BotProfileConfig struct {
-	Temperature  float64  `json:"temperature"`
-	MaxTokens    int      `json:"max_tokens"`
-	Tools        []string `json:"tools,omitempty"`
-	Model        string   `json:"model"`
-	Endpoint     string   `json:"endpoint"`
-	Backend      string   `json:"backend"`
-	Context      int      `json:"context"`
-	SystemPrompt string   `json:"system_prompt"`
-	Reasoning    *bool    `json:"reasoning,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
+	Temperature  float64                `json:"temperature"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Tools        []string               `json:"tools,omitempty"`
+	Integrations []string               `json:"integrations,omitempty"`
+	Model        string                 `json:"model"`
+	Endpoint     string                 `json:"endpoint"`
+	Backend      string                 `json:"backend"`
+	Context      int                    `json:"context"`
+	SystemPrompt string                 `json:"system_prompt"`
+	Reasoning    *bool                  `json:"reasoning,omitempty"`
+	Tags         []string               `json:"tags,omitempty"`
+	MCPTools     map[string]interface{} `json:"mcp_tools,omitempty"`
+	DynamicTools map[string]interface{} `json:"dynamic_tools,omitempty"`
 }
 
 // BotModel represents a bot model configuration
@@ -81,6 +84,22 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	models, err := GetBotModels(DB, botUser.Name)
 	if err != nil {
 		return err
+	}
+
+	if len(models) == 0 {
+		var runtime database.BotRuntimeConfig
+		if err := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error; err == nil {
+			var fallbackConfig BotProfileConfig
+			if err := json.Unmarshal(runtime.DefaultSharedConfig, &fallbackConfig); err == nil {
+				if fallbackConfig.Model != "" && fallbackConfig.Backend != "" {
+					models = append(models, BotModel{
+						Title:         fallbackConfig.Model,
+						Description:   runtime.Description,
+						Configuration: fallbackConfig,
+					})
+				}
+			}
+		}
 	}
 
 	// Convert to interface{} slice for JSON marshaling

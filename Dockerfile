@@ -20,14 +20,25 @@ WORKDIR /backend
 RUN apk add --no-cache gcc musl-dev bash libc6-compat
 COPY backend/go.mod ./
 COPY backend/go.sum ./
-COPY clients/go_tool_interface /clients/go_tool_interface
+COPY clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
+COPY clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
+COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
+COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
+RUN test -f /clients/go_tool_interface/go.mod
+RUN test -f /clients/go_integration_interface/go.mod
+RUN test -f /clients/integrations/mcp_integration/go.mod
 RUN CGO_ENABLED=1 go mod download
 
 FROM basebuilder AS builder
 
+COPY clients/go_tool_interface /clients/go_tool_interface
+COPY clients/go_integration_interface /clients/go_integration_interface
+COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
 COPY backend/ ./
 COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
+COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
+COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt

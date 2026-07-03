@@ -158,7 +158,6 @@ var Tabels []interface{} = []interface{}{
 	&ModelConfig{},
 	&BotRuntimeConfig{},
 	&DynamicRESTTool{},
-	&MCPIntegrationConfig{},
 	&Permission{},
 	&AccessToken{},
 }
@@ -178,8 +177,17 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ModelConfig{}},
 	TableMigration{&BotRuntimeConfig{}},
 	TableMigration{&DynamicRESTTool{}},
-	TableMigration{&MCPIntegrationConfig{}},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
 	GrantDefaultPermissionsMigration{},
+}
+
+func RegisterExternalModels(models ...interface{}) {
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		Tabels = append(Tabels, model)
+		Migrations = append(Migrations, TableMigration{Model: model})
+	}
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/integrations"
 	"backend/queue"
 	"backend/runtimecfg"
 	"backend/server"
@@ -329,6 +330,9 @@ func ServerCli() *cli.Command {
 		Usage: "start the Open Chat server",
 		Flags: GetServerFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
+			integrations.EnsureLoaded()
+			database.RegisterExternalModels(integrations.AdditionalModels()...)
+
 			runtimecfg.SetAll(map[string]runtimecfg.Value{
 				"DB_BACKEND":              {Value: c.String("db-backend"), Sensitive: false},
 				"DB_PATH":                 {Value: c.String("db-path"), Sensitive: false},
