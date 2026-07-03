@@ -15,8 +15,7 @@ services:
       - ./backend:/backend
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
-      - ./clients/integrations/mcp_integration:/clients/integrations/mcp_integration
-      - ./clients/integrations/rest_api_tool_integration:/clients/integrations/rest_api_tool_integration
+      - ./clients/integrations:/clients/integrations
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
@@ -25,6 +24,7 @@ services:
       LITELLM_API_HOST: ${LITELLM_API_HOST}
       FRONTEND_PROXY: "http://frontend:3000"
       ROOT_CREDENTIALS: "admin:password"
+      DB_PATH: "/tmp/data.db"
       CREATE_EXTRA_USER: "littleworld:Test123!"
       CREATE_EXTRA_BOT: "little_world_support_chat_bot:Test123!,little_world_reply_suggestion_bot:Test123!"
       ADD_BOT_FROM_CONFIG: "/backend/little_world_default_bots/little_world_support_chat.json,/backend/little_world_default_bots/little_world_reply_suggestion.json"
