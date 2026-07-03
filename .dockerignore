@@ -7,3 +7,4 @@
 !clients/go_integration_interface
 !clients/integrations
 !clients/integrations/mcp_integration
+!clients/integrations/rest_api_tool_integration

@@ -24,9 +24,12 @@ COPY clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
 COPY clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
 COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
 COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
+COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
+COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
 RUN test -f /clients/go_tool_interface/go.mod
 RUN test -f /clients/go_integration_interface/go.mod
 RUN test -f /clients/integrations/mcp_integration/go.mod
+RUN test -f /clients/integrations/rest_api_tool_integration/go.mod
 RUN CGO_ENABLED=1 go mod download
 
 FROM basebuilder AS builder
@@ -34,11 +37,14 @@ FROM basebuilder AS builder
 COPY clients/go_tool_interface /clients/go_tool_interface
 COPY clients/go_integration_interface /clients/go_integration_interface
 COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
+COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
 COPY backend/ ./
 COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
 COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
 COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
+COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/index.html
+COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/tool-uuid-placeholder/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/tool_uuid/index.html
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
