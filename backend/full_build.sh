@@ -133,7 +133,7 @@ fi
 
 # Generate swagger documentation
 echo "Generating swagger.json..."
-$SWAG_PATH init --parseDependency --parseInternal --output ./docs --generalInfo ./main.go
+$SWAG_PATH init --parseDependency --parseDependencyLevel 3 --parseInternal --output ./docs --generalInfo ./main.go
 
 # Copy swagger files to server directory for embedding
 echo "Copying swagger files for embedding..."

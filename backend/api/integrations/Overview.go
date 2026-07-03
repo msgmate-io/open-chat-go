@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/msgmate-io/go-integration-interface/integrationinterface"
 )
 
 type IntegrationModelOverview struct {
@@ -200,6 +202,65 @@ func describeModel(model interface{}) (IntegrationModelOverview, bool) {
 	return overview, true
 }
 
+func mergeAndSortRoutes(routes []string, docs []integrationinterface.APIRouteDoc) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(routes)+len(docs))
+	for _, route := range routes {
+		route = strings.TrimSpace(route)
+		if route == "" {
+			continue
+		}
+		if _, ok := seen[route]; ok {
+			continue
+		}
+		seen[route] = struct{}{}
+		out = append(out, route)
+	}
+	for _, doc := range docs {
+		route := strings.TrimSpace(doc.Route)
+		if route == "" {
+			continue
+		}
+		if _, ok := seen[route]; ok {
+			continue
+		}
+		seen[route] = struct{}{}
+		out = append(out, route)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func buildAPIRouteOverview(route string, docsByRoute map[string]integrationinterface.APIRouteDoc) IntegrationAPIRouteOverview {
+	doc, ok := docsByRoute[route]
+	if !ok {
+		return IntegrationAPIRouteOverview{
+			Route:      route,
+			Parameters: pathParamsFromRoute(route),
+		}
+	}
+	params := make([]IntegrationAPIParameterOverview, 0, len(doc.Parameters))
+	for _, param := range doc.Parameters {
+		params = append(params, IntegrationAPIParameterOverview{
+			Name:        param.Name,
+			In:          param.In,
+			Type:        param.Type,
+			Required:    param.Required,
+			Description: param.Description,
+		})
+	}
+	if len(params) == 0 {
+		params = pathParamsFromRoute(route)
+	}
+	return IntegrationAPIRouteOverview{
+		Route:        route,
+		Summary:      strings.TrimSpace(doc.Summary),
+		Description:  strings.TrimSpace(doc.Description),
+		RequiredAuth: append([]string(nil), doc.RequiredAuth...),
+		Parameters:   params,
+	}
+}
+
 // Overview returns API, model and function overview for one compiled integration.
 //
 //	@Summary      Get integration overview
@@ -223,15 +284,19 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	routes := append([]string(nil), def.APIRoutes...)
-	sort.Strings(routes)
+	routes := mergeAndSortRoutes(append([]string(nil), def.APIRoutes...), def.APIRouteDocs)
+	docsByRoute := map[string]integrationinterface.APIRouteDoc{}
+	for _, routeDoc := range def.APIRouteDocs {
+		route := strings.TrimSpace(routeDoc.Route)
+		if route == "" {
+			continue
+		}
+		docsByRoute[route] = routeDoc
+	}
 
 	routeOverview := make([]IntegrationAPIRouteOverview, 0, len(routes))
 	for _, route := range routes {
-		routeOverview = append(routeOverview, IntegrationAPIRouteOverview{
-			Route:      route,
-			Parameters: pathParamsFromRoute(route),
-		})
+		routeOverview = append(routeOverview, buildAPIRouteOverview(route, docsByRoute))
 	}
 	sort.Slice(routeOverview, func(i, j int) bool {
 		return routeOverview[i].Route < routeOverview[j].Route
