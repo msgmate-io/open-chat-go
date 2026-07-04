@@ -153,13 +153,20 @@ jobs:
                  "repos/${{ github.repository }}/commits/${head_sha}/pulls" \
                  2>/dev/null)" || candidate=""
             # An empty array is a legitimate answer (the head commit is not a
-            # PR head yet); only a non-array payload means the call was flaky.
-            if printf '%s' "$candidate" |
-                 jq -e 'type == "array"' >/dev/null 2>&1; then
-              pulls_json="$candidate"
+            # PR head yet); a truncated/empty body, an error object or `null`
+            # means the call was flaky. `gh api --paginate` emits one JSON
+            # document per page, so slurp the documents and flatten them with
+            # `add`: a single-page answer is unchanged, a multi-page answer
+            # (`[...][...]`, which is not one valid JSON document) becomes one
+            # array, and anything that is not a non-empty list of arrays is
+            # rejected and retried.
+            if normalized="$(printf '%s' "$candidate" |
+                 jq -ces 'if length > 0 and all(type == "array") then add else empty end' \
+                 2>/dev/null)"; then
+              pulls_json="$normalized"
               break
             fi
-            echo "::warning::Listing the PRs for ${head_sha} (attempt ${attempt}/3) returned no usable payload."
+            echo "::warning::Listing the PRs for ${head_sha} (attempt ${attempt}/3) returned no usable payload (ci#830)."
             sleep "$((attempt * 5))"
           done
 
