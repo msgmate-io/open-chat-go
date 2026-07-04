@@ -5,6 +5,7 @@ import (
 )
 
 type UserHandler struct {
-	DB           *gorm.DB
-	CookieDomain string
+	DB                          *gorm.DB
+	CookieDomain                string
+	SignupRequiresAdminApproval bool
 }
