@@ -4,7 +4,7 @@ set -euo pipefail
 
 exec /dev_bin/CompileDaemon \
   -polling \
-  -build="bash ./scripts/dev_rebuild.sh" \
+  -build="bash ./scripts/dev_rebuild_with_logs.sh" \
   -command="./.devbin/backend server --fpx http://frontend:3000 --host 0.0.0.0 --port 1984" \
   -directory=/backend \
   -directory=/clients/go_tool_interface \
