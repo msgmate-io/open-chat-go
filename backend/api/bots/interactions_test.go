@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -51,7 +52,12 @@ func createBotForInteractionTest(t *testing.T, DB *gorm.DB, owner *database.User
 func setupAsynqTest(t *testing.T) (*asynq.Client, *asynq.Inspector, func()) {
 	t.Helper()
 
-	redisOpt := asynq.RedisClientOpt{Addr: "redis:6379"}
+	redisAddr := strings.TrimSpace(os.Getenv("ASYNQ_REDIS_ADDR"))
+	if redisAddr == "" {
+		redisAddr = "redis:6379"
+	}
+
+	redisOpt := asynq.RedisClientOpt{Addr: redisAddr}
 	client := asynq.NewClient(redisOpt)
 	inspector := asynq.NewInspector(redisOpt)
 
