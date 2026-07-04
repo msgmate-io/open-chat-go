@@ -3,6 +3,7 @@ FROM golang:latest
 
 RUN mkdir -p /backend /dev_bin
 WORKDIR /backend
+ENV PATH=/dev_bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Install dev tools BEFORE copying the app source. These layers only depend on
 # the install commands, so they stay cached across source changes (no more
@@ -27,12 +28,11 @@ COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integ
 COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
 COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
 # END GENERATED: integration-mod-manifests
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    go mod download
+# Keep module/build caches in-image so the first `docker compose up` can reuse
+# warm caches from `docker compose build`.
+RUN go mod download
 
-# Copy the source and pre-compile once at build time. The resulting module and
-# build caches remain available in the image and speed up runtime rebuilds.
+# Copy the source and pre-compile once at build time.
 ADD ./clients/go_tool_interface /clients/go_tool_interface
 ADD ./clients/go_integration_interface /clients/go_integration_interface
 # BEGIN GENERATED: integration-source-copies
@@ -40,8 +40,6 @@ COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
 COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
 # END GENERATED: integration-source-copies
 ADD ./backend /backend
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    go build
+RUN go build
 
 ENTRYPOINT /backend/scripts/dev_watch.sh
