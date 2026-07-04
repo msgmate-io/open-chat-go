@@ -669,14 +669,39 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
+      - name: Start Redis for Go tests
+        if: steps.context.outputs.should_test != ''
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.ci.yaml up -d redis
+          for i in $(seq 1 45); do
+            if docker compose -f docker-compose.ci.yaml exec -T redis redis-cli ping >/dev/null 2>&1; then
+              echo "Redis is ready for Go tests."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for Redis service used by Go tests."
+          docker compose -f docker-compose.ci.yaml logs redis || true
+          exit 1
+
       - name: Run Go tests
         id: go_tests
         if: steps.context.outputs.should_test != ''
         continue-on-error: true
         working-directory: backend
+        env:
+          ASYNQ_REDIS_ADDR: 127.0.0.1:6380
         run: |
           set -euo pipefail
           go test ./...
+
+      - name: Stop Redis for Go tests
+        if: steps.context.outputs.should_test != '' && always()
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.ci.yaml logs redis || true
+          docker compose -f docker-compose.ci.yaml down -v || true
 
       - name: Validate AI process test configuration
         if: steps.context.outputs.should_ai_test_mock != '' || steps.context.outputs.should_ai_test_real != ''
@@ -811,6 +836,8 @@ jobs:
           echo "go_status=$go_status" >> "$GITHUB_OUTPUT"
           echo "ai_mock_status=$ai_mock_status" >> "$GITHUB_OUTPUT"
           echo "ai_real_status=$ai_real_status" >> "$GITHUB_OUTPUT"
+          echo "Suite outcomes: go=${{ steps.go_tests.outcome || 'n/a' }} ai-mock=${{ steps.ai_mock_tests.outcome || 'n/a' }}"
+          echo "Computed statuses: go=${go_status} ai-mock=${ai_mock_status} ai-real=${ai_real_status}"
 
           if [ "$failed" -ne 0 ]; then
             echo "::error::One or more requested test suites failed."
