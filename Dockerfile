@@ -23,6 +23,7 @@ COPY backend/go.sum ./
 COPY clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
 COPY clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
 # BEGIN GENERATED: integration-mod-manifests
+COPY clients/integrations/admin_db_managemnt_integration/go.mod /clients/integrations/admin_db_managemnt_integration/go.mod
 COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
 COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
 COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
@@ -30,6 +31,7 @@ COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations
 # END GENERATED: integration-mod-manifests
 RUN test -f /clients/go_tool_interface/go.mod
 RUN test -f /clients/go_integration_interface/go.mod
+RUN test -f /clients/integrations/admin_db_managemnt_integration/go.mod
 RUN test -f /clients/integrations/mcp_integration/go.mod
 RUN test -f /clients/integrations/rest_api_tool_integration/go.mod
 RUN CGO_ENABLED=1 go mod download
@@ -39,6 +41,7 @@ FROM basebuilder AS builder
 COPY clients/go_tool_interface /clients/go_tool_interface
 COPY clients/go_integration_interface /clients/go_integration_interface
 # BEGIN GENERATED: integration-source-copies
+COPY clients/integrations/admin_db_managemnt_integration /clients/integrations/admin_db_managemnt_integration
 COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
 COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
 # END GENERATED: integration-source-copies
@@ -49,6 +52,10 @@ COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /
 COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
 COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/index.html
 COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/tool-uuid-placeholder/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/tool_uuid/index.html
+COPY --from=frontend /frontend/dist/client/integrations/admin/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/index.html
+COPY --from=frontend /frontend/dist/client/integrations/admin/queues/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/queues/index.html
+COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/table_name/index.html
+COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/{id}/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/table_name/id/index.html
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
