@@ -61,8 +61,15 @@ COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.ht
 COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
 COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/index.html
 COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/tool-uuid-placeholder/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/tool_uuid/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/keys/add/index.html /clients/integrations/ssh_integration/frontend_assets/keys/add/index.html
 COPY --from=frontend /frontend/dist/client/integrations/ssh/keys/index.html /clients/integrations/ssh_integration/frontend_assets/keys/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/keys/key-uuid-placeholder/details/index.html /clients/integrations/ssh_integration/frontend_assets/keys/key_uuid/details/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/keys/key-uuid-placeholder/edit/index.html /clients/integrations/ssh_integration/frontend_assets/keys/key_uuid/edit/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/servers/add/index.html /clients/integrations/ssh_integration/frontend_assets/servers/add/index.html
 COPY --from=frontend /frontend/dist/client/integrations/ssh/servers/index.html /clients/integrations/ssh_integration/frontend_assets/servers/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/servers/server-uuid-placeholder/details/index.html /clients/integrations/ssh_integration/frontend_assets/servers/server_uuid/details/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/servers/server-uuid-placeholder/edit/index.html /clients/integrations/ssh_integration/frontend_assets/servers/server_uuid/edit/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/servers/server-uuid-placeholder/shell/index.html /clients/integrations/ssh_integration/frontend_assets/servers/server_uuid/shell/index.html
 # END GENERATED: integration-frontend-asset-copies
 
 ARG MVPAPP_VERSION=dockerbuild
