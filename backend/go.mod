@@ -16,6 +16,8 @@ require github.com/msgmate-io/mcp-integration v0.0.0
 
 require github.com/msgmate-io/rest-api-tool-integration v0.0.0
 
+require github.com/msgmate-io/ssh-integration v0.0.0
+
 require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/uuid v1.6.0
@@ -35,6 +37,8 @@ replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integ
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
 
 replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integrations/rest_api_tool_integration
+
+replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_integration
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
