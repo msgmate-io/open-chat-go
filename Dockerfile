@@ -28,12 +28,15 @@ COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integ
 COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
 COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
 COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
+COPY clients/integrations/ssh_integration/go.mod /clients/integrations/ssh_integration/go.mod
+COPY clients/integrations/ssh_integration/go.sum /clients/integrations/ssh_integration/go.sum
 # END GENERATED: integration-mod-manifests
 RUN test -f /clients/go_tool_interface/go.mod
 RUN test -f /clients/go_integration_interface/go.mod
 RUN test -f /clients/integrations/admin_db_managemnt_integration/go.mod
 RUN test -f /clients/integrations/mcp_integration/go.mod
 RUN test -f /clients/integrations/rest_api_tool_integration/go.mod
+RUN test -f /clients/integrations/ssh_integration/go.mod
 RUN CGO_ENABLED=1 go mod download
 
 FROM basebuilder AS builder
@@ -44,18 +47,23 @@ COPY clients/go_integration_interface /clients/go_integration_interface
 COPY clients/integrations/admin_db_managemnt_integration /clients/integrations/admin_db_managemnt_integration
 COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
 COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
+COPY clients/integrations/ssh_integration /clients/integrations/ssh_integration
 # END GENERATED: integration-source-copies
 COPY backend/ ./
 COPY --from=frontend /frontend/routes.json server/routes.json
 COPY --from=frontend /frontend/dist/client server/frontend/
-COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
-COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
-COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/index.html
-COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/tool-uuid-placeholder/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/tool_uuid/index.html
+# BEGIN GENERATED: integration-frontend-asset-copies
 COPY --from=frontend /frontend/dist/client/integrations/admin/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/index.html
 COPY --from=frontend /frontend/dist/client/integrations/admin/queues/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/queues/index.html
-COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/table_name/index.html
 COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/{id}/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/table_name/id/index.html
+COPY --from=frontend /frontend/dist/client/integrations/admin/{table_name}/index.html /clients/integrations/admin_db_managemnt_integration/frontend_assets/table_name/index.html
+COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/add/index.html /clients/integrations/mcp_integration/frontend_assets/servers/add/index.html
+COPY --from=frontend /frontend/dist/client/integrations/mcp/servers/index.html /clients/integrations/mcp_integration/frontend_assets/servers/index.html
+COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/index.html
+COPY --from=frontend /frontend/dist/client/integrations/rest_api_tool/tools/tool-uuid-placeholder/index.html /clients/integrations/rest_api_tool_integration/frontend_assets/tools/tool_uuid/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/keys/index.html /clients/integrations/ssh_integration/frontend_assets/keys/index.html
+COPY --from=frontend /frontend/dist/client/integrations/ssh/servers/index.html /clients/integrations/ssh_integration/frontend_assets/servers/index.html
+# END GENERATED: integration-frontend-asset-copies
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
