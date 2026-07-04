@@ -1,6 +1,7 @@
 [
   "/models",
   "/chat/{chat_uuid}",
+  "/chat/new/{contact_token}/init",
   "/chat/new/{contact_token}",
   "/chat/new",
   "/chats/bots/create",
