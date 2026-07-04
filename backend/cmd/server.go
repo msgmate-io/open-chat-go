@@ -214,6 +214,12 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "Number of concurrent worker goroutines",
 			Value:   10,
 		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("SIGNUP_REQUIRES_ADMIN_APPROVAL"),
+			Name:    "signup-requires-admin-approval",
+			Usage:   "Require admin approval for new user signup",
+			Value:   false,
+		},
 	}
 
 	flags = append(flags, GetRedisFlags()...)
@@ -349,18 +355,22 @@ func ServerCli() *cli.Command {
 				"FRONTEND_PROXY":          {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":            {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
 				"ASYNQ_CONCURRENCY":       {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
-				"REDIS_URL":               {Value: c.String("redis-url"), Sensitive: true},
-				"REDIS_ADDR":              {Value: c.String("redis-addr"), Sensitive: false},
-				"REDIS_PASSWORD":          {Value: c.String("redis-password"), Sensitive: true},
-				"REDIS_DB":                {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
-				"OPENAI_API_KEY":          {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_KEY":       {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_HOST":      {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
-				"DEEPINFRA_API_KEY":       {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
-				"GROQ_API_KEY":            {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
-				"LITELLM_API_KEY":         {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
-				"LITELLM_API_HOST":        {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
-				"OPEN_CHAT_SEAL_KEY":      {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+				"SIGNUP_REQUIRES_ADMIN_APPROVAL": {
+					Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
+					Sensitive: false,
+				},
+				"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
+				"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
+				"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
+				"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+				"OPENAI_API_KEY":     {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_KEY":  {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_HOST": {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
+				"DEEPINFRA_API_KEY":  {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
+				"GROQ_API_KEY":       {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
+				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
+				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
+				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 			})
 
 			redisConnOpt, err := resolveRedisConnOpt(c)
@@ -408,6 +418,7 @@ func ServerCli() *cli.Command {
 				c.Bool("debug"),
 				c.String("frontend-proxy"),
 				sessionCookieDomain,
+				c.Bool("signup-requires-admin-approval"),
 			)
 			if err != nil {
 				return err

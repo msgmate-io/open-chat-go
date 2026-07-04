@@ -1235,14 +1235,14 @@
                         "SessionAuth": []
                     }
                 ],
-                "description": "Completes OAuth via provider redirect query params and redirects to integration UI.",
+                "description": "Completes OAuth flow using code+state query params and redirects to integration UI.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "integrations"
                 ],
-                "summary": "Complete MCP OAuth callback",
+                "summary": "MCP OAuth callback endpoint",
                 "responses": {
                     "302": {
                         "description": "redirect",
@@ -1272,7 +1272,8 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/integrations.MCPServerListResponseDoc"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -1294,17 +1295,6 @@
                     "integrations"
                 ],
                 "summary": "Create MCP server",
-                "parameters": [
-                    {
-                        "description": "MCP server config",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/integrations.MCPServerUpsertRequestDoc"
-                        }
-                    }
-                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1337,19 +1327,10 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "description": "Updated MCP server config",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/integrations.MCPServerUpsertRequestDoc"
-                        }
                     }
                 ],
                 "responses": {
@@ -1379,7 +1360,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
@@ -1414,7 +1395,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
@@ -1452,19 +1433,10 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "description": "Auth completion payload",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/integrations.MCPAuthCompleteRequestDoc"
-                        }
                     }
                 ],
                 "responses": {
@@ -1496,7 +1468,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
@@ -1531,7 +1503,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
@@ -1566,7 +1538,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Server name",
+                        "description": "Server Name",
                         "name": "server_name",
                         "in": "path",
                         "required": true
@@ -1578,6 +1550,175 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/rest_api_tool/tools": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "List owner-scoped runtime REST API tools.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "List REST API tools",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Create an owner-scoped runtime REST API tool definition.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Create REST API tool",
+                "parameters": [
+                    {
+                        "description": "REST API tool definition",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/restapitoolintegration.DynamicRESTToolUpsertRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/rest_api_tool/tools/{tool_name}": {
+            "put": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Update an owner-scoped runtime REST API tool definition.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Update REST API tool",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tool Name",
+                        "name": "tool_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Delete an owner-scoped runtime REST API tool definition.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Delete REST API tool",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tool Name",
+                        "name": "tool_name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/rest_api_tool/tools/{tool_uuid}": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Get one owner-scoped runtime REST API tool by UUID.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "integrations"
+                ],
+                "summary": "Get REST API tool",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tool UUID",
+                        "name": "tool_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/restapitoolintegration.dynamicRESTToolDetailResponse"
                         }
                     }
                 }
@@ -2664,6 +2805,9 @@
                 "name": {
                     "type": "string"
                 },
+                "owner_user_uuid": {
+                    "type": "string"
+                },
                 "uuid": {
                     "type": "string"
                 }
@@ -3257,9 +3401,41 @@
                 }
             }
         },
+        "integrations.IntegrationModelFieldOverview": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationModelFieldOverview"
+                    }
+                },
+                "json_name": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "integrations.IntegrationModelOverview": {
             "type": "object",
             "properties": {
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationModelFieldOverview"
+                    }
+                },
                 "kind": {
                     "type": "string"
                 },
@@ -3303,6 +3479,9 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "readme_markdown": {
+                    "type": "string"
                 }
             }
         },
@@ -3314,79 +3493,6 @@
                     "items": {
                         "$ref": "#/definitions/integrations.IntegrationListRow"
                     }
-                }
-            }
-        },
-        "integrations.MCPAuthCompleteRequestDoc": {
-            "type": "object",
-            "properties": {
-                "bearer_token": {
-                    "type": "string"
-                },
-                "code": {
-                    "type": "string"
-                },
-                "state": {
-                    "type": "string"
-                }
-            }
-        },
-        "integrations.MCPServerListResponseDoc": {
-            "type": "object",
-            "properties": {
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/integrations.MCPServerRowDoc"
-                    }
-                }
-            }
-        },
-        "integrations.MCPServerRowDoc": {
-            "type": "object",
-            "properties": {
-                "auth_connected": {
-                    "type": "boolean"
-                },
-                "auth_mode": {
-                    "type": "string"
-                },
-                "auth_pending": {
-                    "type": "boolean"
-                },
-                "config": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "created_at_unix": {
-                    "type": "integer"
-                },
-                "enabled": {
-                    "type": "boolean"
-                },
-                "has_auth_data": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "updated_at_unix": {
-                    "type": "integer"
-                }
-            }
-        },
-        "integrations.MCPServerUpsertRequestDoc": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object",
-                    "additionalProperties": true
-                },
-                "enabled": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
                 }
             }
         },
@@ -3540,6 +3646,150 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "restapitoolintegration.DynamicRESTToolUpsertRequest": {
+            "type": "object",
+            "properties": {
+                "admin_only": {
+                    "type": "boolean"
+                },
+                "base_url_input_name": {
+                    "type": "string"
+                },
+                "base_url_source": {
+                    "type": "string"
+                },
+                "confirmation_block_message": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "function_name": {
+                    "type": "string"
+                },
+                "http_method": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "openapi_source": {
+                    "type": "string"
+                },
+                "openapi_source_type": {
+                    "type": "string"
+                },
+                "operation_id": {
+                    "type": "string"
+                },
+                "param_bindings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "requires_confirmation": {
+                    "type": "boolean"
+                },
+                "safety_policy": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "stop_on_first_confirmable_tool_call": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "restapitoolintegration.dynamicRESTToolDetailResponse": {
+            "type": "object",
+            "properties": {
+                "call_schema": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "init_schema": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "row": {
+                    "$ref": "#/definitions/restapitoolintegration.dynamicRESTToolListRow"
+                }
+            }
+        },
+        "restapitoolintegration.dynamicRESTToolListRow": {
+            "type": "object",
+            "properties": {
+                "admin_only": {
+                    "type": "boolean"
+                },
+                "base_url_input_name": {
+                    "type": "string"
+                },
+                "base_url_source": {
+                    "type": "string"
+                },
+                "confirmation_block_message": {
+                    "type": "string"
+                },
+                "created_at_unix": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "function_name": {
+                    "type": "string"
+                },
+                "http_method": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "openapi_source_type": {
+                    "type": "string"
+                },
+                "operation_id": {
+                    "type": "string"
+                },
+                "param_bindings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "requires_confirmation": {
+                    "type": "boolean"
+                },
+                "safety_policy": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "stop_on_first_confirmable_tool_call": {
+                    "type": "boolean"
+                },
+                "updated_at_unix": {
+                    "type": "integer"
+                },
+                "uuid": {
+                    "type": "string"
                 }
             }
         },
