@@ -18,12 +18,33 @@ request; `slow-android-build-test` only on an explicit maintainer request).
 Two of them stand apart: `deploy` and `sandbox-test` spin up a deployment and
 run the expensive post-deploy suites, so they touch an environment.
 
+The `dev` branch is the **integration trunk** (ci#833). Labels follow the hop
+they belong to:
+
+| PR shape | Base | Labels | Deploys? |
+| --- | --- | --- | --- |
+| feature / bugfix / docs / chore | `dev` | `test` only | no |
+| consolidation (`chore/consolidate-*`) | `dev` | `test`, `e2e` only | no |
+| promotion (`dev` → `main`, titled `[Dev promotion]`) | `main` | `test`, `e2e`, `deploy`, `sandbox-test` | yes → ci.msgmate.io |
+| production promotion (`main` → `production`) | `production` | keeps the production labels | yes → msgmate.io |
+
 Policy:
 
-- Use `deploy` and `sandbox-test` **only on dedicated consolidation PRs
-  targeting `main`** (the `chore/consolidate-*` PRs) — the single place where a
-  batch of ready changes is verified as a whole. Feature, bugfix, docs and
-  chore PRs carry the ordinary code-change labels only.
+- Use `deploy` and `sandbox-test` **only on the release hops**: the
+  `dev` → `main` promotion PR and the `main` → `production` promotion PR.
+  Feature, bugfix, docs and chore PRs carry the ordinary code-change labels
+  only; a consolidation PR targeting `dev` carries `test,e2e` and never a
+  deployment label. `Auto-approve consolidation PRs` refuses to merge a
+  `dev`-based consolidation PR that carries `deploy`/`sandbox-test`.
+- The `dev` → `main` promotion PR is created and refreshed **automatically** by
+  `Run PR CI Tests and Deployments` (job `open-dev-to-main-promotion-pr`) on
+  every merge to `dev`. It is refreshed in place — never closed and recreated,
+  which would cancel its labelled CI run — and its label set is applied by the
+  automation. Do not toggle the labels by hand.
+- Deployment is decided by the merge *base ref* (job
+  `resolve-merged-deployment`), and an unknown base ref is a hard error:
+  `dev` dispatches **no** deployment, `main` deploys the CI environment
+  (ci.msgmate.io), `production` deploys msgmate.io.
 - A same-repository PR targeting `main` is the CI-environment case: its
   deploy/test gate uses the **unprotected** `msgmate-io-ci` GitHub environment,
   so the full suite — including the post-deploy sandbox and real-AI suites —
@@ -35,6 +56,23 @@ Policy:
   admin-protected `msgmate-io-production` environment.
 - Maintainers may make rare, deliberate exceptions (for example to validate an
   infrastructure change); the risk is theirs and they should say so on the PR.
+
+#### The dev integration trunk
+
+Feature work lands on `dev` (protected by the `Dev (Integration) Merge
+Protection` ruleset, whose only requirement is the green `Run PR CI Tests and
+Deployments` check). `main` is then promoted from `dev` through the automatic
+`[Dev promotion]` PR, so `main` only ever receives a batch that already passed
+PR CI on `dev` plus the `deploy`/`sandbox-test` verification of the promotion
+run. The chain is:
+
+```text
+feature/* --(test)--> dev --(test,e2e, consolidation)--> dev
+                     |
+                     auto-refreshed [Dev promotion] PR (test,e2e,deploy,sandbox-test)
+                     v
+                    main --(main -> production promotion)--> production
+```
 
 ### One leaf issue per pull request
 
@@ -163,8 +201,10 @@ approve its own PR, so `.github/workflows/auto-approve-consolidation.yaml`
 approves **and merges** it once it is provably green:
 
 - It triggers on completion of the required **Run PR CI Tests and Deployments**
-  workflow and only considers `chore/consolidate-*` PRs targeting `main` in this
-  repository (open, not a draft, no conflicts).
+  workflow, and accepts exactly two PR shapes in this repository (open, not a
+  draft, no conflicts): `chore/consolidate-*` → `dev` or `main`, and
+  `dev` → `main` (the promotion PR). A `closes`-linked automation identity still
+  cannot approve its own PR, which is why this workflow exists.
 - Before merging it re-reads the PR from the API and refuses to merge unless the
   required CI check concluded `success` and every other check on the PR finished
   green — a red or pending check stops the merge even though the workflow is
@@ -176,13 +216,34 @@ approves **and merges** it once it is provably green:
 - A PR that is merely `BEHIND` gets its branch updated instead (which re-runs CI
   and this workflow); an already merged PR counts as success, so re-runs and
   races are harmless.
+- Resolving *which* PR the finished run belongs to goes through
+  `GET /repos/{repo}/commits/{sha}/pulls`, which this repository has seen answer
+  intermittently with an empty/truncated body (`unexpected end of JSON input`),
+  so the lookup is retried up to three times with a 5s/10s backoff before it
+  falls back to a `gh pr list` matched on `headRefOid`. The retry only accepts a
+  *usable* payload: `gh api --paginate` emits one JSON document per page, so the
+  guard slurps the documents and flattens them (`jq -ces '... then add ...'`),
+  which keeps single-page answers unchanged, turns a multi-page `[...][...]`
+  answer — not one valid JSON document — into a single array, and rejects an
+  empty body, `null` or an error object so the retry (and eventually the
+  fallback) still runs instead of the job dying red on a flaky API. Both paths
+  exhausted is only fatal when the fallback body is unusable; a valid empty
+  listing is a no-op. Pinned by
+  `development/scripts/test_auto_approve_flaky_pulls.py` in the Pin Freshness
+  Gate job.
 
 The preferred configuration is a dedicated reviewer identity (GitHub App or a
 fine-grained token with `pull_requests: write`) stored as the repository secret
 `CONSOLIDATE_APPROVER_TOKEN`; alternatively add a ruleset bypass actor for the
 consolidation automation. With neither, the run warns and leaves the human
-approval in place. All of this is only wired for consolidation PRs — feature,
-bugfix, chore and docs PRs still need a human approval and merge.
+approval in place. All of this is only wired for consolidation PRs and the
+`dev` → `main` promotion PR — feature, bugfix, chore and docs PRs still need a
+human approval and merge.
+
+The promotion hop is the one that deploys: merging the `dev` → `main` PR
+triggers `resolve-merged-deployment` with `merge_target=main`, which dispatches
+the ci.msgmate.io deployment (`msgmate-io-ci`) and opens the `main` →
+`production` promotion PR in turn.
 
 #### A cancelled (superseded) CI run is not a failed gate (ci#659)
 
@@ -679,6 +740,13 @@ python3 -m venv .venv
   coder set-up script retries `full-ci` when the manifest does not know
   `full-development` yet (see *Coding-agent and sandbox documentation is
   private* above).
+- The per-repo default is configurable per bot or interaction: a
+  `coder_dev_setup` map may carry a `profiles` table next to its `profile`
+  default (`profiles: {msgmate-io/open-chat-go: full-development,
+  msgmate-io/open-chat-go-mobile: full-android}`). The longest matching
+  repository prefix wins and a repository outside the table keeps the declared
+  default, so one bot config can serve several repositories with different
+  development set-ups instead of forcing every interaction onto the same one.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
@@ -1056,6 +1124,18 @@ mitigation names no shipped tool, or a *closed* gap still carries a workaround
 keeps ci#394 honest in both directions: the registry says what is missing, the
 fallback table says how the coder copes until it is added.
 
+Gap 1 (`todo_list`) is being closed from the core side first:
+`backend/nativecoder/todoplan.go` holds the per-chat plan state behind
+opencode's `todowrite`/`todoread` (`CoderTodoStore.Write`/`Read`/`Clear`),
+mirroring the opencode contract - four statuses, at most one step in progress,
+stable positional ids, a plan cap, a revision that increments per accepted
+write, structured metadata (`Metadata`) and a deterministic markdown renderer
+(`RenderCoderTodoPlan`) for the chat view. `NormalizeCoderTodoItems` is the
+single validator, so a rejected write is classified by error value rather than
+by parsing a message. The gap is `partial` until the `coder_todo_write` /
+`coder_todo_read` tools on top of this state ship: the registry only reports the
+surface the agent can actually call.
+
 Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
@@ -1202,6 +1282,19 @@ deployment never disagree. The read-only job
 (`--format=markdown`, `--format=json`) or the flip delta (`--format=delta`) for a
 ticket comment; `--require-ready` turns the gate into a non-zero exit for a
 scripted check.
+
+The last step of the umbrella (ci#585) removes the integration itself:
+`backend/nativecoder/opencoderetirestop.go` renders the *stop delta* -
+`OpencodeRetireStopDelta`, `OpencodeRetireStopDeltaJSON` - which disables the
+`opencode` chat backend, removes its dev bots and then removes the integration,
+in that order, through the same vault-sync path. `ValidateOpencodeRetireStopDelta`
+rejects drift: unknown kinds, missing targets/reasons, duplicates, a native
+runtime named as a stop target, or a bot the registry knows but the delta forgets.
+A stop is only reported as complete once `OpencodeRetireStopRecord` (date,
+operator, `retired` mode, stopped bots) is present *and* the retirement gate is
+open, so the umbrella's final checkbox cannot be ticked while a bot still
+resolves to the opencode backend. The report job exposes the same evidence with
+`--format=stop` and `--require-stopped` (non-zero exit while it is incomplete).
 
 ## Decoupled integration builds (ci#423)
 
