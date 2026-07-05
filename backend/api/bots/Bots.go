@@ -3,6 +3,7 @@ package bots
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/integrations"
 	"backend/server/util"
 	"backend/workqueue"
 	"crypto/rand"
@@ -23,6 +24,7 @@ var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 
 type BotDTO struct {
 	UUID                string                 `json:"uuid"`
+	OwnerUserUUID       string                 `json:"owner_user_uuid"`
 	BotUserUUID         string                 `json:"bot_user_uuid"`
 	BotUsername         string                 `json:"bot_username"`
 	BotContactToken     string                 `json:"bot_contact_token"`
@@ -147,6 +149,7 @@ func decodeSharedConfig(raw []byte) map[string]interface{} {
 func toDTO(runtime database.BotRuntimeConfig) BotDTO {
 	return BotDTO{
 		UUID:                runtime.UUID,
+		OwnerUserUUID:       runtime.OwnerUser.UUID,
 		BotUserUUID:         runtime.BotUser.UUID,
 		BotUsername:         runtime.BotUser.Name,
 		BotContactToken:     runtime.BotUser.ContactToken,
@@ -233,7 +236,7 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 		}
 	}
 
-	for _, key := range []string{"max_tokens", "context"} {
+	for _, key := range []string{"max_tokens", "context", "tool_call_max_total", "tool_call_max_failed"} {
 		if value, exists := getNumber(config, key); exists {
 			if value < 1 || math.Trunc(value) != value {
 				return fmt.Errorf("default_shared_config.%s must be a positive integer", key)
@@ -418,6 +421,12 @@ func validateAndAttachMCPIntegrationsForUser(DB *gorm.DB, user *database.User, c
 	if user == nil {
 		return fmt.Errorf("user is required")
 	}
+	if !integrations.Has("mcp") {
+		if names, _ := collectIntegrationNames(config["integrations"]); len(names) > 0 {
+			return fmt.Errorf("integration %q is not available in this build", "mcp")
+		}
+		return nil
+	}
 	integrationNames, err := collectIntegrationNames(config["integrations"])
 	if err != nil {
 		return err
@@ -471,6 +480,7 @@ func resolveByBotUsername(DB *gorm.DB, user *database.User, username string) (da
 
 	baseQuery := DB.Model(&database.BotRuntimeConfig{}).
 		Preload("BotUser").
+		Preload("OwnerUser").
 		Joins("JOIN users ON users.id = bot_runtime_configs.bot_user_id").
 		Where("users.name = ? AND bot_runtime_configs.is_active = ?", username, true)
 
@@ -526,17 +536,17 @@ func resolveReadableBot(DB *gorm.DB, user *database.User, identifier string) (da
 	}
 
 	var runtime database.BotRuntimeConfig
-	if err := DB.Preload("BotUser").Where("uuid = ? AND is_active = ?", identifier, true).First(&runtime).Error; err == nil {
+	if err := DB.Preload("BotUser").Preload("OwnerUser").Where("uuid = ? AND is_active = ?", identifier, true).First(&runtime).Error; err == nil {
 		if runtime.OwnerUserId != user.ID && !user.IsAdmin && !runtime.IsPublic {
 			return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
 		}
 		return runtime, nil
 	}
 
-	query := DB.Preload("BotUser").Where("owner_user_id = ? AND name = ? AND is_active = ?", user.ID, identifier, true)
+	query := DB.Preload("BotUser").Preload("OwnerUser").Where("owner_user_id = ? AND name = ? AND is_active = ?", user.ID, identifier, true)
 	if user.IsAdmin {
 		var matches []database.BotRuntimeConfig
-		if err := DB.Preload("BotUser").Where("name = ? AND is_active = ?", identifier, true).Find(&matches).Error; err != nil {
+		if err := DB.Preload("BotUser").Preload("OwnerUser").Where("name = ? AND is_active = ?", identifier, true).Find(&matches).Error; err != nil {
 			return database.BotRuntimeConfig{}, err
 		}
 		if len(matches) == 0 {
@@ -723,7 +733,11 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		return tx.Preload("BotUser").First(&runtime, runtime.ID).Error
+		if err := msgmate.CreateOrUpdateBotProfile(tx, botUser); err != nil {
+			return err
+		}
+
+		return tx.Preload("BotUser").Preload("OwnerUser").First(&runtime, runtime.ID).Error
 	})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
@@ -735,8 +749,13 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var responsePassword *string
+	if user.IsAdmin {
+		responsePassword = generatedPassword
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: generatedPassword})
+	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: responsePassword})
 }
 
 // List bots
@@ -779,6 +798,7 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var rows []database.BotRuntimeConfig
 	if err := query.Preload("BotUser").
+		Preload("OwnerUser").
 		Offset((page - 1) * limit).
 		Limit(limit).
 		Order("id desc").
@@ -912,7 +932,7 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		return tx.Preload("BotUser").First(&runtime, runtime.ID).Error
+		return tx.Preload("BotUser").Preload("OwnerUser").First(&runtime, runtime.ID).Error
 	})
 	if err != nil {
 		errText := strings.ToLower(err.Error())
@@ -993,7 +1013,7 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save bot config", http.StatusInternalServerError)
 		return
 	}
-	if err := DB.Preload("BotUser").First(&runtime, runtime.ID).Error; err != nil {
+	if err := DB.Preload("BotUser").Preload("OwnerUser").First(&runtime, runtime.ID).Error; err != nil {
 		http.Error(w, "Failed to load bot", http.StatusInternalServerError)
 		return
 	}

@@ -39,3 +39,4 @@ ipython_config.py
 CREDS.md
 venv/
 backend/data.db-journal
+backend/.devbin/

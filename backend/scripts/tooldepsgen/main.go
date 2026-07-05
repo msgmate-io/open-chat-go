@@ -143,7 +143,18 @@ func writeGeneratedImports(path string, deps []dependency) error {
 		return err
 	}
 
-	return os.WriteFile(path, formatted, 0o644)
+	return writeFileIfChanged(path, formatted)
+}
+
+func writeFileIfChanged(path string, content []byte) error {
+	existing, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(existing, content) {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, content, 0o644)
 }
 
 func fatalf(format string, args ...interface{}) {

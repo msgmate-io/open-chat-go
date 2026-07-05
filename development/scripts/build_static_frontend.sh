@@ -21,6 +21,10 @@ npm run build
 echo "Generating Go routes..."
 ./generate_golang_routes.sh
 
+# Export integration-owned frontend pages into integration assets
+echo "Exporting integration frontend pages..."
+bash ./scripts/export_integration_pages.sh
+
 # Copy the built frontend to backend directory
 echo "Copying built frontend to backend..."
 mkdir -p ../backend/frontend/

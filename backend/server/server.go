@@ -22,9 +22,10 @@ func BackendServer(
 	debug bool,
 	frontendProxy string,
 	sessionCookieDomain string,
+	signupRequiresAdminApproval bool,
 ) (*http.Server, *websocket.WebSocketHandler, string, error) {
 	fullHost := fmt.Sprintf("http://%s:%d", host, port)
-	router, websocketHandler := BackendRouting(DB, queueClient, queueInspector, asynqUIHandler, debug, frontendProxy, sessionCookieDomain)
+	router, websocketHandler := BackendRouting(DB, queueClient, queueInspector, asynqUIHandler, debug, frontendProxy, sessionCookieDomain, signupRequiresAdminApproval)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", host, port),
 		Handler: router,

@@ -94,6 +94,9 @@ cd backend
 echo "Syncing external tool dependencies from tooldeps.json..."
 go run ./scripts/tooldepsgen -manifest ./tooldeps.json -output ./api/msgmate/externaltools/imports_gen.go -sync
 
+echo "Syncing external integration dependencies from integrationdeps.json..."
+go run ./scripts/integrationdepsgen -manifest ./integrationdeps.json -output ./integrations/externalintegrations/imports_gen.go -sync
+
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.
 TARGET_GOOS="${GOOS:-}"
@@ -130,7 +133,7 @@ fi
 
 # Generate swagger documentation
 echo "Generating swagger.json..."
-$SWAG_PATH init --parseDependency --parseInternal --output ./docs --generalInfo ./main.go
+$SWAG_PATH init --parseDependency --parseDependencyLevel 3 --parseInternal --output ./docs --generalInfo ./main.go
 
 # Copy swagger files to server directory for embedding
 echo "Copying swagger files for embedding..."

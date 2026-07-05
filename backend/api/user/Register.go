@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"net/http"
 	"net/mail"
+	"strings"
 )
 
 type UserRegister struct {
@@ -46,6 +47,14 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	data.Name = strings.TrimSpace(data.Name)
+	data.Email = strings.TrimSpace(strings.ToLower(data.Email))
+
+	if data.Name == "" {
+		http.Error(w, "Name is required", http.StatusBadRequest)
+		return
+	}
+
 	_, err := mail.ParseAddress(data.Email)
 	if err != nil {
 		http.Error(w, "Invalid email", http.StatusBadRequest)
@@ -70,6 +79,40 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if h.SignupRequiresAdminApproval {
+		var existingRequest database.RegistrationRequest
+		requestQuery := DB.First(&existingRequest, "email = ? AND status = ?", data.Email, database.RegistrationRequestStatusPending)
+		if requestQuery.Error == nil {
+			http.Error(w, "Registration request already pending", http.StatusBadRequest)
+			return
+		}
+		if requestQuery.Error != nil && requestQuery.Error != gorm.ErrRecordNotFound {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		registrationRequest := database.RegistrationRequest{
+			Name:         data.Name,
+			Email:        data.Email,
+			PasswordHash: string(hashedPassword),
+			Status:       database.RegistrationRequestStatusPending,
+		}
+
+		if err := DB.Create(&registrationRequest).Error; err != nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"message":      "Registration request submitted and pending admin approval",
+			"request_uuid": registrationRequest.UUID,
+			"status":       registrationRequest.Status,
+		})
 		return
 	}
 
