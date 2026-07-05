@@ -115,6 +115,9 @@ func (cs *WebSocketHandler) PublishInChatChannel(msg []byte, chatUUID string) {
 			payload := msg
 			if sharecensor.IsCensored(s.ContentMode) {
 				payload = sharecensor.CensorWebSocketPayload(msg)
+			} else {
+				// Even an "unsecure" share must never stream credentials.
+				payload = sharecensor.MaskSecretsJSON(msg)
 			}
 			select {
 			case s.msgs <- payload:

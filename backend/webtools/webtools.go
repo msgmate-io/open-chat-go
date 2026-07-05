@@ -224,7 +224,10 @@ var ErrBadStatus = errors.New("unexpected http status")
 // A 404/410 answers with ErrNotFound instead of an empty document, so the model
 // gets an unambiguous "this URL does not exist" signal, and the outcome is
 // remembered for notFoundCacheTTL so a repeated fetch of the same dead URL is
-// answered without another round-trip (ci#789).
+// answered without another round-trip (ci#789). The cache key is canonicalised
+// (canonicalNotFoundKey), so trivial variants of the same dead path — a trailing
+// slash, a `#fragment` or stray whitespace — also hit the cache instead of
+// paying another 404 (ci#828).
 func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error) {
 	target := strings.TrimSpace(rawURL)
 	if target == "" {
@@ -237,6 +240,9 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 		maxBytes = DefaultMaxBytes
 	}
 	if cached, ok := cachedNotFound(target); ok {
+		// Report the URL the caller actually asked for, not the canonical key:
+		// the cache is shared across trivial variants of the same dead path.
+		cached.URL = target
 		return cached, notFoundError(cached)
 	}
 
@@ -303,17 +309,46 @@ func notFoundError(result FetchResult) error {
 		ErrNotFound, result.URL, result.Status)
 }
 
+// canonicalNotFoundKey normalises a URL into the key used by the not-found
+// cache, so trivial spelling variants of the *same* dead path share one entry
+// instead of each paying another 404 round-trip (ci#828, a child of ci#789):
+//
+//   - surrounding whitespace is trimmed (callers routinely pass a URL copied
+//     out of prose or a markdown cell);
+//   - the `#fragment` is dropped, because it is never sent to the server;
+//   - one trailing slash is collapsed, matching how most servers treat
+//     `/page/` and `/page` as the same resource.
+//
+// The result is only a cache key: the request itself still goes to the exact
+// URL the caller asked for.
+func canonicalNotFoundKey(rawURL string) string {
+	key := strings.TrimSpace(rawURL)
+	if idx := strings.IndexByte(key, '#'); idx >= 0 {
+		key = key[:idx]
+	}
+	// Collapse a single trailing slash, but never turn "https://host/" or a
+	// bare "https://host" into two different keys for the same root.
+	if len(key) > 1 && strings.HasSuffix(key, "/") {
+		trimmed := strings.TrimSuffix(key, "/")
+		if !strings.HasSuffix(trimmed, "/") && !strings.HasSuffix(trimmed, ":") {
+			key = trimmed
+		}
+	}
+	return key
+}
+
 // cachedNotFound returns a remembered not-found outcome for url, if the entry is
 // still fresh.
 func cachedNotFound(url string) (FetchResult, bool) {
+	key := canonicalNotFoundKey(url)
 	notFoundMu.Lock()
 	defer notFoundMu.Unlock()
-	entry, ok := notFoundCache[url]
+	entry, ok := notFoundCache[key]
 	if !ok {
 		return FetchResult{}, false
 	}
 	if time.Since(entry.at) > notFoundCacheTTL {
-		delete(notFoundCache, url)
+		delete(notFoundCache, key)
 		return FetchResult{}, false
 	}
 	return entry.result, true
@@ -323,13 +358,14 @@ func cachedNotFound(url string) (FetchResult, bool) {
 // same URL does not hit the network again. The cache is dropped wholesale once
 // it grows past notFoundCacheMax: it only ever holds cheap to reproduce misses.
 func rememberNotFound(url string) {
+	key := canonicalNotFoundKey(url)
 	notFoundMu.Lock()
 	defer notFoundMu.Unlock()
 	if len(notFoundCache) >= notFoundCacheMax {
 		notFoundCache = map[string]notFoundEntry{}
 	}
-	notFoundCache[url] = notFoundEntry{
-		result: FetchResult{URL: url, Status: http.StatusNotFound},
+	notFoundCache[key] = notFoundEntry{
+		result: FetchResult{URL: key, Status: http.StatusNotFound},
 		at:     time.Now(),
 	}
 }

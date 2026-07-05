@@ -54,6 +54,7 @@ type SelfMessageRuntime struct {
 	entries   []SelfMessageScheduleEntry
 	tick      time.Duration
 	now       func() time.Time
+	guard     *SelfMessageGuard
 
 	mu    sync.Mutex
 	ids   map[string]string
@@ -113,6 +114,7 @@ func newSelfMessageRuntime(db *gorm.DB, client *asynq.Client, inspector *asynq.I
 		entries:   entries,
 		tick:      tick,
 		now:       now,
+		guard:     NewSelfMessageGuard(),
 		ids:       map[string]string{},
 		chats:     map[string]string{},
 		stop:      make(chan struct{}),
@@ -124,6 +126,24 @@ func (r *SelfMessageRuntime) publishSeams() {
 	r.scheduler.SetEnqueue(r.enqueue)
 	r.scheduler.SetCancel(r.cancel)
 	r.scheduler.SetNow(r.now)
+	// ci#744: the default run policy defers a self-message while its chat
+	// already has a live or queued turn (skip + recorded reason instead of a
+	// duplicate reply). A deployment can tighten this via SetIdleCheck, e.g.
+	// with the provider/sandbox admission check.
+	r.guard.SetIdleCheck(r.defaultIdleCheck)
+}
+
+// defaultIdleCheck defers a self-message when a bot:reply turn is already live
+// (or queued, pending or retrying) for the same chat, so a scheduled run can
+// never duplicate a turn that is already in flight.
+func (r *SelfMessageRuntime) defaultIdleCheck(schedule SelfMessageSchedule) (bool, string) {
+	if r.inspector == nil || schedule.ChatUUID == "" {
+		return true, ""
+	}
+	if workqueue.BotReplyHasWork(r.inspector, schedule.ChatUUID) {
+		return false, selfMessageSkipLiveTurn
+	}
+	return true, ""
 }
 
 // Start runs the reconcile/advance ticker until ctx is cancelled or Shutdown is
@@ -205,6 +225,18 @@ func (r *SelfMessageRuntime) registerEntry(entry SelfMessageScheduleEntry) error
 	if err != nil {
 		return err
 	}
+	entrySuperseded, err := r.guard.Register(schedule)
+	if err != nil {
+		// A rejected policy (e.g. a negative max_runs) must not leave a queue
+		// task behind: retract the schedule we just armed.
+		r.scheduler.Cancel(key)
+		return err
+	}
+	if entrySuperseded {
+		// A newer schedule supersedes the older one; the scheduler already
+		// retracted its pending delivery, so only the state is dropped here.
+		logging.Infof("ci#744: self-message schedule of %s replaced by a newer one (single active)", schedule.BotName)
+	}
 	r.mu.Lock()
 	r.ids[key] = scheduleID
 	r.chats[key] = chat.UUID
@@ -215,6 +247,10 @@ func (r *SelfMessageRuntime) registerEntry(entry SelfMessageScheduleEntry) error
 
 // Tick reconciles the configured bots and advances every slot whose instant has
 // passed. A fire of a superseded schedule reports won=false and is forgotten.
+//
+// Before a due slot is delivered the run policy decides whether it may run:
+// a live turn or an already-delivered cron slot defers it (recorded reason,
+// retried on the next tick) instead of queueing a duplicate.
 func (r *SelfMessageRuntime) Tick() error {
 	reconcileErr := r.RegisterConfiguredBots()
 
@@ -231,14 +267,25 @@ func (r *SelfMessageRuntime) Tick() error {
 		if !ok || nextRun.After(now) {
 			continue
 		}
+		schedule, ok := r.scheduler.Active(key)
+		if !ok {
+			continue
+		}
+		if allowed, reason := r.guard.Decide(schedule, nextRun); !allowed {
+			logging.Infof("ci#744: self-message of %s deferred: %s", key, reason)
+			continue
+		}
 		_, won, err := r.scheduler.Fire(key, scheduleID)
 		if err != nil {
+			r.guard.RecordError(key, err)
 			logging.Errorf("ci#744: self-message fire of %s failed: %v", key, err)
 			continue
 		}
 		if !won {
 			r.forget(key)
+			continue
 		}
+		r.guard.RecordFire(key, nextRun)
 	}
 	return reconcileErr
 }
@@ -248,6 +295,7 @@ func (r *SelfMessageRuntime) forget(key string) {
 	delete(r.ids, key)
 	delete(r.chats, key)
 	r.mu.Unlock()
+	r.guard.Drop(key)
 }
 
 // enqueue persists the self-message of schedule.ChatUUID and enqueues its
