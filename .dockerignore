@@ -1,6 +1,16 @@
 *
 !backend
 !Dockerfile
+!dev.dockerfile
 !frontend
 !clients
 !clients/go_tool_interface
+!clients/go_integration_interface
+!clients/integrations
+!clients/integrations/**
+
+# Dev-only/generated backend artifacts are bind-mounted at runtime and do not
+# need to inflate backend image layers.
+backend/.devbin
+backend/.tools
+backend/docs
