@@ -74,6 +74,11 @@ func NewCoderContextTool() Tool {
 	return NewToolFromDefinition(tooldefs.CoderContextToolDef)
 }
 
+// NewAllTasksCompletedTool is the ci#809 explicit end-of-task declaration tool.
+func NewAllTasksCompletedTool() Tool {
+	return NewToolFromDefinition(tooldefs.AllTasksCompletedToolDef)
+}
+
 // NewCoderScheduleTool is the ci#724 self-scheduling tool: it lets a lead agent
 // queue a later turn of its own chat instead of relying on an external CronJob.
 func NewCoderScheduleTool() Tool {
