@@ -67,6 +67,9 @@ func init() {
 	// chat, so an autonomous loop needs no external CronJob. Same free-name
 	// rule: an integration shipping its own `coder_schedule` keeps ownership.
 	registerToolConstructorIfFree("coder_schedule", nil, NewCoderScheduleTool)
+	// ci#809: `all_tasks_completed` is the explicit machine-readable end of a
+	// task; the turn reader promotes its call into `task_completed` metadata.
+	registerToolConstructorIfFree("all_tasks_completed", nil, NewAllTasksCompletedTool)
 }
 
 // registerToolConstructorIfFree registers a builtin constructor only when the
