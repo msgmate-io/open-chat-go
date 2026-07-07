@@ -397,9 +397,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
-	v1PrivateApis.HandleFunc("GET /admin/registration-requests", admin.GetRegistrationRequests)
-	v1PrivateApis.HandleFunc("POST /admin/registration-requests/{request_uuid}/approve", admin.ApproveRegistrationRequest)
-	v1PrivateApis.HandleFunc("POST /admin/registration-requests/{request_uuid}/reject", admin.RejectRegistrationRequest)
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
@@ -437,7 +434,9 @@ func BackendRouting(
 	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
-	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
+	if integrations.Has("account_management") {
+		mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(user.RegisterFromRuntimeConfig)))
+	}
 	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
 	mux.Handle("GET /api/v1/models", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
 	mux.Handle("GET /api/v1/models/{model_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.Get)))))
@@ -447,6 +446,7 @@ func BackendRouting(
 	mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
+	mux.Handle("GET /api/integrations/list", commonMiddlewares(Logging(http.HandlerFunc(integrationsHandler.List))))
 	mux.Handle("GET /api/integrations/{integration_name}/overview", commonMiddlewares(Logging(http.HandlerFunc(integrationsHandler.Overview))))
 	mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
 	mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
