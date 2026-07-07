@@ -2,14 +2,11 @@ package admin
 
 import (
 	"backend/database"
-	"backend/server/util"
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"gorm.io/gorm"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -200,151 +197,4 @@ var tableConfigurations = map[string]TableInfoConfig{
 			"ApprovedUser":   "approved_user",
 		},
 	},
-}
-
-func GetTableInfo(w http.ResponseWriter, r *http.Request) {
-	DB, user, err := util.GetDBAndUser(r)
-	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
-		return
-	}
-
-	if !user.IsAdmin {
-		http.Error(w, "User is not an admin", http.StatusForbidden)
-		return
-	}
-
-	tableName := r.PathValue("table_name")
-	if tableName == "" {
-		http.Error(w, "Table name is required", http.StatusBadRequest)
-		return
-	}
-
-	// Find the corresponding model in the Tabels slice
-	var model interface{}
-	found := false
-	for _, t := range database.Tabels {
-		stmt := &gorm.Statement{DB: DB}
-		stmt.Parse(t)
-		if stmt.Schema.Table == tableName {
-			model = t
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		http.Error(w, "Table not found", http.StatusNotFound)
-		return
-	}
-
-	// Get schema information
-	stmt := &gorm.Statement{DB: DB}
-	stmt.Parse(model)
-
-	exhaustive := r.URL.Query().Get("full") == "1" || r.URL.Query().Get("full") == "true"
-
-	fields := make([]FieldInfo, 0)
-	for _, field := range stmt.Schema.Fields {
-		if exhaustive {
-			fieldType := string(field.DataType)
-			if fieldType == "" {
-				fieldType = "unknown"
-			}
-			fields = append(fields, FieldInfo{
-				Name:       field.Name,
-				NameRaw:    field.DBName,
-				Type:       fieldType,
-				IsPrimary:  field.PrimaryKey,
-				IsNullable: !field.NotNull,
-				Tag:        string(field.TagSettings["JSON"]),
-			})
-			continue
-		}
-
-		// Check if we have a configuration for this table
-		if config, exists := tableConfigurations[tableName]; exists {
-			// Only include field if it's in the IncludeFields list
-			include := false
-			for _, allowedField := range config.IncludeFields {
-				if field.Name == allowedField {
-					include = true
-					break
-				}
-			}
-			if !include {
-				continue
-			}
-
-			// Check if this is a JSON field
-			fieldType := string(field.DataType)
-			for _, jsonField := range config.JsonFields {
-				if field.Name == jsonField {
-					fieldType = "object" // Mark as object type for JSON fields
-					break
-				}
-			}
-
-			if fieldType == "" {
-				fieldType = "unknown"
-			}
-
-			fields = append(fields, FieldInfo{
-				Name:       field.Name,
-				NameRaw:    field.DBName,
-				Type:       fieldType,
-				IsPrimary:  field.PrimaryKey,
-				IsNullable: !field.NotNull,
-				Tag:        string(field.TagSettings["JSON"]),
-			})
-		} else {
-			fieldType := string(field.DataType)
-			if fieldType == "" {
-				fieldType = "unknown"
-			}
-			fields = append(fields, FieldInfo{
-				Name:       field.Name,
-				NameRaw:    field.DBName,
-				Type:       fieldType,
-				IsPrimary:  field.PrimaryKey,
-				IsNullable: !field.NotNull,
-				Tag:        string(field.TagSettings["JSON"]),
-			})
-		}
-	}
-
-	// Add preloaded fields to the result
-	if !exhaustive {
-		if config, exists := tableConfigurations[tableName]; exists && len(config.Preloads) > 0 {
-			for _, preload := range config.Preloads {
-				// Get the JSON key from the mapping or use the preload name
-				nameRaw := preload
-				if mapping, ok := config.PreloadMappings[preload]; ok {
-					nameRaw = mapping
-				}
-
-				// Add the preload field to the fields list
-				fields = append(fields, FieldInfo{
-					Name:       preload,
-					NameRaw:    nameRaw,
-					Type:       "object", // Preloaded fields are typically objects
-					IsPrimary:  false,
-					IsNullable: true,
-					Tag:        "",
-				})
-			}
-		}
-	}
-
-	docMeta := loadModelDescriptions(DB)[tableName]
-
-	tableInfo := TableInfo{
-		Name:        tableName,
-		Description: docMeta.Description,
-		SourceURL:   docMeta.SourceURL,
-		Fields:      fields,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tableInfo)
 }

@@ -2,10 +2,7 @@ package admin
 
 import (
 	"backend/database"
-	"backend/server/util"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -22,28 +19,6 @@ type SchemaRelation struct {
 	FromField string `json:"from_field"`
 	ToTable   string `json:"to_table"`
 	ToField   string `json:"to_field"`
-}
-
-func GetSchemaSQL(w http.ResponseWriter, r *http.Request) {
-	DB, user, err := util.GetDBAndUser(r)
-	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
-		return
-	}
-
-	if !user.IsAdmin {
-		http.Error(w, "User is not an admin", http.StatusForbidden)
-		return
-	}
-
-	sql, relations, err := buildSchemaSQL(DB)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to build schema sql: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(SQLSchemaResponse{SQL: sql, Relations: relations})
 }
 
 func buildSchemaSQL(DB *gorm.DB) (string, []SchemaRelation, error) {
