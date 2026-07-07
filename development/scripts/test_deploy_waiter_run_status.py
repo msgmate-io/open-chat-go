@@ -31,6 +31,7 @@ extracted from the workflow verbatim and executed with a stubbed
 
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import subprocess
@@ -253,11 +254,23 @@ class DeployWaiterRunStatusTest(unittest.TestCase):
         emissions = _run_line_emissions()
         self.assertGreaterEqual(len(emissions), 3)
         for line_no, fields in emissions:
+            keys = [_field_key(field) for field in fields]
             self.assertEqual(
-                _field_key(fields[-1]),
+                keys[-1],
                 ".conclusion",
                 "line %d emits the conclusion before the end of the run line; an "
                 "empty conclusion would shift the trailing fields (ci#832)" % line_no,
+            )
+            # The ci#832 job-status guard fetches `/actions/runs/${run_id}/jobs`,
+            # so every waiter that emits a run line must also emit (and read
+            # back) the run id. The merged-deploy siblings omitted `.id` while
+            # still using `run_id`, which aborted under `set -u` as soon as a
+            # queued run matched (ci#839).
+            self.assertIn(
+                ".id",
+                keys,
+                "line %d emits a run line without .id, but its guard needs "
+                "run_id" % line_no,
             )
         # The PR-deploy waiter also carries the dispatched ref/sha, which the
         # shift used to silently disable: those fields must stay before the
@@ -453,7 +466,10 @@ def _run_all_guards(payload: str) -> tuple[int, str]:
                 capture_output=True,
                 text=True,
                 check=False,
-                env={"PATH": "/usr/bin:/bin", "FIXTURE": str(fixture_path)},
+                env={
+                    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                    "FIXTURE": str(fixture_path),
+                },
             )
             codes.add(result.returncode)
             outputs.append(
