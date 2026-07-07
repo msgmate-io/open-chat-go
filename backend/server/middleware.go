@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"gorm.io/gorm"
 	"log"
 	"net"
@@ -122,6 +123,9 @@ func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, b
 	if err := DB.First(&user, "id = ?", accessToken.UserId).Error; err != nil {
 		return nil, false
 	}
+	if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+		return nil, false
+	}
 
 	now := time.Now()
 	DB.Model(&database.AccessToken{}).Where("id = ?", accessToken.ID).Update("last_used_at", &now)
@@ -175,6 +179,32 @@ func resolveValidSessionFromRequest(DB *gorm.DB, r *http.Request) (*database.Ses
 	}
 
 	return nil, false, nil
+}
+
+func isEmailVerificationExemptAPIPath(path string) bool {
+	switch path {
+	case "/api/v1/user/self", "/api/v1/user/logout", "/api/v1/integrations/account_management/email-verification/status", "/api/v1/integrations/account_management/email-verification/request", "/api/v1/integrations/account_management/email-verification/verify":
+		return true
+	default:
+		return false
+	}
+}
+
+func enforceEmailVerificationForAPI(DB *gorm.DB, r *http.Request, userID uint) error {
+	if !database.RequireEmailVerificationFromRuntimeConfig() {
+		return nil
+	}
+	verified, err := database.IsUserEmailVerified(DB, userID)
+	if err != nil {
+		return err
+	}
+	if verified {
+		return nil
+	}
+	if isEmailVerificationExemptAPIPath(r.URL.Path) {
+		return nil
+	}
+	return errors.New("email verification required")
 }
 
 func cookieSecureFromRequest(r *http.Request) bool {
@@ -259,6 +289,10 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		if user, ok := resolveUserFromBearerToken(DB, r); ok {
+			if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
+				http.Error(w, "email verification required", http.StatusForbidden)
+				return
+			}
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -285,6 +319,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		var user database.User
 		if err := DB.First(&user, "id = ?", session.UserId).Error; err != nil {
 			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+			http.Error(w, "Unable to load user state", http.StatusInternalServerError)
+			return
+		}
+		if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
+			http.Error(w, "email verification required", http.StatusForbidden)
 			return
 		}
 
@@ -328,13 +370,17 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		ctx := context.WithValue(r.Context(), UserContextKey, &user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/integrations", "/callback"}
+var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/integrations", "/callback", "/signup-request-send", "/sign-up", "/email-verification"}
 
 func isPublicFrontendRoute(path string) bool {
 	for _, route := range PublicRoutes {
@@ -390,6 +436,16 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 		if r.URL.Path == "/login" {
 			http.Redirect(w, r, "/chat", http.StatusFound)
 			return
+		}
+		if database.RequireEmailVerificationFromRuntimeConfig() {
+			session, found, err := resolveValidSessionFromRequest(DB, r)
+			if err == nil && found {
+				verified, verifyErr := database.IsUserEmailVerified(DB, session.UserId)
+				if verifyErr == nil && !verified && r.URL.Path != "/email-verification" {
+					http.Redirect(w, r, "/email-verification", http.StatusFound)
+					return
+				}
+			}
 		}
 
 		next.ServeHTTP(w, r)

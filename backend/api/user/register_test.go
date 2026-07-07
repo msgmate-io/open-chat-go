@@ -132,7 +132,7 @@ func TestApproveRegistrationRequestCreatesUser(t *testing.T) {
 		t.Fatalf("failed to create admin user: %v", err)
 	}
 
-	approveReq := httptest.NewRequest("POST", "/api/v1/admin/registration-requests/"+requestUUID+"/approve", bytes.NewReader([]byte(`{"review_note":"looks good"}`)))
+	approveReq := httptest.NewRequest("POST", "/api/v1/integrations/account_management/admin/registration-requests/"+requestUUID+"/approve", bytes.NewReader([]byte(`{"review_note":"looks good"}`)))
 	approveReq.SetPathValue("request_uuid", requestUUID)
 	ctx := context.WithValue(approveReq.Context(), "db", DB)
 	ctx = context.WithValue(ctx, "user", adminUser)
