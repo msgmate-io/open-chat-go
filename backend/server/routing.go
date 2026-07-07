@@ -401,7 +401,6 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
 	v1PrivateApis.HandleFunc("GET /admin/tests/go", admin.GetGoTestsOverview)
-	integrations.RegisterRoutes(v1PrivateApis, mux)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/stats", admin.GetDocsSnapshotStatsByTag)
 	v1PrivateApis.HandleFunc("POST /admin/docs/snapshots/{snapshot}/refresh", admin.RefreshDocsSnapshotByTag)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/data", admin.GetDocsSnapshotDataByTag)
@@ -424,6 +423,28 @@ func BackendRouting(
 		websocketMiddleware(websocketHandler),
 		queueMiddleware(queueClient, queueInspector),
 	)
+
+	integrationRootAPIs := http.NewServeMux()
+	integrations.RegisterRoutes(v1PrivateApis, integrationRootAPIs)
+	registeredPublicIntegrationRoutes := map[string]struct{}{}
+	for _, def := range integrations.List() {
+		for _, routeDoc := range def.APIRouteDocs {
+			if len(routeDoc.RequiredAuth) > 0 {
+				continue
+			}
+			routePattern := strings.TrimSpace(routeDoc.Route)
+			if routePattern == "" {
+				continue
+			}
+			if _, exists := registeredPublicIntegrationRoutes[routePattern]; exists {
+				continue
+			}
+			registeredPublicIntegrationRoutes[routePattern] = struct{}{}
+			mux.Handle(routePattern, commonMiddlewares(Logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				integrationRootAPIs.ServeHTTP(w, r)
+			}))))
+		}
+	}
 
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
 	mux.Handle("GET /ws/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(websocketHandler.ConnectSharedInteraction))))

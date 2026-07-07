@@ -217,6 +217,9 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 			}
 		}
 	}
+	if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+		return err, "", false, database.User{}
+	}
 
 	token := api.GenerateToken(user.Email) //TODO: based on something else! or random!
 	// TODO: make sure sessions expire!
