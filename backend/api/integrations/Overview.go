@@ -51,6 +51,12 @@ type IntegrationFrontendRouteOverview struct {
 	AssetPath   string `json:"asset_path,omitempty"`
 }
 
+type IntegrationRuntimeEnvVarOverview struct {
+	Key         string `json:"key"`
+	Sensitive   bool   `json:"sensitive"`
+	Description string `json:"description,omitempty"`
+}
+
 type IntegrationOverviewResponse struct {
 	Name              string                             `json:"name"`
 	ReadmeMarkdown    string                             `json:"readme_markdown,omitempty"`
@@ -59,6 +65,7 @@ type IntegrationOverviewResponse struct {
 	FrontendRoutes    []IntegrationFrontendRouteOverview `json:"frontend_routes"`
 	Models            []IntegrationModelOverview         `json:"models"`
 	Functions         []string                           `json:"functions"`
+	RuntimeEnvVars    []IntegrationRuntimeEnvVarOverview `json:"runtime_env_vars"`
 }
 
 func pathParamsFromRoute(route string) []IntegrationAPIParameterOverview {
@@ -350,6 +357,18 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(functions)
 
+	runtimeEnvVars := make([]IntegrationRuntimeEnvVarOverview, 0, len(def.RuntimeEnvVars))
+	for _, envVar := range def.RuntimeEnvVars {
+		runtimeEnvVars = append(runtimeEnvVars, IntegrationRuntimeEnvVarOverview{
+			Key:         envVar.Key,
+			Sensitive:   envVar.Sensitive,
+			Description: strings.TrimSpace(envVar.Description),
+		})
+	}
+	sort.Slice(runtimeEnvVars, func(i, j int) bool {
+		return runtimeEnvVars[i].Key < runtimeEnvVars[j].Key
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(IntegrationOverviewResponse{
 		Name:              def.Name,
@@ -359,5 +378,6 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		FrontendRoutes:    frontendRoutes,
 		Models:            models,
 		Functions:         functions,
+		RuntimeEnvVars:    runtimeEnvVars,
 	})
 }
