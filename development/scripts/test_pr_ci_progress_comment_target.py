@@ -53,6 +53,16 @@ DELEGATING_STEPS = (
 # Step fixed by the original ci#755/ci#759 pass: explicit env + fail-safe inline.
 ENV_TARGET_STEPS = ("Render test-complete progress comment",)
 
+# ci#833 follow-up: the job/step that now renders the *terminal* `(4) test`
+# bullet, and the suites whose results it must render (and therefore wait for).
+# Before the fix this job only `needs` the orchestration job, so on a PR without
+# the `deploy` / `ai-test-real` labels no renderer ever replaced the dispatch-era
+# `go=running` literal - run 39866169619 on PR #1033 finished green while its
+# progress comment still read `go=running`.
+AFTER_TESTS_JOB = "update-progress-comment-after-tests"
+AFTER_TESTS_STEP = "Render test-complete progress comment"
+SUITE_JOBS = ("run-pr-ci-go-tests", "run-pr-ci-ai-mock-tests", "run-pr-ci-e2e-tests")
+
 # The ci#745 root cause: a raw `needs.*.outputs.*` expression interpolated inside
 # an api.github.com *comment* URL, which collapses to `repos//issues//comments`.
 RAW_OUTPUT_COMMENT_URL_RE = re.compile(
@@ -62,6 +72,16 @@ RAW_OUTPUT_COMMENT_URL_RE = re.compile(
 
 def _workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _job_block(job: str) -> str:
+    """Return the YAML block of one top-level job, without the next job."""
+    text = _workflow_text()
+    start = text.index(f"\n  {job}:\n") + 1
+    body = text[start:]
+    boundary = JOB_BOUNDARY_RE.search(body[1:])
+    end = start + 1 + boundary.start() if boundary else len(text)
+    return text[start:end]
 
 
 def _progress_comment_steps() -> dict[str, str]:
@@ -154,6 +174,39 @@ class ProgressCommentTargetTest(unittest.TestCase):
         guard = helper.index("::warning::")
         self.assertIn("exit 0", helper[guard:])
         self.assertLess(guard, helper.index("curl -fsSL"))
+
+    def test_after_tests_job_waits_for_the_suites_it_renders(self) -> None:
+        """ci#833 follow-up: the terminal renderer must depend on its inputs.
+
+        A `needs` list that omits the suites makes the `needs.*.result` reads
+        below evaluate against an unscoped context, and lets the job run before
+        the suites it reports on.
+        """
+        block = _job_block(AFTER_TESTS_JOB)
+        needs = re.search(r"^\s+needs: \[(.*)\]$", block, re.M)
+        self.assertIsNotNone(needs, block[:400])
+        entries = {entry.strip() for entry in needs.group(1).split(",")}
+        self.assertIn("run-pr-ci-tests-and-deployments", entries)
+        for job in SUITE_JOBS:
+            with self.subTest(job=job):
+                self.assertIn(job, entries, sorted(entries))
+
+    def test_after_tests_step_renders_terminal_test_status(self) -> None:
+        """The `(4) test` bullet must end terminal, not re-echo the dispatch.
+
+        Asserting on the *absence* of the dispatch-era label gates is what keeps
+        a future copy/paste of the dispatch template from silently restoring the
+        never-terminal `go=running` line.
+        """
+        step = self.steps[AFTER_TESTS_STEP]
+        self.assertNotIn("should_test != ''", step)
+        self.assertNotIn("should_ai_test_mock != ''", step)
+        # `ai-real` genuinely only runs after an approved deploy, so it may stay
+        # `running`; go and ai-mock must map their suite result.
+        self.assertRegex(step, r"needs\.run-pr-ci-go-tests\.result == 'success'")
+        self.assertRegex(step, r"needs\.run-pr-ci-ai-mock-tests\.result == 'success'")
+        # A terminal render marks the bullet done instead of leaving `- [ ]`.
+        self.assertIn("'- [x] `(4) test` `go={0}`", step)
 
     def test_helper_behaviour_test_is_wired_into_the_gate(self) -> None:
         """The shell behaviour test must run in CI, not only locally."""
