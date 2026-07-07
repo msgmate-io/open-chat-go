@@ -3,19 +3,31 @@ package user
 import (
 	"backend/api/admin"
 	"backend/database"
+	"backend/integrations"
 	"backend/server/util"
 	"bytes"
 	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"gorm.io/gorm"
 )
 
+var registerExternalModelsOnce sync.Once
+
+func ensureExternalModelsRegistered() {
+	registerExternalModelsOnce.Do(func() {
+		integrations.EnsureLoaded()
+		database.RegisterExternalModels(integrations.AdditionalModels()...)
+	})
+}
+
 func setupRegisterTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	ensureExternalModelsRegistered()
 	cfg := database.DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "register_test.db"),

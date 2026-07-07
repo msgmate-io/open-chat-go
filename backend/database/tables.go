@@ -159,7 +159,6 @@ var Tabels []interface{} = []interface{}{
 	&BotRuntimeConfig{},
 	&Permission{},
 	&AccessToken{},
-	&RegistrationRequest{},
 }
 
 var Migrations []Migration = []Migration{
@@ -178,7 +177,6 @@ var Migrations []Migration = []Migration{
 	TableMigration{&BotRuntimeConfig{}},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
-	TableMigration{&RegistrationRequest{}},
 	GrantDefaultPermissionsMigration{},
 }
 
