@@ -54,6 +54,12 @@ func WorkerCli() *cli.Command {
 		Action: func(_ context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
+			for _, migration := range integrations.AdditionalMigrations() {
+				database.RegisterExternalMigrations(database.FunctionMigration{
+					Name: migration.Name,
+					Run:  migration.Run,
+				})
+			}
 
 			redisConnOpt, err := resolveRedisConnOpt(c)
 			if err != nil {
