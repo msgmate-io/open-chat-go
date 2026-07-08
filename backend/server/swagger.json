@@ -3381,6 +3381,9 @@
         "integrations.IntegrationListRow": {
             "type": "object",
             "properties": {
+                "admin_only": {
+                    "type": "boolean"
+                },
                 "api_route_count": {
                     "type": "integer"
                 },
@@ -3401,6 +3404,9 @@
                 },
                 "runtime_env_var_count": {
                     "type": "integer"
+                },
+                "user_accessible": {
+                    "type": "boolean"
                 }
             }
         },
