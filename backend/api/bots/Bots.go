@@ -252,6 +252,12 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 		}
 	}
 
+	if raw, exists := config["persist_tool_init"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("default_shared_config.persist_tool_init must be a boolean")
+		}
+	}
+
 	if raw, exists := config["tool_init"]; exists {
 		if _, ok := raw.(map[string]interface{}); !ok {
 			return fmt.Errorf("default_shared_config.tool_init must be an object")
