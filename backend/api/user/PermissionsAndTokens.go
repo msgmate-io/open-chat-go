@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -22,11 +23,15 @@ type PermissionsResponse struct {
 type CreateAccessTokenRequest struct {
 	Name      string  `json:"name"`
 	ExpiresAt *string `json:"expires_at,omitempty"`
+	BotUUID   *string `json:"bot_uuid,omitempty"`
 }
 
 type AccessTokenListItem struct {
 	UUID        string     `json:"uuid"`
 	Name        string     `json:"name"`
+	DisplayName string     `json:"display_name"`
+	Scope       string     `json:"scope"`
+	BotUUID     *string    `json:"bot_uuid,omitempty"`
 	TokenPrefix string     `json:"token_prefix"`
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
@@ -43,6 +48,51 @@ type AccessTokenCreateResponse struct {
 type AccessTokensListResponse struct {
 	database.Pagination
 	Rows []AccessTokenListItem `json:"rows"`
+}
+
+const botScopedTokenNamePrefix = "bot:"
+
+func composeTokenName(displayName string, botUUID *string) string {
+	trimmed := strings.TrimSpace(displayName)
+	if botUUID == nil || strings.TrimSpace(*botUUID) == "" {
+		return trimmed
+	}
+	return fmt.Sprintf("%s%s|%s", botScopedTokenNamePrefix, strings.TrimSpace(*botUUID), trimmed)
+}
+
+func parseTokenName(rawName string) (displayName string, scope string, botUUID *string) {
+	name := strings.TrimSpace(rawName)
+	if !strings.HasPrefix(name, botScopedTokenNamePrefix) {
+		return name, "account", nil
+	}
+	payload := strings.TrimPrefix(name, botScopedTokenNamePrefix)
+	parts := strings.SplitN(payload, "|", 2)
+	if len(parts) != 2 {
+		return name, "account", nil
+	}
+	trimmedBotUUID := strings.TrimSpace(parts[0])
+	if trimmedBotUUID == "" {
+		return name, "account", nil
+	}
+	botUUIDCopy := trimmedBotUUID
+	return strings.TrimSpace(parts[1]), "bot", &botUUIDCopy
+}
+
+func resolveOwnedBotByUUID(DB *gorm.DB, user *database.User, botUUID string) (database.BotRuntimeConfig, error) {
+	if strings.TrimSpace(botUUID) == "" {
+		return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
+	}
+
+	query := DB.Where("uuid = ?", botUUID)
+	if !user.IsAdmin {
+		query = query.Where("owner_user_id = ?", user.ID)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := query.First(&runtime).Error; err != nil {
+		return database.BotRuntimeConfig{}, err
+	}
+	return runtime, nil
 }
 
 func hasPermission(DB *gorm.DB, user *database.User, permission database.PermissionName) bool {
@@ -109,6 +159,27 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Token name is required", http.StatusBadRequest)
 		return
 	}
+	trimmedName := strings.TrimSpace(req.Name)
+	if trimmedName == "" {
+		http.Error(w, "Token name is required", http.StatusBadRequest)
+		return
+	}
+
+	var botUUID *string
+	if req.BotUUID != nil {
+		trimmedBotUUID := strings.TrimSpace(*req.BotUUID)
+		if trimmedBotUUID != "" {
+			if _, err := resolveOwnedBotByUUID(DB, user, trimmedBotUUID); err != nil {
+				if err == gorm.ErrRecordNotFound {
+					http.Error(w, "Bot not found", http.StatusNotFound)
+					return
+				}
+				http.Error(w, "Failed to resolve bot", http.StatusInternalServerError)
+				return
+			}
+			botUUID = &trimmedBotUUID
+		}
+	}
 
 	if !user.IsAdmin {
 		var activeCount int64
@@ -140,7 +211,7 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 
 	accessToken := database.AccessToken{
 		UserId:      user.ID,
-		Name:        req.Name,
+		Name:        composeTokenName(trimmedName, botUUID),
 		TokenPrefix: prefix,
 		TokenHash:   tokenHash,
 		ExpiresAt:   expiresAt,
@@ -150,6 +221,7 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	displayName, scope, parsedBotUUID := parseTokenName(accessToken.Name)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(AccessTokenCreateResponse{
 		Success: true,
@@ -157,6 +229,9 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 		AccessToken: AccessTokenListItem{
 			UUID:        accessToken.UUID,
 			Name:        accessToken.Name,
+			DisplayName: displayName,
+			Scope:       scope,
+			BotUUID:     parsedBotUUID,
 			TokenPrefix: accessToken.TokenPrefix,
 			CreatedAt:   accessToken.CreatedAt,
 			LastUsedAt:  accessToken.LastUsedAt,
@@ -178,6 +253,18 @@ func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	botUUIDFilter := strings.TrimSpace(r.URL.Query().Get("bot_uuid"))
+	if botUUIDFilter != "" {
+		if _, err := resolveOwnedBotByUUID(DB, user, botUUIDFilter); err != nil {
+			if err == gorm.ErrRecordNotFound {
+				http.Error(w, "Bot not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "Failed to resolve bot", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	pagination := database.Pagination{Page: 1, Limit: 20}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, err := strconv.Atoi(pageParam); err == nil && page > 0 {
@@ -191,7 +278,11 @@ func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalRows int64
-	if err := DB.Model(&database.AccessToken{}).Where("user_id = ?", user.ID).Count(&totalRows).Error; err != nil {
+	countQuery := DB.Model(&database.AccessToken{}).Where("user_id = ?", user.ID)
+	if botUUIDFilter != "" {
+		countQuery = countQuery.Where("name LIKE ?", fmt.Sprintf("%s%s|%%", botScopedTokenNamePrefix, botUUIDFilter))
+	}
+	if err := countQuery.Count(&totalRows).Error; err != nil {
 		http.Error(w, "Failed to count access tokens", http.StatusInternalServerError)
 		return
 	}
@@ -201,7 +292,11 @@ func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []database.AccessToken
-	if err := DB.Where("user_id = ?", user.ID).
+	listQuery := DB.Where("user_id = ?", user.ID)
+	if botUUIDFilter != "" {
+		listQuery = listQuery.Where("name LIKE ?", fmt.Sprintf("%s%s|%%", botScopedTokenNamePrefix, botUUIDFilter))
+	}
+	if err := listQuery.
 		Offset(pagination.GetOffset()).
 		Limit(pagination.GetLimit()).
 		Order(pagination.GetSort()).
@@ -212,9 +307,13 @@ func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]AccessTokenListItem, 0, len(rows))
 	for _, token := range rows {
+		displayName, scope, parsedBotUUID := parseTokenName(token.Name)
 		items = append(items, AccessTokenListItem{
 			UUID:        token.UUID,
 			Name:        token.Name,
+			DisplayName: displayName,
+			Scope:       scope,
+			BotUUID:     parsedBotUUID,
 			TokenPrefix: token.TokenPrefix,
 			CreatedAt:   token.CreatedAt,
 			LastUsedAt:  token.LastUsedAt,
@@ -226,4 +325,60 @@ func (h *UserHandler) ListAccessTokens(w http.ResponseWriter, r *http.Request) {
 	pagination.Rows = items
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(pagination)
+}
+
+func (h *UserHandler) RevokeAccessToken(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	if !requirePermission(DB, user, database.PermissionCreateAPITokens) {
+		http.Error(w, "Missing permission: create_api_tokens", http.StatusForbidden)
+		return
+	}
+
+	tokenUUID := strings.TrimSpace(r.PathValue("token_uuid"))
+	if tokenUUID == "" {
+		http.Error(w, "token_uuid is required", http.StatusBadRequest)
+		return
+	}
+
+	var token database.AccessToken
+	if err := DB.Where("uuid = ? AND user_id = ?", tokenUUID, user.ID).First(&token).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			http.Error(w, "Access token not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to load access token", http.StatusInternalServerError)
+		return
+	}
+
+	if token.RevokedAt == nil {
+		now := time.Now()
+		if err := DB.Model(&token).Update("revoked_at", &now).Error; err != nil {
+			http.Error(w, "Failed to revoke access token", http.StatusInternalServerError)
+			return
+		}
+		token.RevokedAt = &now
+	}
+
+	displayName, scope, parsedBotUUID := parseTokenName(token.Name)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"access_token": AccessTokenListItem{
+			UUID:        token.UUID,
+			Name:        token.Name,
+			DisplayName: displayName,
+			Scope:       scope,
+			BotUUID:     parsedBotUUID,
+			TokenPrefix: token.TokenPrefix,
+			CreatedAt:   token.CreatedAt,
+			LastUsedAt:  token.LastUsedAt,
+			ExpiresAt:   token.ExpiresAt,
+			RevokedAt:   token.RevokedAt,
+		},
+	})
 }
