@@ -27,6 +27,9 @@ func (p *Processor) NewServeMux() *asynq.ServeMux {
 	mux.HandleFunc(workqueue.TypeBotReply, func(ctx context.Context, task *asynq.Task) error {
 		return tasks.HandleBotReply(ctx, task, deps)
 	})
+	mux.HandleFunc(workqueue.TypeEmailAutomation, func(ctx context.Context, task *asynq.Task) error {
+		return tasks.HandleEmailAutomation(ctx, task, deps)
+	})
 	return mux
 }
 
