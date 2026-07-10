@@ -417,7 +417,7 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 				OwnerUserId:         owner.ID,
 				Name:                cfg.Bot.Name,
 				Description:         cfg.Bot.Description,
-				DefaultSharedConfig: configData,
+				DefaultSharedConfig: database.JSONRaw(configData),
 				IsPublic:            isPublic,
 				IsActive:            isActive,
 			}

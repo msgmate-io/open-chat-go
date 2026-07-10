@@ -128,7 +128,7 @@ func ensureAdminOwnsDefaultBotRuntime(DB *gorm.DB, adminUser database.User, botU
 				OwnerUserId:         adminUser.ID,
 				Name:                name,
 				Description:         "Default platform bot",
-				DefaultSharedConfig: emptyConfig,
+				DefaultSharedConfig: database.JSONRaw(emptyConfig),
 				IsPublic:            true,
 				IsActive:            true,
 			}

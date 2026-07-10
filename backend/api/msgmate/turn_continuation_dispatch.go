@@ -1,6 +1,9 @@
 package msgmate
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // ci#747 (RC2/RC3): the continuation *decision* (turn_cap_continuation.go) is
 // pure and therefore was never dispatched: nothing turned "this turn ended on a
@@ -94,4 +97,41 @@ func CapContinuationVisibleMetadata(dispatch TurnContinuationDispatch, chainKey 
 		"continuation_correlation_id":        TurnContinuationCorrelationID(chainKey),
 		"continuation_schedule_id":           dispatch.ScheduleID,
 	}
+}
+
+// ContinuationAttemptsFromMetadata reports how many automatic continuations the
+// chain that produced this turn already used. The scheduled continuation carries
+// its stable correlation id as coder_schedule metadata; the first continuation
+// therefore sees attempts=0 and its scheduled turn sees attempts=1, which is what
+// bounds a chain to TurnContinuationMaxAttempts (ci#747 RC2/RC3).
+func ContinuationAttemptsFromMetadata(metadata map[string]interface{}) int {
+	if metadata == nil {
+		return 0
+	}
+	if raw, ok := metadata["ci747_continuation_attempts"]; ok {
+		if n, ok := metadataInt(raw); ok && n > 0 {
+			return n
+		}
+	}
+	if correlation, _ := metadata["coder_schedule_scheduled_by_correlation"].(string); strings.HasPrefix(correlation, ContinuationCorrelationPrefix+"-") {
+		return 1
+	}
+	return 0
+}
+
+func metadataInt(raw interface{}) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), true
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(value, "%d", &parsed); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
 }

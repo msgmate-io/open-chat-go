@@ -1052,7 +1052,7 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			OwnerUserId:         actingUser.ID,
 			Name:                req.Name,
 			Description:         req.Description,
-			DefaultSharedConfig: configJSON,
+			DefaultSharedConfig: database.JSONRaw(configJSON),
 			IsPublic:            isPublic,
 			IsActive:            true,
 		}
