@@ -118,3 +118,20 @@ func TestDispatchCapContinuationSurfacesEnqueueFailure(t *testing.T) {
 		t.Fatalf("the failed attempt must still be recorded explicitly, got %+v", dispatch)
 	}
 }
+
+func TestContinuationAttemptsFromMetadata(t *testing.T) {
+	if got := ContinuationAttemptsFromMetadata(nil); got != 0 {
+		t.Fatalf("nil metadata = %d, want 0", got)
+	}
+	if got := ContinuationAttemptsFromMetadata(map[string]interface{}{}); got != 0 {
+		t.Fatalf("empty metadata = %d, want 0", got)
+	}
+	if got := ContinuationAttemptsFromMetadata(map[string]interface{}{
+		"coder_schedule_scheduled_by_correlation": TurnContinuationCorrelationID("chat-1"),
+	}); got != 1 {
+		t.Fatalf("scheduled continuation metadata = %d, want 1", got)
+	}
+	if got := ContinuationAttemptsFromMetadata(map[string]interface{}{"ci747_continuation_attempts": float64(2)}); got != 2 {
+		t.Fatalf("explicit attempts = %d, want 2", got)
+	}
+}
