@@ -113,15 +113,15 @@ else
 fi
 echo "Using GOFLAGS=${GOFLAGS}"
 
-echo "Downloading and tidying effective module dependencies..."
-go mod download
-go mod tidy
-
 echo "Syncing external tool dependencies from tooldeps.json..."
 go run ./scripts/tooldepsgen -manifest ./tooldeps.json -output ./api/msgmate/externaltools/imports_gen.go -sync
 
 echo "Syncing external integration dependencies from effective integration manifest..."
 go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
+
+echo "Downloading and tidying effective module dependencies..."
+go mod download
+go mod tidy
 
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.
