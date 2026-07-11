@@ -38,13 +38,19 @@ COPY --from=frontend_selected /frontend/dist/client server/frontend/
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
 RUN bash full_build.sh --no-frontend
+RUN mkdir -p /backend/little_world_default_bots \
+  && if [ -d /clients/integrations/admin_db_managemnt_integration/little_world_default_bots ]; then \
+       cp -a /clients/integrations/admin_db_managemnt_integration/little_world_default_bots/. /backend/little_world_default_bots/; \
+     fi
 
 FROM scratch AS prod
 COPY --from=builder /backend/backend /backend
+COPY --from=builder /backend/little_world_default_bots /backend/little_world_default_bots
 
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS prod-alpine
 WORKDIR /backend
 COPY --from=builder /backend/backend /usr/local/bin/backend
 COPY --from=builder /backend/server/routes.json /backend/routes.json
+COPY --from=builder /backend/little_world_default_bots /backend/little_world_default_bots
 
 CMD ["backend", "server"]
