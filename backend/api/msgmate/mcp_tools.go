@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -59,9 +61,34 @@ func parseMCPIntegrationConfig(raw map[string]interface{}) (mcpIntegrationConfig
 	if out.URL == "" {
 		return out, fmt.Errorf("config.url is required")
 	}
-	if !strings.HasPrefix(strings.ToLower(out.URL), "https://") {
-		return out, fmt.Errorf("config.url must use https")
+
+	parsedURL, err := url.Parse(out.URL)
+	if err != nil {
+		return out, fmt.Errorf("config.url must be a valid URL")
 	}
+	scheme := strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
+	hostname := strings.ToLower(strings.TrimSpace(parsedURL.Hostname()))
+	isLoopbackHost := hostname == "localhost" || net.ParseIP(hostname) != nil && net.ParseIP(hostname).IsLoopback()
+
+	if scheme != "https" {
+		if scheme != "http" {
+			return out, fmt.Errorf("config.url must use https or http")
+		}
+		if !(isLoopbackHost || hostname == "host.docker.internal") {
+			return out, fmt.Errorf("config.url may use http only for localhost or host.docker.internal")
+		}
+	}
+
+	resolveLocalhost, _ := raw["resolve_localhost_to_host_docker_internal"].(bool)
+	if resolveLocalhost && isLoopbackHost {
+		if port := parsedURL.Port(); strings.TrimSpace(port) != "" {
+			parsedURL.Host = "host.docker.internal:" + port
+		} else {
+			parsedURL.Host = "host.docker.internal"
+		}
+		out.URL = parsedURL.String()
+	}
+
 	if timeoutRaw, ok := raw["request_timeout_seconds"]; ok {
 		switch v := timeoutRaw.(type) {
 		case float64:
