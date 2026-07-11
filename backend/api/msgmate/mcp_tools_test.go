@@ -1,6 +1,11 @@
 package msgmate
 
-import "testing"
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestParseMCPAuthHeaders_NormalizesBearerTokenType(t *testing.T) {
 	headers := parseMCPAuthHeaders(map[string]interface{}{
@@ -66,5 +71,25 @@ func TestParseMCPIntegrationConfig_RejectsPlainHTTPForRemoteHost(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for remote plain http URL")
+	}
+}
+
+func TestIsServerNotInitializedError(t *testing.T) {
+	err := fmt.Errorf("mcp request failed: 400 Bad Request: {\"error\":{\"message\":\"Bad Request: Server not initialized\"}}")
+	if !isServerNotInitializedError(err) {
+		t.Fatalf("expected server-not-initialized error to be detected")
+	}
+}
+
+func TestMCPDoRequest_NotificationAllowsEmptyBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	config := mcpIntegrationConfig{Transport: "http", URL: server.URL, RequestTimeoutSeconds: 5}
+	_, _, err := mcpDoRequest(config, map[string]interface{}{}, "notifications/initialized", map[string]interface{}{}, nil)
+	if err != nil {
+		t.Fatalf("expected empty notification response to be accepted, got error: %v", err)
 	}
 }
