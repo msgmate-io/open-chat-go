@@ -24,7 +24,7 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /backend
 
-RUN apk add --no-cache gcc musl-dev bash libc6-compat python3
+RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 git
 COPY clients/ /clients/
 COPY backend/ ./
 
