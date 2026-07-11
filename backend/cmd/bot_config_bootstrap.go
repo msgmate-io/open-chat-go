@@ -13,10 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type ownerBotConfig struct {
-	Username string `json:"username"`
-}
-
 type botIdentityConfig struct {
 	Username    string `json:"username"`
 	Email       string `json:"email,omitempty"`
@@ -28,10 +24,34 @@ type botIdentityConfig struct {
 }
 
 type botBootstrapConfig struct {
-	Owner               ownerBotConfig         `json:"owner"`
+	PrimaryOwner        string                 `json:"primary_owner"`
+	AdditionalOwners    []string               `json:"additional_owners,omitempty"`
 	Bot                 botIdentityConfig      `json:"bot"`
 	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
 	OverwriteIfExists   bool                   `json:"overwrite_if_exists,omitempty"`
+}
+
+func normalizeOwnerUsernames(cfg botBootstrapConfig) []string {
+	ordered := []string{}
+	seen := map[string]struct{}{}
+	appendOwner := func(username string) {
+		trimmed := strings.TrimSpace(username)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		ordered = append(ordered, trimmed)
+	}
+
+	appendOwner(cfg.PrimaryOwner)
+	for _, username := range cfg.AdditionalOwners {
+		appendOwner(username)
+	}
+
+	return ordered
 }
 
 func loadBotBootstrapConfig(path string) (botBootstrapConfig, error) {
@@ -46,8 +66,12 @@ func loadBotBootstrapConfig(path string) (botBootstrapConfig, error) {
 		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", path, err)
 	}
 
-	if strings.TrimSpace(cfg.Owner.Username) == "" {
-		return cfg, fmt.Errorf("bot config %q: owner.username is required", path)
+	ownerUsernames := normalizeOwnerUsernames(cfg)
+	if strings.TrimSpace(cfg.PrimaryOwner) == "" {
+		return cfg, fmt.Errorf("bot config %q: primary_owner is required", path)
+	}
+	if len(ownerUsernames) == 0 {
+		return cfg, fmt.Errorf("bot config %q: primary_owner/additional_owners must include at least one owner", path)
 	}
 	if strings.TrimSpace(cfg.Bot.Username) == "" {
 		return cfg, fmt.Errorf("bot config %q: bot.username is required", path)
@@ -186,10 +210,18 @@ func ensureOwnerConnectedToBot(DB *gorm.DB, owner database.User, bot database.Us
 }
 
 func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) error {
-	owner, err := findUserByUsername(DB, cfg.Owner.Username)
-	if err != nil {
-		return fmt.Errorf("bot config %q: owner user must already exist: %w", sourcePath, err)
+	ownerUsernames := normalizeOwnerUsernames(cfg)
+	ownersByUsername := map[string]*database.User{}
+	for _, ownerUsername := range ownerUsernames {
+		owner, err := findUserByUsername(DB, ownerUsername)
+		if err != nil {
+			return fmt.Errorf("bot config %q: owner user must already exist: %w", sourcePath, err)
+		}
+		ownersByUsername[ownerUsername] = owner
 	}
+
+	primaryOwnerUsername := strings.TrimSpace(cfg.PrimaryOwner)
+	owner := ownersByUsername[primaryOwnerUsername]
 
 	botUser, err := resolveBotUserForConfig(DB, sourcePath, cfg, validateStrength)
 	if err != nil {
@@ -242,8 +274,17 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 			}
 		}
 
-		if err := ensureOwnerConnectedToBot(tx, *owner, *botUser); err != nil {
-			return err
+		for _, ownerUsername := range ownerUsernames {
+			configuredOwner := ownersByUsername[ownerUsername]
+			if configuredOwner == nil {
+				continue
+			}
+			if err := database.EnsureBotRuntimeOwner(tx, runtime.ID, configuredOwner.ID); err != nil {
+				return err
+			}
+			if err := ensureOwnerConnectedToBot(tx, *configuredOwner, *botUser); err != nil {
+				return err
+			}
 		}
 
 		return nil

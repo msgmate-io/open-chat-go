@@ -44,9 +44,7 @@ func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 	}
 
 	path := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username":    "owner_support_bot",
 			"password":    "BotPass1!",
@@ -105,9 +103,7 @@ func TestApplyBotBootstrapConfigFilesRequiresOwner(t *testing.T) {
 	DB := database.SetupDatabase(*config)
 
 	path := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "missing_owner",
-		},
+		"primary_owner": "missing_owner",
 		"bot": map[string]interface{}{
 			"username": "orphan_bot",
 			"password": "BotPass1!",
@@ -136,9 +132,7 @@ func TestApplyBotBootstrapConfigFilesIsIdempotent(t *testing.T) {
 	}
 
 	path := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username": "owner_support_bot",
 			"password": "BotPass1!",
@@ -187,9 +181,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 	}
 
 	initialPath := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username":    "owner_support_bot",
 			"password":    "BotPass1!",
@@ -204,9 +196,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 	})
 
 	overwriteAttemptPath := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username":    "owner_support_bot",
 			"password":    "BotPass1!",
@@ -265,9 +255,7 @@ func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *tes
 	}
 
 	initialPath := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username":    "owner_support_bot",
 			"password":    "BotPass1!",
@@ -282,9 +270,7 @@ func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *tes
 	})
 
 	overwritePath := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username":    "owner_support_bot",
 			"password":    "BotPass1!",
@@ -352,9 +338,7 @@ func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *test
 	}
 
 	path := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username": "existing_bot_user",
 			"name":     "support_bot",
@@ -386,9 +370,7 @@ func TestApplyBotBootstrapConfigFilesMissingPasswordRequiresExistingBot(t *testi
 	}
 
 	path := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username": "missing_bot_user",
 			"name":     "support_bot",
@@ -416,9 +398,7 @@ func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
 	}
 
 	path := writeBotConfigFile(t, map[string]interface{}{
-		"owner": map[string]interface{}{
-			"username": "owner_user",
-		},
+		"primary_owner": "owner_user",
 		"bot": map[string]interface{}{
 			"username": "owner_support_bot",
 			"password": "BotPass1!",
@@ -440,5 +420,101 @@ func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
 	}
 	if bot.Email != "owner+support-bot@example.com" {
 		t.Fatalf("expected bot email to be updated, got %q", bot.Email)
+	}
+}
+
+func TestApplyBotBootstrapConfigFilesSupportsAdditionalOwners(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if err, _ := util.CreateUser(DB, "primary_owner", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create primary owner user: %v", err)
+	}
+	if err, _ := util.CreateUser(DB, "secondary_owner", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create secondary owner user: %v", err)
+	}
+
+	path := writeBotConfigFile(t, map[string]interface{}{
+		"primary_owner":     "primary_owner",
+		"additional_owners": []string{"secondary_owner"},
+		"bot": map[string]interface{}{
+			"username": "owner_support_bot",
+			"password": "BotPass1!",
+			"name":     "support_bot",
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "qwen3-8b-instruct_vllm",
+		},
+	})
+
+	if err := applyBotBootstrapConfigFiles(DB, []string{path}, false); err != nil {
+		t.Fatalf("applyBotBootstrapConfigFiles failed: %v", err)
+	}
+
+	primaryOwner, err := findUserByUsername(DB, "primary_owner")
+	if err != nil {
+		t.Fatalf("failed to resolve primary owner: %v", err)
+	}
+	secondaryOwner, err := findUserByUsername(DB, "secondary_owner")
+	if err != nil {
+		t.Fatalf("failed to resolve secondary owner: %v", err)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("owner_user_id = ? AND name = ?", primaryOwner.ID, "support_bot").First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load bot runtime config: %v", err)
+	}
+
+	var ownershipCount int64
+	if err := DB.Model(&database.BotRuntimeOwner{}).Where("bot_runtime_config_id = ?", runtime.ID).Count(&ownershipCount).Error; err != nil {
+		t.Fatalf("failed to count runtime owner rows: %v", err)
+	}
+	if ownershipCount != 2 {
+		t.Fatalf("expected two runtime owner rows, got %d", ownershipCount)
+	}
+
+	for _, ownerID := range []uint{primaryOwner.ID, secondaryOwner.ID} {
+		var count int64
+		if err := DB.Model(&database.BotRuntimeOwner{}).Where("bot_runtime_config_id = ? AND user_id = ?", runtime.ID, ownerID).Count(&count).Error; err != nil {
+			t.Fatalf("failed to verify runtime owner row for owner_id=%d: %v", ownerID, err)
+		}
+		if count != 1 {
+			t.Fatalf("expected one runtime owner row for owner_id=%d, got %d", ownerID, count)
+		}
+	}
+}
+
+func TestApplyBotBootstrapConfigFilesAllowsSinglePrimaryOwner(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if err, _ := util.CreateUser(DB, "fallback_owner", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create fallback owner user: %v", err)
+	}
+
+	path := writeBotConfigFile(t, map[string]interface{}{
+		"primary_owner": "fallback_owner",
+		"bot": map[string]interface{}{
+			"username": "owner_support_bot",
+			"password": "BotPass1!",
+			"name":     "support_bot",
+		},
+		"default_shared_config": map[string]interface{}{
+			"model": "qwen3-8b-instruct_vllm",
+		},
+	})
+
+	if err := applyBotBootstrapConfigFiles(DB, []string{path}, false); err != nil {
+		t.Fatalf("applyBotBootstrapConfigFiles failed: %v", err)
+	}
+
+	owner, err := findUserByUsername(DB, "fallback_owner")
+	if err != nil {
+		t.Fatalf("failed to resolve fallback owner user: %v", err)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("owner_user_id = ? AND name = ?", owner.ID, "support_bot").First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load bot runtime config: %v", err)
 	}
 }
