@@ -634,8 +634,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
-          token: ${{ secrets.BOT_TOKEN || github.token }}
+          token: ${{ secrets.BOT_TOKEN }}
           submodules: false
+
+      - name: Initialize required core submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUBMODULE_TOKEN}" ]; then
+            echo "::error::BOT_TOKEN is required for core-only submodule checkout."
+            exit 1
+          fi
+          git submodule sync -- \
+            clients/go_tool_interface \
+            clients/go_integration_interface \
+            clients/integrations/mcp_integration \
+            clients/integrations/rest_api_tool_integration
+          git submodule update --init --depth 1 -- \
+            clients/go_tool_interface \
+            clients/go_integration_interface \
+            clients/integrations/mcp_integration \
+            clients/integrations/rest_api_tool_integration
 
       - name: Resolve core-only image metadata
         id: image
