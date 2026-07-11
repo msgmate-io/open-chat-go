@@ -185,28 +185,7 @@ func ensureOwnerConnectedToBot(DB *gorm.DB, owner database.User, bot database.Us
 	if err := DB.Where("owning_user_id = ? AND contact_user_id = ?", owner.ID, bot.ID).FirstOrCreate(&contact).Error; err != nil {
 		return err
 	}
-
-	var chat database.Chat
-	err := DB.Where(
-		"(user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)",
-		owner.ID,
-		bot.ID,
-		bot.ID,
-		owner.ID,
-	).First(&chat).Error
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-
-	if owner.ID < bot.ID {
-		chat = database.Chat{User1Id: owner.ID, User2Id: bot.ID}
-	} else {
-		chat = database.Chat{User1Id: bot.ID, User2Id: owner.ID}
-	}
-	return DB.Create(&chat).Error
+	return nil
 }
 
 func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) error {
