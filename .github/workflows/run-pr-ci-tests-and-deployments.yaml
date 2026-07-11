@@ -808,6 +808,13 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
+      - name: Regenerate integration imports for full CI profile
+        if: steps.context.outputs.should_test != ''
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go run ./scripts/integrationdepsgen -manifest ./integrationdeps.json -output ./integrations/externalintegrations/imports_gen.go -sync=false
+
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
         run: |
