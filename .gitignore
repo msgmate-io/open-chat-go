@@ -42,3 +42,4 @@ backend/data.db-journal
 backend/.devbin/
 backend/.generated/
 kubeconfig.yaml
+.playwright-mcp/
