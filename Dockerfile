@@ -16,6 +16,8 @@ FROM docker.io/library/alpine:${ALPINE_VERSION} AS frontend_empty
 WORKDIR /frontend
 RUN mkdir -p /frontend/dist/client && printf '{}\n' > /frontend/routes.json
 
+FROM ${FRONTEND_STAGE} AS frontend_selected
+
 FROM docker.io/library/golang:${GOLANG_VERSION}-alpine AS basebuilder
 
 ENV GOTOOLCHAIN=auto
@@ -28,11 +30,10 @@ COPY backend/ ./
 
 FROM basebuilder AS builder
 
-ARG FRONTEND_STAGE
 ARG INTEGRATION_PROFILE=default
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
-COPY --from=${FRONTEND_STAGE} /frontend/routes.json server/routes.json
-COPY --from=${FRONTEND_STAGE} /frontend/dist/client server/frontend/
+COPY --from=frontend_selected /frontend/routes.json server/routes.json
+COPY --from=frontend_selected /frontend/dist/client server/frontend/
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
