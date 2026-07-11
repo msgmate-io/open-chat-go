@@ -1445,23 +1445,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			}
 		}
 
-		// ci#809: a successful all_tasks_completed call is the machine-readable
-		// end of the task. The auto-continue loop already stops on the
-		// task_completed metadata flag; task_blocked keeps the blocked variant
-		// visible to the UI and operators.
-		if completed, blocked, summary := collectTaskCompletion(allToolCalls); completed {
-			metadata["task_completed"] = true
-			if blocked {
-				metadata["task_blocked"] = true
-			}
-			if summary != "" {
-				metadata["task_completion_summary"] = summary
-				if strings.TrimSpace(text) == "" {
-					text = summary
-				}
-			}
-		}
-
 		// ci#709: a turn that ran tools must never finish on an empty message.
 		// The resolution runs last (after the confirmable-action prompt) so it
 		// only ever fills a genuinely blank message.
