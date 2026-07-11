@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM golang:latest
 
+ARG INTEGRATION_PROFILE=default
+ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
+
 RUN mkdir -p /backend /dev_bin
 WORKDIR /backend
 ENV PATH=/dev_bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -15,43 +18,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     GOBIN="/dev_bin" go install -mod=mod github.com/githubnemo/CompileDaemon
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 
-# Copy only module manifests first so dependency download stays cached across
-# normal source edits.
-COPY backend/go.mod ./go.mod
-COPY backend/go.sum ./go.sum
-COPY clients/go_tool_interface/go.mod /clients/go_tool_interface/go.mod
-COPY clients/go_integration_interface/go.mod /clients/go_integration_interface/go.mod
-# BEGIN GENERATED: integration-mod-manifests
-COPY clients/integrations/account_management/go.mod /clients/integrations/account_management/go.mod
-COPY clients/integrations/account_management/go.sum /clients/integrations/account_management/go.sum
-COPY clients/integrations/admin_db_managemnt_integration/go.mod /clients/integrations/admin_db_managemnt_integration/go.mod
-COPY clients/integrations/admin_db_managemnt_integration/go.sum /clients/integrations/admin_db_managemnt_integration/go.sum
-COPY clients/integrations/mcp_integration/go.mod /clients/integrations/mcp_integration/go.mod
-COPY clients/integrations/mcp_integration/go.sum /clients/integrations/mcp_integration/go.sum
-COPY clients/integrations/email_integration/go.mod /clients/integrations/email_integration/go.mod
-COPY clients/integrations/email_integration/go.sum /clients/integrations/email_integration/go.sum
-COPY clients/integrations/rest_api_tool_integration/go.mod /clients/integrations/rest_api_tool_integration/go.mod
-COPY clients/integrations/rest_api_tool_integration/go.sum /clients/integrations/rest_api_tool_integration/go.sum
-COPY clients/integrations/ssh_integration/go.mod /clients/integrations/ssh_integration/go.mod
-COPY clients/integrations/ssh_integration/go.sum /clients/integrations/ssh_integration/go.sum
-# END GENERATED: integration-mod-manifests
-# Keep module/build caches in-image so the first `docker compose up` can reuse
-# warm caches from `docker compose build`.
-RUN go mod download
-
-# Copy the source and pre-compile once at build time.
-ADD ./clients/go_tool_interface /clients/go_tool_interface
-ADD ./clients/go_integration_interface /clients/go_integration_interface
-# BEGIN GENERATED: integration-source-copies
-COPY clients/integrations/account_management /clients/integrations/account_management
-COPY clients/integrations/admin_db_managemnt_integration /clients/integrations/admin_db_managemnt_integration
-COPY clients/integrations/mcp_integration /clients/integrations/mcp_integration
-COPY clients/integrations/email_integration /clients/integrations/email_integration
-COPY clients/integrations/rest_api_tool_integration /clients/integrations/rest_api_tool_integration
-COPY clients/integrations/ssh_integration /clients/integrations/ssh_integration
-# END GENERATED: integration-source-copies
+COPY clients/ /clients/
 ADD ./backend /backend
-RUN go build
+RUN bash ./scripts/dev_rebuild.sh
 
 ENTRYPOINT /backend/scripts/dev_watch.sh
