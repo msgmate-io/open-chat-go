@@ -2711,6 +2711,18 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_auto_approve_flaky_pulls.py -v
 
+      # ci#847: the auto-approve merge gate decided from the *raw*
+      # `statusCheckRollup`, so a superseded run that GitHub reports as
+      # CANCELLED next to its green replacement vetoed an otherwise green
+      # consolidation PR forever (PR #1057, head 3a5d4291). The step now
+      # collapses the rollup onto the newest instance per (context, app) first.
+      # The guard extracts the shipped `JQ_NEWEST_CHECKS` definition verbatim
+      # and runs both gate programs against the real rollup shape.
+      - name: Auto-approve stale check-run instance unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_auto_approve_stale_check_instances.py -v
+
       # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
       # Deployment of the CI deployment with probe_timeout_too_low,
       # probe_budget_too_short, startup_probe_missing and

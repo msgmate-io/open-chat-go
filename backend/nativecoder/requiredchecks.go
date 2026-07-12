@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // This file resolves which status checks a pull request's base branch actually
@@ -65,6 +66,102 @@ type checkRunFact struct {
 	Status        string
 	Conclusion    string
 	IntegrationID int64
+	// StartedAt/CompletedAt order the concurrent runs of one context: branch
+	// protection evaluates the *newest* instance per (context, app), so the
+	// aggregation must too (ci#847).
+	StartedAt   time.Time
+	CompletedAt time.Time
+	// RunID is the workflow-run id parsed from details_url and CheckRunID the
+	// check-run id; both are monotonically increasing and act as tiebreakers.
+	RunID      int64
+	CheckRunID int64
+}
+
+// observedAt is the effective ordering timestamp of a check-run. It is the
+// later of started_at/completed_at, because a skipped run can report a
+// completion *before* its start (observed on the ci#847 repro).
+func (r checkRunFact) observedAt() time.Time {
+	if r.CompletedAt.After(r.StartedAt) {
+		return r.CompletedAt
+	}
+	return r.StartedAt
+}
+
+// newerThan orders two instances of the same (context, app): the later
+// observation wins, then the higher workflow-run id, then the higher check-run
+// id — the newest-per-context rule GitHub applies (ci#847).
+func (r checkRunFact) newerThan(other checkRunFact) bool {
+	if a, b := r.observedAt(), other.observedAt(); !a.Equal(b) {
+		return a.After(b)
+	}
+	if r.RunID != other.RunID {
+		return r.RunID > other.RunID
+	}
+	return r.CheckRunID > other.CheckRunID
+}
+
+// newestCheckRuns keeps only the newest check-run per (context, app) and
+// preserves the first-seen order otherwise. A superseded run that GitHub
+// reports as `cancelled` must not veto its green replacement, which is what
+// permanently blocked a green consolidation PR (ci#847).
+func newestCheckRuns(facts []checkRunFact) []checkRunFact {
+	type key struct {
+		name string
+		app  int64
+	}
+	out := make([]checkRunFact, 0, len(facts))
+	index := map[key]int{}
+	for _, fact := range facts {
+		factKey := key{name: strings.ToLower(strings.TrimSpace(fact.Name)), app: fact.IntegrationID}
+		if at, ok := index[factKey]; ok {
+			if fact.newerThan(out[at]) {
+				out[at] = fact
+			}
+			continue
+		}
+		index[factKey] = len(out)
+		out = append(out, fact)
+	}
+	return out
+}
+
+// parseCheckTime parses an RFC3339 check-run timestamp, returning the zero time
+// when the field is absent or malformed (ordering then falls back to the ids).
+func parseCheckTime(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+// parseRunID extracts the workflow-run id from a check-run details_url
+// (`.../actions/runs/<id>/job/<job>`); 0 when absent (the legacy commit-status
+// URLs share no such structure and deliberately degrade to 0).
+func parseRunID(detailsURL string) int64 {
+	detailsURL = strings.TrimSpace(detailsURL)
+	if detailsURL == "" {
+		return 0
+	}
+	const marker = "/actions/runs/"
+	idx := strings.Index(detailsURL, marker)
+	if idx < 0 {
+		return 0
+	}
+	rest := detailsURL[idx+len(marker):]
+	end := strings.IndexAny(rest, "/?#")
+	if end >= 0 {
+		rest = rest[:end]
+	}
+	var id int64
+	if _, err := fmt.Sscanf(rest, "%d", &id); err != nil {
+		return 0
+	}
+	return id
 }
 
 // statusFact is the minimal legacy commit-status fact the aggregation needs.
@@ -195,10 +292,14 @@ func (c *GitHubAPIClient) branchCheckStates(ctx context.Context, branch, sha str
 func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]checkRunFact, []statusFact, error) {
 	var runs struct {
 		CheckRuns []struct {
-			Name       string `json:"name"`
-			Status     string `json:"status"`
-			Conclusion string `json:"conclusion"`
-			App        struct {
+			ID          int64  `json:"id"`
+			Name        string `json:"name"`
+			Status      string `json:"status"`
+			Conclusion  string `json:"conclusion"`
+			StartedAt   string `json:"started_at"`
+			CompletedAt string `json:"completed_at"`
+			DetailsURL  string `json:"details_url"`
+			App         struct {
 				ID int64 `json:"id"`
 			} `json:"app"`
 		} `json:"check_runs"`
@@ -214,8 +315,17 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 			Status:        run.Status,
 			Conclusion:    run.Conclusion,
 			IntegrationID: run.App.ID,
+			StartedAt:     parseCheckTime(run.StartedAt),
+			CompletedAt:   parseCheckTime(run.CompletedAt),
+			RunID:         parseRunID(run.DetailsURL),
+			CheckRunID:    run.ID,
 		})
 	}
+	// ci#847: branch protection evaluates the newest instance per
+	// (context, app); collapse the rollup onto that instance before anything
+	// aggregates it, so a superseded `cancelled` run cannot veto its green
+	// replacement.
+	facts = newestCheckRuns(facts)
 
 	var status struct {
 		Statuses []struct {
