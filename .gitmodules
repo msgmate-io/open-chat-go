@@ -34,3 +34,6 @@
 [submodule "clients/integrations/email_integration"]
 	path = clients/integrations/email_integration
 	url = https://github.com/msgmate-io/open-chat-go-email-integration
+[submodule "clients/integrations/voice_integration"]
+	path = clients/integrations/voice_integration
+	url = https://github.com/msgmate-io/open-chat-go-voice-integration

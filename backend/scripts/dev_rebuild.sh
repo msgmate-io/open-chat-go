@@ -101,6 +101,12 @@ else
 fi
 log "using GOFLAGS=${GOFLAGS}"
 
+INTEGRATION_JOBS=("${EFFECTIVE_INTEGRATION_MANIFEST}:./integrations/externalintegrations/imports_gen.go")
+run_step "integration dependency generation" run_generator_jobs "integrationdepsgen" "./scripts/integrationdepsgen" "${INTEGRATION_JOBS[@]}"
+run_step "tool dependency generation" run_generator_jobs "tooldepsgen" "./scripts/tooldepsgen" "${TOOL_JOBS[@]}"
+run_step "module download" go mod download
+run_step "module tidy" go mod tidy
+
 run_step "swagger generation" generate_swagger
 
 if [[ -f ./docs/swagger.json ]]; then
@@ -109,12 +115,6 @@ if [[ -f ./docs/swagger.json ]]; then
     cp ./docs/swagger.json ./server/swagger.json
   fi
 fi
-
-run_step "tool dependency generation" run_generator_jobs "tooldepsgen" "./scripts/tooldepsgen" "${TOOL_JOBS[@]}"
-INTEGRATION_JOBS=("${EFFECTIVE_INTEGRATION_MANIFEST}:./integrations/externalintegrations/imports_gen.go")
-run_step "integration dependency generation" run_generator_jobs "integrationdepsgen" "./scripts/integrationdepsgen" "${INTEGRATION_JOBS[@]}"
-run_step "module download" go mod download
-run_step "module tidy" go mod tidy
 
 mkdir -p ./.devbin
 run_step "backend build" go build -o ./.devbin/backend .
