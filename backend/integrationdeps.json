@@ -53,6 +53,15 @@
       "local_path": "clients/integrations/ssh_integration",
       "default_enabled": false,
       "private": true
+    },
+    {
+      "module": "github.com/msgmate-io/voice-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/voice-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/voice_integration",
+      "default_enabled": false,
+      "private": true
     }
   ]
 }
