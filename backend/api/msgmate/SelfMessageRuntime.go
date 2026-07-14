@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/coordination"
 	"backend/database"
 	"backend/logging"
 	"backend/workqueue"
@@ -55,6 +56,10 @@ type SelfMessageRuntime struct {
 	tick      time.Duration
 	now       func() time.Time
 	guard     *SelfMessageGuard
+	// coordinationCheck reports the live interaction that currently owns the
+	// schedule's coordination lane (ci#845): the owner chat UUID and whether it
+	// is live. Nil disables the gate.
+	coordinationCheck func(schedule SelfMessageSchedule) (string, bool)
 
 	mu    sync.Mutex
 	ids   map[string]string
@@ -131,6 +136,9 @@ func (r *SelfMessageRuntime) publishSeams() {
 	// duplicate reply). A deployment can tighten this via SetIdleCheck, e.g.
 	// with the provider/sandbox admission check.
 	r.guard.SetIdleCheck(r.defaultIdleCheck)
+	// ci#845: a self-message of a chat that declares a coordination lane is
+	// additionally deferred while another interaction of the same lane is live.
+	r.coordinationCheck = r.defaultCoordinationOwnerCheck
 }
 
 // defaultIdleCheck defers a self-message when a bot:reply turn is already live
@@ -144,6 +152,26 @@ func (r *SelfMessageRuntime) defaultIdleCheck(schedule SelfMessageSchedule) (boo
 		return false, selfMessageSkipLiveTurn
 	}
 	return true, ""
+}
+
+// coordinationOwnerLive reports the live interaction that owns the coordination
+// lane of a schedule (ci#845). It reports no owner when the gate is disabled, the
+// runtime has no coordination seam, or the schedule's chat never declared a lane,
+// so an un-laned schedule is never deferred by the coordination gate.
+func (r *SelfMessageRuntime) coordinationOwnerLive(schedule SelfMessageSchedule) (string, bool) {
+	if r == nil || r.coordinationCheck == nil || strings.TrimSpace(schedule.OwnerKey) == "" {
+		return "", false
+	}
+	return r.coordinationCheck(schedule)
+}
+
+// SetCoordinationOwnerCheck publishes the ci#845 coordination seam: it reports
+// the live interaction chat that owns the coordination lane of a schedule.
+func (r *SelfMessageRuntime) SetCoordinationOwnerCheck(fn func(SelfMessageSchedule) (string, bool)) {
+	if r == nil {
+		return
+	}
+	r.coordinationCheck = fn
 }
 
 // Start runs the reconcile/advance ticker until ctx is cancelled or Shutdown is
@@ -208,6 +236,7 @@ func (r *SelfMessageRuntime) registerEntry(entry SelfMessageScheduleEntry) error
 		Prompt:    SelfMessageContinuationPrompt,
 		Cron:      entry.Cron,
 		Timezone:  entry.Timezone,
+		OwnerKey:  coordination.OwnerKeyFromTags([]string(chat.Tags)),
 	}
 	key := schedule.Key()
 
@@ -273,6 +302,11 @@ func (r *SelfMessageRuntime) Tick() error {
 		}
 		if allowed, reason := r.guard.Decide(schedule, nextRun); !allowed {
 			logging.Infof("ci#744: self-message of %s deferred: %s", key, reason)
+			continue
+		}
+		if ownerChat, live := r.coordinationOwnerLive(schedule); live {
+			r.guard.RecordSkip(key, selfMessageSkipOtherOwner)
+			logging.Infof("ci#845: self-message of %s deferred: %s is owned by live interaction %s", key, schedule.OwnerKey, ownerChat)
 			continue
 		}
 		_, won, err := r.scheduler.Fire(key, scheduleID)
