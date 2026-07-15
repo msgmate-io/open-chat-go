@@ -215,11 +215,15 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 	// still live. Ad-hoc lead dispatches used to run concurrently and duplicate
 	// work/consolidation, burning a full agent each.
 	dispatchTags := database.NormalizeChatTags(req.Tags)
-	dedupeKey := dedupeKeyTag(req.DedupeKey)
+	// The dedupe key is either the explicit one or the (ticket, lane) owner key
+	// derived from the tags (ci#747 RC7/QW4): one lane of one ticket has exactly
+	// one live owner. The key is also stamped on the interaction so the reconcile
+	// step reads back the very key the dispatch enforced.
+	dedupeKey, enforceDedupe := ownerKeyForDispatch(req.Tags, req.DedupeKey)
 	if dedupeKey != "" {
 		dispatchTags = database.NormalizeChatTags(append([]string(dispatchTags), dedupeKey))
 	}
-	if dedupeKey != "" && !req.Force {
+	if dedupeKey != "" && enforceDedupe && !req.Force {
 		if existing, ok := liveInteractionForDedupeKey(DB, queueInspector, sessionUser, actingUser, dedupeKey); ok {
 			view := agentInteractionView(DB, queueInspector, actingUser, existing)
 			respondAgentJSON(w, http.StatusOK, map[string]interface{}{
