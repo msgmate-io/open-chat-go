@@ -52,6 +52,12 @@ type NetworkPlanStatus struct {
 	Exhausted bool `json:"exhausted"`
 	// PortGeometry renders the block layout (base+size*slots) for the logs.
 	PortGeometry string `json:"port_geometry"`
+	// PublishedBlock is the whole-pool port span the pool publishes on its
+	// transport (ci#846): the union of every per-workspace block the resolved
+	// policy can hand out, so the block this plan reports is the block that is
+	// reachable. It is nil when the policy cannot be applied, so the admin view
+	// says "nothing published" instead of a half-filled contract.
+	PublishedBlock *PoolPortBlock `json:"published_block,omitempty"`
 	// Workspaces are the live plans, sorted by block index: the port block and
 	// loopback alias each workspace currently owns.
 	Workspaces []WorkspaceNetworkPlan `json:"workspaces,omitempty"`
@@ -115,7 +121,7 @@ func baseNetworkPlanStatus(policy NetworkPolicy, now time.Time) NetworkPlanStatu
 func planNotes(policy NetworkPolicy) []string {
 	notes := []string{
 		"a hard-coded dev-server port can still collide; take the port from PORT / CODER_PORT_BLOCK_START",
-		"reaching a workspace dev server from outside the pod needs a published port, not the loopback alias (ci#792 follow-up)",
+		"the whole-pool span is published on the transport (ci#846): reach a workspace dev server on the pool host and its block port, not the loopback alias",
 	}
 	if policy.Mode == NetworkModeShared {
 		notes = append(notes,
@@ -158,6 +164,7 @@ func (a *PortAllocator) statusLocked(now time.Time) NetworkPlanStatus {
 	}
 	status.Exhausted = status.FreeSlots == 0
 	status.PortGeometry = portGeometry(policy, a.slots)
+	status.PublishedBlock = publishedBlockPtr(policy, a.slots)
 	status.Workspaces = plansByBlockIndex(a.assigned)
 	status.Notes = planNotes(policy)
 	if status.Exhausted {
@@ -185,6 +192,17 @@ func portGeometry(policy NetworkPolicy, slots int) string {
 	return "[" + strconv.Itoa(policy.PortBase) + "+" + strconv.Itoa(policy.PortBlockSize) + "*" + strconv.Itoa(slots) + " => " + strconv.Itoa(last) + "]"
 }
 
+// publishedBlockPtr resolves the transport-published span of a policy for the
+// admin view (ci#846). It returns nil when the geometry is unusable, so the
+// operator sees "nothing published" rather than a zero block.
+func publishedBlockPtr(policy NetworkPolicy, slots int) *PoolPortBlock {
+	block, ok := resolvePoolPortBlock(policy, slots)
+	if !ok {
+		return nil
+	}
+	return &block
+}
+
 func exhaustionNote(policy NetworkPolicy, slots int) string {
 	if policy.Mode == NetworkModeNetns {
 		return "all " + strconv.Itoa(slots) + " blocks are in use: the pool is full, free a lease or raise " + EnvNetworkMaxWorkspaces
@@ -209,6 +227,7 @@ func NetworkPlanStatusFromEnv(now time.Time) NetworkPlanStatus {
 	status.Slots = alloc.slots
 	status.FreeSlots = alloc.slots
 	status.PortGeometry = portGeometry(policy, alloc.slots)
+	status.PublishedBlock = publishedBlockPtr(policy, alloc.slots)
 	status.Notes = planNotes(policy)
 	return status
 }
