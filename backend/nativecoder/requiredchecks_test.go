@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // requiredChecksServer stubs the three endpoints the required-check resolution
@@ -246,5 +247,131 @@ func TestRequiredStatusChecksCached(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("expected one ruleset read, got %d", requests)
+	}
+}
+
+// TestParseRunIDAndCheckTime guards the ordering inputs: the workflow-run id is
+// parsed out of `details_url` and a malformed/absent timestamp degrades to the
+// zero time instead of failing the resolution.
+func TestParseRunIDAndCheckTime(t *testing.T) {
+	if got := parseRunID("https://github.com/o/n/actions/runs/39892668623/job/120216647618"); got != 39892668623 {
+		t.Fatalf("run id = %d, want 39892668623", got)
+	}
+	for _, url := range []string{"", "https://github.com/o/n/runs/120215871330"} {
+		if got := parseRunID(url); got != 0 {
+			t.Fatalf("parseRunID(%q) = %d, want 0", url, got)
+		}
+	}
+	if !parseCheckTime("2026-10-23T03:03:29Z").Equal(time.Date(2026, 10, 23, 3, 3, 29, 0, time.UTC)) {
+		t.Fatal("RFC3339 timestamp was not parsed")
+	}
+	if !parseCheckTime("not-a-time").IsZero() || !parseCheckTime("").IsZero() {
+		t.Fatal("an unusable timestamp must degrade to the zero time")
+	}
+}
+
+// TestNewestCheckRunsKeepsTheNewestInstancePerContext is the ci#847 core case:
+// after a supersede, GitHub reports the dead run as CANCELLED *next to* the green
+// replacement of the same context. Branch protection evaluates only the newest
+// instance, so the resolver must collapse the rollup the same way - otherwise a
+// green consolidation PR is vetoed forever by its own superseded run.
+func TestNewestCheckRunsKeepsTheNewestInstancePerContext(t *testing.T) {
+	// Verbatim shape observed on PR #1057: the superseded run finished (in wall
+	// time) before the successful replacement even started.
+	facts := []checkRunFact{
+		{Name: "Run PR CI Tests and Deployments", Status: "completed", Conclusion: "cancelled", IntegrationID: 15368,
+			StartedAt: parseCheckTime("2026-10-23T03:00:14Z"), CompletedAt: parseCheckTime("2026-10-23T03:00:34Z"), RunID: 39892624806, CheckRunID: 120215677969},
+		{Name: "Run PR CI Tests and Deployments", Status: "completed", Conclusion: "success", IntegrationID: 15368,
+			StartedAt: parseCheckTime("2026-10-23T03:03:29Z"), CompletedAt: parseCheckTime("2026-10-23T03:03:49Z"), RunID: 39892668623, CheckRunID: 120216647618},
+	}
+	kept := newestCheckRuns(facts)
+	if len(kept) != 1 {
+		t.Fatalf("expected one instance per context, got %d: %#v", len(kept), kept)
+	}
+	if kept[0].Conclusion != "success" {
+		t.Fatalf("kept the superseded run: %#v", kept[0])
+	}
+}
+
+// TestNewestCheckRunsIgnoresCompleteBeforeStartAndFallsBackToRunID guards the
+// two ordering subtleties: a skipped run reports completed_at *before*
+// started_at, so the later of the two orders it, and when the timestamps are
+// identical the workflow-run / check-run id breaks the tie.
+func TestNewestCheckRunsIgnoresCompleteBeforeStartAndFallsBackToRunID(t *testing.T) {
+	skipped := checkRunFact{Name: "Update PR Comment After Release", Status: "completed", Conclusion: "skipped",
+		StartedAt: parseCheckTime("2026-10-23T03:00:12Z"), CompletedAt: parseCheckTime("2026-10-23T03:00:11Z"), RunID: 39892624806}
+	replacement := checkRunFact{Name: "Update PR Comment After Release", Status: "completed", Conclusion: "success",
+		StartedAt: parseCheckTime("2026-10-23T03:03:26Z"), CompletedAt: parseCheckTime("2026-10-23T03:03:26Z"), RunID: 39892668623}
+	if kept := newestCheckRuns([]checkRunFact{skipped, replacement}); len(kept) != 1 || kept[0].Conclusion != "success" {
+		t.Fatalf("a complete-before-start run was mis-ranked: %#v", kept)
+	}
+
+	stamp := parseCheckTime("2026-10-23T03:00:00Z")
+	older := checkRunFact{Name: "CodeQL", Status: "completed", Conclusion: "failure", StartedAt: stamp, CompletedAt: stamp, RunID: 100, CheckRunID: 7}
+	newer := checkRunFact{Name: "CodeQL", Status: "completed", Conclusion: "success", StartedAt: stamp, CompletedAt: stamp, RunID: 200, CheckRunID: 8}
+	if kept := newestCheckRuns([]checkRunFact{older, newer}); len(kept) != 1 || kept[0].RunID != 200 {
+		t.Fatalf("identical timestamps must fall back to the run id: %#v", kept)
+	}
+
+	// Distinct contexts and distinct apps of the same name stay separate.
+	mixed := newestCheckRuns([]checkRunFact{
+		{Name: "CodeQL", IntegrationID: 1, Status: "completed", Conclusion: "success"},
+		{Name: "CodeQL", IntegrationID: 2, Status: "completed", Conclusion: "failure"},
+		{Name: "Pin Freshness Gate", IntegrationID: 1, Status: "completed", Conclusion: "success"},
+	})
+	if len(mixed) != 3 {
+		t.Fatalf("distinct context/app pairs must not be merged: %#v", mixed)
+	}
+}
+
+// TestBranchCheckStatesPrefersNewestRequiredContextInstance is the same ci#847
+// case end to end: the required context is present twice (superseded CANCELLED
+// + green replacement) and the branch must resolve to success with no failing
+// required context named.
+func TestBranchCheckStatesPrefersNewestRequiredContextInstance(t *testing.T) {
+	checkRuns := `{"check_runs":[
+		{"id":11,"name":"Run PR CI Tests and Deployments","status":"completed","conclusion":"cancelled","started_at":"2026-10-23T03:00:14Z","completed_at":"2026-10-23T03:00:34Z","details_url":"https://github.com/o/n/actions/runs/39892624806/job/120215677969","app":{"id":15368}},
+		{"id":12,"name":"Run PR CI Tests and Deployments","status":"completed","conclusion":"success","started_at":"2026-10-23T03:03:29Z","completed_at":"2026-10-23T03:03:49Z","details_url":"https://github.com/o/n/actions/runs/39892668623/job/120216647618","app":{"id":15368}}]}`
+
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, checkRuns, `{"state":"failure","statuses":[]}`))
+	states, err := client.branchCheckStates(t.Context(), "main", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if states.RequiredState != "success" {
+		t.Fatalf("required state = %q, want success: the superseded CANCELLED run must not veto its green replacement (%v)", states.RequiredState, states.FailingRequired)
+	}
+	if len(states.FailingRequired) != 0 {
+		t.Fatalf("no required context is red, got %v", states.FailingRequired)
+	}
+	if len(states.Informational) != 0 {
+		t.Fatalf("the superseded instance is not a context of its own, got %v", states.Informational)
+	}
+
+	runs, statuses, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := combinedStateFromFacts(runs, statuses); got != "success" {
+		t.Fatalf("combined state = %q, want success once the rollup is normalized", got)
+	}
+}
+
+// TestNewestCheckRunsKeepsARealCancelledFailure guards the safety side of
+// ci#847: only a *superseded* instance is dropped. When the newest instance of a
+// context is itself cancelled/failed, the context stays red.
+func TestNewestCheckRunsKeepsARealCancelledFailure(t *testing.T) {
+	facts := []checkRunFact{
+		{Name: "Full Suite Gate", Status: "completed", Conclusion: "success",
+			StartedAt: parseCheckTime("2026-10-23T03:00:00Z"), RunID: 1},
+		{Name: "Full Suite Gate", Status: "completed", Conclusion: "cancelled",
+			StartedAt: parseCheckTime("2026-10-23T04:00:00Z"), RunID: 2},
+	}
+	kept := newestCheckRuns(facts)
+	if len(kept) != 1 || kept[0].Conclusion != "cancelled" {
+		t.Fatalf("the newest instance is the cancelled one: %#v", kept)
+	}
+	if got := combinedStateFromFacts(kept, nil); got != "failure" {
+		t.Fatalf("combined state = %q, want failure", got)
 	}
 }
