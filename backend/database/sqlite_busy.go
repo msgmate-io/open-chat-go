@@ -74,7 +74,7 @@ type BusyRetryPolicy struct {
 }
 
 // DefaultBusyRetryPolicy is used by RetryOnBusy. With the SQLite
-// busy_timeout(10000) set by openSQLite, 20 attempts with a 200ms to 5s backoff
+// busy_timeout(30000) set by openSQLite, 20 attempts with a 200ms to 5s backoff
 // tolerate well over two minutes of foreign write lock.
 var DefaultBusyRetryPolicy = BusyRetryPolicy{
 	Attempts:     20,
