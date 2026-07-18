@@ -37,3 +37,6 @@
 [submodule "clients/integrations/voice_integration"]
 	path = clients/integrations/voice_integration
 	url = https://github.com/msgmate-io/open-chat-go-voice-integration
+[submodule "clients/integrations/go_client_integration"]
+	path = clients/integrations/go_client_integration
+	url = https://github.com/msgmate-io/open-chat-go-golang-client

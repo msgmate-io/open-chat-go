@@ -37,6 +37,15 @@
       "private": true
     },
     {
+      "module": "github.com/msgmate-io/go-client-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/go-client-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/go_client_integration",
+      "default_enabled": true,
+      "private": false
+    },
+    {
       "module": "github.com/msgmate-io/rest-api-tool-integration",
       "version": "",
       "import": "github.com/msgmate-io/rest-api-tool-integration",
