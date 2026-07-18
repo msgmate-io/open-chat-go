@@ -72,7 +72,7 @@ func CreateUserPwPreHashed(
 ) (error, *database.User) {
 
 	var user database.User
-	q := DB.First(&user, "email = ?", username)
+	q := DB.First(&user, "email = ? OR username = ?", username, username)
 
 	if q.Error != nil {
 		if q.Error.Error() != "record not found" {
@@ -86,6 +86,7 @@ func CreateUserPwPreHashed(
 
 	user = database.User{
 		Name:         username,
+		Username:     username,
 		Email:        username,
 		PasswordHash: hashedPassword,
 		ContactToken: uuid.New().String(),
@@ -111,7 +112,7 @@ func CreateUser(
 	log.Println("Creating user", username, "isAdminUser: ", isAdminUser)
 	// first chaeck if that user already exists
 	var user database.User
-	q := DB.First(&user, "email = ?", username)
+	q := DB.First(&user, "email = ? OR username = ?", username, username)
 
 	if q.Error != nil {
 		if q.Error.Error() != "record not found" {
@@ -131,6 +132,7 @@ func CreateUser(
 
 	user = database.User{
 		Name:         username,
+		Username:     username,
 		Email:        username,
 		PasswordHash: string(hashedPassword),
 		ContactToken: uuid.New().String(),

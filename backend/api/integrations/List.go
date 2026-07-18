@@ -2,6 +2,7 @@ package integrations
 
 import (
 	backendintegrations "backend/integrations"
+	"backend/server/util"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -14,6 +15,9 @@ type IntegrationListRow struct {
 	FrontendRouteCount int    `json:"frontend_route_count"`
 	ModelProviderCount int    `json:"model_provider_count"`
 	FunctionCount      int    `json:"function_count"`
+	RuntimeEnvVarCount int    `json:"runtime_env_var_count"`
+	AdminOnly          bool   `json:"admin_only"`
+	UserAccessible     bool   `json:"user_accessible"`
 }
 
 type IntegrationsListResponse struct {
@@ -29,7 +33,16 @@ type IntegrationsListResponse struct {
 //	@Success      200 {object} IntegrationsListResponse
 //	@Router       /api/v1/integrations/list [get]
 func (h *IntegrationsHandler) List(w http.ResponseWriter, r *http.Request) {
-	defs := backendintegrations.List()
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil || user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	defs, err := backendintegrations.ListVisibleDefinitions(DB, user)
+	if err != nil {
+		http.Error(w, "Failed to resolve integration visibility", http.StatusInternalServerError)
+		return
+	}
 	rows := make([]IntegrationListRow, 0, len(defs))
 	for _, def := range defs {
 		rows = append(rows, IntegrationListRow{
@@ -39,6 +52,9 @@ func (h *IntegrationsHandler) List(w http.ResponseWriter, r *http.Request) {
 			FrontendRouteCount: len(def.FrontendRoutes) + len(def.FrontendPages),
 			ModelProviderCount: len(def.ModelProviders),
 			FunctionCount:      len(def.Functions),
+			RuntimeEnvVarCount: len(def.RuntimeEnvVars),
+			AdminOnly:          def.AdminOnly,
+			UserAccessible:     def.UserAccessible,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {

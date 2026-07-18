@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -18,6 +19,18 @@ type TableMigration struct {
 
 func (t TableMigration) Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(t.Model)
+}
+
+type FunctionMigration struct {
+	Name string
+	Run  func(*gorm.DB) error
+}
+
+func (m FunctionMigration) Migrate(db *gorm.DB) error {
+	if m.Run == nil {
+		return nil
+	}
+	return m.Run(db)
 }
 
 type ChatAndMessageMigration struct{}
@@ -141,6 +154,67 @@ func (GrantDefaultPermissionsMigration) Migrate(db *gorm.DB) error {
 	return nil
 }
 
+type BackfillUsernamesMigration struct{}
+
+func (BackfillUsernamesMigration) Migrate(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("users") || !db.Migrator().HasColumn(&User{}, "username") {
+		return nil
+	}
+	users := []User{}
+	if err := db.Where("username IS NULL OR username = ''").Find(&users).Error; err != nil {
+		return err
+	}
+	for _, user := range users {
+		candidate := strings.TrimSpace(user.Email)
+		if candidate == "" {
+			generated, err := EnsureUniqueRandomUsername(db)
+			if err != nil {
+				return err
+			}
+			candidate = generated
+		}
+		if err := db.Model(&User{}).Where("id = ?", user.ID).Update("username", candidate).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type BackfillBotRuntimeOwnersMigration struct{}
+
+func (BackfillBotRuntimeOwnersMigration) Migrate(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	if !db.Migrator().HasTable("bot_runtime_configs") || !db.Migrator().HasTable("bot_runtime_owners") {
+		return nil
+	}
+
+	type runtimeOwnerRow struct {
+		ID          uint
+		OwnerUserId uint
+	}
+	rows := []runtimeOwnerRow{}
+	if err := db.Model(&BotRuntimeConfig{}).Select("id", "owner_user_id").Find(&rows).Error; err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		if row.ID == 0 || row.OwnerUserId == 0 {
+			continue
+		}
+		owner := BotRuntimeOwner{BotRuntimeConfigId: row.ID, UserId: row.OwnerUserId}
+		if err := db.Where("bot_runtime_config_id = ? AND user_id = ?", row.ID, row.OwnerUserId).FirstOrCreate(&owner).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 var Tabels []interface{} = []interface{}{
 	&User{},
 	&TwoFactorRecoveryCode{},
@@ -157,13 +231,15 @@ var Tabels []interface{} = []interface{}{
 	&TaskResult{},
 	&ModelConfig{},
 	&BotRuntimeConfig{},
+	&BotRuntimeOwner{},
 	&Permission{},
 	&AccessToken{},
-	&RegistrationRequest{},
+	&IntegrationAccess{},
 }
 
 var Migrations []Migration = []Migration{
 	TableMigration{&User{}},
+	BackfillUsernamesMigration{},
 	TableMigration{&TwoFactorRecoveryCode{}},
 	TableMigration{&Session{}},
 	TableMigration{&PublicProfile{}},
@@ -176,9 +252,11 @@ var Migrations []Migration = []Migration{
 	TableMigration{&TaskResult{}},
 	TableMigration{&ModelConfig{}},
 	TableMigration{&BotRuntimeConfig{}},
+	TableMigration{&BotRuntimeOwner{}},
+	BackfillBotRuntimeOwnersMigration{},
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
-	TableMigration{&RegistrationRequest{}},
+	TableMigration{&IntegrationAccess{}},
 	GrantDefaultPermissionsMigration{},
 }
 
@@ -189,5 +267,14 @@ func RegisterExternalModels(models ...interface{}) {
 		}
 		Tabels = append(Tabels, model)
 		Migrations = append(Migrations, TableMigration{Model: model})
+	}
+}
+
+func RegisterExternalMigrations(migrations ...FunctionMigration) {
+	for _, migration := range migrations {
+		if migration.Run == nil {
+			continue
+		}
+		Migrations = append(Migrations, migration)
 	}
 }

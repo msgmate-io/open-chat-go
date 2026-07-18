@@ -17,9 +17,11 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/hibiken/asynqmon"
 	"github.com/urfave/cli/v3"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -158,7 +160,7 @@ func GetServerFlags() []cli.Flag {
 			Value:   "127.0.0.1",
 			Usage:   "server bind address",
 		},
-		&cli.IntFlag{
+		&cli.Uint16Flag{
 			Sources: cli.EnvVars("PORT"),
 			Name:    "port",
 			Aliases: []string{"p"},
@@ -261,6 +263,150 @@ type bootstrapUserSpec struct {
 	ValidateStrength bool
 }
 
+func nextAvailableUsername(DB *gorm.DB, base string) (string, error) {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "user"
+	}
+	for i := 0; i < 1000; i++ {
+		candidate := base
+		if i > 0 {
+			candidate = fmt.Sprintf("%s_%d", base, i+1)
+		}
+		var count int64
+		if err := DB.Model(&database.User{}).Where("username = ?", candidate).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("failed to resolve unique username for %q", base)
+}
+
+func nextAvailableEmail(DB *gorm.DB, localPart string) (string, error) {
+	localPart = strings.TrimSpace(localPart)
+	if localPart == "" {
+		localPart = "user"
+	}
+	for i := 0; i < 1000; i++ {
+		candidateLocal := localPart
+		if i > 0 {
+			candidateLocal = fmt.Sprintf("%s_%d", localPart, i+1)
+		}
+		candidate := candidateLocal + "@legacy.local"
+		var count int64
+		if err := DB.Model(&database.User{}).Where("email = ?", candidate).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("failed to resolve unique email for %q", localPart)
+}
+
+func renameReservedAdminUsernameConflicts(DB *gorm.DB, excludeUserID uint) error {
+	q := DB.Where("username = ?", "admin")
+	if excludeUserID != 0 {
+		q = q.Where("id <> ?", excludeUserID)
+	}
+
+	conflicts := []database.User{}
+	if err := q.Find(&conflicts).Error; err != nil {
+		return err
+	}
+
+	for _, conflict := range conflicts {
+		// TODO: stop auto-renaming reserved "admin" username and fail startup after legacy deployments migrate.
+		candidate, err := nextAvailableUsername(DB, fmt.Sprintf("admin_legacy_%d", conflict.ID))
+		if err != nil {
+			return err
+		}
+		if err := DB.Model(&database.User{}).Where("id = ?", conflict.ID).Update("username", candidate).Error; err != nil {
+			return err
+		}
+		if strings.EqualFold(strings.TrimSpace(conflict.Email), "admin") {
+			emailCandidate, emailErr := nextAvailableEmail(DB, candidate)
+			if emailErr != nil {
+				return emailErr
+			}
+			if err := DB.Model(&database.User{}).Where("id = ?", conflict.ID).Update("email", emailCandidate).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*database.User, error) {
+	if err := renameReservedAdminUsernameConflicts(DB, 0); err != nil {
+		return nil, err
+	}
+
+	var admin database.User
+	err := DB.First(&admin, "is_admin = ?", true).Error
+	if err == nil {
+		if err := renameReservedAdminUsernameConflicts(DB, admin.ID); err != nil {
+			return nil, err
+		}
+		updates := map[string]interface{}{}
+		if strings.TrimSpace(admin.Username) != "admin" {
+			updates["username"] = "admin"
+		}
+		if strings.TrimSpace(admin.Name) == "" {
+			updates["name"] = "admin"
+		}
+		if isAutomated && !admin.IsAutomated {
+			updates["is_automated"] = true
+		}
+		if len(updates) > 0 {
+			if err := DB.Model(&admin).Updates(updates).Error; err != nil {
+				return nil, err
+			}
+			if reloadErr := DB.First(&admin, "id = ?", admin.ID).Error; reloadErr != nil {
+				return nil, reloadErr
+			}
+		}
+		return &admin, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	var passwordHash string
+	if strings.HasPrefix(password, "hashed_") {
+		passwordHash = strings.TrimPrefix(password, "hashed_")
+	} else {
+		hashedPassword, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if hashErr != nil {
+			return nil, hashErr
+		}
+		passwordHash = string(hashedPassword)
+	}
+
+	adminEmail, emailErr := nextAvailableEmail(DB, "admin")
+	if emailErr != nil {
+		return nil, emailErr
+	}
+
+	admin = database.User{
+		Name:         "admin",
+		Username:     "admin",
+		Email:        adminEmail,
+		PasswordHash: passwordHash,
+		ContactToken: uuid.NewString(),
+		IsAdmin:      true,
+		IsAutomated:  isAutomated,
+	}
+	if err := DB.Create(&admin).Error; err != nil {
+		return nil, err
+	}
+
+	return &admin, nil
+}
+
 func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string) (string, error) {
 	if rawPassword == "random" {
 		generatedPassword, genErr := generateRandomPassword()
@@ -297,18 +443,7 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 	}
 
 	if spec.SingletonAdmin {
-		var existingAdmin database.User
-		q := DB.First(&existingAdmin, "is_admin = ?", true)
-		if q.Error == nil {
-			if spec.IsAutomated && !existingAdmin.IsAutomated {
-				existingAdmin.IsAutomated = true
-				DB.Save(&existingAdmin)
-			}
-			return &existingAdmin, nil
-		}
-		if q.Error != nil && q.Error != gorm.ErrRecordNotFound {
-			return nil, q.Error
-		}
+		return ensureSingletonAdminUser(DB, password, spec.IsAutomated)
 	}
 
 	var user *database.User
@@ -338,15 +473,21 @@ func ServerCli() *cli.Command {
 		Action: func(_ context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
+			for _, migration := range integrations.AdditionalMigrations() {
+				database.RegisterExternalMigrations(database.FunctionMigration{
+					Name: migration.Name,
+					Run:  migration.Run,
+				})
+			}
 
-			runtimecfg.SetAll(map[string]runtimecfg.Value{
+			runtimeValues := map[string]runtimecfg.Value{
 				"DB_BACKEND":              {Value: c.String("db-backend"), Sensitive: false},
 				"DB_PATH":                 {Value: c.String("db-path"), Sensitive: false},
 				"DEBUG":                   {Value: fmt.Sprintf("%t", c.Bool("debug")), Sensitive: false},
 				"SETUP_TEST_USERS":        {Value: fmt.Sprintf("%t", c.Bool("setup-test-users")), Sensitive: false},
 				"RESET_DB":                {Value: fmt.Sprintf("%t", c.Bool("reset-db")), Sensitive: false},
 				"HOST":                    {Value: c.String("host"), Sensitive: false},
-				"PORT":                    {Value: fmt.Sprintf("%d", c.Int("port")), Sensitive: false},
+				"PORT":                    {Value: fmt.Sprintf("%d", c.Uint16("port")), Sensitive: false},
 				"ROOT_CREDENTIALS":        {Value: c.String("root-credentials"), Sensitive: true},
 				"DEFAULT_BOT_CREDENTIALS": {Value: c.String("default-bot"), Sensitive: true},
 				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
@@ -371,7 +512,19 @@ func ServerCli() *cli.Command {
 				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
 				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
-			})
+			}
+
+			for _, decl := range integrations.RuntimeEnvDeclarations() {
+				if _, exists := runtimeValues[decl.Key]; exists {
+					continue
+				}
+				runtimeValues[decl.Key] = runtimecfg.Value{
+					Value:     os.Getenv(decl.Key),
+					Sensitive: decl.Sensitive,
+				}
+			}
+
+			runtimecfg.SetAll(runtimeValues)
 
 			redisConnOpt, err := resolveRedisConnOpt(c)
 			if err != nil {
@@ -404,20 +557,20 @@ func ServerCli() *cli.Command {
 				database.SetupTestUsers(DB)
 			}
 
-			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Int("port"))
+			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Uint16("port"))
 			sessionCookieDomain := normalizeSessionCookieDomain(c.String("host"))
 
 			// Initialize HTTP server and websocket handler.
-			s, ch, _, err := server.BackendServer(
-				DB,
-				queueClient,
-				queueInspector,
-				asynqUIHandler,
-				c.String("host"),
-				c.Int("port"),
-				c.Bool("debug"),
-				c.String("frontend-proxy"),
-				sessionCookieDomain,
+				s, ch, _, err := server.BackendServer(
+					DB,
+					queueClient,
+					queueInspector,
+					asynqUIHandler,
+					c.String("host"),
+					c.Uint16("port"),
+					c.Bool("debug"),
+					c.String("frontend-proxy"),
+					sessionCookieDomain,
 				c.Bool("signup-requires-admin-approval"),
 			)
 			if err != nil {

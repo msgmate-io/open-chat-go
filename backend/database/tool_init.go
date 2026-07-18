@@ -219,3 +219,124 @@ func (m *ToolInitDataManager) SetExpiration(chatId uint, toolName string, expire
 		Where("chat_id = ? AND tool_name = ?", chatId, toolName).
 		Update("expires_at", expiresAt).Error
 }
+
+func redactToolInitValueShape(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		redacted := map[string]interface{}{}
+		for key, nested := range typed {
+			redacted[key] = redactToolInitValueShape(nested)
+		}
+		return redacted
+	default:
+		return nil
+	}
+}
+
+func mergeToolInitValueShape(current interface{}, incoming interface{}) interface{} {
+	if current == nil {
+		return incoming
+	}
+	if incoming == nil {
+		return current
+	}
+
+	currentMap, currentOK := current.(map[string]interface{})
+	incomingMap, incomingOK := incoming.(map[string]interface{})
+	if !currentOK || !incomingOK {
+		if currentOK {
+			return current
+		}
+		if incomingOK {
+			return incoming
+		}
+		return nil
+	}
+
+	merged := map[string]interface{}{}
+	for key, value := range currentMap {
+		merged[key] = value
+	}
+	for key, value := range incomingMap {
+		merged[key] = mergeToolInitValueShape(merged[key], value)
+	}
+
+	return merged
+}
+
+// DisposeToolInitDataForChat removes persisted tool init rows for a chat and
+// keeps only the key shape in shared_config.tool_init with null leaf values.
+func (m *ToolInitDataManager) DisposeToolInitDataForChat(chat *Chat) error {
+	if chat == nil {
+		return fmt.Errorf("chat is required")
+	}
+
+	redactedToolInit := map[string]interface{}{}
+	if allToolInitData, err := m.GetAllToolInitData(chat.ID); err == nil {
+		for toolName, initData := range allToolInitData {
+			redactedToolInit[toolName] = redactToolInitValueShape(initData)
+		}
+	}
+
+	var sharedConfig SharedChatConfig
+	hasSharedConfig := false
+	if chat.SharedConfig != nil {
+		sharedConfig = *chat.SharedConfig
+		hasSharedConfig = true
+	} else if chat.SharedConfigId != nil && *chat.SharedConfigId != 0 {
+		err := m.DB.First(&sharedConfig, "id = ?", *chat.SharedConfigId).Error
+		if err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return err
+			}
+		} else {
+			hasSharedConfig = true
+		}
+	}
+
+	if hasSharedConfig {
+		configData := map[string]interface{}{}
+		if len(sharedConfig.ConfigData) > 0 {
+			_ = json.Unmarshal(sharedConfig.ConfigData, &configData)
+		}
+		if existingToolInitRaw, ok := configData["tool_init"].(map[string]interface{}); ok {
+			for toolName, initPayload := range existingToolInitRaw {
+				redacted := redactToolInitValueShape(initPayload)
+				redactedToolInit[toolName] = mergeToolInitValueShape(redactedToolInit[toolName], redacted)
+			}
+		}
+	}
+
+	return m.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("chat_id = ?", chat.ID).Delete(&ToolInitData{}).Error; err != nil {
+			return err
+		}
+
+		if !hasSharedConfig {
+			return nil
+		}
+
+		configData := map[string]interface{}{}
+		if len(sharedConfig.ConfigData) > 0 {
+			_ = json.Unmarshal(sharedConfig.ConfigData, &configData)
+		}
+
+		if len(redactedToolInit) == 0 {
+			delete(configData, "tool_init")
+		} else {
+			configData["tool_init"] = redactedToolInit
+		}
+
+		encoded, err := json.Marshal(configData)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&SharedChatConfig{}).Where("id = ?", sharedConfig.ID).Update("config_data", encoded).Error; err != nil {
+			return err
+		}
+
+		sharedConfig.ConfigData = encoded
+		chat.SharedConfig = &sharedConfig
+		return nil
+	})
+}

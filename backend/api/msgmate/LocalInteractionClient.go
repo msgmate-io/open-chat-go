@@ -3,16 +3,17 @@ package msgmate
 import (
 	"backend/api/chats"
 	"backend/api/contacts"
-	"backend/client"
 	"encoding/json"
 	"fmt"
-	"gorm.io/gorm"
 	"io"
 	"log"
 	"net/http"
 	"reflect"
 	"strings"
 	"time"
+
+	client "github.com/msgmate-io/go-client-integration/goclient"
+	"gorm.io/gorm"
 )
 
 // DefaultBotConfig represents the default configuration for a bot
@@ -66,7 +67,6 @@ func (l *LocalInteractionClient) RetrieveDefaultBot() (*contacts.ListedContact, 
 	for _, contact := range contactsList.Rows {
 		// The contact is already a ListedContact with Name field
 		if contact.Name == "bot" {
-			// Return the contact directly since it's already a ListedContact
 			return &contacts.ListedContact{
 				ContactToken: contact.ContactToken,
 				Name:         contact.Name,
@@ -215,10 +215,21 @@ func (l *LocalInteractionClient) CreateInteraction(toolInit map[string]interface
 	log.Printf("  Attachments: %+v", attachments)
 	log.Printf("  ChatType: interaction")
 
+	clientAttachments := make([]client.FileAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		clientAttachments = append(clientAttachments, client.FileAttachment{
+			FileID:      attachment.FileID,
+			DisplayName: attachment.DisplayName,
+			FileName:    attachment.FileName,
+			FileSize:    attachment.FileSize,
+			MimeType:    attachment.MimeType,
+		})
+	}
+
 	err, chat := l.client.CreateChatWithAttachments(
 		defaultBot.ContactToken,
 		firstMessageToSend,
-		attachments,
+		clientAttachments,
 		sharedConfig,
 		"interaction",
 	)

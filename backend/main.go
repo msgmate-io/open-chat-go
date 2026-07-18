@@ -41,6 +41,7 @@ func main() {
 		Commands: []*ufcli.Command{
 			cmd.ServerCli(),
 			cmd.WorkerCli(),
+			cmd.ClientCli(),
 		},
 	}
 
