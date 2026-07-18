@@ -63,24 +63,8 @@ else
     echo "Step 1: Incrementing version in metrics handler..."
 fi
 
-# Read current version
-CURRENT_VERSION=$(grep 'var VERSION =' backend/api/metrics/handler.go | sed 's/.*"\(.*\)".*/\1/')
-echo "Current version: $CURRENT_VERSION"
-
-# Parse version (assuming format: major.minor.patch)
-IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
-MAJOR=${VERSION_PARTS[0]}
-MINOR=${VERSION_PARTS[1]}
-PATCH=${VERSION_PARTS[2]}
-
-# Increment patch version (the last number)
-NEW_PATCH=$((PATCH + 1))
-NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-echo "New version: $NEW_VERSION"
-
-TMP_FILE="$(mktemp)"
-sed "s|var VERSION = \"$CURRENT_VERSION\"|var VERSION = \"$NEW_VERSION\"|" backend/api/metrics/handler.go > "$TMP_FILE" && mv "$TMP_FILE" backend/api/metrics/handler.go
-
+./development/scripts/bump_backend_version.sh
+NEW_VERSION=$(grep 'var VERSION =' backend/api/metrics/handler.go | sed 's/.*"\(.*\)".*/\1/')
 echo "Version updated to: $NEW_VERSION"
 
 # Step 3: Generate Swagger documentation
