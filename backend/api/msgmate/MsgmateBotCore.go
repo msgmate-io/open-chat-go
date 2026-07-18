@@ -2,11 +2,12 @@ package msgmate
 
 import (
 	wsapi "backend/api/websocket"
-	"backend/client"
 	"backend/database"
 	"context"
 	"errors"
 	"sync"
+
+	client "github.com/msgmate-io/go-client-integration/goclient"
 )
 
 var ErrResponseAlreadySent = errors.New("ai response already sent")
