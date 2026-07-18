@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	cliintegration "github.com/msgmate-io/open-chat-go-golang-client/cliintegration"
+	cliintegration "github.com/msgmate-io/go-client-integration/cliintegration"
 	"github.com/urfave/cli/v3"
 )
 
