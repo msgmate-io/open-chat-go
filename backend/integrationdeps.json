@@ -37,9 +37,9 @@
       "private": true
     },
     {
-      "module": "github.com/msgmate-io/go-client-integration",
+      "module": "github.com/msgmate-io/open-chat-go-golang-client",
       "version": "",
-      "import": "github.com/msgmate-io/go-client-integration",
+      "import": "github.com/msgmate-io/open-chat-go-golang-client",
       "source": "submodule",
       "local_path": "clients/integrations/go_client_integration",
       "default_enabled": true,
