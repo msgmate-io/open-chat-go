@@ -53,6 +53,13 @@ func TestSetupBaseConnectionsCreatesDefaultBotRuntimeOwnedByAdmin(t *testing.T) 
 	if runtime.OwnerUserId != admin.ID {
 		t.Fatalf("expected admin owner_user_id=%d, got %d", admin.ID, runtime.OwnerUserId)
 	}
+	var ownerCount int64
+	if err := DB.Model(&database.BotRuntimeOwner{}).Where("bot_runtime_config_id = ? AND user_id = ?", runtime.ID, admin.ID).Count(&ownerCount).Error; err != nil {
+		t.Fatalf("failed to verify bot runtime owner row: %v", err)
+	}
+	if ownerCount != 1 {
+		t.Fatalf("expected one bot runtime owner row for admin, got %d", ownerCount)
+	}
 	if runtime.Name == "" {
 		t.Fatalf("expected runtime name to be non-empty")
 	}
@@ -94,5 +101,12 @@ func TestSetupBaseConnectionsReassignsDefaultBotRuntimeToAdmin(t *testing.T) {
 	}
 	if updated.OwnerUserId != admin.ID {
 		t.Fatalf("expected reassigned owner_user_id=%d, got %d", admin.ID, updated.OwnerUserId)
+	}
+	var ownerCount int64
+	if err := DB.Model(&database.BotRuntimeOwner{}).Where("bot_runtime_config_id = ? AND user_id = ?", updated.ID, admin.ID).Count(&ownerCount).Error; err != nil {
+		t.Fatalf("failed to verify bot runtime owner row: %v", err)
+	}
+	if ownerCount != 1 {
+		t.Fatalf("expected one bot runtime owner row for admin after reassignment, got %d", ownerCount)
 	}
 }

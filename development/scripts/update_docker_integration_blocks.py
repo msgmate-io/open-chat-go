@@ -24,6 +24,7 @@ END_FRONTEND = "# END GENERATED: integration-frontend-asset-copies"
 PLACEHOLDER_SEGMENT_MAP = {
     "table_name": "{table_name}",
     "id": "{id}",
+    "dynamic_email_uuid": "dynamic-email-uuid-placeholder",
     "tool_uuid": "tool-uuid-placeholder",
     "key_uuid": "key-uuid-placeholder",
     "server_uuid": "server-uuid-placeholder",

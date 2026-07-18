@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +17,7 @@ import (
 
 type mcpRPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      string      `json:"id"`
+	ID      interface{} `json:"id,omitempty"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params,omitempty"`
 }
@@ -59,9 +61,34 @@ func parseMCPIntegrationConfig(raw map[string]interface{}) (mcpIntegrationConfig
 	if out.URL == "" {
 		return out, fmt.Errorf("config.url is required")
 	}
-	if !strings.HasPrefix(strings.ToLower(out.URL), "https://") {
-		return out, fmt.Errorf("config.url must use https")
+
+	parsedURL, err := url.Parse(out.URL)
+	if err != nil {
+		return out, fmt.Errorf("config.url must be a valid URL")
 	}
+	scheme := strings.ToLower(strings.TrimSpace(parsedURL.Scheme))
+	hostname := strings.ToLower(strings.TrimSpace(parsedURL.Hostname()))
+	isLoopbackHost := hostname == "localhost" || net.ParseIP(hostname) != nil && net.ParseIP(hostname).IsLoopback()
+
+	if scheme != "https" {
+		if scheme != "http" {
+			return out, fmt.Errorf("config.url must use https or http")
+		}
+		if !(isLoopbackHost || hostname == "host.docker.internal") {
+			return out, fmt.Errorf("config.url may use http only for localhost or host.docker.internal")
+		}
+	}
+
+	resolveLocalhost, _ := raw["resolve_localhost_to_host_docker_internal"].(bool)
+	if resolveLocalhost && isLoopbackHost {
+		if port := parsedURL.Port(); strings.TrimSpace(port) != "" {
+			parsedURL.Host = "host.docker.internal:" + port
+		} else {
+			parsedURL.Host = "host.docker.internal"
+		}
+		out.URL = parsedURL.String()
+	}
+
 	if timeoutRaw, ok := raw["request_timeout_seconds"]; ok {
 		switch v := timeoutRaw.(type) {
 		case float64:
@@ -126,42 +153,118 @@ func parseMCPAuthHeaders(raw map[string]interface{}) map[string]string {
 	return headers
 }
 
-func mcpCall(config mcpIntegrationConfig, auth map[string]interface{}, method string, params interface{}) (mcpRPCResponse, error) {
-	body, err := json.Marshal(mcpRPCRequest{JSONRPC: "2.0", ID: "open-chat", Method: method, Params: params})
+func mcpDoRequest(config mcpIntegrationConfig, auth map[string]interface{}, method string, params interface{}, extraHeaders map[string]string) (mcpRPCResponse, http.Header, error) {
+	isNotificationMethod := strings.HasPrefix(strings.ToLower(strings.TrimSpace(method)), "notifications/")
+	reqBody := mcpRPCRequest{JSONRPC: "2.0", Method: method, Params: params}
+	if !isNotificationMethod {
+		reqBody.ID = "open-chat"
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return mcpRPCResponse{}, err
+		return mcpRPCResponse{}, nil, err
 	}
 	req, err := http.NewRequest(http.MethodPost, config.URL, bytes.NewReader(body))
 	if err != nil {
-		return mcpRPCResponse{}, err
+		return mcpRPCResponse{}, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream, application/x-ndjson")
 	for key, value := range parseMCPAuthHeaders(auth) {
 		req.Header.Set(key, value)
 	}
+	for key, value := range extraHeaders {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
 	client := &http.Client{Timeout: time.Duration(config.RequestTimeoutSeconds) * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return mcpRPCResponse{}, err
+		return mcpRPCResponse{}, nil, err
 	}
 	defer resp.Body.Close()
+	headers := resp.Header.Clone()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return mcpRPCResponse{}, fmt.Errorf("mcp request failed: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
+		return mcpRPCResponse{}, headers, fmt.Errorf("mcp request failed: %s: %s", resp.Status, strings.TrimSpace(string(payload)))
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
-		return mcpRPCResponse{}, err
+		return mcpRPCResponse{}, headers, err
+	}
+	if len(strings.TrimSpace(string(responseBody))) == 0 {
+		if isNotificationMethod || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusAccepted {
+			return mcpRPCResponse{JSONRPC: "2.0", ID: nil, Result: json.RawMessage(`{}`)}, headers, nil
+		}
 	}
 	parsed, err := parseMCPResponseBody(responseBody)
 	if err != nil {
-		return mcpRPCResponse{}, err
+		return mcpRPCResponse{}, headers, err
 	}
 	if parsed.Error != nil {
-		return mcpRPCResponse{}, fmt.Errorf("mcp error %d: %s", parsed.Error.Code, parsed.Error.Message)
+		return mcpRPCResponse{}, headers, fmt.Errorf("mcp error %d: %s", parsed.Error.Code, parsed.Error.Message)
 	}
-	return parsed, nil
+	return parsed, headers, nil
+}
+
+func isServerNotInitializedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "server not initialized")
+}
+
+func isMethodNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "method not found") || strings.Contains(msg, "-32601")
+}
+
+func mcpInitializeSession(config mcpIntegrationConfig, auth map[string]interface{}) (map[string]string, error) {
+	initializeParams := map[string]interface{}{
+		"protocolVersion": "2025-03-26",
+		"capabilities":    map[string]interface{}{},
+		"clientInfo": map[string]interface{}{
+			"name":    "open-chat-go",
+			"version": "dev",
+		},
+	}
+	_, headers, err := mcpDoRequest(config, auth, "initialize", initializeParams, nil)
+	if err != nil {
+		return nil, err
+	}
+	extraHeaders := map[string]string{}
+	sessionID := strings.TrimSpace(headers.Get("Mcp-Session-Id"))
+	if sessionID != "" {
+		extraHeaders["Mcp-Session-Id"] = sessionID
+	}
+	_, _, initNotifyErr := mcpDoRequest(config, auth, "notifications/initialized", map[string]interface{}{}, extraHeaders)
+	if initNotifyErr != nil && !isMethodNotFoundError(initNotifyErr) {
+		return nil, initNotifyErr
+	}
+	return extraHeaders, nil
+}
+
+func mcpCall(config mcpIntegrationConfig, auth map[string]interface{}, method string, params interface{}) (mcpRPCResponse, error) {
+	response, _, err := mcpDoRequest(config, auth, method, params, nil)
+	if err == nil {
+		return response, nil
+	}
+	if !isServerNotInitializedError(err) {
+		return mcpRPCResponse{}, err
+	}
+	sessionHeaders, initErr := mcpInitializeSession(config, auth)
+	if initErr != nil {
+		return mcpRPCResponse{}, fmt.Errorf("mcp initialize failed: %w", initErr)
+	}
+	response, _, err = mcpDoRequest(config, auth, method, params, sessionHeaders)
+	if err != nil {
+		return mcpRPCResponse{}, err
+	}
+	return response, nil
 }
 
 func parseMCPResponseBody(body []byte) (mcpRPCResponse, error) {
