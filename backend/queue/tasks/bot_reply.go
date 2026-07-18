@@ -3,18 +3,20 @@ package tasks
 import (
 	"backend/api/msgmate"
 	wsapi "backend/api/websocket"
-	"backend/client"
 	"backend/database"
 	"backend/workqueue"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	client "github.com/msgmate-io/go-client-integration/goclient"
+	"gorm.io/gorm"
 )
 
 // @doc:open-chat-hal-agent-logic
@@ -72,7 +74,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	ocClient := client.NewClient(host)
 	ocClient.SetSessionId(token)
-	ocClient.User = botUser
+	ocClient.User = client.User{UUID: botUser.UUID}
 
 	wsHandler := deps.WSHandler
 	if wsHandler == nil {
@@ -140,6 +142,9 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 			}
 		}
 		if responseAlreadySent {
+			if disposeErr := disposeToolInitAfterBotReply(deps.DB, payload.ChatUUID); disposeErr != nil {
+				log.Printf("tool_init disposal failed after already-sent response for chat %s: %v", payload.ChatUUID, disposeErr)
+			}
 			failureMessage = fmt.Sprintf("%s (response already sent)", failureMessage)
 		}
 		failure := ToolExecutionResult{Success: false, Error: failureMessage}
@@ -148,9 +153,57 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("bot reply generation failed: %w", asynq.SkipRetry)
 	}
 
+	if disposeErr := disposeToolInitAfterBotReply(deps.DB, payload.ChatUUID); disposeErr != nil {
+		log.Printf("tool_init disposal failed for chat %s: %v", payload.ChatUUID, disposeErr)
+	}
+
 	success := ToolExecutionResult{Success: true, Result: "bot reply generated"}
 	persistTaskResult(deps.DB, task, success)
 	return writeResult(task, success)
+}
+
+func shouldDisposeToolInitForChat(chat database.Chat) bool {
+	if !strings.HasPrefix(chat.ChatType, "interaction") {
+		return false
+	}
+
+	if chat.SharedConfig == nil || len(chat.SharedConfig.ConfigData) == 0 {
+		return true
+	}
+
+	configData := map[string]interface{}{}
+	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &configData); err != nil {
+		return true
+	}
+
+	rawPersist, exists := configData["persist_tool_init"]
+	if !exists {
+		return true
+	}
+
+	persist, ok := rawPersist.(bool)
+	if !ok {
+		return true
+	}
+
+	return !persist
+}
+
+func disposeToolInitAfterBotReply(DB *gorm.DB, chatUUID string) error {
+	if DB == nil {
+		return nil
+	}
+
+	var chat database.Chat
+	if err := DB.Preload("SharedConfig").Where("uuid = ?", chatUUID).First(&chat).Error; err != nil {
+		return err
+	}
+
+	if !shouldDisposeToolInitForChat(chat) {
+		return nil
+	}
+
+	return database.NewToolInitDataManager(DB).DisposeToolInitDataForChat(&chat)
 }
 
 func botReplyFailureMessage(err error) string {
