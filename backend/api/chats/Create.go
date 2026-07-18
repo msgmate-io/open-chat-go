@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
 )
 
@@ -81,35 +82,40 @@ func applyModelConfigBindingForUser(DB *gorm.DB, ownerUserID uint, config map[st
 	return config
 }
 
-func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestSharedConfig map[string]interface{}) map[string]interface{} {
+func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestSharedConfig map[string]interface{}) (map[string]interface{}, error) {
 	if !botUser.IsAutomated {
 		if requestSharedConfig == nil {
-			return nil
+			return nil, nil
 		}
-		return requestSharedConfig
+		withDefaults := extiface.ApplySharedConfigDefaults(requestSharedConfig)
+		return withDefaults, nil
 	}
 	var runtime database.BotRuntimeConfig
 	if err := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error; err != nil {
 		if requestSharedConfig == nil {
-			return nil
+			return nil, nil
 		}
-		return requestSharedConfig
+		withDefaults := extiface.ApplySharedConfigDefaults(requestSharedConfig)
+		return withDefaults, nil
 	}
 	runtimeConfig := map[string]interface{}{}
 	if len(runtime.DefaultSharedConfig) > 0 {
 		_ = json.Unmarshal(runtime.DefaultSharedConfig, &runtimeConfig)
 	}
+	var resolved map[string]interface{}
 	if requestSharedConfig == nil {
 		if len(runtimeConfig) == 0 {
-			return nil
+			return nil, nil
 		}
-		return runtimeConfig
+		resolved = runtimeConfig
+	} else if len(runtimeConfig) == 0 {
+		resolved = applyModelConfigBindingForUser(DB, runtime.OwnerUserId, requestSharedConfig)
+	} else {
+		merged := mergeJSONMaps(runtimeConfig, requestSharedConfig)
+		resolved = applyModelConfigBindingForUser(DB, runtime.OwnerUserId, merged)
 	}
-	if len(runtimeConfig) == 0 {
-		return applyModelConfigBindingForUser(DB, runtime.OwnerUserId, requestSharedConfig)
-	}
-	merged := mergeJSONMaps(runtimeConfig, requestSharedConfig)
-	return applyModelConfigBindingForUser(DB, runtime.OwnerUserId, merged)
+	withDefaults := extiface.ApplySharedConfigDefaults(resolved)
+	return withDefaults, nil
 }
 
 // Create a chat
@@ -270,7 +276,11 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resolvedSharedConfig := resolveSharedConfigForChat(DB, otherUser, data.SharedConfig)
+	resolvedSharedConfig, resolveSharedErr := resolveSharedConfigForChat(DB, otherUser, data.SharedConfig)
+	if resolveSharedErr != nil {
+		http.Error(w, "Failed to resolve shared_config", http.StatusInternalServerError)
+		return
+	}
 	if resolvedSharedConfig != nil {
 		configData, err := json.Marshal(resolvedSharedConfig)
 		if err != nil {

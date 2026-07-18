@@ -63,24 +63,33 @@ else
     echo "Step 1: Incrementing version in metrics handler..."
 fi
 
-# Read current version
-CURRENT_VERSION=$(grep 'var VERSION =' backend/api/metrics/handler.go | sed 's/.*"\(.*\)".*/\1/')
-echo "Current version: $CURRENT_VERSION"
-
-# Parse version (assuming format: major.minor.patch)
-IFS='.' read -ra VERSION_PARTS <<< "$CURRENT_VERSION"
-MAJOR=${VERSION_PARTS[0]}
-MINOR=${VERSION_PARTS[1]}
-PATCH=${VERSION_PARTS[2]}
-
-# Increment patch version (the last number)
-NEW_PATCH=$((PATCH + 1))
-NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
-echo "New version: $NEW_VERSION"
-
-TMP_FILE="$(mktemp)"
-sed "s|var VERSION = \"$CURRENT_VERSION\"|var VERSION = \"$NEW_VERSION\"|" backend/api/metrics/handler.go > "$TMP_FILE" && mv "$TMP_FILE" backend/api/metrics/handler.go
-
+BUMP_SCRIPT="./development/scripts/bump_backend_version.sh"
+if [ -x "$BUMP_SCRIPT" ]; then
+    "$BUMP_SCRIPT"
+elif [ -f "$BUMP_SCRIPT" ]; then
+    bash "$BUMP_SCRIPT"
+else
+    echo "Warning: $BUMP_SCRIPT not found; bumping backend version inline."
+    VERSION_FILE="backend/api/metrics/handler.go"
+    CURRENT_VERSION=$(grep 'var VERSION =' "$VERSION_FILE" | sed 's/.*"\(.*\)".*/\1/')
+    IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+    if [ -z "$MAJOR" ] || [ -z "$MINOR" ] || [ -z "$PATCH" ]; then
+        echo "Error: unexpected version format '$CURRENT_VERSION' in $VERSION_FILE"
+        exit 1
+    fi
+    if ! [[ "$PATCH" =~ ^[0-9]+$ ]]; then
+        echo "Error: patch segment is not numeric in version '$CURRENT_VERSION'"
+        exit 1
+    fi
+    NEW_PATCH=$((PATCH + 1))
+    NEW_VERSION_INLINE="${MAJOR}.${MINOR}.${NEW_PATCH}"
+    TMP_FILE=$(mktemp)
+    sed "s|var VERSION = \"${CURRENT_VERSION}\"|var VERSION = \"${NEW_VERSION_INLINE}\"|" "$VERSION_FILE" > "$TMP_FILE"
+    mv "$TMP_FILE" "$VERSION_FILE"
+    echo "Current version: $CURRENT_VERSION"
+    echo "New version: $NEW_VERSION_INLINE"
+fi
+NEW_VERSION=$(grep 'var VERSION =' backend/api/metrics/handler.go | sed 's/.*"\(.*\)".*/\1/')
 echo "Version updated to: $NEW_VERSION"
 
 # Step 3: Generate Swagger documentation
@@ -91,11 +100,37 @@ else
 fi
 cd backend
 
+INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-default}"
+GEN_DIR="${PWD}/.generated"
+mkdir -p "$GEN_DIR"
+EFFECTIVE_INTEGRATION_MANIFEST="${GEN_DIR}/integrationdeps.effective.json"
+EFFECTIVE_MODFILE="${GEN_DIR}/go.effective.mod"
+
+echo "Resolving effective integrations (profile=${INTEGRATION_PROFILE})..."
+python3 ./scripts/resolve_integrations.py \
+  --manifest ./integrationdeps.json \
+  --profile "$INTEGRATION_PROFILE" \
+  --repo-root "$REPO_ROOT" \
+  --base-go-mod ./go.mod \
+  --output-manifest "$EFFECTIVE_INTEGRATION_MANIFEST" \
+  --output-modfile "$EFFECTIVE_MODFILE"
+
+if [ -n "${GOFLAGS:-}" ]; then
+  export GOFLAGS="${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}"
+else
+  export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
+fi
+echo "Using GOFLAGS=${GOFLAGS}"
+
 echo "Syncing external tool dependencies from tooldeps.json..."
 go run ./scripts/tooldepsgen -manifest ./tooldeps.json -output ./api/msgmate/externaltools/imports_gen.go -sync
 
-echo "Syncing external integration dependencies from integrationdeps.json..."
-go run ./scripts/integrationdepsgen -manifest ./integrationdeps.json -output ./integrations/externalintegrations/imports_gen.go -sync
+echo "Syncing external integration dependencies from effective integration manifest..."
+go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
+
+echo "Downloading and tidying effective module dependencies..."
+go mod download
+go mod tidy
 
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.

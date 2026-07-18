@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 
@@ -56,6 +57,10 @@ func normalizeFrontendAssetPath(assetPath string) string {
 		return ""
 	}
 	return assetPath
+}
+
+func normalizeRuntimeEnvKey(key string) string {
+	return strings.ToUpper(strings.TrimSpace(key))
 }
 
 func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definition, error) {
@@ -118,6 +123,20 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 	}
 	def.FrontendPages = frontendPages
 
+	runtimeEnvVars := make([]extiface.RuntimeEnvVar, 0, len(def.RuntimeEnvVars))
+	for idx, envVar := range def.RuntimeEnvVars {
+		key := normalizeRuntimeEnvKey(envVar.Key)
+		if key == "" {
+			return def, fmt.Errorf("integration %q runtime_env_vars[%d] is missing key", name, idx)
+		}
+		if !strings.HasPrefix(key, "OCI_") {
+			return def, fmt.Errorf("integration %q runtime env key %q must use OCI_ prefix", name, key)
+		}
+		envVar.Key = key
+		runtimeEnvVars = append(runtimeEnvVars, envVar)
+	}
+	def.RuntimeEnvVars = runtimeEnvVars
+
 	return def, nil
 }
 
@@ -128,6 +147,7 @@ func EnsureLoaded() {
 		return
 	}
 	registry = map[string]extiface.Definition{}
+	runtimeEnvOwners := map[string]string{}
 	for _, def := range extiface.List() {
 		normalizedDef, err := validateAndNormalizeDefinition(def)
 		if err != nil {
@@ -137,9 +157,44 @@ func EnsureLoaded() {
 		if name == "" {
 			continue
 		}
+		for _, envVar := range normalizedDef.RuntimeEnvVars {
+			if owner, exists := runtimeEnvOwners[envVar.Key]; exists {
+				log.Fatalf("duplicate integration runtime env key %q from %q and %q", envVar.Key, owner, name)
+			}
+			runtimeEnvOwners[envVar.Key] = name
+		}
 		registry[name] = normalizedDef
 	}
 	loaded = true
+}
+
+type RuntimeEnvVarDeclaration struct {
+	IntegrationName string
+	Key             string
+	Sensitive       bool
+	Description     string
+}
+
+func RuntimeEnvDeclarations() []RuntimeEnvVarDeclaration {
+	EnsureLoaded()
+	out := []RuntimeEnvVarDeclaration{}
+	for _, def := range List() {
+		for _, envVar := range def.RuntimeEnvVars {
+			out = append(out, RuntimeEnvVarDeclaration{
+				IntegrationName: def.Name,
+				Key:             envVar.Key,
+				Sensitive:       envVar.Sensitive,
+				Description:     envVar.Description,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IntegrationName == out[j].IntegrationName {
+			return out[i].Key < out[j].Key
+		}
+		return out[i].IntegrationName < out[j].IntegrationName
+	})
+	return out
 }
 
 func List() []extiface.Definition {
@@ -260,4 +315,18 @@ func AdditionalModels() []interface{} {
 		}
 	}
 	return models
+}
+
+func AdditionalMigrations() []extiface.Migration {
+	EnsureLoaded()
+	migrations := []extiface.Migration{}
+	for _, def := range List() {
+		for _, migration := range def.Migrations {
+			if migration.Run == nil {
+				continue
+			}
+			migrations = append(migrations, migration)
+		}
+	}
+	return migrations
 }

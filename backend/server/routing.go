@@ -392,20 +392,20 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /user/permissions", userHandler.ListPermissions)
 	v1PrivateApis.HandleFunc("POST /user/access-tokens", userHandler.CreateAccessToken)
 	v1PrivateApis.HandleFunc("GET /user/access-tokens/list", userHandler.ListAccessTokens)
+	v1PrivateApis.HandleFunc("POST /user/access-tokens/{token_uuid}/revoke", userHandler.RevokeAccessToken)
 	v1PrivateApis.HandleFunc("POST /user/2fa/setup", userHandler.SetupTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/confirm", userHandler.ConfirmTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/disable", userHandler.DisableTwoFactor)
 	v1PrivateApis.HandleFunc("POST /user/2fa/recovery-codes", userHandler.GenerateNewRecoveryCodes)
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
-	v1PrivateApis.HandleFunc("GET /admin/registration-requests", admin.GetRegistrationRequests)
-	v1PrivateApis.HandleFunc("POST /admin/registration-requests/{request_uuid}/approve", admin.ApproveRegistrationRequest)
-	v1PrivateApis.HandleFunc("POST /admin/registration-requests/{request_uuid}/reject", admin.RejectRegistrationRequest)
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
+	v1PrivateApis.HandleFunc("GET /admin/integrations/access/users", integrationsHandler.ListAccessUsers)
+	v1PrivateApis.HandleFunc("GET /admin/integrations/access/{user_uuid}", integrationsHandler.GetAccessByUser)
+	v1PrivateApis.HandleFunc("POST /admin/integrations/access/{user_uuid}/{integration_name}", integrationsHandler.GrantAccess)
+	v1PrivateApis.HandleFunc("DELETE /admin/integrations/access/{user_uuid}/{integration_name}", integrationsHandler.RevokeAccess)
 	v1PrivateApis.HandleFunc("GET /admin/docs/tag/{tag}", admin.GetCodeDocByTag)
 	v1PrivateApis.HandleFunc("GET /admin/tests/go", admin.GetGoTestsOverview)
-	v1PrivateApis.HandleFunc("GET /admin/server/config", admin.GetServerRuntimeConfig)
-	integrations.RegisterRoutes(v1PrivateApis, mux)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/stats", admin.GetDocsSnapshotStatsByTag)
 	v1PrivateApis.HandleFunc("POST /admin/docs/snapshots/{snapshot}/refresh", admin.RefreshDocsSnapshotByTag)
 	v1PrivateApis.HandleFunc("GET /admin/docs/snapshots/{snapshot}/data", admin.GetDocsSnapshotDataByTag)
@@ -429,15 +429,38 @@ func BackendRouting(
 		queueMiddleware(queueClient, queueInspector),
 	)
 
+	integrationRootAPIs := http.NewServeMux()
+	integrations.RegisterRoutes(v1PrivateApis, integrationRootAPIs)
+	registeredPublicIntegrationRoutes := map[string]struct{}{}
+	for _, def := range integrations.List() {
+		for _, routeDoc := range def.APIRouteDocs {
+			if len(routeDoc.RequiredAuth) > 0 {
+				continue
+			}
+			routePattern := strings.TrimSpace(routeDoc.Route)
+			if routePattern == "" {
+				continue
+			}
+			if _, exists := registeredPublicIntegrationRoutes[routePattern]; exists {
+				continue
+			}
+			registeredPublicIntegrationRoutes[routePattern] = struct{}{}
+			mux.Handle(routePattern, commonMiddlewares(Logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				integrationRootAPIs.ServeHTTP(w, r)
+			}))))
+		}
+	}
+
 	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
 	mux.Handle("GET /ws/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(websocketHandler.ConnectSharedInteraction))))
 	mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
 	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
 	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
+	mux.Handle("GET /api/user/cli-auth", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuth))))
+	mux.Handle("GET /api/user/cli-auth/poll", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuthPoll))))
 	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
-	mux.Handle("POST /api/v1/user/register", commonMiddlewares(http.HandlerFunc(userHandler.Register)))
 	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
 	mux.Handle("GET /api/v1/models", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
 	mux.Handle("GET /api/v1/models/{model_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.Get)))))
@@ -447,7 +470,6 @@ func BackendRouting(
 	mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
 	mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
-	mux.Handle("GET /api/integrations/{integration_name}/overview", commonMiddlewares(Logging(http.HandlerFunc(integrationsHandler.Overview))))
 	mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
 	mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
 	mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
