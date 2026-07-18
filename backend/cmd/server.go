@@ -160,7 +160,7 @@ func GetServerFlags() []cli.Flag {
 			Value:   "127.0.0.1",
 			Usage:   "server bind address",
 		},
-		&cli.IntFlag{
+		&cli.Uint16Flag{
 			Sources: cli.EnvVars("PORT"),
 			Name:    "port",
 			Aliases: []string{"p"},
@@ -487,7 +487,7 @@ func ServerCli() *cli.Command {
 				"SETUP_TEST_USERS":        {Value: fmt.Sprintf("%t", c.Bool("setup-test-users")), Sensitive: false},
 				"RESET_DB":                {Value: fmt.Sprintf("%t", c.Bool("reset-db")), Sensitive: false},
 				"HOST":                    {Value: c.String("host"), Sensitive: false},
-				"PORT":                    {Value: fmt.Sprintf("%d", c.Int("port")), Sensitive: false},
+				"PORT":                    {Value: fmt.Sprintf("%d", c.Uint16("port")), Sensitive: false},
 				"ROOT_CREDENTIALS":        {Value: c.String("root-credentials"), Sensitive: true},
 				"DEFAULT_BOT_CREDENTIALS": {Value: c.String("default-bot"), Sensitive: true},
 				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
@@ -557,20 +557,20 @@ func ServerCli() *cli.Command {
 				database.SetupTestUsers(DB)
 			}
 
-			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Int("port"))
+			fullHost := fmt.Sprintf("http://%s:%d", c.String("host"), c.Uint16("port"))
 			sessionCookieDomain := normalizeSessionCookieDomain(c.String("host"))
 
 			// Initialize HTTP server and websocket handler.
-			s, ch, _, err := server.BackendServer(
-				DB,
-				queueClient,
-				queueInspector,
-				asynqUIHandler,
-				c.String("host"),
-				int64(c.Int("port")),
-				c.Bool("debug"),
-				c.String("frontend-proxy"),
-				sessionCookieDomain,
+				s, ch, _, err := server.BackendServer(
+					DB,
+					queueClient,
+					queueInspector,
+					asynqUIHandler,
+					c.String("host"),
+					c.Uint16("port"),
+					c.Bool("debug"),
+					c.String("frontend-proxy"),
+					sessionCookieDomain,
 				c.Bool("signup-requires-admin-approval"),
 			)
 			if err != nil {
