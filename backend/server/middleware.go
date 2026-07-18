@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -420,7 +421,12 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			http.Redirect(w, r, "/login", http.StatusFound)
+			target := r.URL.RequestURI()
+			if !strings.HasPrefix(target, "/") {
+				target = "/chat"
+			}
+			escapedTarget := url.QueryEscape(target)
+			http.Redirect(w, r, "/login?redirect="+escapedTarget+"&next="+escapedTarget, http.StatusFound)
 			return
 		}
 
