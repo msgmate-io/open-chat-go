@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	client "github.com/msgmate-io/open-chat-go-golang-client/goclient"
+	client "github.com/msgmate-io/go-client-integration/goclient"
 	"gorm.io/gorm"
 )
 

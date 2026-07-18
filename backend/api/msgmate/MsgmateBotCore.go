@@ -7,7 +7,7 @@ import (
 	"errors"
 	"sync"
 
-	client "github.com/msgmate-io/open-chat-go-golang-client/goclient"
+	client "github.com/msgmate-io/go-client-integration/goclient"
 )
 
 var ErrResponseAlreadySent = errors.New("ai response already sent")
