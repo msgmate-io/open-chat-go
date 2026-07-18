@@ -628,69 +628,31 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	botUserID, humanUserID := findBotAndReceiver(chat, *user)
 	continuationMessageUUID := ""
 
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
-			return err
-		}
-		toolCallStatus := "failed"
-		toolCallResult := toolResult
-		if execErr == nil {
-			toolCallStatus = "succeeded"
-		} else {
-			// Surface the execution error as the tool result so the model can
-			// observe the failure and recover on the continuation turn.
-			toolCallResult = execErr.Error()
-		}
-		if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolCallResult, toolCallStatus); err != nil {
-			return err
-		}
+	// ci#850: the confirm write can hit SQLITE_BUSY while a bot-reply write
+	// burst holds the single SQLite write lock. Retry it with backoff instead
+	// of returning a 500 that leaves the user unable to confirm an action.
+	err = database.RetryOnBusy(r.Context(), "confirmable-action-persist", func() error {
+		return DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
+				return err
+			}
+			toolCallStatus := "failed"
+			toolCallResult := toolResult
+			if execErr == nil {
+				toolCallStatus = "succeeded"
+			} else {
+				// Surface the execution error as the tool result so the model can
+				// observe the failure and recover on the continuation turn.
+				toolCallResult = execErr.Error()
+			}
+			if err := updateSourceMessageToolCallResult(tx, sourceMessage, actionID, toolCallResult, toolCallStatus); err != nil {
+				return err
+			}
 
-		eventRequestedMeta := map[string]interface{}{
-			"finished":    true,
-			"event_type":  "confirmable_action_execute",
-			"event_phase": "requested",
-			"confirmable_action_execution": map[string]interface{}{
-				"action_id":              actionID,
-				"target_tool_name":       targetToolName,
-				"approved_by":            user.UUID,
-				"approved_at":            now,
-				"source_message_uuid":    sourceMessage.UUID,
-				"continue_after_execute": continueAfterExecute,
-			},
-		}
-		eventRequestedMetaBytes, _ := json.Marshal(eventRequestedMeta)
-		// Persist a short human-readable text instead of an empty string: a
-		// consumer that does not render the confirmable-action lifecycle inline
-		// would otherwise show this row as a bare empty bubble.
-		eventRequestedText := fmt.Sprintf("Approved `%s`; running it now.", targetToolName)
-		eventRequestedMessage := database.Message{
-			ChatId:     chat.ID,
-			SenderId:   humanUserID,
-			ReceiverId: botUserID,
-			DataType:   "event",
-			Text:       &eventRequestedText,
-			MetaData:   database.JSONRaw(eventRequestedMetaBytes),
-		}
-		if err := tx.Create(&eventRequestedMessage).Error; err != nil {
-			return err
-		}
-		// Continue the interaction after the action was handled, including when
-		// it failed: otherwise the bot is left hanging with no final reply (the
-		// failure event becomes the latest message and the model never sees the
-		// error). Unlock-required actions still wait for the user.
-		if continueAfterExecute && !unlockRequired {
-			continuationMessageUUID = eventRequestedMessage.UUID
-		}
-
-		if unlockRequired {
-			return nil
-		}
-
-		if execErr != nil {
-			eventFailedMeta := map[string]interface{}{
+			eventRequestedMeta := map[string]interface{}{
 				"finished":    true,
 				"event_type":  "confirmable_action_execute",
-				"event_phase": "failed",
+				"event_phase": "requested",
 				"confirmable_action_execution": map[string]interface{}{
 					"action_id":              actionID,
 					"target_tool_name":       targetToolName,
@@ -698,64 +660,107 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 					"approved_at":            now,
 					"source_message_uuid":    sourceMessage.UUID,
 					"continue_after_execute": continueAfterExecute,
-					"error":                  execErr.Error(),
 				},
 			}
-			eventFailedMetaBytes, _ := json.Marshal(eventFailedMeta)
-			eventFailedText := confirmableFailureText(targetToolName, execErr)
-			eventFailedMessage := database.Message{
+			eventRequestedMetaBytes, _ := json.Marshal(eventRequestedMeta)
+			// Persist a short human-readable text instead of an empty string: a
+			// consumer that does not render the confirmable-action lifecycle inline
+			// would otherwise show this row as a bare empty bubble.
+			eventRequestedText := fmt.Sprintf("Approved `%s`; running it now.", targetToolName)
+			eventRequestedMessage := database.Message{
+				ChatId:     chat.ID,
+				SenderId:   humanUserID,
+				ReceiverId: botUserID,
+				DataType:   "event",
+				Text:       &eventRequestedText,
+				MetaData:   database.JSONRaw(eventRequestedMetaBytes),
+			}
+			if err := tx.Create(&eventRequestedMessage).Error; err != nil {
+				return err
+			}
+			// Continue the interaction after the action was handled, including when
+			// it failed: otherwise the bot is left hanging with no final reply (the
+			// failure event becomes the latest message and the model never sees the
+			// error). Unlock-required actions still wait for the user.
+			if continueAfterExecute && !unlockRequired {
+				continuationMessageUUID = eventRequestedMessage.UUID
+			}
+
+			if unlockRequired {
+				return nil
+			}
+
+			if execErr != nil {
+				eventFailedMeta := map[string]interface{}{
+					"finished":    true,
+					"event_type":  "confirmable_action_execute",
+					"event_phase": "failed",
+					"confirmable_action_execution": map[string]interface{}{
+						"action_id":              actionID,
+						"target_tool_name":       targetToolName,
+						"approved_by":            user.UUID,
+						"approved_at":            now,
+						"source_message_uuid":    sourceMessage.UUID,
+						"continue_after_execute": continueAfterExecute,
+						"error":                  execErr.Error(),
+					},
+				}
+				eventFailedMetaBytes, _ := json.Marshal(eventFailedMeta)
+				eventFailedText := confirmableFailureText(targetToolName, execErr)
+				eventFailedMessage := database.Message{
+					ChatId:     chat.ID,
+					SenderId:   botUserID,
+					ReceiverId: humanUserID,
+					DataType:   "event",
+					Text:       &eventFailedText,
+					MetaData:   database.JSONRaw(eventFailedMetaBytes),
+				}
+				if err := tx.Create(&eventFailedMessage).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&chat).Update("latest_message_id", eventFailedMessage.ID).Error; err != nil {
+					return err
+				}
+				return nil
+			}
+
+			messageText := fmt.Sprintf("Confirmed action `%s` executed.", targetToolName)
+			if toolResult != "" {
+				messageText = fmt.Sprintf("Confirmed action `%s` executed.\n\n%s", targetToolName, toolResult)
+			}
+
+			execMeta := map[string]interface{}{
+				"finished":    true,
+				"event_type":  "confirmable_action_execute",
+				"event_phase": "completed",
+				"confirmable_action_execution": map[string]interface{}{
+					"action_id":              actionID,
+					"target_tool_name":       targetToolName,
+					"approved_by":            user.UUID,
+					"approved_at":            now,
+					"source_message_uuid":    sourceMessage.UUID,
+					"continue_after_execute": continueAfterExecute,
+				},
+			}
+			execMetaBytes, _ := json.Marshal(execMeta)
+
+			msg := database.Message{
 				ChatId:     chat.ID,
 				SenderId:   botUserID,
 				ReceiverId: humanUserID,
 				DataType:   "event",
-				Text:       &eventFailedText,
-				MetaData:   database.JSONRaw(eventFailedMetaBytes),
+				Text:       &messageText,
+				MetaData:   database.JSONRaw(execMetaBytes),
 			}
-			if err := tx.Create(&eventFailedMessage).Error; err != nil {
+
+			if err := tx.Create(&msg).Error; err != nil {
 				return err
 			}
-			if err := tx.Model(&chat).Update("latest_message_id", eventFailedMessage.ID).Error; err != nil {
+			if err := tx.Model(&chat).Update("latest_message_id", msg.ID).Error; err != nil {
 				return err
 			}
 			return nil
-		}
-
-		messageText := fmt.Sprintf("Confirmed action `%s` executed.", targetToolName)
-		if toolResult != "" {
-			messageText = fmt.Sprintf("Confirmed action `%s` executed.\n\n%s", targetToolName, toolResult)
-		}
-
-		execMeta := map[string]interface{}{
-			"finished":    true,
-			"event_type":  "confirmable_action_execute",
-			"event_phase": "completed",
-			"confirmable_action_execution": map[string]interface{}{
-				"action_id":              actionID,
-				"target_tool_name":       targetToolName,
-				"approved_by":            user.UUID,
-				"approved_at":            now,
-				"source_message_uuid":    sourceMessage.UUID,
-				"continue_after_execute": continueAfterExecute,
-			},
-		}
-		execMetaBytes, _ := json.Marshal(execMeta)
-
-		msg := database.Message{
-			ChatId:     chat.ID,
-			SenderId:   botUserID,
-			ReceiverId: humanUserID,
-			DataType:   "event",
-			Text:       &messageText,
-			MetaData:   database.JSONRaw(execMetaBytes),
-		}
-
-		if err := tx.Create(&msg).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&chat).Update("latest_message_id", msg.ID).Error; err != nil {
-			return err
-		}
-		return nil
+		})
 	})
 	if err != nil {
 		http.Error(w, "Failed to persist confirmable action state", http.StatusInternalServerError)
