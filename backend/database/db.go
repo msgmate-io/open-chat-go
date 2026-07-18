@@ -66,6 +66,13 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 		panic(fmt.Sprintf("Failed to connect to database: %v", err))
 	}
 
+	// ci#850: keep the SQLite WAL bounded under the write burst of a large
+	// bot-reply backlog. The connection pragmas already auto-checkpoint, and
+	// this periodic truncating checkpoint reclaims the WAL file's space.
+	if config.Backend == "sqlite" {
+		StartWALCheckpointer(db, defaultWALCheckpointInterval)
+	}
+
 	stmt := &gorm.Statement{DB: db}
 	if config.SkipMigrations {
 		logging.Infof("Skipping database migrations (SkipMigrations=true)")
