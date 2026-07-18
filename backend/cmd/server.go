@@ -500,10 +500,11 @@ func ServerCli() *cli.Command {
 					Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 					Sensitive: false,
 				},
-				"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
-				"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
-				"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
-				"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+			"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
+			"REDIS_MODE":         {Value: c.String("redis-mode"), Sensitive: false},
+			"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
+			"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
+			"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
 				"OPENAI_API_KEY":     {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
 				"ANTHROPIC_API_KEY":  {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
 				"ANTHROPIC_API_HOST": {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
@@ -526,18 +527,28 @@ func ServerCli() *cli.Command {
 
 			runtimecfg.SetAll(runtimeValues)
 
-			redisConnOpt, err := resolveRedisConnOpt(c)
+			redisRuntime, err := resolveRedisRuntime(c)
 			if err != nil {
 				return err
 			}
+			defer redisRuntime.Cleanup()
+			if redisRuntime.Mode == queue.RedisModeEmbedded {
+				if redisRuntime.FallbackReason != nil {
+					log.Printf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
+				} else {
+					log.Printf("Started embedded redis at %s", redisRuntime.Address)
+				}
+			} else {
+				log.Printf("Using external redis at %s", redisRuntime.Address)
+			}
 
-			queueClient := asynq.NewClient(redisConnOpt)
+			queueClient := asynq.NewClient(redisRuntime.ConnOpt)
 			defer queueClient.Close()
 
-			queueInspector := asynq.NewInspector(redisConnOpt)
+			queueInspector := asynq.NewInspector(redisRuntime.ConnOpt)
 			asynqUIHandler := asynqmon.New(asynqmon.Options{
 				RootPath:     "/admin/asynq/ui",
-				RedisConnOpt: redisConnOpt,
+				RedisConnOpt: redisRuntime.ConnOpt,
 				ReadOnly:     false,
 			})
 			defer asynqUIHandler.Close()
@@ -646,7 +657,7 @@ func ServerCli() *cli.Command {
 
 			if c.Bool("start-worker") {
 				workerServer := asynq.NewServer(
-					redisConnOpt,
+					redisRuntime.ConnOpt,
 					asynq.Config{
 						Concurrency: int(c.Int("asynq-concurrency")),
 						Queues: map[string]int{

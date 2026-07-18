@@ -3,12 +3,17 @@ package cmd
 import (
 	"backend/queue"
 
-	"github.com/hibiken/asynq"
 	"github.com/urfave/cli/v3"
 )
 
 func GetRedisFlags() []cli.Flag {
 	return []cli.Flag{
+		&cli.StringFlag{
+			Sources: cli.EnvVars("REDIS_MODE"),
+			Name:    "redis-mode",
+			Usage:   "Redis mode: auto|external|embedded",
+			Value:   queue.RedisModeAuto,
+		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("REDIS_URL"),
 			Name:    "redis-url",
@@ -36,8 +41,9 @@ func GetRedisFlags() []cli.Flag {
 	}
 }
 
-func resolveRedisConnOpt(c *cli.Command) (asynq.RedisConnOpt, error) {
-	return queue.BuildRedisConnOpt(
+func resolveRedisRuntime(c *cli.Command) (*queue.RedisRuntime, error) {
+	return queue.ResolveRedisRuntime(
+		c.String("redis-mode"),
 		c.String("redis-url"),
 		c.String("redis-addr"),
 		c.String("redis-password"),
