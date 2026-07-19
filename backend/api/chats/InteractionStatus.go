@@ -167,6 +167,35 @@ func (h *ChatsHandler) GetSharedInteractionStatus(w http.ResponseWriter, r *http
 // message, but a newer user message may sit on top of it).
 const confirmationScanLimit = 5
 
+// chatQueueActivity answers the two live-queue questions the resolver asks of a
+// chat. The default implementation queries the asynq inspector per chat; the
+// chat-list and batch-state endpoints pass a BotReplyActivity snapshot so N
+// chats cost one queue listing instead of N (ci#850).
+type chatQueueActivity interface {
+	isActive(chatUUID string) bool
+	queuedCount(chatUUID string) int
+}
+
+type inspectorQueueActivity struct{ inspector *asynq.Inspector }
+
+func (a inspectorQueueActivity) isActive(chatUUID string) bool {
+	return a.inspector != nil && workqueue.BotReplyIsActive(a.inspector, chatUUID)
+}
+
+func (a inspectorQueueActivity) queuedCount(chatUUID string) int {
+	return workqueue.BotReplyQueuedCount(a.inspector, chatUUID)
+}
+
+type snapshotQueueActivity struct{ snapshot *workqueue.BotReplyActivity }
+
+func (a snapshotQueueActivity) isActive(chatUUID string) bool {
+	return a.snapshot.IsActive(chatUUID)
+}
+
+func (a snapshotQueueActivity) queuedCount(chatUUID string) int {
+	return a.snapshot.QueuedCount(chatUUID)
+}
+
 // ResolveInteractionStatus exposes the deterministic interaction-state resolver
 // to other core packages (the trusted agent-dispatch surface) so a dispatched
 // agent's live state is computed by the same logic the chat status endpoint uses.
@@ -175,6 +204,10 @@ func ResolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 }
 
 func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat database.Chat) (InteractionStatusResponse, error) {
+	return resolveInteractionStatusWithQueue(DB, chat, inspectorQueueActivity{inspector: inspector})
+}
+
+func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue chatQueueActivity) (InteractionStatusResponse, error) {
 	response := InteractionStatusResponse{
 		ChatUUID: chat.UUID,
 		IsActive: false,
@@ -186,7 +219,7 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	// ci#656: report how many replies are queued behind the live turn so the UI
 	// can render those persisted messages as pending rather than lost. Resolved
 	// once here and carried through every early return below.
-	response.QueuedReplies = workqueue.BotReplyQueuedCount(inspector, chat.UUID)
+	response.QueuedReplies = queue.queuedCount(chat.UUID)
 
 	// ci#850: read the transcript tail once and reuse it for both questions the
 	// resolver asks of it - "is the newest message a pending user action?" and
@@ -224,7 +257,7 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		}
 	}
 
-	if inspector != nil && workqueue.BotReplyIsActive(inspector, chat.UUID) {
+	if queue.isActive(chat.UUID) {
 		response.IsActive = true
 		response.State = string(chatstate.StateActive)
 		response.Source = "queue"
