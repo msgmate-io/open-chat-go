@@ -970,6 +970,19 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		logging.Infof("Expired session sweeping disabled (%s=off)", database.SessionSweepIntervalEnv)
 	}
 
+	// Message history is the bulk of the SQLite volume and nothing ever removed
+	// it. Prune it off the request path on an interval, keeping a window plus a
+	// per-chat hot floor (ci#850 retention/archival);
+	// OPEN_CHAT_MESSAGE_RETENTION_WINDOW/INTERVAL/BATCH_SIZE tune it.
+	retentionPolicy := database.DefaultMessageRetentionPolicy()
+	if retentionInterval := database.MessageRetentionInterval(); retentionInterval > 0 && retentionPolicy.Window > 0 {
+		logging.Infof("Pruning messages older than %s (keeping the newest %d per chat) every %s in batches of %d",
+			retentionPolicy.Window, retentionPolicy.HotFloorPerChat, retentionInterval, retentionPolicy.BatchSize)
+		defer database.StartMessageRetentionSweeper(DB, retentionInterval, retentionPolicy)()
+	} else {
+		logging.Infof("Message retention pruning disabled (%s=off)", database.MessageRetentionWindowEnv)
+	}
+
 	if err := runStartupBootstrapDBStep(ctx, "seed-model-configs", func() error {
 		return database.SeedModelConfigs(DB)
 	}); err != nil {
