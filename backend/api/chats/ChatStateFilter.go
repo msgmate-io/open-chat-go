@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/chatstate"
 	"backend/database"
+	"backend/workqueue"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,9 +76,13 @@ func parseChatStateFilter(values []string) ([]string, error) {
 // instead of failing the whole list.
 func ResolveChatStates(DB *gorm.DB, inspector *asynq.Inspector, chats []database.Chat) map[string]string {
 	states := make(map[string]string, len(chats))
+	// ci#850: take one queue snapshot for the whole batch instead of listing the
+	// queue once per chat inside resolveInteractionStatus, which made a list of
+	// N chats cost O(N x queue size) Redis scans.
+	queue := snapshotQueueActivity{snapshot: workqueue.SnapshotBotReplyActivity(inspector)}
 	for i := range chats {
 		state := string(chatstate.StateIdle)
-		if status, err := resolveInteractionStatus(DB, inspector, chats[i]); err == nil && status.State != "" {
+		if status, err := resolveInteractionStatusWithQueue(DB, chats[i], queue); err == nil && status.State != "" {
 			state = status.State
 		}
 		states[chats[i].UUID] = state
