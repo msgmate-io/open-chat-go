@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/database"
 	"backend/server/util"
+	"backend/workqueue"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -61,6 +62,9 @@ func (h *ChatsHandler) GetChatStates(w http.ResponseWriter, r *http.Request) {
 
 	browserToken := database.IsBrowserToken(r.Context())
 	response := ChatStatesResponse{States: []ChatStateRow{}}
+	// ci#850: one queue snapshot for the whole batch instead of a queue listing
+	// per chat.
+	queue := snapshotQueueActivity{snapshot: workqueue.SnapshotBotReplyActivity(inspector)}
 	for _, chatUUID := range chatUUIDs {
 		chat, err := findAccessibleChat(DB, user, chatUUID)
 		if err != nil {
@@ -69,7 +73,7 @@ func (h *ChatsHandler) GetChatStates(w http.ResponseWriter, r *http.Request) {
 		if browserToken && !isInteractionChatType(chat.ChatType) {
 			continue
 		}
-		status, err := resolveInteractionStatus(DB, inspector, chat)
+		status, err := resolveInteractionStatusWithQueue(DB, chat, queue)
 		if err != nil {
 			continue
 		}
