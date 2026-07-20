@@ -40,3 +40,6 @@
 [submodule "clients/integrations/go_client_integration"]
 	path = clients/integrations/go_client_integration
 	url = https://github.com/msgmate-io/open-chat-go-golang-client
+[submodule "clients/gomobile"]
+	path = clients/gomobile
+	url = https://github.com/msgmate-io/open-chat-go-mobile

@@ -382,7 +382,7 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/callback", "/signup-request-send", "/sign-up", "/email-verification"}
+var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/callback", "/signup-request-send", "/sign-up", "/email-verification", "/mobile"}
 
 func isPublicFrontendRoute(path string) bool {
 	for _, route := range PublicRoutes {
