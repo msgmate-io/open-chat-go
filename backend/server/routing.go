@@ -476,7 +476,7 @@ func BackendRouting(
 			log.Printf("Invalid MOBILE_UPSTREAM_URL %q, disabling mobile API/WS proxy: %v", mobileProxyCfg.Target, parseErr)
 			mobileProxyCfg.Enabled = false
 		} else {
-			proxyHandler := commonMiddlewares(Logging(newReverseProxy(target)))
+			proxyHandler := commonMiddlewares(Logging(newMobileAPIWSReverseProxy(target)))
 			mux.Handle("/api/", proxyHandler)
 			mux.Handle("/ws/", proxyHandler)
 			log.Printf("Mobile API/WS proxy enabled: /api and /ws -> %s", mobileProxyCfg.Target)
