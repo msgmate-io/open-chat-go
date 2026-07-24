@@ -1,8 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
 // Imported through the integration barrel on purpose: integration repositories
 // compile against `@open-chat-go/ui`, which re-exports this module with
 // `export *`, so this test pins the *public* surface rather than the internal
-// file (ci#876).
+// file (ci#876). Reaching the barrel pulls in the rest of the integration
+// surface, whose components import Vike (`DataTable`, `IntegrationPageShell`,
+// `ChatBase`, `MessagesView`), so stub Vike's Node-version-gated client entries
+// the same way the other barrel-touching tests in this folder do.
+vi.mock("vike-react/usePageContext", () => ({ usePageContext: () => ({}) }));
+vi.mock("vike/client/router", () => ({ navigate: vi.fn() }));
+
 import {
   buildTurnBlocks,
   parseTurnTimeline,
