@@ -1,59 +1,90 @@
 package chats
 
 import (
+	"strings"
+
 	"backend/database"
 
 	"gorm.io/gorm"
 )
 
-// actingScopeUser resolves the user whose chats a session may read.
+// actingScopeUserIDs returns the participant ids a session may read chats and
+// messages for.
 //
-// ci#865: an interaction created through POST /bots/{identifier}/interactions
-// is stored owner-scoped — the participant is the *acting user* (the owner of
-// the bot runtime, see createBotInteraction), while the read/follow routes
-// scoped by the raw session principal. For an automated (bot) session that is
-// the bot user itself, so the session that had just created a dispatched
-// interaction could not read or follow it back and the dispatched run never
-// started (also behind the silent_idle_freeze failures on ci#848).
+// ci#865: an interaction created through POST /bots/{identifier}/interactions is
+// stored owner-scoped — its participant is the *acting user* (the owner of the
+// bot runtime, see createBotInteraction) — while the chat read/follow routes
+// scoped by the raw session principal. For an automated (bot) session the raw
+// principal is the bot user itself, so the session that had just created a
+// dispatched interaction could not read or follow it back and the dispatched run
+// never started (the same defect behind the silent_idle_freeze failures on
+// ci#848).
 //
-// Mirroring the bots API's resolveActingUser, an automated session is therefore
-// resolved to the owner of its active runtime config. Non-automated sessions and
-// bots without an active runtime config keep their own scope, so authorisation
-// for unrelated users is unchanged.
-func actingScopeUser(db *gorm.DB, user *database.User) *database.User {
-	if db == nil || user == nil || !user.IsAutomated {
-		return user
+// Mirroring the bots API's resolveActingUser, an automated session additionally
+// scopes by the owner of its active runtime config. The resolution is strictly
+// additive — the raw session principal stays in scope — so a bot session still
+// reads every chat it participates in (for example an interaction dispatched by
+// a non-owner acting user) and no visibility is lost. It is a no-op for
+// non-automated sessions and for bots without an active runtime config, so
+// authorisation for unrelated users is unchanged.
+func actingScopeUserIDs(db *gorm.DB, user *database.User) []uint {
+	if user == nil {
+		return nil
+	}
+	ids := []uint{user.ID}
+	if db == nil || !user.IsAutomated {
+		return ids
 	}
 	var runtime database.BotRuntimeConfig
-	err := db.Preload("OwnerUser").
-		Where("bot_user_id = ? AND is_active = ?", user.ID, true).
-		First(&runtime).Error
-	if err != nil || runtime.OwnerUser.ID == 0 {
-		return user
+	err := db.Where("bot_user_id = ? AND is_active = ?", user.ID, true).First(&runtime).Error
+	if err != nil || runtime.OwnerUserId == 0 || runtime.OwnerUserId == user.ID {
+		return ids
 	}
-	owner := runtime.OwnerUser
-	return &owner
+	return append(ids, runtime.OwnerUserId)
+}
+
+// scopeByParticipant restricts a query to rows where one of the given columns
+// matches any of the ids.
+func scopeByParticipant(db *gorm.DB, ids []uint, columns ...string) *gorm.DB {
+	conditions := make([]string, 0, len(columns))
+	args := make([]interface{}, 0, len(columns))
+	for _, column := range columns {
+		if len(ids) == 1 {
+			conditions = append(conditions, column+" = ?")
+			args = append(args, ids[0])
+			continue
+		}
+		conditions = append(conditions, column+" IN ?")
+		args = append(args, ids)
+	}
+	return db.Where(strings.Join(conditions, " OR "), args...)
 }
 
 // scopedChatQuery restricts a chats query to the chats the user participates
 // in. Admins may inspect any chat so they can view and manage other users'
 // interactions in "see all" mode.
 func scopedChatQuery(db *gorm.DB, user *database.User) *gorm.DB {
-	user = actingScopeUser(db, user)
 	if user != nil && user.IsAdmin {
 		return db
 	}
-	return db.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	ids := actingScopeUserIDs(db, user)
+	if len(ids) == 0 {
+		return db.Where("1 = 0")
+	}
+	return scopeByParticipant(db, ids, "user1_id", "user2_id")
 }
 
 // scopedMessageQuery restricts a messages query to the messages the user
 // exchanged. Admins may inspect any message in "see all" mode.
 func scopedMessageQuery(db *gorm.DB, user *database.User) *gorm.DB {
-	user = actingScopeUser(db, user)
 	if user != nil && user.IsAdmin {
 		return db
 	}
-	return db.Where("receiver_id = ? OR sender_id = ?", user.ID, user.ID)
+	ids := actingScopeUserIDs(db, user)
+	if len(ids) == 0 {
+		return db.Where("1 = 0")
+	}
+	return scopeByParticipant(db, ids, "receiver_id", "sender_id")
 }
 
 // findAccessibleChat loads a chat by UUID for the given user. Admins may load
