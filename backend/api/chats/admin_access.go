@@ -1,9 +1,12 @@
 package chats
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 
 	"backend/database"
+	"backend/logging"
 
 	"gorm.io/gorm"
 )
@@ -93,6 +96,22 @@ func findAccessibleChat(db *gorm.DB, user *database.User, chatUUID string) (data
 	var chat database.Chat
 	err := scopedChatQuery(db, user).Where("uuid = ?", chatUUID).First(&chat).Error
 	return chat, err
+}
+
+// writeChatErrorJSON writes a JSON error body, keeping the HTTP status code the
+// read routes used to return.
+//
+// ci#865: those routes answered with http.Error's plain-text body, so the
+// generated CI client — which only decodes JSON on 200/400 — died in its JSON
+// decoder ("JSONDecodeError: Expecting value: line 1 column 1") instead of
+// surfacing the actual failure. Consumers can now always parse the body and read
+// .error.
+func writeChatErrorJSON(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		logging.Errorf("failed to encode chat error response: %v", err)
+	}
 }
 
 // adminIsExternalViewer reports whether an admin is looking at a chat they do
