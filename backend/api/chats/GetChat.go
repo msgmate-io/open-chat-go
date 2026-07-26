@@ -53,13 +53,13 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	chatUuid, err := parseChatUUID(r)
 	if err != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 		First(&chat)
 
 	if result.Error != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 

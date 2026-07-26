@@ -21,6 +21,6 @@ func enforceBrowserTokenInteractionChat(w http.ResponseWriter, r *http.Request, 
 	if isInteractionChatType(chatType) {
 		return true
 	}
-	http.Error(w, "Browser tokens can only access interaction chats", http.StatusForbidden)
+	writeChatErrorJSON(w, http.StatusForbidden, "Browser tokens can only access interaction chats")
 	return false
 }
