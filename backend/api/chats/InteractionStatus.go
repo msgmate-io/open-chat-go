@@ -66,25 +66,25 @@ type InteractionStatusResponse struct {
 func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	inspector, err := util.GetAsynqInspector(r)
 	if err != nil {
-		http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Async queue unavailable")
 		return
 	}
 
 	chatUUID, chatUUIDErr := parseChatUUID(r)
 	if chatUUIDErr != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
 	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
-		http.Error(w, "Chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Chat not found")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 
 	status, err := resolveInteractionStatus(DB, inspector, chat)
 	if err != nil {
-		http.Error(w, "Unable to resolve interaction status", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Unable to resolve interaction status")
 		return
 	}
 	// ci#609: an interaction that cannot provision must never rest in a silent
@@ -125,36 +125,36 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 func (h *ChatsHandler) GetSharedInteractionStatus(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {
-		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database")
 		return
 	}
 
 	inspector, err := util.GetAsynqInspector(r)
 	if err != nil {
-		http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Async queue unavailable")
 		return
 	}
 
 	shareUUID := strings.TrimSpace(r.PathValue("chat_share_uuid"))
 	if shareUUID == "" {
-		http.Error(w, "Invalid shared chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid shared chat UUID")
 		return
 	}
 
 	chat, share, err := getSharedChatByUUID(DB, shareUUID)
 	if err != nil {
-		http.Error(w, "Shared chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Shared chat not found")
 		return
 	}
 
 	if !shareAllowsUser(share, util.GetOptionalUser(r)) {
-		http.Error(w, "Shared chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Shared chat not found")
 		return
 	}
 
 	status, err := resolveInteractionStatus(DB, inspector, chat)
 	if err != nil {
-		http.Error(w, "Unable to resolve interaction status", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Unable to resolve interaction status")
 		return
 	}
 
