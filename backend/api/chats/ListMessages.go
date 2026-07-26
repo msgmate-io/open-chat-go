@@ -86,13 +86,13 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	chatUuid, err := parseChatUUID(r)
 	if err != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
@@ -119,11 +119,11 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+			writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 			return
 		}
 		logging.Errorf("Failed to load chat %s: %v", chatUuid, result.Error)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
@@ -148,7 +148,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	if result.Error != nil {
 		logging.Errorf("Failed to list messages for chat %s: %v", chatUuid, result.Error)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
