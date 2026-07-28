@@ -176,8 +176,8 @@ func ensureBootstrapSeedTable(db *gorm.DB) error {
 		state varchar(16) NOT NULL,
 		fingerprint varchar(64),
 		owner varchar(255),
-		applied_at datetime,
-		updated_at datetime
+		applied_at timestamp,
+		updated_at timestamp
 	)`
 	if err := db.Exec(createTable).Error; err != nil {
 		// A busy lock is transient and belongs to the retry loop; a table that
