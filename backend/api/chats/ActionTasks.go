@@ -4,6 +4,7 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -321,8 +322,19 @@ func collectPendingActionTasks(DB *gorm.DB, user *database.User, adminScope bool
 		}
 		scannedChats += len(chats)
 
+		// One batched message read for the whole chat batch instead of one query
+		// per chat (ci#801): the per-chat scan was the dominant cost of the
+		// admin-wide action-tasks poll.
+		chatIDs := make([]uint, 0, len(chats))
 		for _, chat := range chats {
-			message, actions, ok := latestPendingActionMessage(DB, chat.ID)
+			chatIDs = append(chatIDs, chat.ID)
+		}
+		messagesByChat, err := recentMessagesByChat(DB, chatIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, chat := range chats {
+			message, actions, ok := latestPendingActionFrom(messagesByChat[chat.ID])
 			if !ok {
 				continue
 			}
@@ -434,6 +446,49 @@ func latestPendingActionMessage(DB *gorm.DB, chatID uint) (database.Message, []A
 	if err != nil {
 		return database.Message{}, nil, false
 	}
+	for _, message := range messages {
+		actions := pendingActionsForMessage(message)
+		if len(actions) > 0 {
+			return message, actions, true
+		}
+	}
+	return database.Message{}, nil, false
+}
+
+// recentMessagesByChat loads the newest confirmationScanLimit messages of every
+// chat in one query, so the action-tasks scan does not issue one message query
+// per candidate chat (ci#801). A window function keeps it a single round-trip and
+// works on both SQLite (>= 3.25) and PostgreSQL; the result is grouped into
+// per-chat slices, newest first, matching latestPendingActionMessage's window.
+func recentMessagesByChat(DB *gorm.DB, chatIDs []uint) (map[uint][]database.Message, error) {
+	out := make(map[uint][]database.Message, len(chatIDs))
+	if len(chatIDs) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chatIDs)), ",")
+	args := make([]interface{}, 0, len(chatIDs)+1)
+	for _, id := range chatIDs {
+		args = append(args, id)
+	}
+	args = append(args, confirmationScanLimit)
+	sql := fmt.Sprintf(`SELECT * FROM (
+		SELECT m.*, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at DESC, id DESC) AS rn
+		FROM messages m
+		WHERE deleted_at IS NULL AND chat_id IN (%s)
+	) t WHERE rn <= ? ORDER BY chat_id, created_at DESC, id DESC`, placeholders)
+	var messages []database.Message
+	if err := DB.Raw(sql, args...).Scan(&messages).Error; err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		out[message.ChatId] = append(out[message.ChatId], message)
+	}
+	return out, nil
+}
+
+// latestPendingActionFrom scans a chat's recent messages (newest first) for the
+// newest one that still carries a pending action.
+func latestPendingActionFrom(messages []database.Message) (database.Message, []ActionTaskAction, bool) {
 	for _, message := range messages {
 		actions := pendingActionsForMessage(message)
 		if len(actions) > 0 {
