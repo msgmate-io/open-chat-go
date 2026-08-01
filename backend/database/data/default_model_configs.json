@@ -1,170 +1,6466 @@
 [
   {
-    "title": "moonshotai/Kimi-K2.6",
-    "description": "Kimi K2.6 is an open-source, native multimodal agentic model that advances practical capabilities in long-horizon coding, coding-driven design, proactive autonomous execution, and swarm-based task orchestration.",
+    "title": "BAAI/bge-base-en-v1.5",
+    "description": "Auto-discovered model from deepinfra provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "moonshotai/Kimi-K2.6",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
       "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "BAAI/bge-base-en-v1.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "BAAI/bge-en-icl",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "BAAI/bge-en-icl",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "BAAI/bge-large-en-v1.5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "BAAI/bge-large-en-v1.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "BAAI/bge-m3",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "BAAI/bge-m3",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "BAAI/bge-m3-multi",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "BAAI/bge-m3-multi",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/Bria-3.2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/Bria-3.2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/Bria-3.2-vector",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/Bria-3.2-vector",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/blur_background",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/blur_background",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/erase_foreground",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/erase_foreground",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/expand",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/expand",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/fibo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/fibo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/fibo_edit",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/fibo_edit",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Bria/remove_background",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Bria/remove_background",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seed-1.8",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seed-1.8",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seed-2.0-code",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seed-2.0-code",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seed-2.0-mini",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seed-2.0-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seed-2.0-pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seed-2.0-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seedance-1.5-Pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seedance-1.5-Pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seedance-2.0",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seedance-2.0",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "ByteDance/Seedream-4",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ByteDance/Seedream-4",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Gryphe/MythoMax-L2-13b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Gryphe/MythoMax-L2-13b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "MiniMaxAI/MiniMax-M2.7",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "MiniMaxAI/MiniMax-M2.7",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "MiniMaxAI/MiniMax-M2.7-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "MiniMaxAI/MiniMax-M2.7-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "MiniMaxAI/MiniMax-M3",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "NousResearch/Hermes-3-Llama-3.1-405B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "NousResearch/Hermes-3-Llama-3.1-405B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "NousResearch/Hermes-3-Llama-3.1-70B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "NousResearch/Hermes-3-Llama-3.1-70B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Pixverse/Pixverse-6-T2V",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Pixverse/Pixverse-6-T2V",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Pixverse/Pixverse-T2V",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Pixverse/Pixverse-T2V",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Pixverse/Pixverse-T2V-HD",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Pixverse/Pixverse-T2V-HD",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "PrunaAI/p-image",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "PrunaAI/p-image",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "PrunaAI/p-video",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "PrunaAI/p-video",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen-Image-Edit",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen-Image-Edit",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen-Image-Max",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen-Image-Max",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen2.5-72B-Instruct",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen2.5-72B-Instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-14B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-14B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-30B-A3B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-30B-A3B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-32B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-32B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-ASR-0.6B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-ASR-0.6B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-ASR-1.7B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-ASR-1.7B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Embedding-0.6B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Embedding-0.6B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Embedding-4B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Embedding-4B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Embedding-8B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Embedding-8B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Max",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Max",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Max-Thinking",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Max-Thinking",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-TTS",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-TTS",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-TTS-VoiceDesign",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-TTS-VoiceDesign",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3.5-122B-A10B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.5-122B-A10B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3.5-27B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.5-27B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3.5-35B-A3B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.5-35B-A3B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3.5-397B-A17B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.5-397B-A17B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Qwen/Qwen3.5-9B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.5-9B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
     "title": "Qwen/Qwen3.6-27B",
-    "description": "Following the February release of the Qwen3.5 series, we're pleased to share the first open-weight variant of Qwen3.6. Built on direct feedback from the community, Qwen3.6 prioritizes stability and real-world utility, offering developers a more intuitive, responsive, and genuinely productive coding experience.",
+    "description": "Auto-discovered model from deepinfra provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "reasoning": true,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "Qwen/Qwen3.6-27B",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
       "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.6-27B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
     "title": "Qwen/Qwen3.6-35B-A3B",
-    "description": "Qwen3.6-35B-A3B is Alibaba's latest flagship Mixture-of-Experts model, with 35B total parameters and only 3B activated per token (256 experts, 8 routed + 1 shared). Built on direct feedback from the community, Qwen3.6 prioritizes stability and real-world utility, offering developers a more intuitive, responsive, and genuinely productive coding experience.",
+    "description": "Auto-discovered model from deepinfra provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
       "max_tokens": 4096,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
       "model": "Qwen/Qwen3.6-35B-A3B",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
-      "backend": "deepinfra",
-      "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
-    "title": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning",
-    "description": "Nemotron 3 Nano Omni is an open multimodal model built on a hybrid Mixture-of-Experts (MoE) architecture, engineered for high efficiency and strong accuracy across image, video, audio, and text inputs. It powers always-on sub-agents for computer use, document intelligence, and audio-video understanding—replacing fragmented vision, speech, and language pipelines with a single unified inference pass.",
+    "title": "Qwen/Qwen3.7-Max",
+    "description": "Auto-discovered model from deepinfra provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "reasoning": true,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
       "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Qwen/Qwen3.7-Max",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
-    "title": "google/gemma-4-26B-A4B-it",
-    "description": "Efficient, MoE variant of Gemma 4. Gemma is a family of open models built by Google DeepMind. Gemma 4 models are multimodal, handling text and image input and generating text output.",
+    "title": "ResembleAI/chatterbox-multilingual",
+    "description": "Auto-discovered model from deepinfra provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "google/gemma-4-26B-A4B-it",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
       "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ResembleAI/chatterbox-multilingual",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
-    "title": "deepseek-ai/DeepSeek-V4-Flash",
-    "description": "DeepSeek V4 Flash is an efficiency-focused MoE model with 284B total parameters (13B active) and a 1M-token context window. It's tuned for fast inference and high-throughput use cases while still holding up on reasoning and coding tasks.",
+    "title": "ResembleAI/chatterbox-turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "reasoning": true,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "deepseek-ai/DeepSeek-V4-Flash",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
       "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "ResembleAI/chatterbox-turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
-    "title": "qwen3-8b-instruct_vllm",
-    "description": "Qwen3 8B Instruct served through LiteLLM/vLLM.",
-    "bot_usernames": ["bot"],
+    "title": "Sao10K/L3-8B-Lunaris-v1-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "reasoning": true,
-      "tools": ["get_current_time_confirmed", "get_weather", "get_random_number"],
-      "model": "qwen3-8b-instruct_vllm",
-      "endpoint": "https://litellm.t1m.me/v1",
-      "backend": "litellm",
+      "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Sao10K/L3-8B-Lunaris-v1-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Sao10K/L3.1-70B-Euryale-v2.2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Sao10K/L3.1-70B-Euryale-v2.2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Wan-AI/Wan2.2-T2V-A14B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Wan-AI/Wan2.2-T2V-A14B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Wan-AI/Wan2.6-T2I",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Wan-AI/Wan2.6-T2I",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "Wan-AI/Wan2.6-T2V",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "Wan-AI/Wan2.6-T2V",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "XiaomiMiMo/MiMo-V2.5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "XiaomiMiMo/MiMo-V2.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "XiaomiMiMo/MiMo-V2.5-Pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "XiaomiMiMo/MiMo-V2.5-Pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "XiaomiMiMo/MiMo-V2.5-tts",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "XiaomiMiMo/MiMo-V2.5-tts",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "XiaomiMiMo/MiMo-V2.5-tts-voicedesign",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "XiaomiMiMo/MiMo-V2.5-tts-voicedesign",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-fable-5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-fable-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-haiku-4-5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-haiku-4-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-opus-4-7",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-opus-4-7",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-opus-4-8",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-opus-4-8",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-opus-5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-opus-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-sonnet-4-6",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-sonnet-4-6",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "anthropic/claude-sonnet-5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "anthropic/claude-sonnet-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "babbage-002",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "babbage-002",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-1-Redux-dev",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-1-Redux-dev",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-1-dev",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-1-dev",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-1-schnell",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-1-schnell",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-1.1-pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-1.1-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-2-dev",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-2-dev",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-2-klein-4b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-2-klein-4b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-2-klein-9b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-2-klein-9b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-2-max",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-2-max",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX-2-pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX-2-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "black-forest-labs/FLUX.1-Kontext-dev",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "black-forest-labs/FLUX.1-Kontext-dev",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "bosonai/HiggsAudioV2.5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "bosonai/HiggsAudioV2.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "chat-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "chat-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "chatgpt-image-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "chatgpt-image-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-fable-5",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-fable-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-haiku-4-5-20251001",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-haiku-4-5-20251001",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-opus-4-1-20250805",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-opus-4-1-20250805",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-opus-4-5-20251101",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-opus-4-5-20251101",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-opus-4-6",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-opus-4-6",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-opus-4-7",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-opus-4-7",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
     "title": "claude-opus-4-8",
-    "description": "Anthropic Claude Opus 4.8 exposed through the OpenAI-compatible Chat Completions schema.",
-    "bot_usernames": ["bot"],
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "tools": ["get_current_time_confirmed", "get_weather", "get_random_number"],
-      "model": "claude-opus-4-8",
-      "endpoint": "https://api.anthropic.com/v1",
       "backend": "anthropic",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-opus-4-8",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-opus-5",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-opus-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-sonnet-4-5-20250929",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-sonnet-4-5-20250929",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-sonnet-4-6",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-sonnet-4-6",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "claude-sonnet-5",
+    "description": "Auto-discovered model from anthropic provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "anthropic",
+      "context": 10,
+      "endpoint": "https://api.anthropic.com/v1",
+      "max_tokens": 4096,
+      "model": "claude-sonnet-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "davinci-002",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "davinci-002",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-R1-0528",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-R1-0528",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V3",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V3",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V3-0324",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V3-0324",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V3.1",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V3.1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V3.2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V3.2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V4-Flash",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V4-Flash",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "deepseek-ai/DeepSeek-V4-Pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "deepseek-ai/DeepSeek-V4-Pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gemini-3.1-pro",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gemini-3.1-pro",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/embeddinggemma-300m",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/embeddinggemma-300m",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-1.5-flash",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-1.5-flash",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-1.5-flash-8b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-1.5-flash-8b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-2.5-flash",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-2.5-flash",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-2.5-pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-2.5-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-3-pro-image",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-3-pro-image",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-3.1-flash-lite",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-3.1-flash-lite",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-3.1-pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-3.1-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemini-3.5-flash",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemini-3.5-flash",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-3-12b-it",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-3-12b-it",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-3-27b-it",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-3-27b-it",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-3-4b-it",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-3-4b-it",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-4-26B-A4B-it",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-4-26B-A4B-it",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-4-31B-it",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-4-31B-it",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-4-31B-it-Ultra",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-4-31B-it-Ultra",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-4-31B-it-turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-4-31B-it-turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/gemma-4-E4B-it",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/gemma-4-E4B-it",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/nano-banana-2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/nano-banana-2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/nano-banana-2-lite",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/nano-banana-2-lite",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/nano-banana-pro",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/nano-banana-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/veo-3.1",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/veo-3.1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "google/veo-3.1-fast",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "google/veo-3.1-fast",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-3.5-turbo",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-3.5-turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-3.5-turbo-0125",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-3.5-turbo-0125",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-3.5-turbo-1106",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-3.5-turbo-1106",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-3.5-turbo-16k",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-3.5-turbo-16k",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-3.5-turbo-instruct",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-3.5-turbo-instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-3.5-turbo-instruct-0914",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-3.5-turbo-instruct-0914",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4-0613",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4-0613",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4-turbo",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4-turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4-turbo-2024-04-09",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4-turbo-2024-04-09",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-2025-04-14",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-2025-04-14",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-mini-2025-04-14",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-mini-2025-04-14",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-nano",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-nano",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4.1-nano-2025-04-14",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4.1-nano-2025-04-14",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-2024-05-13",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-2024-05-13",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-2024-08-06",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-2024-08-06",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-2024-11-20",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-2024-11-20",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-2024-07-18",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-2024-07-18",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-search-preview",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-search-preview",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-search-preview-2025-03-11",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-search-preview-2025-03-11",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-transcribe",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-transcribe",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-transcribe-2025-03-20",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-transcribe-2025-03-20",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-transcribe-2025-12-15",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-transcribe-2025-12-15",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-tts",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-tts",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-tts-2025-03-20",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-tts-2025-03-20",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini-tts-2025-12-15",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini-tts-2025-12-15",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-search-preview",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-search-preview",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-search-preview-2025-03-11",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-search-preview-2025-03-11",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-transcribe",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-transcribe",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-transcribe-diarize",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-transcribe-diarize",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-2025-08-07",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-2025-08-07",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-chat-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-chat-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-codex",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-codex",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-mini-2025-08-07",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-mini-2025-08-07",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-nano",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-nano",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-nano-2025-08-07",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-nano-2025-08-07",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-pro",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-pro-2025-10-06",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-pro-2025-10-06",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-search-api",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-search-api",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5-search-api-2025-10-14",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5-search-api-2025-10-14",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1-2025-11-13",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1-2025-11-13",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1-chat-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1-chat-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1-codex",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1-codex",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1-codex-max",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1-codex-max",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.1-codex-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.1-codex-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2-2025-12-11",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2-2025-12-11",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2-chat-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2-chat-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2-codex",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2-codex",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2-pro",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.2-pro-2025-12-11",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.2-pro-2025-12-11",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.3-chat-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.3-chat-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.3-codex",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.3-codex",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-2026-03-05",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-2026-03-05",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
     "title": "gpt-5.4-mini",
-    "description": "OpenAI GPT-5.4 Mini via the OpenAI Chat Completions API.",
+    "description": "Auto-discovered model from openai provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "gpt-5.4-mini",
-      "endpoint": "https://api.openai.com/v1",
       "backend": "openai",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-mini-2026-03-17",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-nano",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-nano",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-nano-2026-03-17",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-nano-2026-03-17",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-pro",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.4-pro-2026-03-05",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.4-pro-2026-03-05",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.5-2026-04-23",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5-2026-04-23",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.5-pro",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.5-pro-2026-04-23",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5-pro-2026-04-23",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.6-luna",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-luna",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-5.6-sol",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-sol",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
     "title": "gpt-5.6-terra",
-    "description": "OpenAI GPT-5.6 Terra via the OpenAI Chat Completions API.",
+    "description": "Auto-discovered model from openai provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "tools": ["get_current_time", "get_weather", "get_random_number"],
-      "model": "gpt-5.6-terra",
-      "endpoint": "https://api.openai.com/v1",
       "backend": "openai",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-terra",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   },
   {
-    "title": "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    "description": "Llama 3.2 11B Vision is a multimodal model with 11 billion parameters, designed to handle tasks combining visual and textual data. It excels in tasks such as image captioning and visual question answering, bridging the gap between language generation and visual reasoning. Pre-trained on a massive dataset of image-text pairs, it performs well in complex, high-accuracy image analysis. Its ability to integrate visual understanding with language processing makes it an ideal solution for industries requiring comprehensive visual-linguistic AI applications, such as content creation, AI-driven customer service, and research.",
+    "title": "gpt-audio",
+    "description": "Auto-discovered model from openai provider.",
     "bot_usernames": [],
+    "is_public": true,
     "configuration": {
-      "temperature": 0.7,
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
       "max_tokens": 4096,
-      "model": "meta-llama/Llama-3.2-11B-Vision-Instruct",
-      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "model": "gpt-audio",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-audio-1.5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-audio-1.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-audio-2025-08-28",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-audio-2025-08-28",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-audio-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-audio-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-audio-mini-2025-10-06",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-audio-mini-2025-10-06",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-audio-mini-2025-12-15",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-audio-mini-2025-12-15",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-image-1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-image-1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-image-1-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-image-1-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-image-1.5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-image-1.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-image-2",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-image-2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-image-2-2026-04-21",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-image-2-2026-04-21",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-live-transcribe",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-live-transcribe",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-1.5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-1.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-2",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-2.1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-2.1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-2.1-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-2.1-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-2025-08-28",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-2025-08-28",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-mini-2025-10-06",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-mini-2025-10-06",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-mini-2025-12-15",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-mini-2025-12-15",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-translate",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-translate",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-realtime-whisper",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-realtime-whisper",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-transcribe",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-transcribe",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "hexgrad/Kokoro-82M",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
       "backend": "deepinfra",
       "context": 10,
-      "system_prompt": "You are a helpful assistant."
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "hexgrad/Kokoro-82M",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "intfloat/e5-base-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "intfloat/e5-base-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "intfloat/e5-large-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "intfloat/e5-large-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "intfloat/multilingual-e5-large",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "intfloat/multilingual-e5-large",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "intfloat/multilingual-e5-large-instruct",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "intfloat/multilingual-e5-large-instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "inworld-ai/realtime-tts-1.5-max",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "inworld-ai/realtime-tts-1.5-max",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "inworld-ai/realtime-tts-1.5-mini",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "inworld-ai/realtime-tts-1.5-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "inworld-ai/realtime-tts-2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "inworld-ai/realtime-tts-2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "meta-llama/Llama-Guard-4-12B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "meta-llama/Llama-Guard-4-12B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "microsoft/phi-4",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "microsoft/phi-4",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "mistralai/Mistral-Nemo-Instruct-2407",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "mistralai/Mistral-Nemo-Instruct-2407",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "mistralai/Mistral-Small-24B-Instruct-2501",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "mistralai/Mistral-Small-24B-Instruct-2501",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "mistralai/Voxtral-Mini-3B-2507",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "mistralai/Voxtral-Mini-3B-2507",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "mistralai/Voxtral-Small-24B-2507",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "mistralai/Voxtral-Small-24B-2507",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "moonshotai/Kimi-K2.5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "moonshotai/Kimi-K2.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "moonshotai/Kimi-K2.6",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "moonshotai/Kimi-K2.6",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "moonshotai/Kimi-K2.7-Code",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "moonshotai/Kimi-K2.7-Code",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/Cosmos3-Nano",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/Cosmos3-Nano",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/Cosmos3-Super",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/Cosmos3-Super",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/Nemotron-3-Nano-30B-A3B",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/Nemotron-3-Nano-30B-A3B",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/Nemotron-Content-Safety-3.5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/Nemotron-Content-Safety-3.5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "nvidia/llama-nemotron-embed-vl-1b-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "nvidia/llama-nemotron-embed-vl-1b-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o1-2024-12-17",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o1-2024-12-17",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o1-pro",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o1-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o1-pro-2025-03-19",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o1-pro-2025-03-19",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o3",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o3",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o3-2025-04-16",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o3-2025-04-16",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o3-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o3-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o3-mini-2025-01-31",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o3-mini-2025-01-31",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o4-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o4-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "o4-mini-2025-04-16",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "o4-mini-2025-04-16",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "omni-moderation-2024-09-26",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "omni-moderation-2024-09-26",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "omni-moderation-latest",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "omni-moderation-latest",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "openai/gpt-oss-120b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "openai/gpt-oss-120b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "openai/gpt-oss-120b-Turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "openai/gpt-oss-120b-Turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "openai/gpt-oss-120b-Ultra",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "openai/gpt-oss-120b-Ultra",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "openai/gpt-oss-20b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "openai/gpt-oss-20b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "openai/whisper-large-v3",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "openai/whisper-large-v3",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "openai/whisper-large-v3-turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "openai/whisper-large-v3-turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen25-32b-awq_vllm",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen25-32b-awq_vllm",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen3-8b-instruct_vllm",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen3-8b-instruct_vllm",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "qwen36-27b-awq_vllm",
+    "description": "Auto-discovered model from litellm provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "litellm",
+      "context": 10,
+      "endpoint": "https://litellm.t1m.me/v1",
+      "max_tokens": 4096,
+      "model": "qwen36-27b-awq_vllm",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/all-MiniLM-L12-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/all-MiniLM-L12-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/all-MiniLM-L6-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/all-MiniLM-L6-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/all-mpnet-base-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/all-mpnet-base-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/clip-ViT-B-32",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/clip-ViT-B-32",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/clip-ViT-B-32-multilingual-v1",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/clip-ViT-B-32-multilingual-v1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/multi-qa-mpnet-base-dot-v1",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/multi-qa-mpnet-base-dot-v1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sentence-transformers/paraphrase-MiniLM-L6-v2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sesame/csm-1b",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "sesame/csm-1b",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "shibing624/text2vec-base-chinese",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "shibing624/text2vec-base-chinese",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sora-2",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "sora-2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "sora-2-pro",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "sora-2-pro",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "stabilityai/sdxl-turbo",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "stabilityai/sdxl-turbo",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "stepfun-ai/Step-3.7-Flash",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "stepfun-ai/Step-3.7-Flash",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "tencent/Hy3",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "tencent/Hy3",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "text-embedding-3-large",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "text-embedding-3-large",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "text-embedding-3-small",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "text-embedding-3-small",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "text-embedding-ada-002",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "text-embedding-ada-002",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "thenlper/gte-base",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "thenlper/gte-base",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "thenlper/gte-large",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "thenlper/gte-large",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "thinkingmachines/Inkling",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "thinkingmachines/Inkling",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "thinkingmachines/Inkling-Small",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "thinkingmachines/Inkling-Small",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "tts-1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "tts-1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "tts-1-1106",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "tts-1-1106",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "tts-1-hd",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "tts-1-hd",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "tts-1-hd-1106",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "tts-1-hd-1106",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "whisper-1",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "whisper-1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "zai-org/GLM-4.6",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "zai-org/GLM-4.6",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "zai-org/GLM-4.7",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "zai-org/GLM-4.7",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "zai-org/GLM-4.7-Flash",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "zai-org/GLM-4.7-Flash",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "zai-org/GLM-5",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "zai-org/GLM-5",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "zai-org/GLM-5.1",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "zai-org/GLM-5.1",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "zai-org/GLM-5.2",
+    "description": "Auto-discovered model from deepinfra provider.",
+    "bot_usernames": [],
+    "is_public": true,
+    "configuration": {
+      "backend": "deepinfra",
+      "context": 10,
+      "endpoint": "https://api.deepinfra.com/v1/openai",
+      "max_tokens": 4096,
+      "model": "zai-org/GLM-5.2",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
     }
   }
 ]
