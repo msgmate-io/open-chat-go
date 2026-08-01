@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 )
 
 // FrontendProxy describes a reverse-proxy target that owns one or more path
@@ -24,6 +25,51 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 		r.Header.Set("X-Forwarded-Host", r.Host)
 		r.Host = target.Host
 	}
+	return proxy
+}
+
+func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
+	proxy := newReverseProxy(target)
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		setCookies := resp.Header.Values("Set-Cookie")
+		if len(setCookies) == 0 {
+			return nil
+		}
+
+		rewritten := make([]string, 0, len(setCookies))
+		for _, rawCookie := range setCookies {
+			parts := strings.Split(rawCookie, ";")
+			filtered := make([]string, 0, len(parts))
+			for idx, part := range parts {
+				trimmed := strings.TrimSpace(part)
+				if trimmed == "" {
+					continue
+				}
+				if idx > 0 {
+					lower := strings.ToLower(trimmed)
+					if lower == "secure" || strings.HasPrefix(lower, "domain=") {
+						continue
+					}
+				}
+				filtered = append(filtered, trimmed)
+			}
+			if len(filtered) > 0 {
+				rewritten = append(rewritten, strings.Join(filtered, "; "))
+			}
+		}
+
+		if len(rewritten) == 0 {
+			resp.Header.Del("Set-Cookie")
+			return nil
+		}
+
+		resp.Header.Del("Set-Cookie")
+		for _, cookie := range rewritten {
+			resp.Header.Add("Set-Cookie", cookie)
+		}
+		return nil
+	}
+
 	return proxy
 }
 

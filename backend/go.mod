@@ -18,6 +18,8 @@ require github.com/msgmate-io/email-integration v0.0.0
 
 require github.com/msgmate-io/mcp-integration v0.0.0
 
+require github.com/msgmate-io/opencode-integration v0.0.0
+
 require github.com/msgmate-io/rest-api-tool-integration v0.0.0
 
 require github.com/msgmate-io/ssh-integration v0.0.0
@@ -45,6 +47,8 @@ replace github.com/msgmate-io/email-integration => ../clients/integrations/email
 
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
 
+replace github.com/msgmate-io/opencode-integration => ../clients/integrations/opencode_integration
+
 replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integrations/rest_api_tool_integration
 
 replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_integration
@@ -53,6 +57,7 @@ replace github.com/msgmate-io/voice-integration => ../clients/integrations/voice
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/alicebob/miniredis/v2 v2.38.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -98,6 +103,7 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/sv-tools/openapi v0.4.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
