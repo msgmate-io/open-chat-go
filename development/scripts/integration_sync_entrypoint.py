@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import pwd
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -111,6 +112,39 @@ def drop_privileges(uid: int, gid: int) -> None:
     os.setuid(uid)
 
 
+#: Tracked lockfile the non-frozen manager re-pins (ci#756).
+TRACKED_LOCKFILE = "integrations.lock.json"
+
+#: Manager commands that (re)write the tracked lockfile.
+LOCKFILE_COMMANDS = {"prepare", "sync"}
+
+
+def run_and_restore_lockfile(repo_root: Path, argv: list[str]) -> int:
+    """Run the manager, then restore the tracked lockfile it re-pinned (ci#756).
+
+    A non-frozen ``prepare``/``sync`` re-pins ``integrations.lock.json`` to the
+    commits currently checked out in ``clients/integrations``. Those drift ahead
+    of the committed lock, so the tracked file ends up dirty and every
+    ``git switch``/``git checkout`` refuses with "local changes would be
+    overwritten". The running containers only consume the generated workspace and
+    the checkouts, so the developer's snapshot of the lockfile is restored after
+    the command; the checkouts themselves are left untouched.
+    """
+    lock = repo_root / TRACKED_LOCKFILE
+    saved = lock.read_bytes() if lock.is_file() else None
+
+    rc = subprocess.call(["openchat-integrations", *argv])
+
+    if saved is not None and argv and argv[0] in LOCKFILE_COMMANDS:
+        try:
+            if lock.read_bytes() != saved:
+                lock.write_bytes(saved)
+                log(f"restored {TRACKED_LOCKFILE} to the developer's snapshot (ci#756)")
+        except OSError as exc:
+            log(f"warning: could not restore {TRACKED_LOCKFILE}: {exc}")
+    return rc
+
+
 def main() -> int:
     repo_root = Path(os.environ.get("OPENCHAT_WORKSPACE", "/workspace"))
     argv = sys.argv[1:] or ["prepare"]
@@ -118,7 +152,7 @@ def main() -> int:
     if os.geteuid() != 0:
         # Already running as the developer (e.g. an explicit `user:` override);
         # nothing to repair or drop.
-        os.execvp("openchat-integrations", ["openchat-integrations", *argv])
+        return run_and_restore_lockfile(repo_root, argv)
 
     try:
         info = repo_root.stat()
@@ -141,8 +175,7 @@ def main() -> int:
     # git/ssh need a writable HOME; credentials are injected via GIT_CONFIG_*.
     os.environ.setdefault("HOME", "/tmp")
     drop_privileges(owner_uid, owner_gid)
-    os.execvp("openchat-integrations", ["openchat-integrations", *argv])
-    return 0
+    return run_and_restore_lockfile(repo_root, argv)
 
 
 if __name__ == "__main__":
