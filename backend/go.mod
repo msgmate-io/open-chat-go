@@ -18,6 +18,8 @@ require github.com/msgmate-io/email-integration v0.0.0
 
 require github.com/msgmate-io/mcp-integration v0.0.0
 
+require github.com/msgmate-io/opencode-integration v0.0.0
+
 require github.com/msgmate-io/rest-api-tool-integration v0.0.0
 
 require github.com/msgmate-io/ssh-integration v0.0.0
@@ -44,6 +46,8 @@ replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integ
 replace github.com/msgmate-io/email-integration => ../clients/integrations/email_integration
 
 replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
+
+replace github.com/msgmate-io/opencode-integration => ../clients/integrations/opencode_integration
 
 replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integrations/rest_api_tool_integration
 
