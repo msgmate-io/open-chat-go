@@ -120,3 +120,25 @@ func TestCoderWorkspaceSystemPromptIsTypedFirstGitHub(t *testing.T) {
 		}
 	}
 }
+
+// TestCoderWorkspaceSystemPromptPreBakedRootStillTypedFirst covers a config that
+// already carries the workspace-root guidance: the root half must not be emitted
+// twice, but the typed-first half must still be composed, because a pre-baked
+// prompt is exactly the case that would otherwise stay typed-blind. The result
+// must also stay stable across repeated composition.
+func TestCoderWorkspaceSystemPromptPreBakedRootStillTypedFirst(t *testing.T) {
+	config := map[string]interface{}{"tools": []interface{}{"coder_bash"}}
+	prebaked := "You are msgmate coder.\n\n" + nativecoder.WorkspaceRootGuidance()
+
+	got := coderWorkspaceSystemPrompt(prebaked, config)
+
+	if strings.Count(got, workspaceRootPromptMarker) != 1 {
+		t.Fatalf("workspace-root guidance emitted more than once: %q", got)
+	}
+	if !nativecoder.MeasureGitHubTypedFirstPrompt(got).Ready {
+		t.Fatalf("pre-baked prompt did not become typed-first: %q", got)
+	}
+	if again := coderWorkspaceSystemPrompt(got, config); again != got {
+		t.Fatalf("composition is not stable: %q -> %q", got, again)
+	}
+}
