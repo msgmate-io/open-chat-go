@@ -89,7 +89,34 @@ func TestCoderWorkspaceSystemPromptEmptyPrompt(t *testing.T) {
 
 	got := coderWorkspaceSystemPrompt("   ", config)
 
-	if got != nativecoder.WorkspaceRootGuidance() {
-		t.Fatalf("got %q, want the guidance alone", got)
+	if got != nativecoder.GitHubTypedFirstAppend(nativecoder.WorkspaceRootGuidance()) {
+		t.Fatalf("got %q, want the composed guidance alone", got)
+	}
+	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
+		t.Fatalf("composed guidance must not be padded, got %q", got)
+	}
+}
+
+// TestCoderWorkspaceSystemPromptIsTypedFirstGitHub pins the ci#514 phase 1
+// prompt half: the prompt a native coder run really uses must prefer the typed
+// GitHub tools, which is the evidence the phase-1 criterion is measured from.
+// The assertion goes through the same measurement the criteria evaluator uses,
+// so this test fails if the wiring is dropped.
+func TestCoderWorkspaceSystemPromptIsTypedFirstGitHub(t *testing.T) {
+	config := map[string]interface{}{"tools": []interface{}{"coder_bash", "coder_read"}}
+
+	got := coderWorkspaceSystemPrompt("You are msgmate coder.", config)
+
+	if !strings.Contains(got, nativecoder.GitHubTypedFirstPromptMarker) {
+		t.Fatalf("typed-first GitHub block missing from %q", got)
+	}
+	measured := nativecoder.MeasureGitHubTypedFirstPrompt(got)
+	if !measured.Ready {
+		t.Fatalf("rendered coder prompt is not typed-first ready: missing %v", measured.Missing)
+	}
+	for _, tool := range []string{"github_pr_view", "github_pr_create", "github_issue_comment"} {
+		if !strings.Contains(got, tool) {
+			t.Errorf("prompt must name the typed tool %q, got %q", tool, got)
+		}
 	}
 }
