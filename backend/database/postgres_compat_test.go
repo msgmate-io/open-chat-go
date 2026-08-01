@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/postgres"
@@ -19,12 +20,25 @@ type pgCompatProbe struct {
 // TestPostgresJSONCompat is a manual probe (enable with PG_DSN) that verifies the
 // JSON column types the models use actually round-trip on PostgreSQL via the real
 // driver, since the SQLite schema uses `blob`/`jsonb` type names.
+//
+// It deliberately drives the connection through the *unsafe* production query
+// mode (`default_query_exec_mode=exec` with a disabled statement cache) so it
+// also proves ensureJSONSafeQueryMode repairs it: without the safeguard a
+// `json.RawMessage`/`[]byte` parameter is encoded as `bytea` and every jsonb
+// write fails with SQLSTATE 22P02 (ci#878).
 func TestPostgresJSONCompat(t *testing.T) {
 	dsn := os.Getenv("PG_DSN")
 	if dsn == "" {
 		t.Skip("set PG_DSN to run the postgres compatibility probe")
 	}
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Assert the safety net actually rewrites the unsafe mode.
+	unsafeDSN := appendDSNParam(appendDSNParam(dsn, "default_query_exec_mode", "exec"), "statement_cache_capacity", "0")
+	safeDSN := ensureJSONSafeQueryMode(unsafeDSN)
+	if strings.Contains(strings.ToLower(safeDSN), "default_query_exec_mode=exec") {
+		t.Fatalf("ensureJSONSafeQueryMode left the unsafe exec mode in place: %q", safeDSN)
+	}
+
+	db, err := gorm.Open(postgres.Open(safeDSN), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
