@@ -43,3 +43,6 @@
 [submodule "clients/gomobile"]
 	path = clients/gomobile
 	url = https://github.com/msgmate-io/open-chat-go-mobile
+[submodule "clients/integrations/opencode_integration"]
+	path = clients/integrations/opencode_integration
+	url = https://github.com/msgmate-io/open-chat-go-opencode-integration
