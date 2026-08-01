@@ -89,8 +89,9 @@ type retirementReport struct {
 
 func main() {
 	format := flag.String("format", "json", "output format: json or text")
+	coderPrompt := flag.String("coder-prompt", "", "path to the rendered coder system prompt (evidence for the typed-first criterion)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [calls.jsonl] [--format=json|text]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [calls.jsonl] [--format=json|text] [--coder-prompt=prompt.txt]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	// The stdlib flag package stops at the first positional argument, so
@@ -114,7 +115,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "read transcript export: %v\n", err)
 		os.Exit(1)
 	}
-	report := buildReport(samples)
+	report := buildReport(samples, readCoderPrompt(*coderPrompt))
 
 	switch strings.ToLower(*format) {
 	case "json", "":
@@ -130,6 +131,23 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown --format %q (want json or text)\n", *format)
 		os.Exit(2)
 	}
+}
+
+// readCoderPrompt loads the rendered coder system prompt used as evidence for
+// the phase 1 typed-first criterion. A missing path yields an empty prompt,
+// which leaves the criterion unattested (never falsely satisfied); an unreadable
+// file is a hard error, because silently dropping supplied evidence would make
+// the report lie.
+func readCoderPrompt(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read coder prompt %s: %v\n", path, err)
+		os.Exit(1)
+	}
+	return string(data)
 }
 
 // flagsFirst moves flag arguments ahead of positional ones so the documented
@@ -155,7 +173,7 @@ func flagsFirst(args []string) []string {
 // isValueFlag reports whether the flag needs its value in the next argument
 // rather than after an `=`.
 func isValueFlag(arg string) bool {
-	return arg == "--format" || arg == "-format"
+	return arg == "--format" || arg == "-format" || arg == "--coder-prompt" || arg == "-coder-prompt"
 }
 
 // readSamples consumes a JSONL export into the sample slice both metrics are
@@ -198,11 +216,20 @@ func readSamples(input io.Reader) ([]nativecoder.BashCallSample, error) {
 // buildReport computes both plan metrics and the phase exit gates over one
 // sample set, so JSON and text output always agree on `phases` and
 // `ready_to_close`.
-func buildReport(samples []nativecoder.BashCallSample) retirementReport {
+//
+// coderSystemPrompt is the rendered coder system prompt the run really uses; it
+// is the evidence for the phase 1 "typed-first prompt" criterion. An empty
+// prompt leaves that criterion unattested rather than passing it, so a report
+// never claims a criterion it did not check.
+func buildReport(samples []nativecoder.BashCallSample, coderSystemPrompt string) retirementReport {
 	coverage := nativecoder.ComputeBashCoverage(samples)
 	phases := nativecoder.EvaluateBashRetirementPhases(coverage)
 	translation := nativecoder.MeasureGitHubShellTranslation(samples)
-	criteria := nativecoder.EvaluateBashRetirementCriteria(coverage, &translation)
+	criteria := nativecoder.EvaluateBashRetirementCriteriaWithEvidence(nativecoder.BashRetirementEvidence{
+		Coverage:          coverage,
+		GitHub:            &translation,
+		CoderSystemPrompt: coderSystemPrompt,
+	})
 	return retirementReport{
 		BashCoverageReport:   coverage,
 		GitHubPhase1:         translation,
