@@ -13,6 +13,12 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+      # ci#878: optional PostgreSQL backend. `required: false` keeps the default
+      # (SQLite) stack working when the `postgres` profile is not enabled, while
+      # still gating startup on a healthy database when it is.
+      postgres:
+        condition: service_healthy
+        required: false
     ports:
       - "1984:1984"
     volumes:
@@ -46,6 +52,10 @@ services:
       OPENCHAT_NO_SETUP: "1"
       FRONTEND_PROXY: ${FRONTEND_PROXY:-http://frontend:3000}
       ROOT_CREDENTIALS: ${ROOT_CREDENTIALS:-admin:password}
+      # Database backend. Defaults to the historical SQLite file; set
+      # DB_BACKEND=postgres (and a postgres:// DSN in DB_PATH) to run the dev
+      # stack against the profile-gated `postgres` service below (ci#878).
+      DB_BACKEND: ${DB_BACKEND:-sqlite}
       DB_PATH: ${DB_PATH:-/tmp/data.db}
       CREATE_EXTRA_USER: ${CREATE_EXTRA_USER}
       CREATE_EXTRA_BOT: ${CREATE_EXTRA_BOT}
@@ -169,6 +179,45 @@ services:
     networks:
       - app-network
 
+  # ci#878: optional PostgreSQL service for local development/testing of the
+  # PostgreSQL backend. It is disabled by default (the `postgres` profile is not
+  # in COMPOSE_PROFILES) so a plain `docker compose up` keeps using SQLite.
+  #
+  # Enable it together with the backend override:
+  #
+  #   docker compose -f docker-compose.yaml -f docker-compose.postgres.yaml \
+  #     --profile postgres up
+  #
+  # (or `COMPOSE_PROFILES=postgres COMPOSE_FILE=docker-compose.yaml:docker-compose.postgres.yaml docker compose up`).
+  # The override points the backend at this service; the connection default is
+  # postgres://openchat:openchat@postgres:5432/openchat?sslmode=disable.
+  postgres:
+    profiles: [ "postgres" ]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openchat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openchat}
+      POSTGRES_DB: ${POSTGRES_DB:-openchat}
+      # Keep the cluster in a subdirectory so a bind-mounted/named volume that
+      # already has a lost+found (or other stray files) is still usable.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      # 5433 on the host so it does not clash with a host PostgreSQL on 5432.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Mirror the ci#722 redis budget philosophy: give the probe room for a cold
+    # start + first-boot initdb instead of flapping the backend's dependency.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openchat} -d ${POSTGRES_DB:-openchat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
@@ -176,3 +225,4 @@ networks:
 volumes:
   go_mod_cache:
   go_build_cache:
+  postgres_data:

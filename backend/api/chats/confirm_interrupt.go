@@ -89,7 +89,7 @@ func cancelPendingConfirmableActionsForChat(db *gorm.DB, chatID uint, cancelledB
 
 		meta["confirmable_actions"] = rawActions
 		if encoded, err := json.Marshal(meta); err == nil {
-			_ = db.Model(&database.Message{}).Where("id = ?", message.ID).Update("meta_data", encoded).Error
+			_ = db.Model(&database.Message{}).Where("id = ?", message.ID).Update("meta_data", database.JSONRaw(encoded)).Error
 		}
 
 		if len(cancelledIDs) > 0 && message.ToolCalls != nil && len(*message.ToolCalls) > 0 {
