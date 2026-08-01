@@ -801,7 +801,7 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 	if findErr == gorm.ErrRecordNotFound {
 		return db.Create(&database.ChatSettings{ChatId: chatID, ConfigData: encoded}).Error
 	}
-	return db.Model(&settings).Update("config_data", encoded).Error
+	return db.Model(&settings).Update("config_data", database.JSONRaw(encoded)).Error
 }
 
 // recordAutoContinueStop records why a loop stopped, so the state is inspectable
