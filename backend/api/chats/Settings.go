@@ -136,7 +136,7 @@ func (h *ChatsHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unable to save chat settings", http.StatusInternalServerError)
 			return
 		}
-	} else if err := DB.Model(&settings).Update("config_data", encoded).Error; err != nil {
+	} else if err := DB.Model(&settings).Update("config_data", database.JSONRaw(encoded)).Error; err != nil {
 		http.Error(w, "Unable to save chat settings", http.StatusInternalServerError)
 		return
 	}
