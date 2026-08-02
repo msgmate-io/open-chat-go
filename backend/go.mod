@@ -10,9 +10,21 @@ require github.com/msgmate-io/go-tool-interface v0.0.0
 
 require github.com/msgmate-io/go-integration-interface v0.0.0
 
+require github.com/msgmate-io/account-management-integration v0.0.0
+
+require github.com/msgmate-io/admin-db-managemnt-integration v0.0.0
+
+require github.com/msgmate-io/email-integration v0.0.0
+
 require github.com/msgmate-io/mcp-integration v0.0.0
 
+require github.com/msgmate-io/opencode-integration v0.0.0
+
 require github.com/msgmate-io/rest-api-tool-integration v0.0.0
+
+require github.com/msgmate-io/ssh-integration v0.0.0
+
+require github.com/msgmate-io/voice-integration v0.0.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
