@@ -1,6 +1,7 @@
 package server
 
 import (
+	"backend/runtimecfg"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -34,7 +35,7 @@ func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
 
 func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
 	proxy := newReverseProxy(target)
-	namespacedSessionCookie := mobileSessionCookieName(target)
+	namespacedSessionCookie := mobileSessionCookieName(target, resolveMobileSessionNamespace())
 	cacheCfg := resolveMobileProxyCacheConfig(target)
 
 	baseDirector := proxy.Director
@@ -150,8 +151,17 @@ func isMobileProxyOfflineError(err error) bool {
 		strings.Contains(message, "temporary failure in name resolution")
 }
 
-func mobileSessionCookieName(target *url.URL) string {
-	key := strings.TrimSpace(target.String())
+func resolveMobileSessionNamespace() string {
+	values := runtimecfg.GetAll()
+	return strings.TrimSpace(values["MOBILE_SESSION_NAMESPACE"].Value)
+}
+
+func mobileSessionCookieName(target *url.URL, sessionNamespace string) string {
+	targetKey := strings.TrimSpace(target.String())
+	key := targetKey
+	if sessionNamespace != "" {
+		key = sessionNamespace + "|" + targetKey
+	}
 	h := sha1.Sum([]byte(strings.ToLower(key)))
 	return "session_id_mobile_" + hex.EncodeToString(h[:])[:12]
 }
