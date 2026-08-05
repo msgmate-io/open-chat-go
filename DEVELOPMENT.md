@@ -807,8 +807,28 @@ python3 -m venv .venv
   submodules, extra checkouts), `ValidateDevSetupMatrix` lists defects and
   `DevSetupMatrixGaps` names the repositories that still start half-set-up and
   need a `coder_dev_setup` declaration. `RenderDevSetupMatrixMarkdown` renders the
-  operator table; the unit test keeps the public profile catalogue, the per-repo
-  default table and the sandbox palette from drifting apart.
+  operator table; the unit tests keep the public profile catalogue, the per-repo
+  default table and the sandbox palette from drifting apart — every repository
+  the palette maps a ci.msgmate.io trigger to must carry a per-repo entry of its
+  own (`backend/nativecoder/devsetup_perrepo_test.go`), so a client, integration
+  or toolchain repository never inherits the monorepo's batteries-included
+  `full-development` set-up by accident.
+- `backend/nativecoder/devsetupfleet.go` is the per-bot / per-use-case audit of
+  that set-up: `CoderDevSetupFleet` lists which coder bot runs which use-case
+  against which repository, `DevSetupFleetPlans` resolves the plan each bot
+  actually gets (explicit `coder_dev_setup` or per-repo default) and
+  `DevSetupFleetGaps` names the bots that would still start half-set-up (a
+  repository no plan covers, or a profile outside the shipped catalogue).
+  `RenderDevSetupConfigFragment` prints the non-secret `coder_dev_setup` block to
+  paste into a bot config or a ci config delta.
+- `go run ./backend/scripts/dev_setup_report` renders that audit
+  (`--fleet` table is the default, `--matrix` for the per-repo table, `--config`
+  for the config fragment, `--format=json` for machine consumption). `--check`
+  exits non-zero when any coder bot has a coverage gap, so a CI job or a config
+  publish can refuse to ship a half-configured fleet. The report is read-only:
+  it provisions no sandbox, makes no network call and prints only bot names,
+  repository slugs and profile names — never a token, kubeconfig or private
+  module path. Add a new coder bot there when you add it to the runtime.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
