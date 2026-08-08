@@ -1,10 +1,9 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 
-	"backend/logging"
+	"backend/apierror"
 )
 
 // APIErrorResponse is the JSON envelope every API-level rejection uses. The
@@ -14,21 +13,13 @@ import (
 // clients (and the live-runtime canary) call response.json() unconditionally, so
 // a plain-text body makes an expected 4xx look like a client bug
 // (open-chat-go-ci#865).
-type APIErrorResponse struct {
-	Error string `json:"error"`
-	Code  string `json:"code,omitempty"`
-}
+//
+// APIErrorResponse is an alias of apierror.Response so that middleware, handler
+// and (leaf-package) bot-endpoint rejections all emit byte-identical bodies.
+type APIErrorResponse = apierror.Response
 
 // writeAPIError writes a JSON error response with a stable machine readable
 // code. It replaces http.Error on the middleware reject paths.
 func writeAPIError(w http.ResponseWriter, status int, code string, message string) {
-	if w == nil {
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(APIErrorResponse{Error: message, Code: code}); err != nil {
-		logging.Errorf("failed to encode api error response: %v", err)
-	}
+	apierror.Write(w, status, code, message)
 }
