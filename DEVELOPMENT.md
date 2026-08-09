@@ -1455,3 +1455,31 @@ per-integration prebuild precondition from the ci#345 design
 (`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
 for the remaining integrations lives in
 `frontend/pages/docs/content/integration-development.mdx`.
+
+### Re-baselining the dependency surface deliberately
+
+`integrations.dep-surface.json` is the committed record of the integrations that are
+already decoupled. `development/scripts/check_dep_surface_gate.sh` consumes it on every
+pull request:
+
+- it always validates the baseline without a Go toolchain (a malformed or
+  wrongly-pinned baseline fails, exit 2/1);
+- when a Go workspace is materialized (the Go-test job exports `GOWORK`) it additionally
+  measures the integration modules and prints the offending import edge
+  (`module: backend/...`) before failing -- and only for a *regression* against the
+  baseline, so integrations still being migrated are reported, not failed;
+- with no workspace (the toolchain-free integration-module CI job) it validates only and
+  says so, and it is a no-op when `integrations.dep-surface.json` is absent.
+
+The baseline is intentionally small: it records only integrations whose shipped
+packages no longer import `backend/...` at all. Extend it only in its own commit, for an
+integration that is actually fully decoupled, and never to silence a regression:
+
+```sh
+python3 backend/scripts/integration_dep_surface.py --write-baseline integrations.dep-surface.json
+python3 backend/scripts/integration_dep_surface.py --check-baseline integrations.dep-surface.json  # must be 0
+git add integrations.dep-surface.json && git commit -m "ci#423: pin <integration> dependency surface"
+```
+
+A coupled integration listed there (or a `backend/...` package it does not record) is a
+regression by definition; fix the import instead of re-baselining.
