@@ -246,6 +246,14 @@ def main() -> int:
         help="validate a committed baseline without a Go toolchain (0 valid, "
         "1 pins a coupled integration, 2 malformed)",
     )
+    parser.add_argument(
+        "--fail-only-on-regressions",
+        action="store_true",
+        help="gate mode: fail only on a regression against the baseline (or on "
+        "nothing measurable); integrations the baseline deliberately does not pin "
+        "are reported as still-migrating instead of failing. Use this when the "
+        "measurement runs over the full integration set during the migration.",
+    )
     args = parser.parse_args()
 
     if args.check_baseline:
@@ -334,6 +342,22 @@ def main() -> int:
         return 1
     if not production_coupled:
         print("every integration is decoupled in its compiled artifact.")
+        return 0
+    if args.fail_only_on_regressions:
+        # Gate mode: during the ci#423 migration most integrations are still
+        # coupled on purpose, so only a *regression* (or nothing measurable)
+        # fails. Unpinned integrations are reported so the migration stays
+        # visible in the log rather than turning the gate red.
+        print(
+            f"still-migrating integrations ({len(production_coupled)}) - not pinned in "
+            f"{args.baseline} yet:"
+        )
+        for module, packages in production_coupled:
+            print(f"  {module} ({len(packages)} backend/... package(s))")
+        print(
+            "gate mode: no regression against the baseline; see the ci#423 migration "
+            "for the remaining integrations."
+        )
         return 0
     print(f"PRODUCTION-coupled integrations ({len(production_coupled)}):")
     for module, packages in production_coupled:
