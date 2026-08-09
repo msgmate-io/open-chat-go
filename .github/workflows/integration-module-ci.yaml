@@ -64,7 +64,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      # The host-surface guard (ci#423) reads the integration-interface
+      # submodule (`clients/go_integration_interface`), so check it out here;
+      # the other steps in this job are submodule-free.
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: bash syntax
         run: bash -n development/scripts/integration_module_ci.sh
