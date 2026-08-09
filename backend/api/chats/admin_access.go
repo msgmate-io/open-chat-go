@@ -46,6 +46,34 @@ func actingScopeUserIDs(db *gorm.DB, user *database.User) []uint {
 	return append(ids, runtime.OwnerUserId)
 }
 
+// resolveChatActingUserID maps a session principal to the user a chat share is
+// created for and removed from.
+//
+// ci#865: the bots API stores a dispatched interaction owner-scoped — the
+// participant is the acting user, ie the owner of the bot runtime (see
+// createBotInteraction) — and the completion notification looks the
+// interaction's share up under that owner id
+// (interaction_completed_notification.go). Publish/Unpublish therefore key the
+// share on the resolved acting user instead of the raw session principal. It is
+// a no-op for non-automated sessions and for bots without an active runtime
+// config, so ownership for ordinary users is unchanged.
+func resolveChatActingUserID(db *gorm.DB, user *database.User) uint {
+	if user == nil {
+		return 0
+	}
+	if db == nil || !user.IsAutomated {
+		return user.ID
+	}
+	var runtime database.BotRuntimeConfig
+	if err := db.Where("bot_user_id = ? AND is_active = ?", user.ID, true).First(&runtime).Error; err != nil {
+		return user.ID
+	}
+	if runtime.OwnerUserId == 0 || runtime.OwnerUserId == user.ID {
+		return user.ID
+	}
+	return runtime.OwnerUserId
+}
+
 // scopeByParticipant restricts a query to rows where one of the given columns
 // matches any of the ids.
 func scopeByParticipant(db *gorm.DB, ids []uint, columns ...string) *gorm.DB {
@@ -102,10 +130,10 @@ func findAccessibleChat(db *gorm.DB, user *database.User, chatUUID string) (data
 // read routes used to return.
 //
 // ci#865: those routes answered with http.Error's plain-text body, so the
-// generated CI client — which only decodes JSON on 200/400 — died in its JSON
-// decoder ("JSONDecodeError: Expecting value: line 1 column 1") instead of
-// surfacing the actual failure. Consumers can now always parse the body and read
-// .error.
+// generated CI client — which reads the body as JSON on that failure path —
+// died in its JSON decoder ("JSONDecodeError: Expecting value: line 1 column 1")
+// instead of surfacing the actual failure. Consumers can now always parse the
+// body and read .error.
 func writeChatErrorJSON(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
