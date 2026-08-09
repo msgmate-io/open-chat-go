@@ -1,0 +1,25 @@
+{
+  "files": {
+    "auth_events.go": {
+      "gorm.DB": 1,
+      "gorm.io/gorm": 1
+    },
+    "host_capabilities.go": {
+      "gorm.DB": 6,
+      "gorm.io/gorm": 1
+    },
+    "types.go": {
+      "fs.FS": 1,
+      "gorm.DB": 2,
+      "gorm.io/gorm": 1,
+      "http.ServeMux": 2
+    }
+  },
+  "host_version": 4,
+  "requirements": [
+    "github.com/msgmate-io/go-tool-interface v0.0.0",
+    "github.com/urfave/cli/v3 v3.11.0",
+    "gorm.io/gorm v1.25.12"
+  ],
+  "version": 1
+}
