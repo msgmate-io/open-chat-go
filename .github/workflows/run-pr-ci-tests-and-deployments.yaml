@@ -1232,6 +1232,19 @@ jobs:
           # failing the shard (mirrors backend/full_build.sh).
           retry download_modules
 
+      # ci#423 step 4: the dependency-surface gate. The Go-test job has already
+      # materialized every integration module and exported GOWORK, so the measurement
+      # is free here -- and this is the only PR path that can print a *new* import
+      # edge (`module: backend/...`). It runs before the Go suite (so a regression
+      # fails fast) on one shard only and in `--fail-only-on-regressions` mode:
+      # during the migration an integration the baseline does not pin is reported
+      # as still-migrating, never failed.
+      - name: Dependency-surface gate
+        if: steps.context.outputs.should_test != '' && matrix.shard == 1
+        run: |
+          set -euo pipefail
+          bash development/scripts/check_dep_surface_gate.sh
+
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
         run: |
