@@ -2718,6 +2718,20 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_dev_base_deploy_guard.py -v
+      # ci#890: `ci.msgmate.io` was served a VERSION that existed only on
+      # unmerged branches (main sat one release behind it). A PR preview must
+      # never be able to claim, or leave behind, the shared CI deployment:
+      # dispatching a preview without PR-scoped overrides makes the CI-side
+      # deploy fall back to the deployment-wide identity in
+      # `values.msgmate-io-pr-deployment.yaml`, a preview for an already
+      # closed/merged PR keeps re-asserting a stale identity, and a non-PR
+      # deploy carrying PR-scoped overrides leaks a preview host/namespace into
+      # a shared deployment. The guard is a pure predicate over one dispatch
+      # payload; these tests pin every rule before the dispatch site can act.
+      - name: PR CI deploy target guard (ci#890) unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_pr_deploy_target_guard.py -v
 
       # ci#832: the three deploy waiters (the approved-dispatch waiter plus the
       # two merged-deploy siblings) polled a run's top-level status, which GitHub
