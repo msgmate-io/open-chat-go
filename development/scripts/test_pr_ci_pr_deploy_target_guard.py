@@ -115,5 +115,60 @@ class CliTests(unittest.TestCase):
         self.assertEqual(guard.main(["--payload-json", "{not json"]), 1)
 
 
+class WorkflowWiringTests(unittest.TestCase):
+    """The guard is only useful if the dispatch job actually runs it first."""
+
+    WORKFLOW = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "run-pr-ci-tests-and-deployments.yaml"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = cls.WORKFLOW.read_text(encoding="utf-8")
+
+    def test_dispatch_job_runs_the_guard_step(self):
+        guard_step = self.text.index("name: Verify deploy dispatch target (ci#890)")
+        dispatch_step = self.text.index(
+            "name: Dispatch deployment workflow in CI repository"
+        )
+        self.assertLess(
+            guard_step,
+            dispatch_step,
+            "the guard must run before the deploy is dispatched",
+        )
+        self.assertIn(
+            "python3 development/scripts/pr_ci_pr_deploy_target_guard.py",
+            self.text[guard_step:dispatch_step],
+        )
+
+    def test_guard_step_receives_the_payload_inputs(self):
+        guard_step = self.text.index("name: Verify deploy dispatch target (ci#890)")
+        dispatch_step = self.text.index(
+            "name: Dispatch deployment workflow in CI repository"
+        )
+        step = self.text[guard_step:dispatch_step]
+        # Same job outputs the dispatch payload is built from, so the guard can
+        # never disagree with what is about to be dispatched.
+        for output in (
+            "outputs.deployment_name",
+            "outputs.pr_namespace",
+            "outputs.pr_deploy_host",
+            "outputs.pr_helm_release",
+            "outputs.pr_number",
+        ):
+            self.assertIn(output, step, "missing guard input %s" % output)
+        # The closed/merged-PR rule needs the *live* PR state, not the event.
+        self.assertIn('PR_STATE="$PR_STATE"', step)
+
+    def test_gate_job_keeps_running_the_guard_tests(self):
+        self.assertIn(
+            "python3 -m unittest development/scripts/test_pr_ci_pr_deploy_target_guard.py",
+            self.text,
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
