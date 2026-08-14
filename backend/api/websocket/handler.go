@@ -82,7 +82,6 @@ func (cs *WebSocketHandler) Shutdown() {
 	cs.connectionsMu.Unlock()
 
 	for _, conn := range conns {
-		_ = conn.Close(websocket.StatusGoingAway, "server shutting down")
 		conn.CloseNow()
 	}
 }
