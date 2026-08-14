@@ -38,7 +38,7 @@ on:
       opencode_model:
         description: opencode model id to pin for the benchmark interactions
         required: false
-        default: deepseek/deepseek-v4-flash
+        default: deepseek/deepseek-v4-flash-0731
       tags:
         description: Comma-separated sandbox test tags to run (empty = all tests)
         required: false
