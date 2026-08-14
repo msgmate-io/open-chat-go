@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/mail"
 	"os"
 	"strings"
@@ -54,42 +55,102 @@ func normalizeOwnerUsernames(cfg botBootstrapConfig) []string {
 	return ordered
 }
 
-func loadBotBootstrapConfig(path string) (botBootstrapConfig, error) {
-	var cfg botBootstrapConfig
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return cfg, fmt.Errorf("failed reading bot config file %q: %w", path, err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(content))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", path, err)
-	}
-
+func validateBotBootstrapConfig(cfg botBootstrapConfig, source string) (botBootstrapConfig, error) {
 	ownerUsernames := normalizeOwnerUsernames(cfg)
 	if strings.TrimSpace(cfg.PrimaryOwner) == "" {
-		return cfg, fmt.Errorf("bot config %q: primary_owner is required", path)
+		return cfg, fmt.Errorf("bot config %q: primary_owner is required", source)
 	}
 	if len(ownerUsernames) == 0 {
-		return cfg, fmt.Errorf("bot config %q: primary_owner/additional_owners must include at least one owner", path)
+		return cfg, fmt.Errorf("bot config %q: primary_owner/additional_owners must include at least one owner", source)
 	}
 	if strings.TrimSpace(cfg.Bot.Username) == "" {
-		return cfg, fmt.Errorf("bot config %q: bot.username is required", path)
+		return cfg, fmt.Errorf("bot config %q: bot.username is required", source)
 	}
 	if strings.TrimSpace(cfg.Bot.Name) == "" {
-		return cfg, fmt.Errorf("bot config %q: bot.name is required", path)
+		return cfg, fmt.Errorf("bot config %q: bot.name is required", source)
 	}
 	if email := strings.TrimSpace(strings.ToLower(cfg.Bot.Email)); email != "" {
 		if _, err := mail.ParseAddress(email); err != nil {
-			return cfg, fmt.Errorf("bot config %q: bot.email must be a valid email", path)
+			return cfg, fmt.Errorf("bot config %q: bot.email must be a valid email", source)
 		}
 		cfg.Bot.Email = email
 	}
 	if cfg.DefaultSharedConfig == nil {
-		return cfg, fmt.Errorf("bot config %q: default_shared_config is required", path)
+		return cfg, fmt.Errorf("bot config %q: default_shared_config is required", source)
 	}
 
 	return cfg, nil
+}
+
+func decodeBotBootstrapConfig(raw []byte, source string) (botBootstrapConfig, error) {
+	var cfg botBootstrapConfig
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return cfg, fmt.Errorf("invalid bot config JSON in %q: unexpected trailing JSON", source)
+		}
+		return cfg, fmt.Errorf("invalid bot config JSON in %q: %w", source, err)
+	}
+	return validateBotBootstrapConfig(cfg, source)
+}
+
+func loadBotBootstrapConfigsFromSpec(spec string) ([]botBootstrapConfig, error) {
+	trimmed := strings.TrimSpace(spec)
+	if trimmed == "" {
+		return []botBootstrapConfig{}, nil
+	}
+
+	content := []byte(trimmed)
+	source := "inline"
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
+		raw, err := os.ReadFile(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("failed reading bot config file %q: %w", trimmed, err)
+		}
+		content = raw
+		source = trimmed
+	}
+
+	content = bytes.TrimSpace(content)
+	if len(content) == 0 {
+		return []botBootstrapConfig{}, nil
+	}
+
+	if content[0] == '[' {
+		items := []json.RawMessage{}
+		decoder := json.NewDecoder(bytes.NewReader(content))
+		if err := decoder.Decode(&items); err != nil {
+			return nil, fmt.Errorf("invalid bot config array JSON in %q: %w", source, err)
+		}
+		var trailing interface{}
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			if err == nil {
+				return nil, fmt.Errorf("invalid bot config array JSON in %q: unexpected trailing JSON", source)
+			}
+			return nil, fmt.Errorf("invalid bot config array JSON in %q: %w", source, err)
+		}
+
+		out := make([]botBootstrapConfig, 0, len(items))
+		for idx, raw := range items {
+			cfg, err := decodeBotBootstrapConfig(raw, fmt.Sprintf("%s[%d]", source, idx))
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, cfg)
+		}
+		return out, nil
+	}
+
+	cfg, err := decodeBotBootstrapConfig(content, source)
+	if err != nil {
+		return nil, err
+	}
+	return []botBootstrapConfig{cfg}, nil
 }
 
 func findUserByUsername(DB *gorm.DB, username string) (*database.User, error) {
@@ -271,17 +332,23 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 }
 
 func applyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength bool) error {
-	for i, path := range paths {
-		trimmed := strings.TrimSpace(path)
+	for i, spec := range paths {
+		trimmed := strings.TrimSpace(spec)
 		if trimmed == "" {
 			continue
 		}
-		cfg, err := loadBotBootstrapConfig(trimmed)
+		configs, err := loadBotBootstrapConfigsFromSpec(trimmed)
 		if err != nil {
 			return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
 		}
-		if err := applyBotBootstrapConfig(DB, trimmed, cfg, validateStrength); err != nil {
-			return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
+		for cfgIdx, cfg := range configs {
+			sourcePath := trimmed
+			if len(configs) > 1 {
+				sourcePath = fmt.Sprintf("%s[%d]", trimmed, cfgIdx)
+			}
+			if err := applyBotBootstrapConfig(DB, sourcePath, cfg, validateStrength); err != nil {
+				return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
+			}
 		}
 	}
 	return nil
