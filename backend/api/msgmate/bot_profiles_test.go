@@ -217,7 +217,7 @@ func TestCreateOrUpdateBotProfileMergesRuntimeOpencodeProjectIntoAssignedModels(
 	botUser := createBotProfilesTestBot(t, DB, "runtime-opencode-bot", map[string]interface{}{
 		"backend":          "openrouter",
 		"chat_backend":     "opencode",
-		"model":            "deepseek/deepseek-v4.1-flash",
+		"model":            "deepseek/deepseek-v4-flash-0731",
 		"opencode_project": "open-chat-go-dev",
 		"tool_init": map[string]interface{}{
 			"opencode_select_project": map[string]interface{}{"project": "open-chat-go-dev"},
