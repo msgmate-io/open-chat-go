@@ -1,4 +1,4 @@
-//go:build !coreonly
+//go:build sshintegration
 
 package cmd
 
