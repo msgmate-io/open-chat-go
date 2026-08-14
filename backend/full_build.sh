@@ -116,10 +116,15 @@ python3 ./scripts/resolve_integrations.py \
   --output-modfile "$EFFECTIVE_MODFILE"
 
 if [ -n "${GOFLAGS:-}" ]; then
-  export GOFLAGS="${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}"
+  export GOFLAGS="${GOFLAGS} -mod=mod -modfile=${EFFECTIVE_MODFILE}"
 else
-  export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
+  export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
 fi
+
+if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
+  export GOFLAGS="${GOFLAGS} -tags=coreonly"
+fi
+
 echo "Using GOFLAGS=${GOFLAGS}"
 
 echo "Syncing external tool dependencies from tooldeps.json..."
@@ -130,7 +135,11 @@ go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" 
 
 echo "Downloading and tidying effective module dependencies..."
 go mod download
-go mod tidy
+if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
+    echo "Skipping go mod tidy for core-only profile to avoid resolving optional non-core integrations."
+else
+    go mod tidy
+fi
 
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.
