@@ -792,6 +792,7 @@ func ServerCli() *cli.Command {
 				}
 			case <-signalCtx.Done():
 				log.Printf("Shutting down server (signal: %v)", signalCtx.Err())
+				ch.Shutdown()
 				shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancelShutdown()
 				if err := s.Shutdown(shutdownCtx); err != nil {

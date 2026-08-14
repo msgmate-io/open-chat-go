@@ -121,8 +121,41 @@ else
   export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
 fi
 
+GO_TAGS=""
+append_go_tag() {
+  local tag="$1"
+  if [ -z "$tag" ]; then
+    return
+  fi
+  if [ -z "$GO_TAGS" ]; then
+    GO_TAGS="$tag"
+  else
+    GO_TAGS="${GO_TAGS},${tag}"
+  fi
+}
+
 if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
-  export GOFLAGS="${GOFLAGS} -tags=coreonly"
+  append_go_tag "coreonly"
+fi
+
+if python3 - "$EFFECTIVE_INTEGRATION_MANIFEST" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+modules = {
+    str(dep.get("module", "")).strip()
+    for dep in data.get("dependencies", [])
+    if isinstance(dep, dict)
+}
+sys.exit(0 if "github.com/msgmate-io/ssh-integration" in modules else 1)
+PY
+then
+  append_go_tag "sshintegration"
+fi
+
+if [ -n "$GO_TAGS" ]; then
+  export GOFLAGS="${GOFLAGS} -tags=${GO_TAGS}"
 fi
 
 echo "Using GOFLAGS=${GOFLAGS}"
@@ -135,8 +168,8 @@ go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" 
 
 echo "Downloading and tidying effective module dependencies..."
 go mod download
-if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
-    echo "Skipping go mod tidy for core-only profile to avoid resolving optional non-core integrations."
+if [ "${INTEGRATION_PROFILE}" != "full" ]; then
+    echo "Skipping go mod tidy for ${INTEGRATION_PROFILE} profile to avoid resolving optional non-profile integrations."
 else
     go mod tidy
 fi
