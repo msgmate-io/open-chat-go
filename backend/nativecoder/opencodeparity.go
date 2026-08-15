@@ -131,14 +131,14 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "session_trust",
 		Title:  "Trust a session so repeated confirmations are not asked again",
 		Phase:  ParityPhaseNow,
-		Status: ParityStatusOpen,
+		Status: ParityStatusPartial,
 		CoderTools: []string{
 			"coder_trust",
 		},
 		OpenCodeTools:    []string{"permission allow-for-session"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "Every mutating action is confirmed one at a time; batching coder_bash covers part of the work but there is no allow-for-this-session mode.",
+		Note:             "sessiontrust.go ships the per-chat trust state (action classes, grant/revoke, revision, AllowsTool) but the coder_trust tool is not exposed yet; every mutating action is still confirmed one at a time.",
 	},
 	{
 		ID:     "shell_modes",
@@ -151,7 +151,7 @@ var openCodeParityRegistry = []ParityGap{
 		OpenCodeTools:    []string{"bash (background/streaming)"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "coder_bash runs to completion under a timeout: no streaming, no background process handling, no interactive stdin, so dev servers, watchers and tail -f cannot be used.",
+		Note:             "shellmodes.go ships the per-chat session state (start/append/tail-by-offset/kill, background, streaming and interactive modes, bounded output tail) but coder_bash still runs to completion under a timeout: the tool surface does not expose the modes yet, so dev servers, watchers and tail -f cannot be used from a run.",
 	},
 	{
 		ID:     "multi_edit_patch",
