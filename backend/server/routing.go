@@ -38,6 +38,24 @@ import (
 
 //go:embed all:frontend routes.json swagger.json
 var frontendFS embed.FS
+var hashedAssetPattern = regexp.MustCompile(`\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$`)
+
+func setFrontendAssetCacheHeaders(w http.ResponseWriter, requestPath string) {
+	if w == nil {
+		return
+	}
+	cleanPath := strings.TrimSpace(requestPath)
+	if !strings.HasPrefix(cleanPath, "/assets/") {
+		return
+	}
+
+	if hashedAssetPattern.MatchString(cleanPath) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+}
 
 func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +136,7 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 		if !strings.HasSuffix(pathEnding, ".json") {
 			accept := r.Header.Get("Accept")
 			if !strings.Contains(accept, "text/html") {
+				setFrontendAssetCacheHeaders(w, r.URL.Path)
 				fileServer.ServeHTTP(w, r)
 				return
 			}
