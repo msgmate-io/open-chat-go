@@ -89,7 +89,7 @@ func TestCoderWorkspaceSystemPromptEmptyPrompt(t *testing.T) {
 
 	got := coderWorkspaceSystemPrompt("   ", config)
 
-	if got != nativecoder.GitHubTypedFirstAppend(nativecoder.WorkspaceRootGuidance()) {
+	if got != nativecoder.GitTypedFirstAppend(nativecoder.GitHubTypedFirstAppend(nativecoder.WorkspaceRootGuidance())) {
 		t.Fatalf("got %q, want the composed guidance alone", got)
 	}
 	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
