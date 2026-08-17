@@ -28,6 +28,15 @@
       "private": false
     },
     {
+      "module": "github.com/msgmate-io/opencode-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/opencode-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/opencode_integration",
+      "default_enabled": false,
+      "private": false
+    },
+    {
       "module": "github.com/msgmate-io/email-integration",
       "version": "",
       "import": "github.com/msgmate-io/email-integration",

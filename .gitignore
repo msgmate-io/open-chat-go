@@ -43,3 +43,4 @@ backend/.devbin/
 backend/.generated/
 kubeconfig.yaml
 .playwright-mcp/
+backend/uploads/*

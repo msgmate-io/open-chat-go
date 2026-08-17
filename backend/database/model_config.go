@@ -1,11 +1,14 @@
 package database
 
 import (
+	"backend/runtimecfg"
+	"bytes"
 	"database/sql/driver"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"slices"
 	"strings"
 
@@ -14,6 +17,9 @@ import (
 
 //go:embed data/default_model_configs.json
 var defaultModelConfigsJSON []byte
+
+//go:embed data/extra_default_models_config.json
+var extraDefaultModelsConfigJSON []byte
 
 // ModelConfig stores a default LLM model definition that can be assigned to bot profiles.
 type ModelConfig struct {
@@ -151,21 +157,158 @@ func GetModelConfigsForBot(db *gorm.DB, botUsername string) ([]ModelConfig, erro
 	return matched, nil
 }
 
-// SeedModelConfigs loads default model definitions from the embedded JSON file
-// and inserts any that are not already present (matched by model_id).
-func SeedModelConfigs(db *gorm.DB) error {
-	var entries []modelConfigFileEntry
-	if err := json.Unmarshal(defaultModelConfigsJSON, &entries); err != nil {
-		return fmt.Errorf("failed to parse default model configs: %w", err)
+func runtimeConfigValue(key string) string {
+	values := runtimecfg.GetAll()
+	if value, ok := values[key]; ok {
+		return strings.TrimSpace(value.Value)
+	}
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+func managedProviderAPIKeyEnv(backend string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "openai":
+		return "OPENAI_API_KEY", true
+	case "anthropic":
+		return "ANTHROPIC_API_KEY", true
+	case "deepinfra":
+		return "DEEPINFRA_API_KEY", true
+	case "groq":
+		return "GROQ_API_KEY", true
+	case "litellm":
+		return "LITELLM_API_KEY", true
+	default:
+		return "", false
+	}
+}
+
+func modelConfigBackend(raw json.RawMessage) (string, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", nil
+	}
+	cfg := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", err
+	}
+	backend, _ := cfg["backend"].(string)
+	return strings.ToLower(strings.TrimSpace(backend)), nil
+}
+
+// DefaultBotProviderKeySyncResult reports assignment changes applied while
+// syncing default bot model access from provider API key availability.
+type DefaultBotProviderKeySyncResult struct {
+	Assigned         int
+	Unassigned       int
+	SkippedUnmanaged int
+	SkippedInvalid   int
+}
+
+// SyncDefaultBotModelsByProviderKeys enables/disables default-model assignments
+// for the given bot username based on provider API key availability.
+//
+// Only provider backends with explicit key mappings are managed. Models with
+// unknown backends or invalid configuration are left untouched.
+func SyncDefaultBotModelsByProviderKeys(db *gorm.DB, botUsername string) (DefaultBotProviderKeySyncResult, error) {
+	result := DefaultBotProviderKeySyncResult{}
+	botUsername = strings.TrimSpace(botUsername)
+	if botUsername == "" {
+		return result, fmt.Errorf("bot username is required")
 	}
 
+	rows := []ModelConfig{}
+	if err := db.Where("owner_user_id IS NULL AND is_default = ?", true).Find(&rows).Error; err != nil {
+		return result, err
+	}
+
+	for _, row := range rows {
+		backend, err := modelConfigBackend(row.Configuration)
+		if err != nil {
+			result.SkippedInvalid++
+			continue
+		}
+
+		apiKeyEnv, managed := managedProviderAPIKeyEnv(backend)
+		if !managed {
+			result.SkippedUnmanaged++
+			continue
+		}
+
+		hasAPIKey := strings.TrimSpace(runtimeConfigValue(apiKeyEnv)) != ""
+		isAssigned := row.AssignedToBot(botUsername)
+
+		if hasAPIKey && !isAssigned {
+			updated := append(append(StringSliceJSON{}, row.BotUsernames...), botUsername)
+			if err := db.Model(&row).Update("bot_usernames", updated).Error; err != nil {
+				return result, err
+			}
+			result.Assigned++
+			continue
+		}
+
+		if !hasAPIKey && isAssigned {
+			updated := slices.DeleteFunc(row.BotUsernames, func(username string) bool {
+				return username == botUsername
+			})
+			if err := db.Model(&row).Update("bot_usernames", updated).Error; err != nil {
+				return result, err
+			}
+			result.Unassigned++
+		}
+	}
+
+	return result, nil
+}
+
+// ResolveExtraModelConfigsJSON returns the extra default-models JSON payload used
+// at seed time. EXTRA_MODELS_JSON / --extra-models-json may be a filesystem path
+// or an inline JSON array; otherwise the embedded extra_default_models_config.json
+// is used.
+func ResolveExtraModelConfigsJSON() ([]byte, string, error) {
+	override := runtimeConfigValue("EXTRA_MODELS_JSON")
+	if override == "" {
+		return extraDefaultModelsConfigJSON, "embedded:extra_default_models_config.json", nil
+	}
+
+	trimmed := strings.TrimSpace(override)
+	if strings.HasPrefix(trimmed, "[") {
+		return []byte(trimmed), "EXTRA_MODELS_JSON (inline)", nil
+	}
+
+	content, err := os.ReadFile(trimmed)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed reading EXTRA_MODELS_JSON path %q: %w", trimmed, err)
+	}
+	return content, trimmed, nil
+}
+
+func parseModelConfigFileEntries(raw []byte, source string) ([]modelConfigFileEntry, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return []modelConfigFileEntry{}, nil
+	}
+	var entries []modelConfigFileEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", source, err)
+	}
+	for idx, entry := range entries {
+		var cfg modelConfigID
+		if err := json.Unmarshal(entry.Configuration, &cfg); err != nil {
+			return nil, fmt.Errorf("%s[%d] has invalid configuration JSON: %w", source, idx, err)
+		}
+		if strings.TrimSpace(cfg.Model) == "" {
+			return nil, fmt.Errorf("%s[%d] is missing configuration.model", source, idx)
+		}
+	}
+	return entries, nil
+}
+
+func seedModelConfigEntries(db *gorm.DB, entries []modelConfigFileEntry, source string) error {
 	for _, entry := range entries {
 		var cfg modelConfigID
 		if err := json.Unmarshal(entry.Configuration, &cfg); err != nil {
-			return fmt.Errorf("failed to parse configuration for %q: %w", entry.Title, err)
+			return fmt.Errorf("failed to parse configuration for %q from %s: %w", entry.Title, source, err)
 		}
 		if cfg.Model == "" {
-			return fmt.Errorf("model config %q is missing configuration.model", entry.Title)
+			return fmt.Errorf("model config %q from %s is missing configuration.model", entry.Title, source)
 		}
 
 		var existing ModelConfig
@@ -204,10 +347,33 @@ func SeedModelConfigs(db *gorm.DB) error {
 			IsDefault:     true,
 		}
 		if err := db.Create(&record).Error; err != nil {
-			return fmt.Errorf("failed to seed model config %q: %w", cfg.Model, err)
+			return fmt.Errorf("failed to seed model config %q from %s: %w", cfg.Model, source, err)
 		}
-		log.Printf("Seeded model config: %s (bots: %v)", cfg.Model, entry.BotUsernames)
+		log.Printf("Seeded model config: %s (bots: %v, source: %s)", cfg.Model, entry.BotUsernames, source)
 	}
 
 	return nil
+}
+
+// SeedModelConfigs loads default model definitions from the embedded JSON file
+// plus optional EXTRA_MODELS_JSON / embedded extras, and inserts any that are
+// not already present (matched by model_id).
+func SeedModelConfigs(db *gorm.DB) error {
+	defaultEntries, err := parseModelConfigFileEntries(defaultModelConfigsJSON, "default_model_configs.json")
+	if err != nil {
+		return err
+	}
+	if err := seedModelConfigEntries(db, defaultEntries, "default_model_configs.json"); err != nil {
+		return err
+	}
+
+	extraRaw, extraSource, err := ResolveExtraModelConfigsJSON()
+	if err != nil {
+		return err
+	}
+	extraEntries, err := parseModelConfigFileEntries(extraRaw, extraSource)
+	if err != nil {
+		return err
+	}
+	return seedModelConfigEntries(db, extraEntries, extraSource)
 }

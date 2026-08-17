@@ -4,6 +4,7 @@ package server
 import (
 	"backend/database"
 	"backend/integrations"
+	"backend/runtimecfg"
 	"bufio"
 	"context"
 	"crypto/sha256"
@@ -85,6 +86,23 @@ func Logging(next http.Handler) http.Handler {
 		if jsonData := r.Context().Value("json"); jsonData != nil {
 			log.Printf("JSON Body: %v", jsonData)
 		}
+	})
+}
+
+func APINoCacheMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI := ""
+		if r != nil {
+			requestURI = strings.TrimSpace(r.RequestURI)
+		}
+		isAPIPath := r != nil && (r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/"))
+		isAPIRequestURI := requestURI == "/api" || strings.HasPrefix(requestURI, "/api/")
+		if isAPIPath || isAPIRequestURI {
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -382,7 +400,7 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/callback", "/signup-request-send", "/sign-up", "/email-verification"}
+var PublicRoutes = []string{"/", "/docs", "/models", "/tools", "/interaction", "/callback", "/signup-request-send", "/sign-up", "/email-verification", "/mobile"}
 
 func isPublicFrontendRoute(path string) bool {
 	for _, route := range PublicRoutes {
@@ -395,6 +413,11 @@ func isPublicFrontendRoute(path string) bool {
 
 func FrontendAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(strings.TrimSpace(runtimecfg.GetAll()["MOBILE_ROUTE_API_WS_TO_UPSTREAM"].Value), "true") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		accept := r.Header.Get("Accept")
 		if !strings.Contains(accept, "text/html") {
 			next.ServeHTTP(w, r)

@@ -8,9 +8,17 @@ type Value struct {
 }
 
 var (
-	mu     sync.RWMutex
-	values = map[string]Value{}
+	mu                sync.RWMutex
+	values            = map[string]Value{}
+	openChatBootstrap OpenChatBootstrap
 )
+
+type OpenChatBootstrap struct {
+	BotSpecs         []string
+	SSHDefaultOwners []string
+	SSHKeySpecs      []string
+	SSHServerSpecs   []string
+}
 
 func SetAll(next map[string]Value) {
 	mu.Lock()
@@ -29,4 +37,26 @@ func GetAll() map[string]Value {
 		out[key] = value
 	}
 	return out
+}
+
+func SetOpenChatBootstrap(next OpenChatBootstrap) {
+	mu.Lock()
+	defer mu.Unlock()
+	openChatBootstrap = OpenChatBootstrap{
+		BotSpecs:         append([]string(nil), next.BotSpecs...),
+		SSHDefaultOwners: append([]string(nil), next.SSHDefaultOwners...),
+		SSHKeySpecs:      append([]string(nil), next.SSHKeySpecs...),
+		SSHServerSpecs:   append([]string(nil), next.SSHServerSpecs...),
+	}
+}
+
+func GetOpenChatBootstrap() OpenChatBootstrap {
+	mu.RLock()
+	defer mu.RUnlock()
+	return OpenChatBootstrap{
+		BotSpecs:         append([]string(nil), openChatBootstrap.BotSpecs...),
+		SSHDefaultOwners: append([]string(nil), openChatBootstrap.SSHDefaultOwners...),
+		SSHKeySpecs:      append([]string(nil), openChatBootstrap.SSHKeySpecs...),
+		SSHServerSpecs:   append([]string(nil), openChatBootstrap.SSHServerSpecs...),
+	}
 }
