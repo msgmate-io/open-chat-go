@@ -10,11 +10,16 @@ import (
 	"backend/server/util"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -492,7 +497,7 @@ func ServerCli() *cli.Command {
 		Name:  "server",
 		Usage: "start the Open Chat server",
 		Flags: GetServerFlags(),
-		Action: func(_ context.Context, c *cli.Command) error {
+		Action: func(ctx context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 			for _, migration := range integrations.AdditionalMigrations() {
@@ -741,8 +746,9 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
+			var workerServer *asynq.Server
 			if c.Bool("start-worker") {
-				workerServer := asynq.NewServer(
+				workerServer = asynq.NewServer(
 					redisRuntime.ConnOpt,
 					asynq.Config{
 						Concurrency: int(c.Int("asynq-concurrency")),
@@ -757,16 +763,59 @@ func ServerCli() *cli.Command {
 					BackendHost: fullHost,
 					WSHandler:   ch,
 				}
-				go func() {
-					log.Printf("Starting embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
-					if workerErr := workerServer.Run(processor.NewServeMux()); workerErr != nil {
-						log.Printf("Embedded asynq worker failed: %v", workerErr)
-					}
-				}()
+				if workerErr := workerServer.Start(processor.NewServeMux()); workerErr != nil {
+					return fmt.Errorf("embedded asynq worker failed to start: %w", workerErr)
+				}
+				log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 			}
 
-			if err := s.ListenAndServe(); err != nil {
-				return err
+			serverErrCh := make(chan error, 1)
+			go func() {
+				err := s.ListenAndServe()
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					serverErrCh <- err
+					return
+				}
+				serverErrCh <- nil
+			}()
+
+			signalCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+			defer stopSignals()
+
+			select {
+			case err := <-serverErrCh:
+				if err != nil {
+					if workerServer != nil {
+						workerServer.Shutdown()
+					}
+					return err
+				}
+			case <-signalCtx.Done():
+				log.Printf("Shutting down server (signal: %v)", signalCtx.Err())
+				forceSigCh := make(chan os.Signal, 1)
+				signal.Notify(forceSigCh, os.Interrupt)
+				defer signal.Stop(forceSigCh)
+				go func() {
+					<-forceSigCh
+					log.Printf("Received additional interrupt; forcing immediate exit")
+					os.Exit(130)
+				}()
+				ch.Shutdown()
+				shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancelShutdown()
+				if err := s.Shutdown(shutdownCtx); err != nil {
+					_ = s.Close()
+					if workerServer != nil {
+						workerServer.Shutdown()
+					}
+					return fmt.Errorf("server shutdown failed: %w", err)
+				}
+				if workerServer != nil {
+					workerServer.Shutdown()
+				}
+				if err := <-serverErrCh; err != nil {
+					return err
+				}
 			}
 
 			return nil

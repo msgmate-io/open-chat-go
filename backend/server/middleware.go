@@ -89,6 +89,23 @@ func Logging(next http.Handler) http.Handler {
 	})
 }
 
+func APINoCacheMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI := ""
+		if r != nil {
+			requestURI = strings.TrimSpace(r.RequestURI)
+		}
+		isAPIPath := r != nil && (r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/"))
+		isAPIRequestURI := requestURI == "/api" || strings.HasPrefix(requestURI, "/api/")
+		if isAPIPath || isAPIRequestURI {
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 const UserContextKey = "user"
 
 func UserFromContext(ctx context.Context) *database.User {
