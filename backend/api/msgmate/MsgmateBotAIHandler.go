@@ -87,6 +87,37 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) map[string]interface{} {
+	runtime := map[string]interface{}{
+		"chat_uuid":     strings.TrimSpace(chatUUID),
+		"sender_uuid":   strings.TrimSpace(senderUUID),
+		"bot_user_id":   aih.botContext.BotUser.ID,
+		"bot_user_uuid": strings.TrimSpace(aih.botContext.BotUser.UUID),
+	}
+	if aih.botContext != nil && aih.botContext.Client != nil {
+		runtime["api_host"] = strings.TrimSpace(aih.botContext.Client.GetHost())
+		runtime["session_id"] = strings.TrimSpace(aih.botContext.Client.GetSessionId())
+	}
+	return runtime
+}
+
+func mergeToolInitWithTrustedRuntime(initData interface{}, runtime map[string]interface{}) map[string]interface{} {
+	base := map[string]interface{}{}
+	if typed, ok := initData.(map[string]interface{}); ok {
+		for k, v := range typed {
+			base[k] = v
+		}
+	}
+	if apiHost, ok := runtime["api_host"].(string); ok && strings.TrimSpace(apiHost) != "" {
+		base["api_host"] = strings.TrimSpace(apiHost)
+	}
+	if sessionID, ok := runtime["session_id"].(string); ok && strings.TrimSpace(sessionID) != "" {
+		base["session_id"] = sessionID
+	}
+	base["_runtime"] = runtime
+	return base
+}
+
 // AIHandlerImpl implements the AIHandler interface
 type AIHandlerImpl struct {
 	botContext *BotContext
@@ -188,7 +219,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	openAiMessages := aih.buildOpenAIMessages(&paginatedMessages, message, systemPrompt, backend)
 
 	// Setup tools
-	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit, dynamicTools, mcpTools)
+	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
 
 	// Add run_callback_function to tools
 	tools = append(tools, "run_callback_function")
@@ -451,7 +482,7 @@ func (aih *AIHandlerImpl) processCurrentMessageAttachments(text string, attachme
 }
 
 // setupTools sets up the tools for the AI response
-func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interface{}, dynamicTools map[string]interface{}, mcpTools map[string]interface{}) ([]interface{}, map[string]Tool, []string, []string) {
+func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, toolInit map[string]interface{}, dynamicTools map[string]interface{}, mcpTools map[string]interface{}) ([]interface{}, map[string]Tool, []string, []string) {
 	var toolsData []interface{}
 	toolMap := map[string]Tool{}
 	var interactionStartTools []string
@@ -460,6 +491,7 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 	EnsureExternalToolsRegistered()
 
 	if len(tools) > 0 {
+		trustedRuntime := trustedToolRuntime(aih, message.Content.ChatUUID, message.Content.SenderUUID)
 		// Debug: Print all available tools in AllTools
 		log.Printf("=== DEBUG: Available tools in AllTools ===")
 		for i, tool := range AllTools {
@@ -468,6 +500,7 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 		log.Printf("=== END DEBUG ===")
 
 		for _, toolName := range tools {
+			trustedRuntime = trustedToolRuntime(aih, message.Content.ChatUUID, message.Content.SenderUUID)
 			actualToolName := toolName
 			if strings.HasPrefix(toolName, "interaction_start:") {
 				interactionStartTools = append(interactionStartTools, toolName)
@@ -523,10 +556,10 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 				}
 				if ok {
 					log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(initData)
+					tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
 				} else {
 					log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(map[string]interface{}{})
+					tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
 				}
 			}
 		}
@@ -1036,7 +1069,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 	partialSessionID := fmt.Sprintf("%s-skip-core-%d", message.Content.ChatUUID, time.Now().UnixNano())
 
 	// Setup tools
-	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit, dynamicTools, mcpTools)
+	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
 
 	// Add run_callback_function to tools
 	tools = append(tools, "run_callback_function")
