@@ -24,19 +24,10 @@ run_step() {
   log "done: ${label} (${SECONDS-start}s)"
 }
 
-TOOL_JOBS=("./tooldeps.json:./api/msgmate/externaltools/imports_gen.go")
 INTEGRATION_JOBS=("./integrationdeps.json:./integrations/externalintegrations/imports_gen.go")
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tool-job)
-      if [[ $# -lt 2 ]]; then
-        log "missing value for --tool-job"
-        exit 1
-      fi
-      TOOL_JOBS+=("$2")
-      shift 2
-      ;;
     --integration-job)
       if [[ $# -lt 2 ]]; then
         log "missing value for --integration-job"
@@ -47,7 +38,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       log "unknown argument: $1"
-      log "supported arguments: --tool-job <manifest:output>, --integration-job <manifest:output>"
+      log "supported arguments: --integration-job <manifest:output>"
       exit 1
       ;;
   esac
@@ -103,7 +94,6 @@ log "using GOFLAGS=${GOFLAGS}"
 
 INTEGRATION_JOBS=("${EFFECTIVE_INTEGRATION_MANIFEST}:./integrations/externalintegrations/imports_gen.go")
 run_step "integration dependency generation" run_generator_jobs "integrationdepsgen" "./scripts/integrationdepsgen" "${INTEGRATION_JOBS[@]}"
-run_step "tool dependency generation" run_generator_jobs "tooldepsgen" "./scripts/tooldepsgen" "${TOOL_JOBS[@]}"
 run_step "module download" go mod download
 run_step "module tidy" go mod tidy
 

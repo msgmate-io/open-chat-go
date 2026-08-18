@@ -457,6 +457,8 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 	var interactionStartTools []string
 	var interactionCompleteTools []string
 
+	EnsureExternalToolsRegistered()
+
 	if len(tools) > 0 {
 		// Debug: Print all available tools in AllTools
 		log.Printf("=== DEBUG: Available tools in AllTools ===")

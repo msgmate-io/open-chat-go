@@ -499,6 +499,7 @@ func ServerCli() *cli.Command {
 		Flags: GetServerFlags(),
 		Action: func(ctx context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
+			msgmate.EnsureExternalToolsRegistered()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 			for _, migration := range integrations.AdditionalMigrations() {
 				database.RegisterExternalMigrations(database.FunctionMigration{
