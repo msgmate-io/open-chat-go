@@ -51,6 +51,7 @@ services:
       dockerfile: dev.dockerfile
       context: ./frontend/
     image: dev-frontend
+    command: sh -c "if [ ! -x node_modules/.bin/vike ]; then npm ci | cat; fi && npm run dev | cat"
     ports:
       - "3000:3000"
     volumes:
