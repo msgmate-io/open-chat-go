@@ -749,28 +749,6 @@
   },
   {
     "title": "gpt-4o-mini",
-    "description": "Auto-discovered model from openai provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "openai",
-      "context": 10,
-      "endpoint": "https://api.openai.com/v1",
-      "max_tokens": 4096,
-      "model": "gpt-4o-mini",
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "gpt-4o-mini",
     "description": "Auto-discovered model from litellm provider.",
     "bot_usernames": [
       "bot"
@@ -787,6 +765,28 @@
       "temperature": 0.7,
       "tools": [
         "get_current_time_confirmed",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
         "get_weather",
         "get_random_number"
       ]
@@ -2573,7 +2573,7 @@
     }
   },
   {
-    "title": "qwen25-32b-awq_vllm",
+    "title": "qwen3-4b-instruct-2507_vllm",
     "description": "Auto-discovered model from litellm provider.",
     "bot_usernames": [
       "bot"
@@ -2584,30 +2584,7 @@
       "context": 10,
       "endpoint": "https://litellm.t1m.me/v1",
       "max_tokens": 4096,
-      "model": "qwen25-32b-awq_vllm",
-      "reasoning": true,
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "qwen3-8b-instruct_vllm",
-    "description": "Auto-discovered model from litellm provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "litellm",
-      "context": 10,
-      "endpoint": "https://litellm.t1m.me/v1",
-      "max_tokens": 4096,
-      "model": "qwen3-8b-instruct_vllm",
+      "model": "qwen3-4b-instruct-2507_vllm",
       "reasoning": true,
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7,
