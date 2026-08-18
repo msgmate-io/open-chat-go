@@ -749,6 +749,28 @@
   },
   {
     "title": "gpt-4o-mini",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-4o-mini",
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7,
+      "tools": [
+        "get_current_time",
+        "get_weather",
+        "get_random_number"
+      ]
+    }
+  },
+  {
+    "title": "gpt-4o-mini",
     "description": "Auto-discovered model from litellm provider.",
     "bot_usernames": [
       "bot"
@@ -765,28 +787,6 @@
       "temperature": 0.7,
       "tools": [
         "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "gpt-4o-mini",
-    "description": "Auto-discovered model from openai provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "openai",
-      "context": 10,
-      "endpoint": "https://api.openai.com/v1",
-      "max_tokens": 4096,
-      "model": "gpt-4o-mini",
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time",
         "get_weather",
         "get_random_number"
       ]
@@ -2619,7 +2619,7 @@
     }
   },
   {
-    "title": "qwen36-27b-awq_vllm",
+    "title": "qwen38-27b-fp8_vllm",
     "description": "Auto-discovered model from litellm provider.",
     "bot_usernames": [
       "bot"
@@ -2630,7 +2630,7 @@
       "context": 10,
       "endpoint": "https://litellm.t1m.me/v1",
       "max_tokens": 4096,
-      "model": "qwen36-27b-awq_vllm",
+      "model": "qwen38-27b-fp8_vllm",
       "reasoning": true,
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7,
