@@ -953,12 +953,12 @@ func randomPassword() (string, error) {
 func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 
 	if !hasPermission(DB, user, database.PermissionCreateBots) {
-		http.Error(w, "Missing permission: create_bots", http.StatusForbidden)
+		writeBotAPIError(w, http.StatusForbidden, "missing_permission", "Missing permission: create_bots")
 		return
 	}
 
@@ -967,40 +967,40 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// permission gate above stays on the raw session principal.
 	actingUser, err := resolveActingUser(DB, user)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
 	var req CreateBotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "name_is_required", "name is required")
 		return
 	}
 	if req.DefaultSharedConfig == nil {
-		http.Error(w, "default_shared_config is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "default_shared_config_is_required", "default_shared_config is required")
 		return
 	}
 	defaultsAppliedConfig, err := applyIntegrationDefaultsForUser(DB, actingUser, req.DefaultSharedConfig)
 	if err != nil {
-		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_apply_shared_config_defaults", "Failed to apply integration shared config defaults")
 		return
 	}
 	req.DefaultSharedConfig = defaultsAppliedConfig
 	if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_shared_config", err.Error())
 		return
 	}
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_dynamic_tools", err.Error())
 		return
 	}
 	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_mcp_integrations", err.Error())
 		return
 	}
 
@@ -1009,7 +1009,7 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(password) == "" {
 		generated, err := randomPassword()
 		if err != nil {
-			http.Error(w, "Failed to generate password", http.StatusInternalServerError)
+			writeBotAPIError(w, http.StatusInternalServerError, "failed_to_generate_password", "Failed to generate password")
 			return
 		}
 		password = generated
@@ -1018,13 +1018,13 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_hash_password", "Failed to hash password")
 		return
 	}
 
 	configJSON, err := json.Marshal(req.DefaultSharedConfig)
 	if err != nil {
-		http.Error(w, "default_shared_config must be a valid JSON object", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_shared_config", "default_shared_config must be a valid JSON object")
 		return
 	}
 
@@ -1077,10 +1077,10 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "idx_bot_owner_name") || strings.Contains(errText, "duplicate") {
-			http.Error(w, "bot name already exists for owner", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "bot_name_already_exists", "bot name already exists for owner")
 			return
 		}
-		http.Error(w, "Failed to create bot", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_create_bot", "Failed to create bot")
 		return
 	}
 
@@ -1108,13 +1108,13 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 
 	actingUser, actingErr := resolveActingUser(DB, user)
 	if actingErr != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
@@ -1132,7 +1132,7 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var totalRows int64
 	if err := query.Count(&totalRows).Error; err != nil {
-		http.Error(w, "Failed to count bots", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_count_bots", "Failed to count bots")
 		return
 	}
 
@@ -1148,7 +1148,7 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit(limit).
 		Order("id desc").
 		Find(&rows).Error; err != nil {
-		http.Error(w, "Failed to list bots", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_list_bots", "Failed to list bots")
 		return
 	}
 
@@ -1175,7 +1175,7 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 
@@ -1184,16 +1184,16 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// the runtime owned by its owner instead of 404ing on the raw principal.
 	actingUser, actingErr := resolveActingUser(DB, user)
 	if actingErr != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
-			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "ambiguous_bot_identifier", "ambiguous bot identifier")
 			return
 		}
-		http.Error(w, "Bot not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "bot_not_found", "Bot not found")
 		return
 	}
 
@@ -1216,7 +1216,7 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 
@@ -1226,7 +1226,7 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// genuinely exists. For a human session resolveActingUser is a no-op.
 	actingUser, err := resolveActingUser(DB, user)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
@@ -1234,35 +1234,35 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
-			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "ambiguous_bot_identifier", "ambiguous bot identifier")
 			return
 		}
-		http.Error(w, "Bot not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "bot_not_found", "Bot not found")
 		return
 	}
 
 	var req UpdateBotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	if req.DefaultSharedConfig != nil {
 		defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, req.DefaultSharedConfig)
 		if defaultsErr != nil {
-			http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+			writeBotAPIError(w, http.StatusInternalServerError, "failed_to_apply_shared_config_defaults", "Failed to apply integration shared config defaults")
 			return
 		}
 		req.DefaultSharedConfig = defaultsAppliedConfig
 		if err := validateSharedConfigStructure(req.DefaultSharedConfig); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeBotAPIError(w, http.StatusBadRequest, "invalid_shared_config", err.Error())
 			return
 		}
 		if err := validateAndAttachDynamicToolsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeBotAPIError(w, http.StatusBadRequest, "invalid_dynamic_tools", err.Error())
 			return
 		}
 		if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeBotAPIError(w, http.StatusBadRequest, "invalid_mcp_integrations", err.Error())
 			return
 		}
 	}
@@ -1305,14 +1305,14 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errText := strings.ToLower(err.Error())
 		if strings.Contains(errText, "name cannot be empty") {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeBotAPIError(w, http.StatusBadRequest, "name_cannot_be_empty", err.Error())
 			return
 		}
 		if strings.Contains(errText, "idx_bot_owner_name") || strings.Contains(errText, "duplicate") {
-			http.Error(w, "bot name already exists for owner", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "bot_name_already_exists", "bot name already exists for owner")
 			return
 		}
-		http.Error(w, "Failed to update bot", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_update_bot", "Failed to update bot")
 		return
 	}
 
@@ -1336,14 +1336,14 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 
 	// Same acting-user resolution as Update (ci#824 follow-up).
 	actingUser, err := resolveActingUser(DB, user)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
@@ -1351,10 +1351,10 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
-			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "ambiguous_bot_identifier", "ambiguous bot identifier")
 			return
 		}
-		http.Error(w, "Bot not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "bot_not_found", "Bot not found")
 		return
 	}
 
@@ -1362,40 +1362,40 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	config := map[string]interface{}{}
 	if err := decoder.Decode(&config); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, config)
 	if defaultsErr != nil {
-		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_apply_shared_config_defaults", "Failed to apply integration shared config defaults")
 		return
 	}
 	config = defaultsAppliedConfig
 	if err := validateSharedConfigStructure(config); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_shared_config", err.Error())
 		return
 	}
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, config); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_dynamic_tools", err.Error())
 		return
 	}
 	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, config); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_mcp_integrations", err.Error())
 		return
 	}
 
 	configJSON, err := json.Marshal(config)
 	if err != nil {
-		http.Error(w, "Failed to encode config", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "failed_to_encode_config", "Failed to encode config")
 		return
 	}
 
 	if err := DB.Model(&runtime).Update("default_shared_config", database.JSONRaw(configJSON)).Error; err != nil {
-		http.Error(w, "Failed to save bot config", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_save_bot_config", "Failed to save bot config")
 		return
 	}
 	if err := DB.Preload("BotUser").Preload("OwnerUser").First(&runtime, runtime.ID).Error; err != nil {
-		http.Error(w, "Failed to load bot", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_load_bot", "Failed to load bot")
 		return
 	}
 
@@ -1417,14 +1417,14 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 
 	// Same acting-user resolution as Update/SaveConfig (ci#824 follow-up).
 	actingUser, err := resolveActingUser(DB, user)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
@@ -1432,15 +1432,15 @@ func (h *BotsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
-			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "ambiguous_bot_identifier", "ambiguous bot identifier")
 			return
 		}
-		http.Error(w, "Bot not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "bot_not_found", "Bot not found")
 		return
 	}
 
 	if err := DB.Model(&runtime).Update("is_active", false).Error; err != nil {
-		http.Error(w, "Failed to delete bot", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_delete_bot", "Failed to delete bot")
 		return
 	}
 	runtime.IsActive = false
