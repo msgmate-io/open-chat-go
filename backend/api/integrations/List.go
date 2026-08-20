@@ -16,6 +16,7 @@ type IntegrationListRow struct {
 	ModelProviderCount int    `json:"model_provider_count"`
 	FunctionCount      int    `json:"function_count"`
 	RuntimeEnvVarCount int    `json:"runtime_env_var_count"`
+	DefaultBotCount    int    `json:"default_bot_count"`
 	AdminOnly          bool   `json:"admin_only"`
 	UserAccessible     bool   `json:"user_accessible"`
 }
@@ -53,6 +54,7 @@ func (h *IntegrationsHandler) List(w http.ResponseWriter, r *http.Request) {
 			ModelProviderCount: len(def.ModelProviders),
 			FunctionCount:      len(def.Functions),
 			RuntimeEnvVarCount: len(def.RuntimeEnvVars),
+			DefaultBotCount:    len(def.BotBootstrapConfigs),
 			AdminOnly:          def.AdminOnly,
 			UserAccessible:     def.UserAccessible,
 		})

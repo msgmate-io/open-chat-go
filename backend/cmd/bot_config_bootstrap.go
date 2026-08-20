@@ -11,26 +11,12 @@ import (
 	"os"
 	"strings"
 
+	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
 )
 
-type botIdentityConfig struct {
-	Username    string `json:"username"`
-	Email       string `json:"email,omitempty"`
-	Password    string `json:"password"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	IsPublic    *bool  `json:"is_public,omitempty"`
-	IsActive    *bool  `json:"is_active,omitempty"`
-}
-
-type botBootstrapConfig struct {
-	PrimaryOwner        string                 `json:"primary_owner"`
-	AdditionalOwners    []string               `json:"additional_owners,omitempty"`
-	Bot                 botIdentityConfig      `json:"bot"`
-	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
-	OverwriteIfExists   bool                   `json:"overwrite_if_exists,omitempty"`
-}
+type botIdentityConfig = extiface.BotIdentityConfig
+type botBootstrapConfig = extiface.BotBootstrapConfig
 
 func normalizeOwnerUsernames(cfg botBootstrapConfig) []string {
 	ordered := []string{}
@@ -79,7 +65,75 @@ func validateBotBootstrapConfig(cfg botBootstrapConfig, source string) (botBoots
 		return cfg, fmt.Errorf("bot config %q: default_shared_config is required", source)
 	}
 
+	normalizedBackends := make([]string, 0, len(cfg.AllowedModelBackends))
+	seenBackends := map[string]struct{}{}
+	for _, backend := range cfg.AllowedModelBackends {
+		normalized := strings.ToLower(strings.TrimSpace(backend))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seenBackends[normalized]; exists {
+			continue
+		}
+		seenBackends[normalized] = struct{}{}
+		normalizedBackends = append(normalizedBackends, normalized)
+	}
+	cfg.AllowedModelBackends = normalizedBackends
+
 	return cfg, nil
+}
+
+func modelBackendFromConfiguration(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	cfg := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return ""
+	}
+	backend, _ := cfg["backend"].(string)
+	return strings.ToLower(strings.TrimSpace(backend))
+}
+
+func syncBotDefaultModelAccessByBackend(tx *gorm.DB, botUsername string, allowedBackends []string) error {
+	botUsername = strings.TrimSpace(botUsername)
+	if botUsername == "" || len(allowedBackends) == 0 {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	for _, backend := range allowedBackends {
+		normalized := strings.ToLower(strings.TrimSpace(backend))
+		if normalized != "" {
+			allowed[normalized] = struct{}{}
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	rows := []database.ModelConfig{}
+	if err := tx.Where("owner_user_id IS NULL AND is_default = ?", true).Find(&rows).Error; err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		backend := modelBackendFromConfiguration(row.Configuration)
+		_, isAllowed := allowed[backend]
+		isAssigned := row.AssignedToBot(botUsername)
+		if isAllowed && !isAssigned {
+			if _, err := database.AssignBotToModelConfig(tx, row.UUID, botUsername); err != nil {
+				return err
+			}
+			continue
+		}
+		if !isAllowed && isAssigned {
+			if _, err := database.UnassignBotFromModelConfig(tx, row.UUID, botUsername); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func decodeBotBootstrapConfig(raw []byte, source string) (botBootstrapConfig, error) {
@@ -180,7 +234,7 @@ func findUserByUsername(DB *gorm.DB, username string) (*database.User, error) {
 	return &user, nil
 }
 
-func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) (*database.User, error) {
+func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool, suppressGeneratedPasswordLog bool) (*database.User, error) {
 	username := strings.TrimSpace(cfg.Bot.Username)
 	botEmail := strings.TrimSpace(strings.ToLower(cfg.Bot.Email))
 	password := strings.TrimSpace(cfg.Bot.Password)
@@ -213,11 +267,12 @@ func resolveBotUserForConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 
 	botCredentials := fmt.Sprintf("%s:%s", username, password)
 	botUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
-		Label:            fmt.Sprintf("add-bot-from-config[%s]", sourcePath),
-		Credentials:      botCredentials,
-		IsAdmin:          false,
-		IsAutomated:      true,
-		ValidateStrength: validateStrength,
+		Label:                        fmt.Sprintf("add-bot-from-config[%s]", sourcePath),
+		Credentials:                  botCredentials,
+		IsAdmin:                      false,
+		IsAutomated:                  true,
+		ValidateStrength:             validateStrength,
+		SuppressGeneratedPasswordLog: suppressGeneratedPasswordLog,
 	})
 	if err != nil {
 		return nil, err
@@ -249,7 +304,7 @@ func ensureOwnerConnectedToBot(DB *gorm.DB, owner database.User, bot database.Us
 	return nil
 }
 
-func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool) error {
+func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapConfig, validateStrength bool, suppressGeneratedPasswordLog bool) error {
 	ownerUsernames := normalizeOwnerUsernames(cfg)
 	ownersByUsername := map[string]*database.User{}
 	for _, ownerUsername := range ownerUsernames {
@@ -263,7 +318,7 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 	primaryOwnerUsername := strings.TrimSpace(cfg.PrimaryOwner)
 	owner := ownersByUsername[primaryOwnerUsername]
 
-	botUser, err := resolveBotUserForConfig(DB, sourcePath, cfg, validateStrength)
+	botUser, err := resolveBotUserForConfig(DB, sourcePath, cfg, validateStrength, suppressGeneratedPasswordLog)
 	if err != nil {
 		return err
 	}
@@ -327,8 +382,42 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 			}
 		}
 
+		if len(cfg.AllowedModelBackends) > 0 {
+			assignmentName := strings.TrimSpace(botUser.Name)
+			if assignmentName == "" {
+				assignmentName = strings.TrimSpace(botUser.Username)
+			}
+			if err := syncBotDefaultModelAccessByBackend(tx, assignmentName, cfg.AllowedModelBackends); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
+}
+
+func applyBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, configs []botBootstrapConfig, validateStrength bool, suppressGeneratedPasswordLog bool) error {
+	for cfgIdx, cfg := range configs {
+		sourcePath := sourcePrefix
+		if len(configs) > 1 {
+			sourcePath = fmt.Sprintf("%s[%d]", sourcePrefix, cfgIdx)
+		}
+		validated, err := validateBotBootstrapConfig(cfg, sourcePath)
+		if err != nil {
+			return err
+		}
+		if suppressGeneratedPasswordLog {
+			password := strings.TrimSpace(validated.Bot.Password)
+			if password != "" && password != "random" {
+				return fmt.Errorf("bot config %q: integration declared bot.password must be empty or random", sourcePath)
+			}
+			validated.OverwriteIfExists = false
+		}
+		if err := applyBotBootstrapConfig(DB, sourcePath, validated, validateStrength, suppressGeneratedPasswordLog); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func applyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength bool) error {
@@ -341,15 +430,13 @@ func applyBotBootstrapConfigFiles(DB *gorm.DB, paths []string, validateStrength 
 		if err != nil {
 			return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
 		}
-		for cfgIdx, cfg := range configs {
-			sourcePath := trimmed
-			if len(configs) > 1 {
-				sourcePath = fmt.Sprintf("%s[%d]", trimmed, cfgIdx)
-			}
-			if err := applyBotBootstrapConfig(DB, sourcePath, cfg, validateStrength); err != nil {
-				return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
-			}
+		if err := applyBotBootstrapConfigs(DB, trimmed, configs, validateStrength, false); err != nil {
+			return fmt.Errorf("add-bot-from-config[%d]: %w", i, err)
 		}
 	}
 	return nil
+}
+
+func applyIntegrationBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, configs []botBootstrapConfig, validateStrength bool) error {
+	return applyBotBootstrapConfigs(DB, sourcePrefix, configs, validateStrength, true)
 }
