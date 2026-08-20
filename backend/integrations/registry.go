@@ -3,6 +3,7 @@ package integrations
 import (
 	_ "backend/integrations/externalintegrations"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
@@ -218,6 +219,12 @@ type RuntimeConfigAliasDeclaration struct {
 	Description     string
 }
 
+type BotBootstrapDeclaration struct {
+	IntegrationName string
+	Index           int
+	Config          extiface.BotBootstrapConfig
+}
+
 func RuntimeEnvDeclarations() []RuntimeEnvVarDeclaration {
 	EnsureLoaded()
 	out := []RuntimeEnvVarDeclaration{}
@@ -259,6 +266,54 @@ func RuntimeConfigAliasDeclarations() []RuntimeConfigAliasDeclaration {
 		}
 		return out[i].IntegrationName < out[j].IntegrationName
 	})
+	return out
+}
+
+func BotBootstrapDeclarations() []BotBootstrapDeclaration {
+	EnsureLoaded()
+	definitions := List()
+	out := []BotBootstrapDeclaration{}
+	for _, def := range definitions {
+		for idx, cfg := range def.BotBootstrapConfigs {
+			out = append(out, BotBootstrapDeclaration{
+				IntegrationName: def.Name,
+				Index:           idx,
+				Config:          cloneBotBootstrapConfig(cfg),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IntegrationName == out[j].IntegrationName {
+			return out[i].Index < out[j].Index
+		}
+		return out[i].IntegrationName < out[j].IntegrationName
+	})
+	return out
+}
+
+func cloneBotBootstrapConfig(input extiface.BotBootstrapConfig) extiface.BotBootstrapConfig {
+	out := input
+	out.AdditionalOwners = append([]string(nil), input.AdditionalOwners...)
+	out.DefaultSharedConfig = cloneJSONMap(input.DefaultSharedConfig)
+	return out
+}
+
+func cloneJSONMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		out := map[string]interface{}{}
+		for k, v := range input {
+			out[k] = v
+		}
+		return out
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]interface{}{}
+	}
 	return out
 }
 

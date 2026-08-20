@@ -292,12 +292,13 @@ func normalizeSessionCookieDomain(host string) string {
 }
 
 type bootstrapUserSpec struct {
-	Label            string
-	Credentials      string
-	IsAdmin          bool
-	IsAutomated      bool
-	SingletonAdmin   bool
-	ValidateStrength bool
+	Label                        string
+	Credentials                  string
+	IsAdmin                      bool
+	IsAutomated                  bool
+	SingletonAdmin               bool
+	ValidateStrength             bool
+	SuppressGeneratedPasswordLog bool
 }
 
 func nextAvailableUsername(DB *gorm.DB, base string) (string, error) {
@@ -444,14 +445,16 @@ func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*
 	return &admin, nil
 }
 
-func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string) (string, error) {
+func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string, suppressGeneratedPasswordLog bool) (string, error) {
 	if rawPassword == "random" {
 		generatedPassword, genErr := generateRandomPassword()
 		if genErr != nil {
 			return "", fmt.Errorf("failed to generate random password for %s: %w", label, genErr)
 		}
-		fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
-		fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		if !suppressGeneratedPasswordLog {
+			fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
+			fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		}
 		return generatedPassword, nil
 	}
 
@@ -474,7 +477,7 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		return nil, err
 	}
 
-	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label)
+	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label, spec.SuppressGeneratedPasswordLog)
 	if err != nil {
 		return nil, err
 	}
@@ -733,6 +736,13 @@ func ServerCli() *cli.Command {
 			botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
 			if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
 				return err
+			}
+			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			for _, decl := range integrationBotDecls {
+				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
+				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
+					return err
+				}
 			}
 
 			sshDefaultOwners := append([]string{}, c.StringSlice("add-ssh-default-owner")...)
