@@ -161,7 +161,7 @@ fi
 echo "Using GOFLAGS=${GOFLAGS}"
 
 echo "Syncing external integration dependencies from effective integration manifest..."
-go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
+go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync=false
 
 echo "Downloading and tidying effective module dependencies..."
 go mod download
