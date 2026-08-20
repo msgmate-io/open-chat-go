@@ -95,6 +95,7 @@ func registerExternalToolsLocked() {
 			Description:                    externalDef.Description,
 			AdminOnly:                      externalDef.AdminOnly,
 			RequiresInit:                   externalDef.RequiresInit,
+			InitSchema:                     externalDef.InitSchema,
 			RequiresConfirmation:           externalDef.RequiresConfirmation,
 			StopOnFirstConfirmableToolCall: externalDef.StopOnFirstConfirmableToolCall,
 			ConfirmationBlockMessage:       externalDef.ConfirmationBlockMessage,
