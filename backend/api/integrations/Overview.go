@@ -13,6 +13,25 @@ import (
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
 )
 
+func cloneDefaultSharedConfigMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		out := map[string]interface{}{}
+		for key, value := range input {
+			out[key] = value
+		}
+		return out
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]interface{}{}
+	}
+	return out
+}
+
 type IntegrationModelOverview struct {
 	TypeName string                          `json:"type_name"`
 	Kind     string                          `json:"kind"`
@@ -58,6 +77,20 @@ type IntegrationRuntimeEnvVarOverview struct {
 	Description string `json:"description,omitempty"`
 }
 
+type IntegrationDefaultBotOverview struct {
+	PrimaryOwner        string                 `json:"primary_owner"`
+	AdditionalOwners    []string               `json:"additional_owners,omitempty"`
+	Username            string                 `json:"username"`
+	Email               string                 `json:"email,omitempty"`
+	Name                string                 `json:"name"`
+	Description         string                 `json:"description,omitempty"`
+	IsPublic            *bool                  `json:"is_public,omitempty"`
+	IsActive            *bool                  `json:"is_active,omitempty"`
+	UsesRandomPassword  bool                   `json:"uses_random_password"`
+	OverwriteIfExists   bool                   `json:"overwrite_if_exists"`
+	DefaultSharedConfig map[string]interface{} `json:"default_shared_config"`
+}
+
 type IntegrationOverviewResponse struct {
 	Name              string                             `json:"name"`
 	ReadmeMarkdown    string                             `json:"readme_markdown,omitempty"`
@@ -67,6 +100,7 @@ type IntegrationOverviewResponse struct {
 	Models            []IntegrationModelOverview         `json:"models"`
 	Functions         []string                           `json:"functions"`
 	RuntimeEnvVars    []IntegrationRuntimeEnvVarOverview `json:"runtime_env_vars"`
+	DefaultBots       []IntegrationDefaultBotOverview    `json:"default_bots"`
 }
 
 func pathParamsFromRoute(route string) []IntegrationAPIParameterOverview {
@@ -385,6 +419,32 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		return runtimeEnvVars[i].Key < runtimeEnvVars[j].Key
 	})
 
+	defaultBots := make([]IntegrationDefaultBotOverview, 0, len(def.BotBootstrapConfigs))
+	for _, cfg := range def.BotBootstrapConfigs {
+		defaultBots = append(defaultBots, IntegrationDefaultBotOverview{
+			PrimaryOwner:        strings.TrimSpace(cfg.PrimaryOwner),
+			AdditionalOwners:    append([]string(nil), cfg.AdditionalOwners...),
+			Username:            strings.TrimSpace(cfg.Bot.Username),
+			Email:               strings.TrimSpace(cfg.Bot.Email),
+			Name:                strings.TrimSpace(cfg.Bot.Name),
+			Description:         strings.TrimSpace(cfg.Bot.Description),
+			IsPublic:            cfg.Bot.IsPublic,
+			IsActive:            cfg.Bot.IsActive,
+			UsesRandomPassword:  strings.EqualFold(strings.TrimSpace(cfg.Bot.Password), "random"),
+			OverwriteIfExists:   cfg.OverwriteIfExists,
+			DefaultSharedConfig: cloneDefaultSharedConfigMap(cfg.DefaultSharedConfig),
+		})
+	}
+	sort.Slice(defaultBots, func(i, j int) bool {
+		if defaultBots[i].PrimaryOwner == defaultBots[j].PrimaryOwner {
+			if defaultBots[i].Name == defaultBots[j].Name {
+				return defaultBots[i].Username < defaultBots[j].Username
+			}
+			return defaultBots[i].Name < defaultBots[j].Name
+		}
+		return defaultBots[i].PrimaryOwner < defaultBots[j].PrimaryOwner
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(IntegrationOverviewResponse{
 		Name:              def.Name,
@@ -395,5 +455,6 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		Models:            models,
 		Functions:         functions,
 		RuntimeEnvVars:    runtimeEnvVars,
+		DefaultBots:       defaultBots,
 	})
 }
