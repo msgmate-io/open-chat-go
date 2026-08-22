@@ -419,7 +419,11 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			// enables it and a GitHub client is configured.
 			MaybeRunAutoConsolidation(DB, chat)
 		}
-		maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+		// A terminal error row takes precedence: it is an `interaction_error`
+		// (or `provider_credits_exhausted`) notification, never a completion.
+		if !maybeDispatchInteractionFailureNotification(context.Background(), DB, chat, *user, receiver, message) {
+			maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+		}
 	})
 
 	w.Header().Set("Content-Type", "application/json")
