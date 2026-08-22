@@ -74,6 +74,27 @@ All `/api/v1/*` routes not listed above require an authenticated session or an
 | `POST` | `/api/chat/{chat_uuid}/publish` | Publish a chat as a shared interaction. |
 | `POST` | `/api/chat/{chat_uuid}/unpublish` | Unpublish a shared interaction. |
 
+Sending into a chat that is already running a turn takes an explicit
+`delivery_mode` (default `"queued"`, matched case-insensitively):
+
+- `"queued"` (aliases `""`, `"queue"`, `"task-stack"`, `"task_stack"`) — the
+  message is persisted and visible immediately and is answered once the live
+  turn completes. Order is preserved, and `queued_replies` in
+  `GET /api/v1/chats/{chat_uuid}/status` reports how many messages are waiting
+  behind the live turn, so a client can render them as pending instead of
+  looking lost.
+- `"interrupt"` (aliases `"immediate"`, `"send_now"`, `"send-now"`, `"now"`) —
+  the live turn is stopped and the new turn starts immediately (this is what a
+  "send now" affordance sends). Queued replies behind the live turn are dropped
+  and pending confirmable actions are voided so the interrupt is
+  authoritative; work the stopped turn already persisted (files, commits) is
+  preserved, and a running auto-continuation loop is stopped.
+
+Any other value is rejected with `400 Invalid delivery_mode` rather than
+silently falling back to a default, so a client bug never discards the sender's
+intent. [Terminal UI (TUI)](/docs/tui) describes the same contract from the
+client side.
+
 ### Bots and agents
 
 | Method | Path |
