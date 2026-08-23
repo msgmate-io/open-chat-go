@@ -203,6 +203,30 @@ func ResolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	return resolveInteractionStatus(DB, inspector, chat)
 }
 
+// ResolveInteractionStatusesWithSnapshot resolves the live status of many chats
+// using a single BotReplyActivity snapshot, so a listing of N interactions
+// costs one queue listing instead of one asynq inspector round-trip (x2) per
+// chat (ci#850). The result aligns 1:1 with the input order; a per-chat
+// resolution error degrades to a plain idle status rather than failing the
+// whole listing.
+func ResolveInteractionStatusesWithSnapshot(DB *gorm.DB, snapshot *workqueue.BotReplyActivity, chats []database.Chat) []InteractionStatusResponse {
+	queue := snapshotQueueActivity{snapshot: snapshot}
+	out := make([]InteractionStatusResponse, len(chats))
+	for i, chat := range chats {
+		status, err := resolveInteractionStatusWithQueue(DB, chat, queue)
+		if err != nil {
+			out[i] = InteractionStatusResponse{
+				ChatUUID: chat.UUID,
+				State:    string(chatstate.StateIdle),
+				Source:   "none",
+			}
+			continue
+		}
+		out[i] = status
+	}
+	return out
+}
+
 func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat database.Chat) (InteractionStatusResponse, error) {
 	return resolveInteractionStatusWithQueue(DB, chat, inspectorQueueActivity{inspector: inspector})
 }
