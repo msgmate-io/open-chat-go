@@ -199,6 +199,24 @@ func TestIndexMigrationChatMembershipIndex(t *testing.T) {
 	}
 }
 
+// TestIndexMigrationUsesMessageUUIDIndex pins the ci overload fix: a message
+// lookup by uuid (the hot streaming meta_data update / queued-marker path) must
+// be served by idx_messages_uuid, not a full table scan. The base model's UUID
+// column had no index, so every such lookup scanned the whole table and pegged
+// Postgres under agent load.
+func TestIndexMigrationUsesMessageUUIDIndex(t *testing.T) {
+	db := setupIndexMigrationTestDB(t)
+	seedIndexMigrationRows(t, db)
+
+	plan := explainQueryPlan(t, db, "SELECT * FROM messages WHERE uuid = ?", "no-such-uuid")
+	if !strings.Contains(plan, "idx_messages_uuid") {
+		t.Fatalf("expected uuid lookup to use idx_messages_uuid, plan was:\n%s", plan)
+	}
+	if strings.Contains(plan, "SCAN messages") {
+		t.Fatalf("uuid lookup degrades to a full table scan, plan was:\n%s", plan)
+	}
+}
+
 // TestIndexMigrationRejectsUnusedCompositeIndexes keeps the ci#850 negative
 // results honest: the candidates listed in rejectedIndexCandidates must not be
 // (re)introduced by hotPathIndexes, because the planner ignores them and an
