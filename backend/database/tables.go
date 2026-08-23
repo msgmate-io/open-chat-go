@@ -300,6 +300,9 @@ var Migrations []Migration = []Migration{
 	// IndexMigration runs last so every table it indexes exists, and is
 	// idempotent (CREATE INDEX IF NOT EXISTS) for repeated boots (ci#850).
 	IndexMigration{},
+	// VacuumTuningMigration applies Postgres autovacuum storage parameters to
+	// the write-hot tables (no-op on SQLite).
+	VacuumTuningMigration{},
 }
 
 func RegisterExternalModels(models ...interface{}) {
