@@ -125,8 +125,18 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 	}
 
-	aiHandler := msgmate.NewAIHandler(botContext)
-	if err := aiHandler.GenerateResponse(ctx, message); err != nil {
+	var err error
+	if backendFn, config, ok := msgmate.ResolveChatBackend(deps.DB, payload.ChatUUID); ok {
+		err = backendFn(ctx, msgmate.ChatBackendRequest{
+			DB:         deps.DB,
+			BotContext: botContext,
+			Message:    message,
+			Config:     config,
+		})
+	} else {
+		err = msgmate.NewAIHandler(botContext).GenerateResponse(ctx, message)
+	}
+	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
 		if errors.Is(err, context.Canceled) {
 			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(err)}
