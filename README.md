@@ -25,8 +25,8 @@ docker compose --profile storybook up
 
 ### Infuse Open-Chat Tools & Integrations
 
-- Use the [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface) and include your tool in `backend/tooldeps.json`
-- Or the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and place integrations in `backend/integrationdeps.json`
+- Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and place integrations in `backend/integrationdeps.json`
+- Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
 ### Production
 

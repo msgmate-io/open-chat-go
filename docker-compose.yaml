@@ -51,6 +51,9 @@ services:
       dockerfile: dev.dockerfile
       context: ./frontend/
     image: dev-frontend
+    command: sh -c "if [ ! -x node_modules/.bin/vike ]; then npm ci | cat; fi && npm run dev | cat"
+    environment:
+      VITE_ENABLE_ADMIN_MODEL_DEFAULT_SYNC: ${VITE_ENABLE_ADMIN_MODEL_DEFAULT_SYNC:-1}
     ports:
       - "3000:3000"
     volumes:

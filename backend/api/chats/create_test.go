@@ -45,7 +45,7 @@ func TestCreateChatFallsBackToBotDefaultSharedConfig(t *testing.T) {
 	}
 
 	defaultConfig := map[string]interface{}{
-		"model":         "qwen3-8b-instruct_vllm",
+		"model":         "qwen3-4b-instruct-2507_vllm",
 		"backend":       "litellm",
 		"endpoint":      "https://litellm.t1m.me/v1",
 		"temperature":   0.7,
@@ -96,7 +96,7 @@ func TestCreateChatFallsBackToBotDefaultSharedConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected config object in response")
 	}
-	if model, _ := config["model"].(string); model != "qwen3-8b-instruct_vllm" {
+	if model, _ := config["model"].(string); model != "qwen3-4b-instruct-2507_vllm" {
 		t.Fatalf("expected fallback model in chat config, got %v", config["model"])
 	}
 }
@@ -112,7 +112,7 @@ func TestCreateChatMergesProvidedSharedConfigWithAutomatedBotDefaults(t *testing
 	}
 
 	defaultConfig := map[string]interface{}{
-		"model":   "qwen3-8b-instruct_vllm",
+		"model":   "qwen3-4b-instruct-2507_vllm",
 		"backend": "litellm",
 		"tools":   []string{"mcp:figma5:get_metadata"},
 		"integrations": []string{
@@ -284,7 +284,7 @@ func TestCreateChatKeepsTestbackendWithoutModelBindingOverride(t *testing.T) {
 	}
 
 	modelCfg := map[string]interface{}{
-		"model":    "qwen3-8b-instruct_vllm",
+		"model":    "qwen3-4b-instruct-2507_vllm",
 		"backend":  "litellm",
 		"endpoint": "https://litellm.t1m.me/v1",
 	}
@@ -292,7 +292,7 @@ func TestCreateChatKeepsTestbackendWithoutModelBindingOverride(t *testing.T) {
 	if err := DB.Create(&database.ModelConfig{
 		Title:         "Qwen",
 		Description:   "test",
-		ModelID:       "qwen3-8b-instruct_vllm",
+		ModelID:       "qwen3-4b-instruct-2507_vllm",
 		Configuration: modelCfgJSON,
 		IsPublic:      true,
 		IsDefault:     false,
@@ -301,7 +301,7 @@ func TestCreateChatKeepsTestbackendWithoutModelBindingOverride(t *testing.T) {
 	}
 
 	defaultConfig := map[string]interface{}{
-		"model":    "qwen3-8b-instruct_vllm",
+		"model":    "qwen3-4b-instruct-2507_vllm",
 		"backend":  "testbackend",
 		"endpoint": "http://testbackend.local/v1",
 	}
