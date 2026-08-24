@@ -27,6 +27,10 @@ fi
 commit_and_push_subrepo_if_changed() {
   local relative_path="$1"
   local repo_path="${REPO_ROOT}/${relative_path}"
+  local current_branch=""
+  local remote_head=""
+  local target_branch=""
+  local upstream_ref=""
 
   if [[ ! -d "${repo_path}" ]]; then
     echo "Skipping ${relative_path}: directory not found"
@@ -46,6 +50,27 @@ commit_and_push_subrepo_if_changed() {
   echo "Committing and pushing ${relative_path}"
   (
     cd "${repo_path}"
+
+    current_branch="$(git symbolic-ref --quiet --short HEAD || true)"
+    if [[ -z "${current_branch}" ]]; then
+      remote_head="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD || true)"
+      target_branch="${remote_head#origin/}"
+      if [[ -z "${target_branch}" || "${target_branch}" == "${remote_head}" ]]; then
+        target_branch="main"
+      fi
+
+      echo "${relative_path} is detached; switching to branch ${target_branch}"
+      if git show-ref --verify --quiet "refs/heads/${target_branch}"; then
+        git checkout "${target_branch}"
+      elif git show-ref --verify --quiet "refs/remotes/origin/${target_branch}"; then
+        git checkout -b "${target_branch}" --track "origin/${target_branch}"
+      else
+        git checkout -b "${target_branch}"
+      fi
+
+      current_branch="${target_branch}"
+    fi
+
     git add -A
 
     if git diff --cached --quiet; then
@@ -54,7 +79,13 @@ commit_and_push_subrepo_if_changed() {
     fi
 
     git commit -m "${COMMIT_MESSAGE}"
-    git push
+
+    upstream_ref="$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)"
+    if [[ -n "${upstream_ref}" ]]; then
+      git push
+    else
+      git push --set-upstream origin "${current_branch}"
+    fi
   )
 }
 

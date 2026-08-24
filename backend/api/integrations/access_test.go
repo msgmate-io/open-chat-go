@@ -61,8 +61,8 @@ func TestListShowsOnlyUserVisibleIntegrationsForRegularUsers(t *testing.T) {
 	for _, row := range payload.Rows {
 		names[row.Name] = row
 	}
-	if _, exists := names["ssh"]; exists {
-		t.Fatalf("expected ssh to be hidden for regular users")
+	if _, exists := names["ssh"]; !exists {
+		t.Fatalf("expected ssh to be visible for regular users")
 	}
 	if _, exists := names["account_management"]; exists {
 		t.Fatalf("expected account_management to be hidden for regular users")
@@ -102,8 +102,8 @@ func TestGrantAccessRejectsAdminOnlyForRegularUser(t *testing.T) {
 func TestAdminOnlyIntegrationStaysHiddenForRegularUserEvenIfAssigned(t *testing.T) {
 	db := setupIntegrationsTestDB(t)
 	user := createUserForIntegrationsTest(t, db, "regular@example.com", false)
-	if err := database.EnsureIntegrationAccess(db, user.ID, "ssh"); err != nil {
-		t.Fatalf("failed to grant ssh integration access: %v", err)
+	if err := database.EnsureIntegrationAccess(db, user.ID, "admin"); err != nil {
+		t.Fatalf("failed to grant admin integration access: %v", err)
 	}
 
 	rr := requestWithDBUser("/api/v1/integrations/list", db, user)
@@ -116,14 +116,14 @@ func TestAdminOnlyIntegrationStaysHiddenForRegularUserEvenIfAssigned(t *testing.
 		t.Fatalf("failed to decode list response: %v", err)
 	}
 
-	foundSSH := false
+	foundAdmin := false
 	for _, row := range payload.Rows {
-		if row.Name == "ssh" {
-			foundSSH = true
+		if row.Name == "admin" {
+			foundAdmin = true
 			break
 		}
 	}
-	if foundSSH {
-		t.Fatalf("expected ssh to remain hidden for regular users")
+	if foundAdmin {
+		t.Fatalf("expected admin integration to remain hidden for regular users")
 	}
 }

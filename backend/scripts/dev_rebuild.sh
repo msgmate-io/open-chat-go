@@ -24,19 +24,10 @@ run_step() {
   log "done: ${label} (${SECONDS-start}s)"
 }
 
-TOOL_JOBS=("./tooldeps.json:./api/msgmate/externaltools/imports_gen.go")
 INTEGRATION_JOBS=("./integrationdeps.json:./integrations/externalintegrations/imports_gen.go")
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tool-job)
-      if [[ $# -lt 2 ]]; then
-        log "missing value for --tool-job"
-        exit 1
-      fi
-      TOOL_JOBS+=("$2")
-      shift 2
-      ;;
     --integration-job)
       if [[ $# -lt 2 ]]; then
         log "missing value for --integration-job"
@@ -47,7 +38,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       log "unknown argument: $1"
-      log "supported arguments: --tool-job <manifest:output>, --integration-job <manifest:output>"
+      log "supported arguments: --integration-job <manifest:output>"
       exit 1
       ;;
   esac
@@ -99,11 +90,48 @@ if [[ -n "${GOFLAGS:-}" ]]; then
 else
   export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
 fi
+
+GO_TAGS=""
+append_go_tag() {
+  local tag="$1"
+  if [[ -z "$tag" ]]; then
+    return
+  fi
+  if [[ -z "$GO_TAGS" ]]; then
+    GO_TAGS="$tag"
+  else
+    GO_TAGS="${GO_TAGS},${tag}"
+  fi
+}
+
+if [[ "${INTEGRATION_PROFILE}" == "core-only" ]]; then
+  append_go_tag "coreonly"
+fi
+
+if python3 - "$EFFECTIVE_INTEGRATION_MANIFEST" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+modules = {
+    str(dep.get("module", "")).strip()
+    for dep in data.get("dependencies", [])
+    if isinstance(dep, dict)
+}
+sys.exit(0 if "github.com/msgmate-io/ssh-integration" in modules else 1)
+PY
+then
+  append_go_tag "sshintegration"
+fi
+
+if [[ -n "$GO_TAGS" ]]; then
+  export GOFLAGS="${GOFLAGS} -tags=${GO_TAGS}"
+fi
+
 log "using GOFLAGS=${GOFLAGS}"
 
 INTEGRATION_JOBS=("${EFFECTIVE_INTEGRATION_MANIFEST}:./integrations/externalintegrations/imports_gen.go")
 run_step "integration dependency generation" run_generator_jobs "integrationdepsgen" "./scripts/integrationdepsgen" "${INTEGRATION_JOBS[@]}"
-run_step "tool dependency generation" run_generator_jobs "tooldepsgen" "./scripts/tooldepsgen" "${TOOL_JOBS[@]}"
 run_step "module download" go mod download
 run_step "module tidy" go mod tidy
 
