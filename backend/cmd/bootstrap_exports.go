@@ -20,3 +20,7 @@ func ApplySSHBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners [
 func ApplySSHBootstrapSourcesWithGrants(DB *gorm.DB, fallbackOwner string, defaultOwners []string, keySpecs []string, serverSpecs []string, keyGrantSpecs []string, serverGrantSpecs []string) error {
 	return applySSHBootstrapSources(DB, fallbackOwner, defaultOwners, keySpecs, serverSpecs, keyGrantSpecs, serverGrantSpecs)
 }
+
+func ApplyOpencodeBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners []string, projectSpecs []string) error {
+	return applyOpencodeBootstrapSources(DB, fallbackOwner, defaultOwners, projectSpecs)
+}
