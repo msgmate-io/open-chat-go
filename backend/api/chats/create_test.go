@@ -355,3 +355,92 @@ func TestCreateChatKeepsTestbackendWithoutModelBindingOverride(t *testing.T) {
 		t.Fatalf("expected testbackend endpoint to be preserved, got %v", config["endpoint"])
 	}
 }
+
+func TestCreateChatKeepsOpencodeBackendWithoutModelBindingOverride(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner-opencode@example.com", false)
+	botUser := createUserForChatsTest(t, DB, "bot-opencode@example.com", false)
+
+	botUser.IsAutomated = true
+	if err := DB.Save(botUser).Error; err != nil {
+		t.Fatalf("failed to mark bot user automated: %v", err)
+	}
+
+	// A default LLM model config whose model_id matches the opencode bot's model.
+	// Without the opencode skip this would rewrite backend to litellm.
+	modelCfg := map[string]interface{}{
+		"model":    "qwen3-4b-instruct-2507_vllm",
+		"backend":  "litellm",
+		"endpoint": "https://litellm.t1m.me/v1",
+	}
+	modelCfgJSON, _ := json.Marshal(modelCfg)
+	if err := DB.Create(&database.ModelConfig{
+		Title:         "Qwen",
+		Description:   "test",
+		ModelID:       "qwen3-4b-instruct-2507_vllm",
+		Configuration: modelCfgJSON,
+		IsPublic:      true,
+		IsDefault:     false,
+	}).Error; err != nil {
+		t.Fatalf("failed creating model config: %v", err)
+	}
+
+	defaultConfig := map[string]interface{}{
+		"model":             "qwen3-4b-instruct-2507_vllm",
+		"backend":           "opencode",
+		"persist_tool_init": true,
+		"tools":             []string{"opencode_select_project"},
+	}
+	defaultConfigJSON, _ := json.Marshal(defaultConfig)
+
+	runtime := database.BotRuntimeConfig{
+		BotUserId:           botUser.ID,
+		OwnerUserId:         owner.ID,
+		Name:                "bot-runtime-opencode",
+		Description:         "runtime",
+		DefaultSharedConfig: defaultConfigJSON,
+		IsPublic:            false,
+		IsActive:            true,
+	}
+	if err := DB.Create(&runtime).Error; err != nil {
+		t.Fatalf("failed to create bot runtime config: %v", err)
+	}
+
+	bodyPayload := map[string]interface{}{
+		"contact_token": botUser.ContactToken,
+		"chat_type":     "conversation",
+	}
+	body, _ := json.Marshal(bodyPayload)
+	req := httptest.NewRequest("POST", "/api/v1/chats/create", bytes.NewReader(body))
+	ctx := context.WithValue(req.Context(), "db", DB)
+	ctx = context.WithValue(ctx, "user", owner)
+	ctx = context.WithValue(ctx, "websocket", websocket.NewWebSocketHandler())
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h := &ChatsHandler{}
+	h.Create(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode create chat response: %v", err)
+	}
+
+	config, ok := response["config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected config object in response")
+	}
+	if backend, _ := config["backend"].(string); backend != "opencode" {
+		t.Fatalf("expected opencode backend to be preserved, got %v", config["backend"])
+	}
+	if model, _ := config["model"].(string); model != "qwen3-4b-instruct-2507_vllm" {
+		t.Fatalf("expected opencode model to pass through unchanged, got %v", config["model"])
+	}
+	if _, ok := config["endpoint"]; ok {
+		t.Fatalf("expected no endpoint injected for opencode backend, got %v", config["endpoint"])
+	}
+}
