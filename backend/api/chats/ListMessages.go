@@ -116,6 +116,10 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !enforceBrowserTokenInteractionChat(w, r, chat.ChatType) {
+		return
+	}
+
 	// Now list the messages paginated
 	result = DB.Scopes(database.Paginate(&messages, &pagination, DB)).
 		Where("chat_id = ? AND (receiver_id = ? OR sender_id = ?)", chat.ID, user.ID, user.ID).

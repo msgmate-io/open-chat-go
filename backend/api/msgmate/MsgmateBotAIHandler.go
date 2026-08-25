@@ -163,15 +163,16 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	backend := mapGetOrDefault[string](configMap, "backend", "deepinfra")
 	model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 	reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
-	context := mapGetOrDefault[int64](configMap, "context", 10)
-	toolCallMaxTotal := mapGetOrDefault[int64](configMap, "tool_call_max_total", int64(DefaultToolCallMaxTotal))
-	toolCallMaxFailed := mapGetOrDefault[int64](configMap, "tool_call_max_failed", int64(DefaultToolCallMaxFailed))
+	context := mapInt64OrDefault(configMap, "context", 10)
+	toolCallMaxTotal := mapInt64OrDefault(configMap, "tool_call_max_total", int64(DefaultToolCallMaxTotal))
+	toolCallMaxFailed := mapInt64OrDefault(configMap, "tool_call_max_failed", int64(DefaultToolCallMaxFailed))
 	tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+	samplingParams := samplingParamsFromConfig(configMap)
 
 	if toolCallMaxTotal < 1 {
 		toolCallMaxTotal = int64(DefaultToolCallMaxTotal)
@@ -249,6 +250,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		interactionStartTools,
 		interactionCompleteTools,
 		GetGlobalMsgmateHandler(),
+		samplingParams,
 	)
 
 	// Process the streaming response
