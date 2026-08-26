@@ -328,6 +328,7 @@ func normalizeSessionCookieDomain(host string) string {
 type bootstrapUserSpec struct {
 	Label                        string
 	Credentials                  string
+	Email                        string
 	IsAdmin                      bool
 	IsAutomated                  bool
 	SingletonAdmin               bool
@@ -534,6 +535,16 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 	if spec.IsAutomated && user != nil && !user.IsAutomated {
 		user.IsAutomated = true
 		DB.Save(user)
+	}
+
+	if user != nil {
+		email := strings.TrimSpace(spec.Email)
+		if email != "" && user.Email != email {
+			user.Email = email
+			if err := DB.Save(user).Error; err != nil {
+				return nil, fmt.Errorf("failed to update email for %s: %w", spec.Label, err)
+			}
+		}
 	}
 
 	return user, nil
@@ -779,6 +790,11 @@ func ServerCli() *cli.Command {
 			}
 
 			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
+
+			userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
+			if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
+				return err
+			}
 
 			botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
 			botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
