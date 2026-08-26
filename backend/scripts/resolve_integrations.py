@@ -65,6 +65,7 @@ def main() -> int:
     all_modules: list[str] = []
     selected_deps: list[dict[str, str]] = []
     keep_local_replace: set[str] = set()
+    available_local_replace: set[str] = set()
     selected_remote_versions: dict[str, str] = {}
 
     for dep in raw_deps:
@@ -80,13 +81,16 @@ def main() -> int:
             continue
         all_modules.append(module)
 
-        if not dep_selected(dep, args.profile):
-            continue
-
         use_local = False
         if local_path:
             local_go_mod = repo_root / local_path / "go.mod"
             use_local = local_go_mod.exists()
+
+        if use_local:
+            available_local_replace.add(module)
+
+        if not dep_selected(dep, args.profile):
+            continue
 
         # Submodule-backed integrations can fall back to remote modules when local path is absent.
         if source == "submodule" and local_path and not use_local:
@@ -109,7 +113,8 @@ def main() -> int:
     for module in all_modules:
         if module not in selected_modules:
             run_go_mod_edit(output_modfile, module_dir, f"-droprequire={module}")
-            run_go_mod_edit(output_modfile, module_dir, f"-dropreplace={module}")
+            if module not in available_local_replace:
+                run_go_mod_edit(output_modfile, module_dir, f"-dropreplace={module}")
             continue
         if module not in keep_local_replace:
             fallback_replace = REMOTE_FALLBACK_REPLACES.get(module, "")

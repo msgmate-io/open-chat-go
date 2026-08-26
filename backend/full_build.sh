@@ -116,21 +116,76 @@ python3 ./scripts/resolve_integrations.py \
   --output-modfile "$EFFECTIVE_MODFILE"
 
 if [ -n "${GOFLAGS:-}" ]; then
-  export GOFLAGS="${GOFLAGS} -modfile=${EFFECTIVE_MODFILE}"
+  export GOFLAGS="${GOFLAGS} -mod=mod -modfile=${EFFECTIVE_MODFILE}"
 else
-  export GOFLAGS="-modfile=${EFFECTIVE_MODFILE}"
+  export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
 fi
+
+GO_TAGS=""
+append_go_tag() {
+  local tag="$1"
+  if [ -z "$tag" ]; then
+    return
+  fi
+  if [ -z "$GO_TAGS" ]; then
+    GO_TAGS="$tag"
+  else
+    GO_TAGS="${GO_TAGS},${tag}"
+  fi
+}
+
+if [ "${INTEGRATION_PROFILE}" = "core-only" ]; then
+  append_go_tag "coreonly"
+fi
+
+if python3 - "$EFFECTIVE_INTEGRATION_MANIFEST" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+modules = {
+    str(dep.get("module", "")).strip()
+    for dep in data.get("dependencies", [])
+    if isinstance(dep, dict)
+}
+sys.exit(0 if "github.com/msgmate-io/ssh-integration" in modules else 1)
+PY
+then
+  append_go_tag "sshintegration"
+fi
+
+if python3 - "$EFFECTIVE_INTEGRATION_MANIFEST" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+modules = {
+    str(dep.get("module", "")).strip()
+    for dep in data.get("dependencies", [])
+    if isinstance(dep, dict)
+}
+sys.exit(0 if "github.com/msgmate-io/opencode-integration" in modules else 1)
+PY
+then
+  append_go_tag "opencodeintegration"
+fi
+
+if [ -n "$GO_TAGS" ]; then
+  export GOFLAGS="${GOFLAGS} -tags=${GO_TAGS}"
+fi
+
 echo "Using GOFLAGS=${GOFLAGS}"
 
-echo "Syncing external tool dependencies from tooldeps.json..."
-go run ./scripts/tooldepsgen -manifest ./tooldeps.json -output ./api/msgmate/externaltools/imports_gen.go -sync
-
 echo "Syncing external integration dependencies from effective integration manifest..."
-go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
+go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync=false
 
 echo "Downloading and tidying effective module dependencies..."
 go mod download
-go mod tidy
+if [ "${INTEGRATION_PROFILE}" != "full" ]; then
+    echo "Skipping go mod tidy for ${INTEGRATION_PROFILE} profile to avoid resolving optional non-profile integrations."
+else
+    go mod tidy
+fi
 
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be installed for the *host* platform so they can run.

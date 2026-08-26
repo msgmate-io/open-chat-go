@@ -28,6 +28,8 @@ const (
 	ToolCallStatusPendingConfirmation = "pending_confirmation"
 	DefaultToolCallMaxTotal           = 12
 	DefaultToolCallMaxFailed          = 3
+	DefaultContextRetryTailMessages   = 14
+	DefaultToolResultMaxCharsForModel = 12000
 )
 
 type ToolCallsResult struct {
@@ -251,6 +253,7 @@ func streamChatCompletion(
 	interactionStartTools []string,
 	interactionCompleteTools []string,
 	handler *MsgmateHandler,
+	samplingParams SamplingParams,
 ) (<-chan string, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -339,7 +342,25 @@ func streamChatCompletion(
 				host, model, backend, currentMessages, tools, toolMap, apiKey,
 				executedToolResults,
 				chunkChan, usageChan, toolChan, errChan,
+				samplingParams,
 			)
+			if err != nil && isContextWindowExceededError(err) {
+				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
+				if trimmed {
+					log.Printf(
+						"Context window exceeded; retrying with trimmed history (%d -> %d messages)",
+						len(currentMessages),
+						len(trimmedMessages),
+					)
+					currentMessages = trimmedMessages
+					toolCallResult, err = processStreamingRequest(
+						host, model, backend, currentMessages, tools, toolMap, apiKey,
+						executedToolResults,
+						chunkChan, usageChan, toolChan, errChan,
+						samplingParams,
+					)
+				}
+			}
 			if err != nil {
 				errChan <- err
 				return
@@ -487,10 +508,19 @@ func streamChatCompletion(
 			currentMessages = append(currentMessages, toolsCallMessage)
 
 			// Add tool result to messages and continue conversation
+			modelToolResult := truncateToolResultForModel(toolCallResult.result)
+			if modelToolResult != toolCallResult.result {
+				log.Printf(
+					"Truncated tool result for model context (%d -> %d chars): %s",
+					len(toolCallResult.result),
+					len(modelToolResult),
+					toolCallResult.toolName,
+				)
+			}
 			toolResultMsg := map[string]interface{}{
 				"role":         "tool",
 				"tool_call_id": toolCallResult.id,
-				"content":      toolCallResult.result,
+				"content":      modelToolResult,
 			}
 			currentMessages = append(currentMessages, toolResultMsg)
 
@@ -536,6 +566,7 @@ func processStreamingRequest(
 	},
 	toolChan chan<- ToolCall,
 	errChan chan<- error,
+	samplingParams SamplingParams,
 ) (*toolCallResult, error) {
 	if backend == "testbackend" {
 		reader, err := buildTestBackendStreamingReader(messages, toolMap)
@@ -558,6 +589,7 @@ func processStreamingRequest(
 	if backend == "openai" {
 		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
+	applySamplingParamsToRequestBody(requestBody, samplingParams, backend)
 
 	// Setup request
 	jsonData, err := json.Marshal(requestBody)
@@ -615,6 +647,62 @@ func normalizeMessagesForBackend(messages []map[string]interface{}, backend stri
 	}
 
 	return normalized
+}
+
+func isContextWindowExceededError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errLower := strings.ToLower(err.Error())
+	return strings.Contains(errLower, "contextwindowexceeded") ||
+		strings.Contains(errLower, "maximum context length") ||
+		strings.Contains(errLower, "context length")
+}
+
+func trimMessagesForContextRetry(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
+	if len(messages) <= DefaultContextRetryTailMessages {
+		return messages, false
+	}
+
+	hasLeadingSystemMessage := false
+	if len(messages) > 0 {
+		role, _ := messages[0]["role"].(string)
+		hasLeadingSystemMessage = role == "system"
+	}
+
+	tailStart := len(messages) - DefaultContextRetryTailMessages
+	if hasLeadingSystemMessage && tailStart < 1 {
+		tailStart = 1
+	}
+	if !hasLeadingSystemMessage && tailStart < 0 {
+		tailStart = 0
+	}
+
+	trimmed := make([]map[string]interface{}, 0, DefaultContextRetryTailMessages+1)
+	if hasLeadingSystemMessage {
+		trimmed = append(trimmed, messages[0])
+	}
+	trimmed = append(trimmed, messages[tailStart:]...)
+
+	if len(trimmed) >= len(messages) {
+		return messages, false
+	}
+
+	return trimmed, true
+}
+
+func truncateToolResultForModel(result string) string {
+	if len(result) <= DefaultToolResultMaxCharsForModel {
+		return result
+	}
+
+	notice := fmt.Sprintf("\n\n[tool output truncated to %d chars out of %d to fit model context]", DefaultToolResultMaxCharsForModel, len(result))
+	maxContentLen := DefaultToolResultMaxCharsForModel - len(notice)
+	if maxContentLen < 0 {
+		maxContentLen = 0
+	}
+
+	return result[:maxContentLen] + notice
 }
 
 func processStreamingResponseReader(
@@ -787,12 +875,7 @@ func processStreamingResponseReader(
 			toolErr := ""
 			if tool.GetRequiresConfirmation() {
 				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
-				executedResult, runErr := tool.RunTool(toolInput)
-				if runErr == nil && isConfirmActionPayload(executedResult) {
-					toolResult = executedResult
-				} else {
-					toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
-				}
+				toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
 				status = ToolCallStatusPendingConfirmation
 
 				modelResult := toolResult

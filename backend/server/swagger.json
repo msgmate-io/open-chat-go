@@ -738,6 +738,55 @@
                 }
             }
         },
+        "/api/v1/chats/states": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Batch-resolve the current state of multiple owned chats",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Get chat states",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Comma-separated chat UUIDs (max 100)",
+                        "name": "chat_uuids",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Chat states",
+                        "schema": {
+                            "$ref": "#/definitions/chats.ChatStatesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid input",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to resolve chat states",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chats/{chat_uuid}": {
             "get": {
                 "security": [
@@ -2628,6 +2677,60 @@
                 }
             }
         },
+        "/api/v1/user/browser-token": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Exchange the caller's existing credential for a short-lived scoped browser API token",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user"
+                ],
+                "summary": "Exchange credentials for a short-lived browser token",
+                "parameters": [
+                    {
+                        "description": "Requested scopes and optional TTL",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/user.BrowserTokenExchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ephemeral browser token",
+                        "schema": {
+                            "$ref": "#/definitions/user.BrowserTokenExchangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid scopes or TTL",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/user/login": {
             "post": {
                 "description": "Authenticate and login a user with email and password",
@@ -2956,6 +3059,34 @@
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "chats.ChatStateRow": {
+            "type": "object",
+            "properties": {
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.ChatStatesResponse": {
+            "type": "object",
+            "properties": {
+                "states": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chats.ChatStateRow"
+                    }
                 }
             }
         },
@@ -3387,6 +3518,48 @@
                 }
             }
         },
+        "integrations.IntegrationDefaultBotOverview": {
+            "type": "object",
+            "properties": {
+                "additional_owners": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default_shared_config": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "description": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "overwrite_if_exists": {
+                    "type": "boolean"
+                },
+                "primary_owner": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                },
+                "uses_random_password": {
+                    "type": "boolean"
+                }
+            }
+        },
         "integrations.IntegrationFrontendRouteOverview": {
             "type": "object",
             "properties": {
@@ -3414,6 +3587,9 @@
                     "type": "boolean"
                 },
                 "api_route_count": {
+                    "type": "integer"
+                },
+                "default_bot_count": {
                     "type": "integer"
                 },
                 "frontend_route_count": {
@@ -3495,6 +3671,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/integrations.IntegrationAPIRouteOverview"
+                    }
+                },
+                "default_bots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrations.IntegrationDefaultBotOverview"
                     }
                 },
                 "frontend_routes": {
@@ -4046,6 +4228,49 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "user.BrowserTokenExchangeRequest": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ttl_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "user.BrowserTokenExchangeResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string"
+                },
+                "api_base_url": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "expires_in": {
+                    "type": "integer"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_type": {
+                    "type": "string"
                 }
             }
         },

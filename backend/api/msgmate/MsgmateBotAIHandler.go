@@ -14,6 +14,48 @@ import (
 	client "github.com/msgmate-io/go-client-integration/goclient"
 )
 
+// providerHostEnv maps provider backends whose API host is configured through
+// a dedicated environment variable. When set, the env host overrides the
+// endpoint stored in the chat's shared config.
+var providerHostEnv = map[string]string{
+	"litellm":         "LITELLM_API_HOST",
+	"msgmate_cluster": "MSGMATE_CLUSTER_HOST",
+}
+
+// resolveProviderEndpoint applies provider-specific endpoint rules: host-env
+// providers (litellm, msgmate_cluster) require a resolvable host, and
+// anthropic falls back to its public API when no host is configured.
+func resolveProviderEndpoint(backend, endpoint string) (string, error) {
+	if hostEnv, ok := providerHostEnv[backend]; ok {
+		providerHost := strings.TrimSpace(os.Getenv(hostEnv))
+		if providerHost != "" {
+			endpoint = providerHost
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return "", fmt.Errorf("missing API host for %s provider", backend)
+		}
+		return endpoint, nil
+	}
+
+	if backend == "anthropic" {
+		anthropicHost := strings.TrimSpace(os.Getenv("ANTHROPIC_API_HOST"))
+		if anthropicHost != "" {
+			endpoint = anthropicHost
+		} else if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://api.anthropic.com/v1"
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return "", fmt.Errorf("missing API host for anthropic provider")
+		}
+	}
+
+	return endpoint, nil
+}
+
 func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[string]interface{} {
 	confirmation, ok := toolCall["confirmation"].(map[string]interface{})
 	if !ok {
@@ -37,6 +79,9 @@ func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[str
 
 	if suggested, exists := confirmation["suggested_inputs"]; exists {
 		action["input"] = suggested
+	}
+	if toolInput, exists := confirmation["tool_input"]; exists {
+		action["input"] = toolInput
 	}
 	if continueAfterExecute, ok := confirmation["continue_after_execute"].(bool); ok {
 		action["continue_after_execute"] = continueAfterExecute
@@ -87,6 +132,37 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) map[string]interface{} {
+	runtime := map[string]interface{}{
+		"chat_uuid":     strings.TrimSpace(chatUUID),
+		"sender_uuid":   strings.TrimSpace(senderUUID),
+		"bot_user_id":   aih.botContext.BotUser.ID,
+		"bot_user_uuid": strings.TrimSpace(aih.botContext.BotUser.UUID),
+	}
+	if aih.botContext != nil && aih.botContext.Client != nil {
+		runtime["api_host"] = strings.TrimSpace(aih.botContext.Client.GetHost())
+		runtime["session_id"] = strings.TrimSpace(aih.botContext.Client.GetSessionId())
+	}
+	return runtime
+}
+
+func mergeToolInitWithTrustedRuntime(initData interface{}, runtime map[string]interface{}) map[string]interface{} {
+	base := map[string]interface{}{}
+	if typed, ok := initData.(map[string]interface{}); ok {
+		for k, v := range typed {
+			base[k] = v
+		}
+	}
+	if apiHost, ok := runtime["api_host"].(string); ok && strings.TrimSpace(apiHost) != "" {
+		base["api_host"] = strings.TrimSpace(apiHost)
+	}
+	if sessionID, ok := runtime["session_id"].(string); ok && strings.TrimSpace(sessionID) != "" {
+		base["session_id"] = sessionID
+	}
+	base["_runtime"] = runtime
+	return base
+}
+
 // AIHandlerImpl implements the AIHandler interface
 type AIHandlerImpl struct {
 	botContext *BotContext
@@ -129,15 +205,16 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	backend := mapGetOrDefault[string](configMap, "backend", "deepinfra")
 	model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 	reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
-	context := mapGetOrDefault[int64](configMap, "context", 10)
-	toolCallMaxTotal := mapGetOrDefault[int64](configMap, "tool_call_max_total", int64(DefaultToolCallMaxTotal))
-	toolCallMaxFailed := mapGetOrDefault[int64](configMap, "tool_call_max_failed", int64(DefaultToolCallMaxFailed))
+	context := mapInt64OrDefault(configMap, "context", 10)
+	toolCallMaxTotal := mapInt64OrDefault(configMap, "tool_call_max_total", int64(DefaultToolCallMaxTotal))
+	toolCallMaxFailed := mapInt64OrDefault(configMap, "tool_call_max_failed", int64(DefaultToolCallMaxFailed))
 	tools := mapGetOrDefault[[]string](configMap, "tools", []string{})
 	toolInit := mapGetOrDefault[map[string]interface{}](configMap, "tool_init", map[string]interface{}{})
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+	samplingParams := samplingParamsFromConfig(configMap)
 
 	if toolCallMaxTotal < 1 {
 		toolCallMaxTotal = int64(DefaultToolCallMaxTotal)
@@ -146,30 +223,9 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		toolCallMaxFailed = int64(DefaultToolCallMaxFailed)
 	}
 
-	if backend == "litellm" {
-		litellmHost := strings.TrimSpace(os.Getenv("LITELLM_API_HOST"))
-		if litellmHost != "" {
-			endpoint = litellmHost
-		}
-		endpoint = strings.TrimSpace(endpoint)
-		endpoint = strings.TrimRight(endpoint, "/")
-		if endpoint == "" {
-			return fmt.Errorf("missing API host for litellm provider")
-		}
-	}
-
-	if backend == "anthropic" {
-		anthropicHost := strings.TrimSpace(os.Getenv("ANTHROPIC_API_HOST"))
-		if anthropicHost != "" {
-			endpoint = anthropicHost
-		} else if strings.TrimSpace(endpoint) == "" {
-			endpoint = "https://api.anthropic.com/v1"
-		}
-		endpoint = strings.TrimSpace(endpoint)
-		endpoint = strings.TrimRight(endpoint, "/")
-		if endpoint == "" {
-			return fmt.Errorf("missing API host for anthropic provider")
-		}
+	endpoint, err = resolveProviderEndpoint(backend, endpoint)
+	if err != nil {
+		return err
 	}
 
 	// Check for skip-core tag
@@ -188,7 +244,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	openAiMessages := aih.buildOpenAIMessages(&paginatedMessages, message, systemPrompt, backend)
 
 	// Setup tools
-	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit, dynamicTools, mcpTools)
+	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
 
 	// Add run_callback_function to tools
 	tools = append(tools, "run_callback_function")
@@ -215,6 +271,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		interactionStartTools,
 		interactionCompleteTools,
 		GetGlobalMsgmateHandler(),
+		samplingParams,
 	)
 
 	// Process the streaming response
@@ -451,13 +508,16 @@ func (aih *AIHandlerImpl) processCurrentMessageAttachments(text string, attachme
 }
 
 // setupTools sets up the tools for the AI response
-func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interface{}, dynamicTools map[string]interface{}, mcpTools map[string]interface{}) ([]interface{}, map[string]Tool, []string, []string) {
+func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, toolInit map[string]interface{}, dynamicTools map[string]interface{}, mcpTools map[string]interface{}) ([]interface{}, map[string]Tool, []string, []string) {
 	var toolsData []interface{}
 	toolMap := map[string]Tool{}
 	var interactionStartTools []string
 	var interactionCompleteTools []string
 
+	EnsureExternalToolsRegistered()
+
 	if len(tools) > 0 {
+		trustedRuntime := trustedToolRuntime(aih, message.Content.ChatUUID, message.Content.SenderUUID)
 		// Debug: Print all available tools in AllTools
 		log.Printf("=== DEBUG: Available tools in AllTools ===")
 		for i, tool := range AllTools {
@@ -466,6 +526,7 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 		log.Printf("=== END DEBUG ===")
 
 		for _, toolName := range tools {
+			trustedRuntime = trustedToolRuntime(aih, message.Content.ChatUUID, message.Content.SenderUUID)
 			actualToolName := toolName
 			if strings.HasPrefix(toolName, "interaction_start:") {
 				interactionStartTools = append(interactionStartTools, toolName)
@@ -521,10 +582,10 @@ func (aih *AIHandlerImpl) setupTools(tools []string, toolInit map[string]interfa
 				}
 				if ok {
 					log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(initData)
+					tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
 				} else {
 					log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(map[string]interface{}{})
+					tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
 				}
 			}
 		}
@@ -663,6 +724,13 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		return strings.TrimSpace(clean), thoughts
 	}
 
+	streamFailureReason := func(streamErr error) string {
+		if isContextWindowExceededError(streamErr) {
+			return "context_window_exceeded"
+		}
+		return "upstream_provider_error"
+	}
+
 	// Helper function to send final message and cleanup
 	sendFinalMessage := func(isCancelled bool, streamErr error) {
 		// If we're still thinking when finishing, add the final thinking time
@@ -680,13 +748,20 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 		if streamErr != nil {
 			text = strings.TrimSpace(text)
+			failureReason := streamFailureReason(streamErr)
+			providerGuidance := "This can happen if your provider tokens/credits are exhausted or if the provider is having a temporary outage."
+			reasoningEntry := "Response stopped due to an upstream provider error (possible token/credit exhaustion or temporary provider outage)."
+			if failureReason == "context_window_exceeded" {
+				providerGuidance = "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+				reasoningEntry = "Response stopped because the model context window was exceeded."
+			}
 			if text == "" {
-				text = "I ran into an error while generating a reply. Please try again in a moment."
+				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
 			} else {
-				text += "\n\nI ran into an error while finishing this reply."
+				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
 			}
 			if reasoning {
-				reasoningEntries = append(reasoningEntries, "Response stopped due to an upstream provider error.")
+				reasoningEntries = append(reasoningEntries, reasoningEntry)
 			}
 		}
 
@@ -696,7 +771,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			"finished":   true,
 		}
 		if streamErr != nil {
+			failureReason := streamFailureReason(streamErr)
 			metadata["error"] = true
+			metadata["failure_reason"] = failureReason
 			metadata["error_detail"] = streamErr.Error()
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
@@ -1033,7 +1110,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 	partialSessionID := fmt.Sprintf("%s-skip-core-%d", message.Content.ChatUUID, time.Now().UnixNano())
 
 	// Setup tools
-	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(tools, toolInit, dynamicTools, mcpTools)
+	_, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
 
 	// Add run_callback_function to tools
 	tools = append(tools, "run_callback_function")

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 )
 
 func setupBotConfigTestDB(t *testing.T) *database.DBConfig {
@@ -54,7 +56,7 @@ func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 			"is_active":   true,
 		},
 		"default_shared_config": map[string]interface{}{
-			"model":       "qwen3-8b-instruct_vllm",
+			"model":       "qwen3-4b-instruct-2507_vllm",
 			"temperature": 0.2,
 		},
 	})
@@ -88,7 +90,7 @@ func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
 		t.Fatalf("failed to decode default_shared_config: %v", err)
 	}
-	if shared["model"] != "qwen3-8b-instruct_vllm" {
+	if shared["model"] != "qwen3-4b-instruct-2507_vllm" {
 		t.Fatalf("unexpected model in default_shared_config: %v", shared["model"])
 	}
 
@@ -110,7 +112,7 @@ func TestApplyBotBootstrapConfigFilesRequiresOwner(t *testing.T) {
 			"name":     "orphan_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -139,7 +141,7 @@ func TestApplyBotBootstrapConfigFilesIsIdempotent(t *testing.T) {
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -191,7 +193,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 			"is_active":   true,
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -241,7 +243,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
 		t.Fatalf("failed to decode default_shared_config: %v", err)
 	}
-	if shared["model"] != "qwen3-8b-instruct_vllm" {
+	if shared["model"] != "qwen3-4b-instruct-2507_vllm" {
 		t.Fatalf("expected original model to be preserved, got %v", shared["model"])
 	}
 }
@@ -265,7 +267,7 @@ func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *tes
 			"is_active":   true,
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -344,7 +346,7 @@ func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *test
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -376,7 +378,7 @@ func TestApplyBotBootstrapConfigFilesMissingPasswordRequiresExistingBot(t *testi
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -406,7 +408,7 @@ func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
 			"email":    "owner+support-bot@example.com",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -443,7 +445,7 @@ func TestApplyBotBootstrapConfigFilesSupportsAdditionalOwners(t *testing.T) {
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -500,7 +502,7 @@ func TestApplyBotBootstrapConfigFilesAllowsSinglePrimaryOwner(t *testing.T) {
 			"name":     "support_bot",
 		},
 		"default_shared_config": map[string]interface{}{
-			"model": "qwen3-8b-instruct_vllm",
+			"model": "qwen3-4b-instruct-2507_vllm",
 		},
 	})
 
@@ -516,5 +518,190 @@ func TestApplyBotBootstrapConfigFilesAllowsSinglePrimaryOwner(t *testing.T) {
 	var runtime database.BotRuntimeConfig
 	if err := DB.Where("owner_user_id = ? AND name = ?", owner.ID, "support_bot").First(&runtime).Error; err != nil {
 		t.Fatalf("failed to load bot runtime config: %v", err)
+	}
+}
+
+func TestApplyIntegrationBotBootstrapConfigsCreatesDedicatedRandomPasswordBot(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	admin, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		Label:          "root-credentials",
+		Credentials:    "admin:AdminPass1!",
+		IsAdmin:        true,
+		SingletonAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin user: %v", err)
+	}
+
+	configs := []extiface.BotBootstrapConfig{
+		{
+			PrimaryOwner: "admin",
+			Bot: extiface.BotIdentityConfig{
+				Username: "ssh-bot-test",
+				Password: "random",
+				Name:     "ssh_bot_runtime_test",
+			},
+			DefaultSharedConfig: map[string]interface{}{
+				"tools": []string{"ssh_list_accessible_servers"},
+			},
+			OverwriteIfExists: true,
+		},
+	}
+
+	if err := applyIntegrationBotBootstrapConfigs(DB, "integration:ssh.bot_bootstrap_configs", configs, false); err != nil {
+		t.Fatalf("applyIntegrationBotBootstrapConfigs failed: %v", err)
+	}
+
+	botUser, err := findUserByUsername(DB, "ssh-bot-test")
+	if err != nil {
+		t.Fatalf("failed to resolve ssh bot user: %v", err)
+	}
+	if !botUser.IsAutomated {
+		t.Fatalf("expected integration bot user to be automated")
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("owner_user_id = ? AND name = ?", admin.ID, "ssh_bot_runtime_test").First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load integration bot runtime: %v", err)
+	}
+	if runtime.BotUserId != botUser.ID {
+		t.Fatalf("expected runtime bot user id %d, got %d", botUser.ID, runtime.BotUserId)
+	}
+}
+
+func TestApplyIntegrationBotBootstrapConfigsNeverOverwritesExistingRuntime(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	owner, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		Label:          "root-credentials",
+		Credentials:    "admin:AdminPass1!",
+		IsAdmin:        true,
+		SingletonAdmin: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	initial := []extiface.BotBootstrapConfig{{
+		PrimaryOwner: "admin",
+		Bot: extiface.BotIdentityConfig{
+			Username:    "ssh-bot-test-2",
+			Password:    "random",
+			Name:        "ssh_bot_runtime_test_2",
+			Description: "initial",
+		},
+		DefaultSharedConfig: map[string]interface{}{"tools": []string{"ssh_list_accessible_servers"}},
+	}}
+	if err := applyIntegrationBotBootstrapConfigs(DB, "integration:ssh.bot_bootstrap_configs", initial, false); err != nil {
+		t.Fatalf("first integration apply failed: %v", err)
+	}
+
+	updated := []extiface.BotBootstrapConfig{{
+		PrimaryOwner: "admin",
+		Bot: extiface.BotIdentityConfig{
+			Username:    "ssh-bot-test-2",
+			Password:    "random",
+			Name:        "ssh_bot_runtime_test_2",
+			Description: "updated",
+		},
+		DefaultSharedConfig: map[string]interface{}{"tools": []string{"ssh_exec_command_run_short"}},
+		OverwriteIfExists:   true,
+	}}
+	if err := applyIntegrationBotBootstrapConfigs(DB, "integration:ssh.bot_bootstrap_configs", updated, false); err != nil {
+		t.Fatalf("second integration apply failed: %v", err)
+	}
+
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("owner_user_id = ? AND name = ?", owner.ID, "ssh_bot_runtime_test_2").First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load runtime: %v", err)
+	}
+	if runtime.Description != "initial" {
+		t.Fatalf("expected integration defaults to not overwrite description, got %q", runtime.Description)
+	}
+}
+
+func TestApplyIntegrationBotBootstrapConfigsRestrictsAllowedModelBackends(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		Label:          "root-credentials",
+		Credentials:    "admin:AdminPass1!",
+		IsAdmin:        true,
+		SingletonAdmin: true,
+	}); err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	insertDefaultModel := func(title string, backend string) {
+		cfg := map[string]interface{}{
+			"model":    title,
+			"backend":  backend,
+			"endpoint": "https://example.invalid/v1",
+		}
+		raw, _ := json.Marshal(cfg)
+		row := database.ModelConfig{
+			Title:         title,
+			Description:   title,
+			ModelID:       title,
+			Configuration: raw,
+			IsDefault:     true,
+		}
+		if err := DB.Create(&row).Error; err != nil {
+			t.Fatalf("failed to create model config %s: %v", title, err)
+		}
+	}
+
+	insertDefaultModel("test-openai", "openai")
+	insertDefaultModel("test-litellm", "litellm")
+	insertDefaultModel("test-ollama", "ollama")
+
+	configs := []extiface.BotBootstrapConfig{{
+		PrimaryOwner: "admin",
+		Bot: extiface.BotIdentityConfig{
+			Username: "ssh-bot-test-models",
+			Password: "random",
+			Name:     "ssh_bot_models_runtime",
+		},
+		DefaultSharedConfig:  map[string]interface{}{"tools": []string{"ssh_list_accessible_servers"}},
+		AllowedModelBackends: []string{"litellm", "ollama"},
+	}}
+	if err := applyIntegrationBotBootstrapConfigs(DB, "integration:ssh.bot_bootstrap_configs", configs, false); err != nil {
+		t.Fatalf("applyIntegrationBotBootstrapConfigs failed: %v", err)
+	}
+
+	botUser, err := findUserByUsername(DB, "ssh-bot-test-models")
+	if err != nil {
+		t.Fatalf("failed to resolve bot user: %v", err)
+	}
+	assigned, err := database.GetModelConfigsForBot(DB, botUser.Name)
+	if err != nil {
+		t.Fatalf("GetModelConfigsForBot failed: %v", err)
+	}
+
+	backends := map[string]struct{}{}
+	for _, row := range assigned {
+		cfg := map[string]interface{}{}
+		if err := json.Unmarshal(row.Configuration, &cfg); err != nil {
+			continue
+		}
+		backend, _ := cfg["backend"].(string)
+		backend = strings.ToLower(strings.TrimSpace(backend))
+		if backend != "" {
+			backends[backend] = struct{}{}
+		}
+	}
+
+	if _, ok := backends["litellm"]; !ok {
+		t.Fatalf("expected litellm models assigned")
+	}
+	if _, ok := backends["ollama"]; !ok {
+		t.Fatalf("expected ollama models assigned")
+	}
+	if _, ok := backends["openai"]; ok {
+		t.Fatalf("expected openai models to be excluded by allowed_model_backends")
 	}
 }

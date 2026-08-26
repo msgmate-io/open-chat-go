@@ -21,6 +21,12 @@ def main() -> int:
         if key.startswith("TPL_"):
             text = text.replace("{{" + key[4:] + "}}", value)
 
+    fallback_placeholders = {
+        "STEP_ANDROID_RELEASE": '- [ ] ~~`(6) android release` `skipped`~~',
+    }
+    for key, value in fallback_placeholders.items():
+        text = text.replace("{{" + key + "}}", value)
+
     unresolved = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", text)))
     if unresolved:
         print(

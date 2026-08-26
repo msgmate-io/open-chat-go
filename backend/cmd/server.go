@@ -10,11 +10,16 @@ import (
 	"backend/server/util"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -115,6 +120,7 @@ func validatePasswordStrength(password string) error {
 // Runtime behavior is driven by CLI flags and environment variables:
 // - DB backend/path and debug/reset toggles
 // - host/port binding and bootstrap credentials for root, bot, and extra users
+// - optional EXTRA_MODELS_JSON / --extra-models-json (path or inline JSON array)
 // - Redis connection options used by Asynq and Asynqmon
 // - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
 func GetServerFlags() []cli.Flag {
@@ -194,7 +200,48 @@ func GetServerFlags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Sources: cli.EnvVars("ADD_BOT_FROM_CONFIG"),
 			Name:    "add-bot-from-config",
-			Usage:   "path(s) to JSON files defining additional bots; can be repeated",
+			Usage:   "path(s) or inline JSON object/array defining additional bots; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_KEYS_FROM_CONFIG"),
+			Name:    "add-ssh-keys-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH keys; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_SERVERS_FROM_CONFIG"),
+			Name:    "add-ssh-servers-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH servers; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_KEY_GRANTS_FROM_CONFIG"),
+			Name:    "add-ssh-key-grants-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH key grants; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_SERVER_GRANTS_FROM_CONFIG"),
+			Name:    "add-ssh-server-grants-from-config",
+			Usage:   "path(s) or inline JSON object/array defining SSH server grants; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_SSH_DEFAULT_OWNER"),
+			Name:    "add-ssh-default-owner",
+			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_OPENCODE_PROJECTS_FROM_CONFIG"),
+			Name:    "add-opencode-projects-from-config",
+			Usage:   "path(s) or inline JSON object/array defining opencode projects; can be repeated",
+		},
+		&cli.StringSliceFlag{
+			Sources: cli.EnvVars("ADD_OPENCODE_DEFAULT_OWNER"),
+			Name:    "add-opencode-default-owner",
+			Usage:   "default opencode bootstrap owner username/email/name; can be repeated",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
+			Name:    "extra-models-json",
+			Usage:   "extra default models: filesystem path to a JSON array, or an inline JSON array string",
+			Value:   "",
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("FRONTEND_PROXY"),
@@ -221,6 +268,30 @@ func GetServerFlags() []cli.Flag {
 			Name:    "signup-requires-admin-approval",
 			Usage:   "Require admin approval for new user signup",
 			Value:   false,
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("CORS_ALLOWED_ORIGINS"),
+			Name:    "cors-allowed-origins",
+			Usage:   "comma separated allowlist of cross-origin browser origins (scheme://host[:port]); wildcards are rejected; empty disables cross-origin API access",
+			Value:   "",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("PUBLIC_BASE_URL"),
+			Name:    "public-base-url",
+			Usage:   "canonical public origin (scheme://host[:port]) advertised to external clients, e.g. in browser token exchange responses",
+			Value:   "",
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("BROWSER_TOKEN_TTL_SECONDS"),
+			Name:    "browser-token-ttl-seconds",
+			Usage:   "default lifetime in seconds for exchanged browser tokens",
+			Value:   900,
+		},
+		&cli.IntFlag{
+			Sources: cli.EnvVars("BROWSER_TOKEN_MAX_TTL_SECONDS"),
+			Name:    "browser-token-max-ttl-seconds",
+			Usage:   "maximum lifetime in seconds for exchanged browser tokens",
+			Value:   3600,
 		},
 	}
 
@@ -255,12 +326,14 @@ func normalizeSessionCookieDomain(host string) string {
 }
 
 type bootstrapUserSpec struct {
-	Label            string
-	Credentials      string
-	IsAdmin          bool
-	IsAutomated      bool
-	SingletonAdmin   bool
-	ValidateStrength bool
+	Label                        string
+	Credentials                  string
+	Email                        string
+	IsAdmin                      bool
+	IsAutomated                  bool
+	SingletonAdmin               bool
+	ValidateStrength             bool
+	SuppressGeneratedPasswordLog bool
 }
 
 func nextAvailableUsername(DB *gorm.DB, base string) (string, error) {
@@ -407,14 +480,16 @@ func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*
 	return &admin, nil
 }
 
-func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string) (string, error) {
+func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string, suppressGeneratedPasswordLog bool) (string, error) {
 	if rawPassword == "random" {
 		generatedPassword, genErr := generateRandomPassword()
 		if genErr != nil {
 			return "", fmt.Errorf("failed to generate random password for %s: %w", label, genErr)
 		}
-		fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
-		fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		if !suppressGeneratedPasswordLog {
+			fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
+			fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+		}
 		return generatedPassword, nil
 	}
 
@@ -437,7 +512,7 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		return nil, err
 	}
 
-	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label)
+	password, err := resolveBootstrapPassword(rawPassword, spec.ValidateStrength, spec.Label, spec.SuppressGeneratedPasswordLog)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +537,16 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		DB.Save(user)
 	}
 
+	if user != nil {
+		email := strings.TrimSpace(spec.Email)
+		if email != "" && user.Email != email {
+			user.Email = email
+			if err := DB.Save(user).Error; err != nil {
+				return nil, fmt.Errorf("failed to update email for %s: %w", spec.Label, err)
+			}
+		}
+	}
+
 	return user, nil
 }
 
@@ -470,8 +555,9 @@ func ServerCli() *cli.Command {
 		Name:  "server",
 		Usage: "start the Open Chat server",
 		Flags: GetServerFlags(),
-		Action: func(_ context.Context, c *cli.Command) error {
+		Action: func(ctx context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
+			msgmate.EnsureExternalToolsRegistered()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 			for _, migration := range integrations.AdditionalMigrations() {
 				database.RegisterExternalMigrations(database.FunctionMigration{
@@ -493,25 +579,85 @@ func ServerCli() *cli.Command {
 				"CREATE_EXTRA_USER":       {Value: strings.Join(c.StringSlice("create-extra-user"), ","), Sensitive: true},
 				"CREATE_EXTRA_BOT":        {Value: strings.Join(c.StringSlice("create-extra-bot"), ","), Sensitive: true},
 				"ADD_BOT_FROM_CONFIG":     {Value: strings.Join(c.StringSlice("add-bot-from-config"), ","), Sensitive: false},
-				"FRONTEND_PROXY":          {Value: c.String("frontend-proxy"), Sensitive: false},
-				"START_WORKER":            {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
-				"ASYNQ_CONCURRENCY":       {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
+				"ADD_SSH_KEYS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-keys-from-config"), ","),
+					Sensitive: true,
+				},
+				"ADD_SSH_SERVERS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-servers-from-config"), ","),
+					Sensitive: true,
+				},
+				"ADD_SSH_KEY_GRANTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-key-grants-from-config"), ","),
+					Sensitive: false,
+				},
+				"ADD_SSH_SERVER_GRANTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-ssh-server-grants-from-config"), ","),
+					Sensitive: false,
+				},
+				"ADD_SSH_DEFAULT_OWNER": {
+					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
+					Sensitive: false,
+				},
+				"ADD_OPENCODE_PROJECTS_FROM_CONFIG": {
+					Value:     strings.Join(c.StringSlice("add-opencode-projects-from-config"), ","),
+					Sensitive: true,
+				},
+				"ADD_OPENCODE_DEFAULT_OWNER": {
+					Value:     strings.Join(c.StringSlice("add-opencode-default-owner"), ","),
+					Sensitive: false,
+				},
+				"EXTRA_MODELS_JSON": {Value: c.String("extra-models-json"), Sensitive: false},
+				"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
+				"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
+				"ASYNQ_CONCURRENCY": {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
 				"SIGNUP_REQUIRES_ADMIN_APPROVAL": {
 					Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 					Sensitive: false,
 				},
-				"REDIS_URL":          {Value: c.String("redis-url"), Sensitive: true},
-				"REDIS_ADDR":         {Value: c.String("redis-addr"), Sensitive: false},
-				"REDIS_PASSWORD":     {Value: c.String("redis-password"), Sensitive: true},
-				"REDIS_DB":           {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
-				"OPENAI_API_KEY":     {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_KEY":  {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
-				"ANTHROPIC_API_HOST": {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
-				"DEEPINFRA_API_KEY":  {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
-				"GROQ_API_KEY":       {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
-				"LITELLM_API_KEY":    {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
-				"LITELLM_API_HOST":   {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
-				"OPEN_CHAT_SEAL_KEY": {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+				"CORS_ALLOWED_ORIGINS":          {Value: c.String("cors-allowed-origins"), Sensitive: false},
+				"PUBLIC_BASE_URL":               {Value: c.String("public-base-url"), Sensitive: false},
+				"BROWSER_TOKEN_TTL_SECONDS":     {Value: fmt.Sprintf("%d", c.Int("browser-token-ttl-seconds")), Sensitive: false},
+				"BROWSER_TOKEN_MAX_TTL_SECONDS": {Value: fmt.Sprintf("%d", c.Int("browser-token-max-ttl-seconds")), Sensitive: false},
+				"REDIS_URL":                     {Value: c.String("redis-url"), Sensitive: true},
+				"REDIS_MODE":                    {Value: c.String("redis-mode"), Sensitive: false},
+				"REDIS_ADDR":                    {Value: c.String("redis-addr"), Sensitive: false},
+				"REDIS_PASSWORD":                {Value: c.String("redis-password"), Sensitive: true},
+				"REDIS_DB":                      {Value: fmt.Sprintf("%d", c.Int("redis-db")), Sensitive: false},
+				"OPENAI_API_KEY":                {Value: os.Getenv("OPENAI_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_KEY":             {Value: os.Getenv("ANTHROPIC_API_KEY"), Sensitive: true},
+				"ANTHROPIC_API_HOST":            {Value: os.Getenv("ANTHROPIC_API_HOST"), Sensitive: true},
+				"DEEPINFRA_API_KEY":             {Value: os.Getenv("DEEPINFRA_API_KEY"), Sensitive: true},
+				"GROQ_API_KEY":                  {Value: os.Getenv("GROQ_API_KEY"), Sensitive: true},
+				"LITELLM_API_KEY":               {Value: os.Getenv("LITELLM_API_KEY"), Sensitive: true},
+				"LITELLM_API_HOST":              {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
+				"MSGMATE_CLUSTER_API_KEY":       {Value: os.Getenv("MSGMATE_CLUSTER_API_KEY"), Sensitive: true},
+				"MSGMATE_CLUSTER_HOST":          {Value: os.Getenv("MSGMATE_CLUSTER_HOST"), Sensitive: true},
+				"OPEN_CHAT_SEAL_KEY":            {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
+				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
+					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
+					Sensitive: false,
+				},
+				"MOBILE_UPSTREAM_URL": {
+					Value:     os.Getenv("MOBILE_UPSTREAM_URL"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_ENABLED": {
+					Value:     os.Getenv("MOBILE_API_CACHE_ENABLED"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_TTL_SECONDS": {
+					Value:     os.Getenv("MOBILE_API_CACHE_TTL_SECONDS"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_MAX_BODY_BYTES": {
+					Value:     os.Getenv("MOBILE_API_CACHE_MAX_BODY_BYTES"),
+					Sensitive: false,
+				},
+				"MOBILE_API_CACHE_MAX_ROWS": {
+					Value:     os.Getenv("MOBILE_API_CACHE_MAX_ROWS"),
+					Sensitive: false,
+				},
 			}
 
 			for _, decl := range integrations.RuntimeEnvDeclarations() {
@@ -526,18 +672,28 @@ func ServerCli() *cli.Command {
 
 			runtimecfg.SetAll(runtimeValues)
 
-			redisConnOpt, err := resolveRedisConnOpt(c)
+			redisRuntime, err := resolveRedisRuntime(c)
 			if err != nil {
 				return err
 			}
+			defer redisRuntime.Cleanup()
+			if redisRuntime.Mode == queue.RedisModeEmbedded {
+				if redisRuntime.FallbackReason != nil {
+					log.Printf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
+				} else {
+					log.Printf("Started embedded redis at %s", redisRuntime.Address)
+				}
+			} else {
+				log.Printf("Using external redis at %s", redisRuntime.Address)
+			}
 
-			queueClient := asynq.NewClient(redisConnOpt)
+			queueClient := asynq.NewClient(redisRuntime.ConnOpt)
 			defer queueClient.Close()
 
-			queueInspector := asynq.NewInspector(redisConnOpt)
+			queueInspector := asynq.NewInspector(redisRuntime.ConnOpt)
 			asynqUIHandler := asynqmon.New(asynqmon.Options{
 				RootPath:     "/admin/asynq/ui",
-				RedisConnOpt: redisConnOpt,
+				RedisConnOpt: redisRuntime.ConnOpt,
 				ReadOnly:     false,
 			})
 			defer asynqUIHandler.Close()
@@ -561,16 +717,16 @@ func ServerCli() *cli.Command {
 			sessionCookieDomain := normalizeSessionCookieDomain(c.String("host"))
 
 			// Initialize HTTP server and websocket handler.
-				s, ch, _, err := server.BackendServer(
-					DB,
-					queueClient,
-					queueInspector,
-					asynqUIHandler,
-					c.String("host"),
-					c.Uint16("port"),
-					c.Bool("debug"),
-					c.String("frontend-proxy"),
-					sessionCookieDomain,
+			s, ch, _, err := server.BackendServer(
+				DB,
+				queueClient,
+				queueInspector,
+				asynqUIHandler,
+				c.String("host"),
+				c.Uint16("port"),
+				c.Bool("debug"),
+				c.String("frontend-proxy"),
+				sessionCookieDomain,
 				c.Bool("signup-requires-admin-approval"),
 			)
 			if err != nil {
@@ -633,9 +789,60 @@ func ServerCli() *cli.Command {
 				}
 			}
 
-			if err := applyBotBootstrapConfigFiles(DB, c.StringSlice("add-bot-from-config"), !c.Bool("debug")); err != nil {
+			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
+
+			userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
+			if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
 				return err
 			}
+
+			botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
+			botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
+			if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
+				return err
+			}
+			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			for _, decl := range integrationBotDecls {
+				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
+				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
+					return err
+				}
+			}
+
+			sshDefaultOwners := append([]string{}, c.StringSlice("add-ssh-default-owner")...)
+			sshDefaultOwners = append(sshDefaultOwners, openChatBootstrap.SSHDefaultOwners...)
+			sshKeySpecs := append([]string{}, c.StringSlice("add-ssh-keys-from-config")...)
+			sshKeySpecs = append(sshKeySpecs, openChatBootstrap.SSHKeySpecs...)
+			sshServerSpecs := append([]string{}, c.StringSlice("add-ssh-servers-from-config")...)
+			sshServerSpecs = append(sshServerSpecs, openChatBootstrap.SSHServerSpecs...)
+			sshKeyGrantSpecs := append([]string{}, c.StringSlice("add-ssh-key-grants-from-config")...)
+			sshKeyGrantSpecs = append(sshKeyGrantSpecs, openChatBootstrap.SSHKeyGrantSpecs...)
+			sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
+			sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
+			if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
+				return err
+			}
+
+			opencodeDefaultOwners := append([]string{}, c.StringSlice("add-opencode-default-owner")...)
+			opencodeDefaultOwners = append(opencodeDefaultOwners, openChatBootstrap.OpencodeDefaultOwners...)
+			opencodeProjectSpecs := append([]string{}, c.StringSlice("add-opencode-projects-from-config")...)
+			opencodeProjectSpecs = append(opencodeProjectSpecs, openChatBootstrap.OpencodeProjectSpecs...)
+			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, opencodeDefaultOwners, opencodeProjectSpecs); err != nil {
+				return err
+			}
+
+			providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
+			if err != nil {
+				return err
+			}
+			log.Printf(
+				"Synced default bot provider-key model access bot=%s assigned=%d unassigned=%d skipped_unmanaged=%d skipped_invalid=%d",
+				botUser.Name,
+				providerSyncResult.Assigned,
+				providerSyncResult.Unassigned,
+				providerSyncResult.SkippedUnmanaged,
+				providerSyncResult.SkippedInvalid,
+			)
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err
@@ -644,9 +851,10 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
+			var workerServer *asynq.Server
 			if c.Bool("start-worker") {
-				workerServer := asynq.NewServer(
-					redisConnOpt,
+				workerServer = asynq.NewServer(
+					redisRuntime.ConnOpt,
 					asynq.Config{
 						Concurrency: int(c.Int("asynq-concurrency")),
 						Queues: map[string]int{
@@ -660,16 +868,59 @@ func ServerCli() *cli.Command {
 					BackendHost: fullHost,
 					WSHandler:   ch,
 				}
-				go func() {
-					log.Printf("Starting embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
-					if workerErr := workerServer.Run(processor.NewServeMux()); workerErr != nil {
-						log.Printf("Embedded asynq worker failed: %v", workerErr)
-					}
-				}()
+				if workerErr := workerServer.Start(processor.NewServeMux()); workerErr != nil {
+					return fmt.Errorf("embedded asynq worker failed to start: %w", workerErr)
+				}
+				log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 			}
 
-			if err := s.ListenAndServe(); err != nil {
-				return err
+			serverErrCh := make(chan error, 1)
+			go func() {
+				err := s.ListenAndServe()
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					serverErrCh <- err
+					return
+				}
+				serverErrCh <- nil
+			}()
+
+			signalCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+			defer stopSignals()
+
+			select {
+			case err := <-serverErrCh:
+				if err != nil {
+					if workerServer != nil {
+						workerServer.Shutdown()
+					}
+					return err
+				}
+			case <-signalCtx.Done():
+				log.Printf("Shutting down server (signal: %v)", signalCtx.Err())
+				forceSigCh := make(chan os.Signal, 1)
+				signal.Notify(forceSigCh, os.Interrupt)
+				defer signal.Stop(forceSigCh)
+				go func() {
+					<-forceSigCh
+					log.Printf("Received additional interrupt; forcing immediate exit")
+					os.Exit(130)
+				}()
+				ch.Shutdown()
+				shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancelShutdown()
+				if err := s.Shutdown(shutdownCtx); err != nil {
+					_ = s.Close()
+					if workerServer != nil {
+						workerServer.Shutdown()
+					}
+					return fmt.Errorf("server shutdown failed: %w", err)
+				}
+				if workerServer != nil {
+					workerServer.Shutdown()
+				}
+				if err := <-serverErrCh; err != nil {
+					return err
+				}
 			}
 
 			return nil
