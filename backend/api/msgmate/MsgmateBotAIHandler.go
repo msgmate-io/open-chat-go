@@ -14,6 +14,48 @@ import (
 	client "github.com/msgmate-io/go-client-integration/goclient"
 )
 
+// providerHostEnv maps provider backends whose API host is configured through
+// a dedicated environment variable. When set, the env host overrides the
+// endpoint stored in the chat's shared config.
+var providerHostEnv = map[string]string{
+	"litellm":         "LITELLM_API_HOST",
+	"msgmate_cluster": "MSGMATE_CLUSTER_HOST",
+}
+
+// resolveProviderEndpoint applies provider-specific endpoint rules: host-env
+// providers (litellm, msgmate_cluster) require a resolvable host, and
+// anthropic falls back to its public API when no host is configured.
+func resolveProviderEndpoint(backend, endpoint string) (string, error) {
+	if hostEnv, ok := providerHostEnv[backend]; ok {
+		providerHost := strings.TrimSpace(os.Getenv(hostEnv))
+		if providerHost != "" {
+			endpoint = providerHost
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return "", fmt.Errorf("missing API host for %s provider", backend)
+		}
+		return endpoint, nil
+	}
+
+	if backend == "anthropic" {
+		anthropicHost := strings.TrimSpace(os.Getenv("ANTHROPIC_API_HOST"))
+		if anthropicHost != "" {
+			endpoint = anthropicHost
+		} else if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://api.anthropic.com/v1"
+		}
+		endpoint = strings.TrimSpace(endpoint)
+		endpoint = strings.TrimRight(endpoint, "/")
+		if endpoint == "" {
+			return "", fmt.Errorf("missing API host for anthropic provider")
+		}
+	}
+
+	return endpoint, nil
+}
+
 func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[string]interface{} {
 	confirmation, ok := toolCall["confirmation"].(map[string]interface{})
 	if !ok {
@@ -181,30 +223,9 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		toolCallMaxFailed = int64(DefaultToolCallMaxFailed)
 	}
 
-	if backend == "litellm" {
-		litellmHost := strings.TrimSpace(os.Getenv("LITELLM_API_HOST"))
-		if litellmHost != "" {
-			endpoint = litellmHost
-		}
-		endpoint = strings.TrimSpace(endpoint)
-		endpoint = strings.TrimRight(endpoint, "/")
-		if endpoint == "" {
-			return fmt.Errorf("missing API host for litellm provider")
-		}
-	}
-
-	if backend == "anthropic" {
-		anthropicHost := strings.TrimSpace(os.Getenv("ANTHROPIC_API_HOST"))
-		if anthropicHost != "" {
-			endpoint = anthropicHost
-		} else if strings.TrimSpace(endpoint) == "" {
-			endpoint = "https://api.anthropic.com/v1"
-		}
-		endpoint = strings.TrimSpace(endpoint)
-		endpoint = strings.TrimRight(endpoint, "/")
-		if endpoint == "" {
-			return fmt.Errorf("missing API host for anthropic provider")
-		}
+	endpoint, err = resolveProviderEndpoint(backend, endpoint)
+	if err != nil {
+		return err
 	}
 
 	// Check for skip-core tag
