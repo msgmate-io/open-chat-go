@@ -54,6 +54,36 @@ type indexStatement struct {
 //	  -> SEARCH streaming_messages USING INDEX idx_streaming_messages_chat_seq
 //	     / idx_streaming_messages_session_seq
 var hotPathIndexes = []indexStatement{
+	// UUID lookups. The base model's `UUID` column carries no index tag, so
+	// every `WHERE uuid = ?` (message/chat/user lookups and the streaming
+	// meta_data updates) was a full sequential scan. On the production-shaped
+	// messages table (~800k rows / ~1 GB) that saturated Postgres under agent
+	// load (ci: ci node pegged, every request slow). These indexes turn those
+	// scans into single-key index scans.
+	{
+		Name:  "idx_messages_uuid",
+		Table: "messages",
+		SQL:   "CREATE INDEX IF NOT EXISTS idx_messages_uuid ON messages(uuid)",
+		Why:   "message lookup/update by uuid (queued marker, streaming meta_data writes, edit/reaction paths)",
+	},
+	{
+		Name:  "idx_chats_uuid",
+		Table: "chats",
+		SQL:   "CREATE INDEX IF NOT EXISTS idx_chats_uuid ON chats(uuid)",
+		Why:   "chat lookup by uuid (every chat-scoped request)",
+	},
+	{
+		Name:  "idx_users_uuid",
+		Table: "users",
+		SQL:   "CREATE INDEX IF NOT EXISTS idx_users_uuid ON users(uuid)",
+		Why:   "user lookup by uuid (session/identity resolution)",
+	},
+	{
+		Name:  "idx_streaming_messages_uuid",
+		Table: "streaming_messages",
+		SQL:   "CREATE INDEX IF NOT EXISTS idx_streaming_messages_uuid ON streaming_messages(uuid)",
+		Why:   "streaming message update by uuid (in-flight text/reasoning rewrites)",
+	},
 	{
 		Name:  "idx_messages_chat_deleted_id",
 		Table: "messages",
