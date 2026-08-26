@@ -27,6 +27,12 @@ var browserTokenRoutes = []browserTokenRoute{
 	{Method: http.MethodPatch, Pattern: "/bots/{identifier}", Scope: database.ScopeBotsWrite},
 	{Method: http.MethodPut, Pattern: "/bots/{identifier}/config", Scope: database.ScopeBotsWrite},
 
+	// Read-only catalogs used by embedded bot editors to populate model,
+	// tool, and MCP integration pickers.
+	{Method: http.MethodGet, Pattern: "/models", Scope: database.ScopeBotsRead},
+	{Method: http.MethodGet, Pattern: "/tools", Scope: database.ScopeBotsRead},
+	{Method: http.MethodGet, Pattern: "/integrations/mcp/servers", Scope: database.ScopeBotsRead},
+
 	{Method: http.MethodGet, Pattern: "/chats/list", Scope: database.ScopeInteractionsList},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}", Scope: database.ScopeInteractionsRead},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/list", Scope: database.ScopeInteractionsRead},

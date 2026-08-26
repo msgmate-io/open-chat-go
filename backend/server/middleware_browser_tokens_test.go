@@ -101,7 +101,9 @@ func TestResolveBrowserTokenDefaultDeny(t *testing.T) {
 		{"POST", "/user/browser-token"},
 		{"GET", "/user/permissions"},
 		{"GET", "/admin/users"},
-		{"GET", "/api/v1/models"},
+		{"GET", "/models/some-model-uuid"},
+		{"GET", "/tools/some-tool"},
+		{"GET", "/integrations/mcp/templates"},
 		{"GET", "/connect"},
 	}
 	for _, route := range denied {
@@ -121,6 +123,10 @@ func TestResolveBrowserTokenDefaultDeny(t *testing.T) {
 		{"GET", "/chats/some-uuid/messages/list"},
 		{"GET", "/chats/some-uuid/status"},
 		{"GET", "/user/self"},
+		{"GET", "/models"},
+		{"GET", "/api/v1/models"},
+		{"GET", "/tools"},
+		{"GET", "/integrations/mcp/servers"},
 	}
 	for _, route := range allowed {
 		if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest(route.method, route.target, raw)); !ok {
@@ -139,6 +145,15 @@ func TestResolveBrowserTokenScopeEnforcement(t *testing.T) {
 
 	if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest("GET", "/bots/list", raw)); !ok {
 		t.Fatalf("expected bots:read token to resolve on GET /bots/list")
+	}
+	if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest("GET", "/models", raw)); !ok {
+		t.Fatalf("expected bots:read token to resolve on GET /models")
+	}
+	if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest("GET", "/tools", raw)); !ok {
+		t.Fatalf("expected bots:read token to resolve on GET /tools")
+	}
+	if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest("GET", "/integrations/mcp/servers", raw)); !ok {
+		t.Fatalf("expected bots:read token to resolve on GET /integrations/mcp/servers")
 	}
 	if _, _, ok := resolveUserFromBearerToken(DB, bearerRequest("PATCH", "/bots/some-uuid", raw)); ok {
 		t.Fatalf("expected bots:read token to be rejected on PATCH /bots/{identifier} (missing bots:write)")
