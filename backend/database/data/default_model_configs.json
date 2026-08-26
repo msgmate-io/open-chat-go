@@ -23,50 +23,6 @@
     }
   },
   {
-    "title": "claude-opus-5",
-    "description": "Auto-discovered model from anthropic provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "anthropic",
-      "context": 10,
-      "endpoint": "https://api.anthropic.com/v1",
-      "max_tokens": 4096,
-      "model": "claude-opus-5",
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "claude-sonnet-5",
-    "description": "Auto-discovered model from anthropic provider.",
-    "bot_usernames": [
-      "bot"
-    ],
-    "is_public": true,
-    "configuration": {
-      "backend": "anthropic",
-      "context": 10,
-      "endpoint": "https://api.anthropic.com/v1",
-      "max_tokens": 4096,
-      "model": "claude-sonnet-5",
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
     "title": "claude-sonnet-5_di",
     "description": "Auto-discovered model from litellm provider.",
     "bot_usernames": [
@@ -199,26 +155,6 @@
       "temperature": 0.7,
       "tools": [
         "get_current_time_confirmed",
-        "get_weather",
-        "get_random_number"
-      ]
-    }
-  },
-  {
-    "title": "gpt-4-turbo",
-    "description": "Auto-discovered model from openai provider.",
-    "bot_usernames": [],
-    "is_public": true,
-    "configuration": {
-      "backend": "openai",
-      "context": 10,
-      "endpoint": "https://api.openai.com/v1",
-      "max_tokens": 4096,
-      "model": "gpt-4-turbo",
-      "system_prompt": "You are a helpful assistant.",
-      "temperature": 0.7,
-      "tools": [
-        "get_current_time",
         "get_weather",
         "get_random_number"
       ]
