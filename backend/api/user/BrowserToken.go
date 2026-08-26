@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	defaultBrowserTokenTTLSeconds    = 900
-	defaultBrowserTokenMaxTTLSeconds = 3600
-	browserTokenNamePrefix           = "browser:"
-	maxBrowserTokenLabelLength       = 80
+	defaultBrowserTokenTTLSeconds        = 900
+	defaultBrowserTokenMaxTTLSeconds     = 3600
+	defaultMaxActiveBrowserTokensPerUser = 10
+	browserTokenNamePrefix               = "browser:"
+	maxBrowserTokenLabelLength           = 80
 )
 
 type BrowserTokenExchangeRequest struct {
@@ -50,6 +51,21 @@ func browserTokenTTLConfig() (defaultTTL int, maxTTL int) {
 		defaultTTL = maxTTL
 	}
 	return defaultTTL, maxTTL
+}
+
+// maxActiveBrowserTokensConfig returns the per-user cap for active browser
+// tokens (BROWSER_TOKEN_MAX_ACTIVE_PER_USER). The oldest active browser
+// tokens are evicted when issuing a new one would exceed the cap.
+func maxActiveBrowserTokensConfig() int {
+	value := strings.TrimSpace(runtimecfg.GetAll()["BROWSER_TOKEN_MAX_ACTIVE_PER_USER"].Value)
+	if value == "" {
+		return defaultMaxActiveBrowserTokensPerUser
+	}
+	limit, err := strconv.Atoi(value)
+	if err != nil || limit <= 0 {
+		return defaultMaxActiveBrowserTokensPerUser
+	}
+	return limit
 }
 
 // stripDefaultPort removes the default port for a scheme from a host string.
@@ -124,6 +140,11 @@ func publicAPIBaseURL(r *http.Request) string {
 // bot/interaction routes, never exceed the parent credential's authority or
 // lifetime, and are invalidated immediately when the parent credential is
 // revoked or expires.
+//
+// Browser tokens rotate: they are capped per user
+// (BROWSER_TOKEN_MAX_ACTIVE_PER_USER) and never count towards the regular
+// API token quota. When the cap is exceeded the oldest active browser tokens
+// are evicted, so issuing a browser token never fails due to token limits.
 //
 //	@Summary      Exchange credentials for a short-lived browser token
 //	@Description  Exchange the caller's existing credential for a short-lived scoped browser API token
@@ -260,6 +281,7 @@ func (h *UserHandler) ExchangeBrowserToken(w http.ResponseWriter, r *http.Reques
 	}
 
 	database.CleanupExpiredBrowserAccessTokens(DB, user.ID)
+	database.EnforceActiveBrowserTokenLimit(DB, user.ID, maxActiveBrowserTokensConfig())
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")

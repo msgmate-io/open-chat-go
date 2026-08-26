@@ -46,6 +46,13 @@ func lookupChatBackend(name string) (ChatBackendFunc, bool) {
 	return fn, ok
 }
 
+// IsRegisteredChatBackend reports whether an external chat backend is
+// registered under the given name (case-insensitive).
+func IsRegisteredChatBackend(name string) bool {
+	_, ok := lookupChatBackend(name)
+	return ok
+}
+
 // ResolveChatBackend loads a chat's shared config and returns the registered
 // external chat backend named by the "backend" key, if any. The parsed config map
 // is returned alongside so the backend can read its own keys.

@@ -86,18 +86,33 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		return err
 	}
 
-	if len(models) == 0 {
-		var runtime database.BotRuntimeConfig
-		if err := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error; err == nil {
-			var fallbackConfig BotProfileConfig
-			if err := json.Unmarshal(runtime.DefaultSharedConfig, &fallbackConfig); err == nil {
-				if fallbackConfig.Model != "" && fallbackConfig.Backend != "" {
-					models = append(models, BotModel{
-						Title:         fallbackConfig.Model,
-						Description:   runtime.Description,
-						Configuration: fallbackConfig,
-					})
-				}
+	var runtime database.BotRuntimeConfig
+	runtimeErr := DB.Where("bot_user_id = ? AND is_active = ?", botUser.ID, true).Order("id desc").First(&runtime).Error
+
+	if len(models) == 0 && runtimeErr == nil {
+		var fallbackConfig BotProfileConfig
+		if err := json.Unmarshal(runtime.DefaultSharedConfig, &fallbackConfig); err == nil {
+			if fallbackConfig.Model != "" && fallbackConfig.Backend != "" {
+				models = append(models, BotModel{
+					Title:         fallbackConfig.Model,
+					Description:   runtime.Description,
+					Configuration: fallbackConfig,
+				})
+			}
+		}
+	}
+
+	// Bots that route chats through a registered external chat backend (eg the
+	// opencode integration bot) keep that backend on every profile model. The
+	// selected model only picks which LLM the external backend runs on, so the
+	// chat start page must keep resolving the backend's chat UI (eg the
+	// opencode project selector) and new chats must stay bound to the backend
+	// regardless of which model config is selected.
+	if runtimeErr == nil {
+		var runtimeProfileConfig BotProfileConfig
+		if json.Unmarshal(runtime.DefaultSharedConfig, &runtimeProfileConfig) == nil && IsRegisteredChatBackend(runtimeProfileConfig.Backend) {
+			for i := range models {
+				models[i].Configuration.Backend = runtimeProfileConfig.Backend
 			}
 		}
 	}
