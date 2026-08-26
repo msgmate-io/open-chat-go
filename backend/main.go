@@ -28,8 +28,16 @@ type openChatConfig struct {
 }
 
 type openChatBootstrapConfig struct {
-	Bots json.RawMessage             `json:"bots,omitempty"`
-	SSH  *openChatSSHBootstrapConfig `json:"ssh,omitempty"`
+	Users    json.RawMessage                  `json:"users,omitempty"`
+	Bots     json.RawMessage                  `json:"bots,omitempty"`
+	SSH      *openChatSSHBootstrapConfig      `json:"ssh,omitempty"`
+	Opencode *openChatOpencodeBootstrapConfig `json:"opencode,omitempty"`
+}
+
+type openChatOpencodeBootstrapConfig struct {
+	Owner    string          `json:"owner,omitempty"`
+	Owners   []string        `json:"owners,omitempty"`
+	Projects json.RawMessage `json:"projects,omitempty"`
 }
 
 type openChatSSHBootstrapConfig struct {
@@ -261,6 +269,10 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 		return out
 	}
 
+	if len(bytes.TrimSpace(cfg.Bootstrap.Users)) > 0 {
+		out.UserSpecs = append(out.UserSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Users)))
+	}
+
 	if len(bytes.TrimSpace(cfg.Bootstrap.Bots)) > 0 {
 		out.BotSpecs = append(out.BotSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Bots)))
 	}
@@ -283,6 +295,18 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 		}
 		if len(bytes.TrimSpace(cfg.Bootstrap.SSH.ServerGrants)) > 0 {
 			out.SSHServerGrantSpecs = append(out.SSHServerGrantSpecs, string(bytes.TrimSpace(cfg.Bootstrap.SSH.ServerGrants)))
+		}
+	}
+
+	if cfg.Bootstrap.Opencode != nil {
+		owners := append([]string{}, cfg.Bootstrap.Opencode.Owners...)
+		if strings.TrimSpace(cfg.Bootstrap.Opencode.Owner) != "" {
+			owners = append(owners, cfg.Bootstrap.Opencode.Owner)
+		}
+		out.OpencodeDefaultOwners = normalizeOwners(owners)
+
+		if len(bytes.TrimSpace(cfg.Bootstrap.Opencode.Projects)) > 0 {
+			out.OpencodeProjectSpecs = append(out.OpencodeProjectSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Opencode.Projects)))
 		}
 	}
 
