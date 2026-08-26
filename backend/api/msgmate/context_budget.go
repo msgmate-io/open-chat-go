@@ -78,6 +78,12 @@ const (
 	// contextBudgetUserMessageKeepChars is the head of such a user message that
 	// survives the truncation.
 	contextBudgetUserMessageKeepChars = 2000
+	// contextBudgetNewestRoundResultMinKeepChars is the floor head kept of each
+	// newest-round tool result when a single batched turn overflows the budget
+	// (below the budget-proportional share). Results are truncated, not evicted
+	// - the call evidently ran - so the request stays bounded even when one
+	// assistant turn issued a large batch of calls (ci#910).
+	contextBudgetNewestRoundResultMinKeepChars = 200
 
 	// contextBudgetNoticeThresholdPercent is the used-percent above which a
 	// one-line budget notice is merged into the system prompt, so the model
@@ -392,6 +398,11 @@ type ContextCompactionStats struct {
 	EvictedToolResults  int `json:"evicted_tool_results"`
 	EvictedNarration    int `json:"evicted_narration"`
 	EvictedUserMessages int `json:"evicted_user_messages"`
+	// TruncatedToolResults counts the newest-round tool results that were
+	// truncated to a bounded head (ci#910). Unlike an eviction these are never
+	// replaced with a marker - the call did run - but a single turn that batches
+	// a large number of tool calls cannot leave the request unbounded.
+	TruncatedToolResults int `json:"truncated_tool_results"`
 	// DroppedMessages counts the whole old messages removed as a last resort.
 	DroppedMessages int `json:"dropped_messages"`
 }
@@ -410,6 +421,7 @@ func mergeContextCompactionStats(first ContextCompactionStats, second ContextCom
 	merged.EvictedToolResults += second.EvictedToolResults
 	merged.EvictedNarration += second.EvictedNarration
 	merged.EvictedUserMessages += second.EvictedUserMessages
+	merged.TruncatedToolResults += second.TruncatedToolResults
 	merged.DroppedMessages += second.DroppedMessages
 	return merged
 }
@@ -688,6 +700,55 @@ func compactMessagesToContextBudgetReserving(messages []map[string]interface{}, 
 		}
 		out[i] = stubbed
 		running -= before - after
+	}
+
+	// Pass 1b (ci#910): a single assistant turn can issue a large batch of tool
+	// calls, so the entire transcript can sit in the protected newest round and
+	// Pass 1 evicts nothing (observed on ci.msgmate.io: 265 tool results in one
+	// round -> ~1.1M chars, ~10x a 120k budget, 0 evictions). Truncate the
+	// newest round's results to a per-result head sized to the budget remaining
+	// for the round - never replace them with an eviction marker, because the
+	// call evidently ran - so the request stays bounded.
+	if running > target {
+		roundIndices := make([]int, 0, len(out))
+		roundChars := 0
+		for i := leadingSystem; i < lastIndex; i++ {
+			if newestRound[i] && roleOf(out[i]) == "tool" {
+				roundIndices = append(roundIndices, i)
+				roundChars += messageCharCount(out[i])
+			}
+		}
+		if len(roundIndices) > 0 {
+			const truncationNote = "\n[...truncated to fit the context budget; the call ran, do not re-issue it - read a narrower range instead]"
+			// Chars available to the round after everything else is accounted for,
+			// minus the per-result truncation note.
+			available := target - (running - roundChars) - len(roundIndices)*(len(truncationNote)+2)
+			perResult := contextBudgetNewestRoundResultMinKeepChars
+			if available > 0 {
+				perResult = available / len(roundIndices)
+			}
+			if perResult < contextBudgetNewestRoundResultMinKeepChars {
+				perResult = contextBudgetNewestRoundResultMinKeepChars
+			}
+			for _, i := range roundIndices {
+				if running <= target {
+					break
+				}
+				content, _ := out[i]["content"].(string)
+				if len(content) <= perResult {
+					continue
+				}
+				before := messageCharCount(out[i])
+				truncated := cloneMessageWithContent(out[i], headOfString(content, perResult)+truncationNote)
+				after := messageCharCount(truncated)
+				if after >= before {
+					continue
+				}
+				out[i] = truncated
+				running -= before - after
+				stats.TruncatedToolResults++
+			}
+		}
 	}
 
 	// Pass 2: drop whole old messages, oldest first, keeping the leading system
