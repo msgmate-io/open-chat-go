@@ -3,6 +3,7 @@ package integrations
 import (
 	_ "backend/integrations/externalintegrations"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
@@ -61,6 +62,10 @@ func normalizeFrontendAssetPath(assetPath string) string {
 
 func normalizeRuntimeEnvKey(key string) string {
 	return strings.ToUpper(strings.TrimSpace(key))
+}
+
+func normalizeRuntimeConfigAliasKey(key string) string {
+	return strings.ToLower(strings.TrimSpace(key))
 }
 
 func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definition, error) {
@@ -124,6 +129,7 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 	def.FrontendPages = frontendPages
 
 	runtimeEnvVars := make([]extiface.RuntimeEnvVar, 0, len(def.RuntimeEnvVars))
+	runtimeEnvByKey := map[string]struct{}{}
 	for idx, envVar := range def.RuntimeEnvVars {
 		key := normalizeRuntimeEnvKey(envVar.Key)
 		if key == "" {
@@ -132,10 +138,41 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 		if !strings.HasPrefix(key, "OCI_") {
 			return def, fmt.Errorf("integration %q runtime env key %q must use OCI_ prefix", name, key)
 		}
+		if _, exists := runtimeEnvByKey[key]; exists {
+			return def, fmt.Errorf("integration %q has duplicate runtime env key %q", name, key)
+		}
 		envVar.Key = key
 		runtimeEnvVars = append(runtimeEnvVars, envVar)
+		runtimeEnvByKey[key] = struct{}{}
 	}
 	def.RuntimeEnvVars = runtimeEnvVars
+
+	runtimeConfigAliases := make([]extiface.RuntimeConfigAlias, 0, len(def.RuntimeConfigAliases))
+	aliasByJSONKey := map[string]struct{}{}
+	for idx, alias := range def.RuntimeConfigAliases {
+		jsonKey := normalizeRuntimeConfigAliasKey(alias.JSONKey)
+		if jsonKey == "" {
+			return def, fmt.Errorf("integration %q runtime_config_aliases[%d] is missing json_key", name, idx)
+		}
+		envKey := normalizeRuntimeEnvKey(alias.EnvKey)
+		if envKey == "" {
+			return def, fmt.Errorf("integration %q runtime_config_aliases[%d] is missing env_key", name, idx)
+		}
+		if !strings.HasPrefix(envKey, "OCI_") {
+			return def, fmt.Errorf("integration %q runtime config alias env_key %q must use OCI_ prefix", name, envKey)
+		}
+		if _, exists := runtimeEnvByKey[envKey]; !exists {
+			return def, fmt.Errorf("integration %q runtime config alias %q references undeclared runtime env key %q", name, jsonKey, envKey)
+		}
+		if _, exists := aliasByJSONKey[jsonKey]; exists {
+			return def, fmt.Errorf("integration %q has duplicate runtime config alias json_key %q", name, jsonKey)
+		}
+		alias.JSONKey = jsonKey
+		alias.EnvKey = envKey
+		runtimeConfigAliases = append(runtimeConfigAliases, alias)
+		aliasByJSONKey[jsonKey] = struct{}{}
+	}
+	def.RuntimeConfigAliases = runtimeConfigAliases
 
 	return def, nil
 }
@@ -175,6 +212,19 @@ type RuntimeEnvVarDeclaration struct {
 	Description     string
 }
 
+type RuntimeConfigAliasDeclaration struct {
+	IntegrationName string
+	JSONKey         string
+	EnvKey          string
+	Description     string
+}
+
+type BotBootstrapDeclaration struct {
+	IntegrationName string
+	Index           int
+	Config          extiface.BotBootstrapConfig
+}
+
 func RuntimeEnvDeclarations() []RuntimeEnvVarDeclaration {
 	EnsureLoaded()
 	out := []RuntimeEnvVarDeclaration{}
@@ -194,6 +244,77 @@ func RuntimeEnvDeclarations() []RuntimeEnvVarDeclaration {
 		}
 		return out[i].IntegrationName < out[j].IntegrationName
 	})
+	return out
+}
+
+func RuntimeConfigAliasDeclarations() []RuntimeConfigAliasDeclaration {
+	EnsureLoaded()
+	out := []RuntimeConfigAliasDeclaration{}
+	for _, def := range List() {
+		for _, alias := range def.RuntimeConfigAliases {
+			out = append(out, RuntimeConfigAliasDeclaration{
+				IntegrationName: def.Name,
+				JSONKey:         alias.JSONKey,
+				EnvKey:          alias.EnvKey,
+				Description:     alias.Description,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IntegrationName == out[j].IntegrationName {
+			return out[i].JSONKey < out[j].JSONKey
+		}
+		return out[i].IntegrationName < out[j].IntegrationName
+	})
+	return out
+}
+
+func BotBootstrapDeclarations() []BotBootstrapDeclaration {
+	EnsureLoaded()
+	definitions := List()
+	out := []BotBootstrapDeclaration{}
+	for _, def := range definitions {
+		for idx, cfg := range def.BotBootstrapConfigs {
+			out = append(out, BotBootstrapDeclaration{
+				IntegrationName: def.Name,
+				Index:           idx,
+				Config:          cloneBotBootstrapConfig(cfg),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IntegrationName == out[j].IntegrationName {
+			return out[i].Index < out[j].Index
+		}
+		return out[i].IntegrationName < out[j].IntegrationName
+	})
+	return out
+}
+
+func cloneBotBootstrapConfig(input extiface.BotBootstrapConfig) extiface.BotBootstrapConfig {
+	out := input
+	out.AdditionalOwners = append([]string(nil), input.AdditionalOwners...)
+	out.AllowedModelBackends = append([]string(nil), input.AllowedModelBackends...)
+	out.DefaultSharedConfig = cloneJSONMap(input.DefaultSharedConfig)
+	return out
+}
+
+func cloneJSONMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return nil
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		out := map[string]interface{}{}
+		for k, v := range input {
+			out[k] = v
+		}
+		return out
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]interface{}{}
+	}
 	return out
 }
 

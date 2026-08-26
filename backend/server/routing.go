@@ -14,6 +14,7 @@ import (
 	"backend/api/user"
 	"backend/api/websocket"
 	"backend/integrations"
+	"backend/runtimecfg"
 	"bytes"
 	"context"
 	"embed"
@@ -37,6 +38,24 @@ import (
 
 //go:embed all:frontend routes.json swagger.json
 var frontendFS embed.FS
+var hashedAssetPattern = regexp.MustCompile(`\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$`)
+
+func setFrontendAssetCacheHeaders(w http.ResponseWriter, requestPath string) {
+	if w == nil {
+		return
+	}
+	cleanPath := strings.TrimSpace(requestPath)
+	if !strings.HasPrefix(cleanPath, "/assets/") {
+		return
+	}
+
+	if hashedAssetPattern.MatchString(cleanPath) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+}
 
 func ProxyRequestHandler(proxy *httputil.ReverseProxy, url *url.URL, endpoint string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +136,7 @@ func ServeFrontendRoute(route string, pathEnding string) func(http.ResponseWrite
 		if !strings.HasSuffix(pathEnding, ".json") {
 			accept := r.Header.Get("Accept")
 			if !strings.Contains(accept, "text/html") {
+				setFrontendAssetCacheHeaders(w, r.URL.Path)
 				fileServer.ServeHTTP(w, r)
 				return
 			}
@@ -294,6 +314,45 @@ func isRouteMoreSpecific(a string, b string) bool {
 	return a < b
 }
 
+type mobileAPIWSProxyConfig struct {
+	Enabled bool
+	Target  string
+}
+
+func resolveMobileAPIWSProxyConfig() mobileAPIWSProxyConfig {
+	values := runtimecfg.GetAll()
+	routeRaw := strings.TrimSpace(values["MOBILE_ROUTE_API_WS_TO_UPSTREAM"].Value)
+	if !strings.EqualFold(routeRaw, "true") {
+		return mobileAPIWSProxyConfig{}
+	}
+
+	target := strings.TrimSpace(values["MOBILE_UPSTREAM_URL"].Value)
+	if target == "" {
+		target = "https://msgmate.io"
+	}
+
+	return mobileAPIWSProxyConfig{
+		Enabled: true,
+		Target:  target,
+	}
+}
+
+func pathFromRoutePattern(pattern string) string {
+	trimmed := strings.TrimSpace(pattern)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.Index(trimmed, " "); idx >= 0 {
+		return strings.TrimSpace(trimmed[idx+1:])
+	}
+	return trimmed
+}
+
+func isAPIOrWSPath(path string) bool {
+	path = strings.TrimSpace(path)
+	return strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/ws")
+}
+
 func tryServeFrontendHTMLRoute(routes []string, w http.ResponseWriter, r *http.Request) bool {
 	logicalPath := r.URL.Path
 	if logicalPath == "" {
@@ -361,6 +420,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}", chatsHandler.GetChat)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/status", chatsHandler.GetInteractionStatus)
+	v1PrivateApis.HandleFunc("GET /chats/states", chatsHandler.GetChatStates)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/contact", contactsHandler.GetContactByChatUUID)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/send", chatsHandler.MessageSend)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/rerun", chatsHandler.RerunMessage)
@@ -390,6 +450,7 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
 	v1PrivateApis.HandleFunc("GET /user/permissions", userHandler.ListPermissions)
+	v1PrivateApis.HandleFunc("POST /user/browser-token", userHandler.ExchangeBrowserToken)
 	v1PrivateApis.HandleFunc("POST /user/access-tokens", userHandler.CreateAccessToken)
 	v1PrivateApis.HandleFunc("GET /user/access-tokens/list", userHandler.ListAccessTokens)
 	v1PrivateApis.HandleFunc("POST /user/access-tokens/{token_uuid}/revoke", userHandler.RevokeAccessToken)
@@ -424,10 +485,26 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("DELETE /files/{file_id}", filesHandler.DeleteFile)
 
 	commonMiddlewares := CreateStack(
+		CORSMiddleware(runtimecfg.CORSAllowedOrigins()),
+		APINoCacheMiddleware,
 		dbMiddleware(DB),
 		websocketMiddleware(websocketHandler),
 		queueMiddleware(queueClient, queueInspector),
 	)
+
+	mobileProxyCfg := resolveMobileAPIWSProxyConfig()
+	if mobileProxyCfg.Enabled {
+		target, parseErr := url.Parse(mobileProxyCfg.Target)
+		if parseErr != nil {
+			log.Printf("Invalid MOBILE_UPSTREAM_URL %q, disabling mobile API/WS proxy: %v", mobileProxyCfg.Target, parseErr)
+			mobileProxyCfg.Enabled = false
+		} else {
+			proxyHandler := commonMiddlewares(Logging(newMobileAPIWSReverseProxy(target)))
+			mux.Handle("/api/", proxyHandler)
+			mux.Handle("/ws/", proxyHandler)
+			log.Printf("Mobile API/WS proxy enabled: /api and /ws -> %s", mobileProxyCfg.Target)
+		}
+	}
 
 	integrationRootAPIs := http.NewServeMux()
 	integrations.RegisterRoutes(v1PrivateApis, integrationRootAPIs)
@@ -441,6 +518,9 @@ func BackendRouting(
 			if routePattern == "" {
 				continue
 			}
+			if mobileProxyCfg.Enabled && isAPIOrWSPath(pathFromRoutePattern(routePattern)) {
+				continue
+			}
 			if _, exists := registeredPublicIntegrationRoutes[routePattern]; exists {
 				continue
 			}
@@ -451,71 +531,82 @@ func BackendRouting(
 		}
 	}
 
-	websocketMux.HandleFunc("/connect", websocketHandler.Connect)
-	mux.Handle("GET /ws/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(websocketHandler.ConnectSharedInteraction))))
-	mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
-	mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
-	mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
-	mux.Handle("GET /api/user/cli-auth", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuth))))
-	mux.Handle("GET /api/user/cli-auth/poll", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuthPoll))))
-	mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
-	mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
+	if !mobileProxyCfg.Enabled {
+		websocketMux.HandleFunc("/connect", websocketHandler.Connect)
+		mux.Handle("GET /ws/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(websocketHandler.ConnectSharedInteraction))))
+		mux.Handle("/ws/", http.StripPrefix("/ws", commonMiddlewares(AuthMiddleware(websocketMux))))
+		mux.Handle("POST /api/v1/user/login", commonMiddlewares(http.HandlerFunc(userHandler.Login)))
+		mux.Handle("POST /api/v1/user/logout", commonMiddlewares(http.HandlerFunc(userHandler.Logout)))
+		mux.Handle("GET /api/user/cli-auth", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuth))))
+		mux.Handle("GET /api/user/cli-auth/poll", commonMiddlewares(Logging(http.HandlerFunc(userHandler.CLIBrowserAuthPoll))))
+		mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
+		mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
 
-	mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
-	mux.Handle("GET /api/v1/models", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
-	mux.Handle("GET /api/v1/models/{model_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.Get)))))
-	mux.Handle("GET /api/v1/tools", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
-	mux.Handle("GET /api/v1/tools/{tool_name}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.Get)))))
-	mux.Handle("GET /api/v1/tools/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ListTyping)))))
-	mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
-	mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
-	mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
-	mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
-	mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
-	mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
-	mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages))))
-	mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus))))
+		mux.Handle("GET /api/tests/go", commonMiddlewares(Logging(http.HandlerFunc(admin.GetGoTestsOverview))))
+		mux.Handle("GET /api/v1/models", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.List)))))
+		mux.Handle("GET /api/v1/models/{model_uuid}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(modelsHandler.Get)))))
+		mux.Handle("GET /api/v1/tools", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.List)))))
+		mux.Handle("GET /api/v1/tools/{tool_name}", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.Get)))))
+		mux.Handle("GET /api/v1/tools/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ListTyping)))))
+		mux.Handle("GET /api/v1/tools/{tool_name}/typing", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.GetTyping)))))
+		mux.Handle("POST /api/v1/tools/typing/{tool_name}/call/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateCallPayload)))))
+		mux.Handle("POST /api/v1/tools/typing/{tool_name}/init/validate", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(toolsHandler.ValidateInitPayload)))))
+		mux.Handle("POST /api/chat/{chat_uuid}/publish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Publish)))))
+		mux.Handle("POST /api/chat/{chat_uuid}/unpublish", commonMiddlewares(Logging(AuthMiddleware(http.HandlerFunc(chatsHandler.Unpublish)))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus))))
 
-	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
-
-	if debug {
-		mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
-			content, readErr := os.ReadFile(filepath.Join("docs", "swagger.json"))
-			if readErr != nil {
-				http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(content)
-		})
-		mux.HandleFunc("/reference", reference.ScalarReference)
-		mux.HandleFunc("/api/reference", reference.ScalarReference)
+		mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 	} else {
-		// Create swagger reference handler with embedded content
-		swaggerContent, err := frontendFS.ReadFile("swagger.json")
-		if err != nil {
-			log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
+		mux.Handle("/admin/asynq/ui", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
+		mux.Handle("/admin/asynq/ui/", commonMiddlewares(AuthMiddleware(http.HandlerFunc(admin.AsynqUIHandler(asynqUIHandler)))))
+	}
+
+	if !mobileProxyCfg.Enabled {
+		if debug {
 			mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
-				http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
+				content, readErr := os.ReadFile(filepath.Join("docs", "swagger.json"))
+				if readErr != nil {
+					http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(content)
 			})
-			// Fallback to file-based handler
 			mux.HandleFunc("/reference", reference.ScalarReference)
 			mux.HandleFunc("/api/reference", reference.ScalarReference)
 		} else {
-			mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write(swaggerContent)
-			})
-			// Use embedded content
-			swaggerHandler := reference.ScalarReferenceWithContent(string(swaggerContent))
-			mux.HandleFunc("/reference", swaggerHandler)
-			mux.HandleFunc("/api/reference", swaggerHandler)
+			// Create swagger reference handler with embedded content
+			swaggerContent, err := frontendFS.ReadFile("swagger.json")
+			if err != nil {
+				log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
+				mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
+				})
+				// Fallback to file-based handler
+				mux.HandleFunc("/reference", reference.ScalarReference)
+				mux.HandleFunc("/api/reference", reference.ScalarReference)
+			} else {
+				mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(swaggerContent)
+				})
+				// Use embedded content
+				swaggerHandler := reference.ScalarReferenceWithContent(string(swaggerContent))
+				mux.HandleFunc("/reference", swaggerHandler)
+				mux.HandleFunc("/api/reference", swaggerHandler)
+			}
 		}
-	}
 
-	mux.HandleFunc("/api/version", reference.VersionHandler)
+		mux.HandleFunc("/api/version", reference.VersionHandler)
+	} else {
+		mux.HandleFunc("/reference", reference.ScalarReference)
+		mux.HandleFunc("/api/reference", reference.ScalarReference)
+		log.Printf("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
+	}
 
 	registerIntegrationFrontendRoutes := !(debug && strings.TrimSpace(frontendProxy) != "")
 	if registerIntegrationFrontendRoutes {

@@ -92,8 +92,20 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Build the base query
 	query := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
 
-	// Handle chat_types filter
-	if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
+	// Restricted browser tokens may only see interaction chats, regardless of the
+	// requested chat_types filter.
+	if database.IsBrowserToken(r.Context()) {
+		if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
+			for _, chatType := range strings.Split(chatTypesParam, ",") {
+				if strings.TrimSpace(chatType) != "interaction" {
+					http.Error(w, "Browser tokens can only list interaction chats", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
+	} else if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
+		// Handle chat_types filter
 		chatTypes := strings.Split(chatTypesParam, ",")
 		if len(chatTypes) > 0 {
 

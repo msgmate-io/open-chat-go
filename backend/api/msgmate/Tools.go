@@ -1,7 +1,6 @@
 package msgmate
 
 import (
-	_ "backend/api/msgmate/externaltools"
 	tooldefs "backend/api/msgmate/tools"
 	"encoding/json"
 	"strings"
@@ -36,14 +35,14 @@ var (
 	AllTools         []Tool
 	toolConstructors = map[string]ToolConstructor{}
 	toolAliases      = map[string]string{}
+	externalToolDefs = map[string]struct{}{}
 	toolNames        []string
 	registryMu       sync.RWMutex
 )
 
 func init() {
 	registerBuiltinTools()
-	registerExternalTools()
-	refreshAllTools()
+	EnsureExternalToolsRegistered()
 }
 
 func registerToolConstructor(name string, aliases []string, constructor ToolConstructor) {
@@ -80,14 +79,23 @@ func registerToolConstructorLocked(name string, aliases []string, constructor To
 	}
 }
 
-func registerExternalTools() {
+func registerExternalToolsLocked() {
+	updated := false
 	for _, externalDef := range extiface.List() {
+		name := strings.TrimSpace(externalDef.Name)
+		if name == "" {
+			continue
+		}
+		if _, seen := externalToolDefs[name]; seen {
+			continue
+		}
 		def := tooldefs.ToolDefinition{
-			Name:                           externalDef.Name,
+			Name:                           name,
 			FunctionName:                   externalDef.FunctionName,
 			Description:                    externalDef.Description,
 			AdminOnly:                      externalDef.AdminOnly,
 			RequiresInit:                   externalDef.RequiresInit,
+			InitSchema:                     externalDef.InitSchema,
 			RequiresConfirmation:           externalDef.RequiresConfirmation,
 			StopOnFirstConfirmableToolCall: externalDef.StopOnFirstConfirmableToolCall,
 			ConfirmationBlockMessage:       externalDef.ConfirmationBlockMessage,
@@ -96,11 +104,24 @@ func registerExternalTools() {
 			Parameters:                     externalDef.Parameters,
 			RunFunction:                    externalDef.Run,
 		}
+		defCopy := def
 
-		registerToolConstructor(def.Name, nil, func() Tool {
-			return NewToolFromDefinition(def)
+		registerToolConstructorLocked(defCopy.Name, nil, func() Tool {
+			return NewToolFromDefinition(defCopy)
 		})
+		externalToolDefs[name] = struct{}{}
+		updated = true
 	}
+
+	if updated {
+		refreshAllToolsLocked()
+	}
+}
+
+func EnsureExternalToolsRegistered() {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registerExternalToolsLocked()
 }
 
 func refreshAllTools() {
@@ -120,6 +141,8 @@ func refreshAllToolsLocked() {
 
 // NewToolByName maps tool names to their constructor functions
 func NewToolByName(name string) (Tool, bool) {
+	EnsureExternalToolsRegistered()
+
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	name = strings.TrimSpace(name)

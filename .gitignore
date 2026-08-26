@@ -43,3 +43,5 @@ backend/.devbin/
 backend/.generated/
 kubeconfig.yaml
 .playwright-mcp/
+backend/uploads/*
+backend/open-chat.json
