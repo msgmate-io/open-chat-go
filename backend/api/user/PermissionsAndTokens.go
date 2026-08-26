@@ -626,6 +626,13 @@ func (h *UserHandler) RevokeAccessToken(w http.ResponseWriter, r *http.Request) 
 		token.RevokedAt = &now
 	}
 
+	// Revoking a parent credential immediately revokes tokens derived from it
+	// (e.g. exchanged browser tokens).
+	if err := database.RevokeChildAccessTokens(DB, token.ID); err != nil {
+		http.Error(w, "Failed to revoke derived access tokens", http.StatusInternalServerError)
+		return
+	}
+
 	displayName, scope, parsedBotUUID := parseTokenName(token.Name)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

@@ -49,3 +49,6 @@
 [submodule "clients/llm_coding_agents"]
 	path = clients/llm_coding_agents
 	url = https://github.com/msgmate-io/open-chat-go-llm-coding-context
+[submodule "clients/js_client"]
+	path = clients/js_client
+	url = https://github.com/msgmate-io/open-chat-go-js-client

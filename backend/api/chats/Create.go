@@ -48,6 +48,12 @@ func applyModelConfigBindingForUser(DB *gorm.DB, ownerUserID uint, config map[st
 	if configuredBackend, _ := config["backend"].(string); strings.EqualFold(strings.TrimSpace(configuredBackend), "testbackend") {
 		return config
 	}
+	// External chat backends (eg opencode) own model routing themselves; the
+	// model key is passed through to them and must not be rewritten from the
+	// default LLM model configs.
+	if configuredBackend, _ := config["backend"].(string); strings.EqualFold(strings.TrimSpace(configuredBackend), "opencode") {
+		return config
+	}
 	if endpoint, _ := config["endpoint"].(string); strings.Contains(strings.ToLower(strings.TrimSpace(endpoint)), "testbackend.local") {
 		return config
 	}
