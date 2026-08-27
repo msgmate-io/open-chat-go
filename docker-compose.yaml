@@ -32,7 +32,7 @@ services:
       FRONTEND_PROXY: ${FRONTEND_PROXY:-http://frontend:3000}
       ROOT_CREDENTIALS: ${ROOT_CREDENTIALS:-admin:password}
       DB_PATH: ${DB_PATH:-/tmp/data.db}
-      CREATE_EXTRA_USER: ${CREATE_EXTRA_USER:-littleworld:Test123!}
+      CREATE_EXTRA_USER: ${CREATE_EXTRA_USER}
       CREATE_EXTRA_BOT: ${CREATE_EXTRA_BOT}
       ADD_BOT_FROM_CONFIG: ${ADD_BOT_FROM_CONFIG}
       HOST: ${HOST:-0.0.0.0}

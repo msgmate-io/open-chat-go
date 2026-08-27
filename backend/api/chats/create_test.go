@@ -356,7 +356,7 @@ func TestCreateChatKeepsTestbackendWithoutModelBindingOverride(t *testing.T) {
 	}
 }
 
-func TestCreateChatKeepsOpencodeBackendWithoutModelBindingOverride(t *testing.T) {
+func TestCreateChatKeepsChatBackendWithoutModelBindingOverride(t *testing.T) {
 	DB := setupChatsTestDB(t)
 	owner := createUserForChatsTest(t, DB, "owner-opencode@example.com", false)
 	botUser := createUserForChatsTest(t, DB, "bot-opencode@example.com", false)
@@ -367,7 +367,8 @@ func TestCreateChatKeepsOpencodeBackendWithoutModelBindingOverride(t *testing.T)
 	}
 
 	// A default LLM model config whose model_id matches the opencode bot's model.
-	// Without the opencode skip this would rewrite backend to litellm.
+	// Without the chat_backend skip this would rewrite backend to litellm and
+	// inject its endpoint.
 	modelCfg := map[string]interface{}{
 		"model":    "qwen3-4b-instruct-2507_vllm",
 		"backend":  "litellm",
@@ -387,7 +388,8 @@ func TestCreateChatKeepsOpencodeBackendWithoutModelBindingOverride(t *testing.T)
 
 	defaultConfig := map[string]interface{}{
 		"model":             "qwen3-4b-instruct-2507_vllm",
-		"backend":           "opencode",
+		"chat_backend":      "opencode",
+		"backend":           "deepinfra",
 		"persist_tool_init": true,
 		"tools":             []string{"opencode_select_project"},
 	}
@@ -434,13 +436,16 @@ func TestCreateChatKeepsOpencodeBackendWithoutModelBindingOverride(t *testing.T)
 	if !ok {
 		t.Fatalf("expected config object in response")
 	}
-	if backend, _ := config["backend"].(string); backend != "opencode" {
-		t.Fatalf("expected opencode backend to be preserved, got %v", config["backend"])
+	if chatBackend, _ := config["chat_backend"].(string); chatBackend != "opencode" {
+		t.Fatalf("expected chat_backend to be preserved, got %v", config["chat_backend"])
+	}
+	if backend, _ := config["backend"].(string); backend != "deepinfra" {
+		t.Fatalf("expected the LLM provider backend to be preserved, got %v", config["backend"])
 	}
 	if model, _ := config["model"].(string); model != "qwen3-4b-instruct-2507_vllm" {
 		t.Fatalf("expected opencode model to pass through unchanged, got %v", config["model"])
 	}
 	if _, ok := config["endpoint"]; ok {
-		t.Fatalf("expected no endpoint injected for opencode backend, got %v", config["endpoint"])
+		t.Fatalf("expected no endpoint injected for chat_backend routing, got %v", config["endpoint"])
 	}
 }
