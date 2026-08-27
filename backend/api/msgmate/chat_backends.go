@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	wsapi "backend/api/websocket"
+	"backend/chatstate"
 	"backend/database"
 	"context"
 	"encoding/json"
@@ -32,7 +33,7 @@ var (
 )
 
 // RegisterChatBackend registers an external chat backend under a name that maps
-// to the chat shared-config "backend" key.
+// to the chat shared-config "chat_backend" key.
 func RegisterChatBackend(name string, fn ChatBackendFunc) {
 	chatBackendMu.Lock()
 	defer chatBackendMu.Unlock()
@@ -54,8 +55,9 @@ func IsRegisteredChatBackend(name string) bool {
 }
 
 // ResolveChatBackend loads a chat's shared config and returns the registered
-// external chat backend named by the "backend" key, if any. The parsed config map
-// is returned alongside so the backend can read its own keys.
+// external chat backend named by the "chat_backend" key (with a legacy fallback
+// to the "backend" key), if any. The parsed config map is returned alongside so
+// the backend can read its own keys.
 func ResolveChatBackend(db *gorm.DB, chatUUID string) (ChatBackendFunc, map[string]interface{}, bool) {
 	if db == nil {
 		return nil, nil, false
@@ -71,10 +73,7 @@ func ResolveChatBackend(db *gorm.DB, chatUUID string) (ChatBackendFunc, map[stri
 	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
 		return nil, nil, false
 	}
-	backendName := ""
-	if v, ok := config["backend"].(string); ok {
-		backendName = strings.ToLower(strings.TrimSpace(v))
-	}
+	backendName := chatstate.ChatBackendNameFromConfig(config)
 	if backendName == "" {
 		return nil, nil, false
 	}

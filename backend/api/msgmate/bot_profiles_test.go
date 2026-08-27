@@ -98,15 +98,12 @@ func readBotProfilesTestModels(t *testing.T, DB *gorm.DB, botUser database.User)
 	return profileData.Models
 }
 
-func TestCreateOrUpdateBotProfileKeepsRegisteredChatBackend(t *testing.T) {
-	RegisterChatBackend("profiletestbackend", func(_ context.Context, _ ChatBackendRequest) error {
-		return nil
-	})
-
+func TestCreateOrUpdateBotProfilePropagatesChatBackend(t *testing.T) {
 	DB := setupBotProfilesTestDB(t)
-	botUser := createBotProfilesTestBot(t, DB, "profile-backend-bot", map[string]interface{}{
-		"backend": "profiletestbackend",
-		"model":   "runtime-default-model",
+	botUser := createBotProfilesTestBot(t, DB, "profile-chat-backend-bot", map[string]interface{}{
+		"chat_backend": "profiletestchatbackend",
+		"backend":      "deepinfra",
+		"model":        "runtime-default-model",
 	})
 	createBotProfilesTestModelConfig(t, DB, botUser.Name, `{"backend":"litellm","model":"assigned-model-id","endpoint":"https://example.com/v1"}`)
 
@@ -118,23 +115,51 @@ func TestCreateOrUpdateBotProfileKeepsRegisteredChatBackend(t *testing.T) {
 	if len(models) != 1 {
 		t.Fatalf("expected 1 profile model, got %d", len(models))
 	}
-	if got := models[0].Configuration.Backend; got != "profiletestbackend" {
-		t.Fatalf("expected profile model backend to stay %q, got %q", "profiletestbackend", got)
+	if got := models[0].Configuration.ChatBackend; got != "profiletestchatbackend" {
+		t.Fatalf("expected profile model chat_backend %q, got %q", "profiletestchatbackend", got)
+	}
+	if got := models[0].Configuration.Backend; got != "litellm" {
+		t.Fatalf("expected profile model to keep the LLM provider backend %q, got %q", "litellm", got)
 	}
 	if got := models[0].Configuration.Model; got != "assigned-model-id" {
 		t.Fatalf("expected profile model to keep the assigned model id, got %q", got)
 	}
 }
 
-func TestCreateOrUpdateBotProfileKeepsRegisteredChatBackendOnFallback(t *testing.T) {
-	RegisterChatBackend("profiletestfallbackbackend", func(_ context.Context, _ ChatBackendRequest) error {
+func TestCreateOrUpdateBotProfilePropagatesLegacyRegisteredBackend(t *testing.T) {
+	RegisterChatBackend("profiletestlegacybackend", func(_ context.Context, _ ChatBackendRequest) error {
 		return nil
 	})
 
 	DB := setupBotProfilesTestDB(t)
-	botUser := createBotProfilesTestBot(t, DB, "profile-fallback-bot", map[string]interface{}{
-		"backend": "profiletestfallbackbackend",
+	botUser := createBotProfilesTestBot(t, DB, "profile-legacy-backend-bot", map[string]interface{}{
+		"backend": "profiletestlegacybackend",
 		"model":   "runtime-default-model",
+	})
+	createBotProfilesTestModelConfig(t, DB, botUser.Name, `{"backend":"deepinfra","model":"assigned-model-id","endpoint":"https://api.deepinfra.com/v1/openai"}`)
+
+	if err := CreateOrUpdateBotProfile(DB, botUser); err != nil {
+		t.Fatalf("CreateOrUpdateBotProfile failed: %v", err)
+	}
+
+	models := readBotProfilesTestModels(t, DB, botUser)
+	if len(models) != 1 {
+		t.Fatalf("expected 1 profile model, got %d", len(models))
+	}
+	if got := models[0].Configuration.ChatBackend; got != "profiletestlegacybackend" {
+		t.Fatalf("expected profile model chat_backend %q, got %q", "profiletestlegacybackend", got)
+	}
+	if got := models[0].Configuration.Backend; got != "deepinfra" {
+		t.Fatalf("expected profile model to keep the LLM provider backend %q, got %q", "deepinfra", got)
+	}
+}
+
+func TestCreateOrUpdateBotProfileKeepsChatBackendOnFallback(t *testing.T) {
+	DB := setupBotProfilesTestDB(t)
+	botUser := createBotProfilesTestBot(t, DB, "profile-fallback-bot", map[string]interface{}{
+		"chat_backend": "profiletestfallbackchatbackend",
+		"backend":      "deepinfra",
+		"model":        "runtime-default-model",
 	})
 
 	if err := CreateOrUpdateBotProfile(DB, botUser); err != nil {
@@ -145,8 +170,11 @@ func TestCreateOrUpdateBotProfileKeepsRegisteredChatBackendOnFallback(t *testing
 	if len(models) != 1 {
 		t.Fatalf("expected 1 fallback profile model, got %d", len(models))
 	}
-	if got := models[0].Configuration.Backend; got != "profiletestfallbackbackend" {
-		t.Fatalf("expected fallback profile model backend %q, got %q", "profiletestfallbackbackend", got)
+	if got := models[0].Configuration.ChatBackend; got != "profiletestfallbackchatbackend" {
+		t.Fatalf("expected fallback profile model chat_backend %q, got %q", "profiletestfallbackchatbackend", got)
+	}
+	if got := models[0].Configuration.Backend; got != "deepinfra" {
+		t.Fatalf("expected fallback profile model backend %q, got %q", "deepinfra", got)
 	}
 }
 
@@ -168,5 +196,8 @@ func TestCreateOrUpdateBotProfileLeavesLLMBotBackendsUntouched(t *testing.T) {
 	}
 	if got := models[0].Configuration.Backend; got != "deepinfra" {
 		t.Fatalf("expected LLM bot profile model backend to stay %q, got %q", "deepinfra", got)
+	}
+	if got := models[0].Configuration.ChatBackend; got != "" {
+		t.Fatalf("expected LLM bot profile model to have no chat_backend, got %q", got)
 	}
 }
