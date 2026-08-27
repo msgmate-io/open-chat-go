@@ -208,30 +208,27 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	return response, nil
 }
 
-// chatBackendName returns the "backend" value from the chat's shared config.
+// chatBackendName returns the external chat backend name from the chat's
+// shared config ("chat_backend" key, with a legacy fallback to "backend").
 func chatBackendName(DB *gorm.DB, chat database.Chat) (string, bool) {
+	var configData []byte
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
-		config := map[string]interface{}{}
-		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err == nil {
-			if backend, ok := config["backend"].(string); ok && strings.TrimSpace(backend) != "" {
-				return strings.TrimSpace(backend), true
-			}
+		configData = chat.SharedConfig.ConfigData
+	} else {
+		var sharedConfig database.SharedChatConfig
+		if err := DB.Where("chat_id = ?", chat.ID).First(&sharedConfig).Error; err != nil || len(sharedConfig.ConfigData) == 0 {
+			return "", false
 		}
-	}
-	var sharedConfig database.SharedChatConfig
-	err := DB.Where("chat_id = ?", chat.ID).First(&sharedConfig).Error
-	if err != nil || len(sharedConfig.ConfigData) == 0 {
-		return "", false
+		configData = sharedConfig.ConfigData
 	}
 	config := map[string]interface{}{}
-	if err := json.Unmarshal(sharedConfig.ConfigData, &config); err != nil {
+	if err := json.Unmarshal(configData, &config); err != nil {
 		return "", false
 	}
-	backend, _ := config["backend"].(string)
-	if strings.TrimSpace(backend) == "" {
-		return "", false
+	if name := chatstate.ChatBackendNameFromConfig(config); name != "" {
+		return name, true
 	}
-	return strings.TrimSpace(backend), true
+	return "", false
 }
 
 func latestMessageForChat(DB *gorm.DB, chatID uint) (database.Message, error) {
