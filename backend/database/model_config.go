@@ -205,6 +205,65 @@ type DefaultBotProviderKeySyncResult struct {
 	SkippedInvalid   int
 }
 
+type BotModelAccessSyncResult struct {
+	Assigned   int
+	Unassigned int
+}
+
+func setModelConfigBotAssignment(db *gorm.DB, row *ModelConfig, botUsername string, shouldAssign bool) (bool, error) {
+	isAssigned := row.AssignedToBot(botUsername)
+	if isAssigned == shouldAssign {
+		return false, nil
+	}
+
+	if shouldAssign {
+		row.BotUsernames = append(append(StringSliceJSON{}, row.BotUsernames...), botUsername)
+	} else {
+		row.BotUsernames = slices.DeleteFunc(append(StringSliceJSON{}, row.BotUsernames...), func(username string) bool {
+			return username == botUsername
+		})
+	}
+	if err := db.Model(row).Update("bot_usernames", row.BotUsernames).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// SyncBotModelsFromBot makes a target bot's default-model assignments exactly
+// match the source bot's assignments.
+func SyncBotModelsFromBot(db *gorm.DB, sourceBotUsername, targetBotUsername string) (BotModelAccessSyncResult, error) {
+	result := BotModelAccessSyncResult{}
+	sourceBotUsername = strings.TrimSpace(sourceBotUsername)
+	targetBotUsername = strings.TrimSpace(targetBotUsername)
+	if sourceBotUsername == "" || targetBotUsername == "" {
+		return result, fmt.Errorf("source and target bot usernames are required")
+	}
+	if sourceBotUsername == targetBotUsername {
+		return result, nil
+	}
+
+	rows := []ModelConfig{}
+	if err := db.Where("owner_user_id IS NULL AND is_default = ?", true).Find(&rows).Error; err != nil {
+		return result, err
+	}
+	for idx := range rows {
+		shouldAssign := rows[idx].AssignedToBot(sourceBotUsername)
+		changed, err := setModelConfigBotAssignment(db, &rows[idx], targetBotUsername, shouldAssign)
+		if err != nil {
+			return result, err
+		}
+		if !changed {
+			continue
+		}
+		if shouldAssign {
+			result.Assigned++
+		} else {
+			result.Unassigned++
+		}
+	}
+	return result, nil
+}
+
 // SyncDefaultBotModelsByProviderKeys enables/disables default-model assignments
 // for the given bot username based on provider API key availability.
 //
@@ -236,25 +295,16 @@ func SyncDefaultBotModelsByProviderKeys(db *gorm.DB, botUsername string) (Defaul
 		}
 
 		hasAPIKey := strings.TrimSpace(runtimeConfigValue(apiKeyEnv)) != ""
-		isAssigned := row.AssignedToBot(botUsername)
-
-		if hasAPIKey && !isAssigned {
-			updated := append(append(StringSliceJSON{}, row.BotUsernames...), botUsername)
-			if err := db.Model(&row).Update("bot_usernames", updated).Error; err != nil {
-				return result, err
-			}
-			result.Assigned++
-			continue
+		changed, err := setModelConfigBotAssignment(db, &row, botUsername, hasAPIKey)
+		if err != nil {
+			return result, err
 		}
-
-		if !hasAPIKey && isAssigned {
-			updated := slices.DeleteFunc(row.BotUsernames, func(username string) bool {
-				return username == botUsername
-			})
-			if err := db.Model(&row).Update("bot_usernames", updated).Error; err != nil {
-				return result, err
+		if changed {
+			if hasAPIKey {
+				result.Assigned++
+			} else {
+				result.Unassigned++
 			}
-			result.Unassigned++
 		}
 	}
 

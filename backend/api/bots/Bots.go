@@ -172,6 +172,25 @@ func decodeSharedConfig(raw []byte) map[string]interface{} {
 	return result
 }
 
+func applyInteractionConfigOverrides(
+	effectiveConfig map[string]interface{},
+	configOverrides map[string]interface{},
+	toolInit map[string]interface{},
+) map[string]interface{} {
+	for key, value := range configOverrides {
+		// tool_init has a dedicated request field. Ignoring it here avoids an
+		// override bypass and lets an omitted field preserve the bot default.
+		if key == "tool_init" {
+			continue
+		}
+		effectiveConfig[key] = value
+	}
+	if toolInit != nil {
+		effectiveConfig["tool_init"] = toolInit
+	}
+	return effectiveConfig
+}
+
 func toDTO(runtime database.BotRuntimeConfig) BotDTO {
 	return BotDTO{
 		UUID:                runtime.UUID,
@@ -275,6 +294,30 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 	if raw, exists := config["reasoning"]; exists {
 		if _, ok := raw.(bool); !ok {
 			return fmt.Errorf("default_shared_config.reasoning must be a boolean")
+		}
+	}
+
+	if raw, exists := config["use_max_completion_tokens"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("default_shared_config.use_max_completion_tokens must be a boolean")
+		}
+	}
+
+	if err := validateStringArray(config, "disabled_sampling_params"); err != nil {
+		return err
+	}
+	if raw, exists := config["disabled_sampling_params"]; exists {
+		supported := map[string]bool{
+			"temperature":       true,
+			"top_p":             true,
+			"presence_penalty":  true,
+			"frequency_penalty": true,
+		}
+		for idx, item := range raw.([]interface{}) {
+			name := strings.ToLower(strings.TrimSpace(item.(string)))
+			if !supported[name] {
+				return fmt.Errorf("default_shared_config.disabled_sampling_params[%d] has unsupported parameter %q", idx, name)
+			}
 		}
 	}
 
@@ -1252,10 +1295,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	}
 
 	effectiveConfig := decodeSharedConfig(runtime.DefaultSharedConfig)
-	for k, v := range req.ConfigOverrides {
-		effectiveConfig[k] = v
-	}
-	effectiveConfig["tool_init"] = req.ToolInit
+	effectiveConfig = applyInteractionConfigOverrides(effectiveConfig, req.ConfigOverrides, req.ToolInit)
 	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, effectiveConfig)
 	if defaultsErr != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
