@@ -2,4 +2,5 @@ package metrics
 
 type MetricsHandler struct{}
 
-var VERSION = "0.0.793"
+// VERSION is the backend version reported by /api/version (bumped each consolidation).
+var VERSION = "0.0.794"
