@@ -337,6 +337,7 @@ func TestGitHubShellTranslationTargetsMatchThePlan(t *testing.T) {
 		GitHubToolIssueList, GitHubToolIssueView, GitHubToolIssueCreate, GitHubToolIssueComment,
 		GitHubToolPRList, GitHubToolPRView, GitHubToolPRCreate, GitHubToolPRComment, GitHubToolPRReview,
 		GitHubToolPRMerge, GitHubToolAuthStatus, GitHubToolAPI,
+		GitHubToolRunList, GitHubToolRunView,
 	}
 	for _, tool := range bridged {
 		if !planned[tool] {
