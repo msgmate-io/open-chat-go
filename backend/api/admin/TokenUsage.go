@@ -64,6 +64,11 @@ func GetTokenUsageOverview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to aggregate token usage", http.StatusInternalServerError)
 		return
 	}
+	for i := range rows {
+		if rows[i].PromptTokens > 0 {
+			rows[i].CacheHitRatio = float64(rows[i].CachedTokens) / float64(rows[i].PromptTokens)
+		}
+	}
 	totals := tokenUsageRow{Bot: "TOTAL"}
 	for _, row := range rows {
 		totals.Messages += row.Messages
