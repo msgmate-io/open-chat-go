@@ -29,6 +29,8 @@ var GitHubTypedFirstPurpose = map[string]string{
 	GitHubToolPRMerge:      "merge a pull request (`gh pr merge`), admin",
 	GitHubToolAuthStatus:   "check the GitHub auth and token scope (`gh auth status`)",
 	GitHubToolAPI:          "read-only REST/GraphQL call (`gh api`)",
+	GitHubToolRunList:      "list workflow runs (`gh run list`), read-only",
+	GitHubToolRunView:      "read one workflow run and its jobs (`gh run view`), read-only",
 }
 
 // GitHubTypedFirstTools returns the typed GitHub tool names in a stable order.
