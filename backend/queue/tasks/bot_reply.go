@@ -86,7 +86,9 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	// automated peer can loop, so the check is gated on that; a long
 	// all-automated run, a run of identical messages, or a burst of turns
 	// seconds apart stops the spin (the peer never gets a reply, so the loop
-	// ends). Legitimate slow agent-to-agent coordination never trips it.
+	// ends). Legitimate slow agent-to-agent coordination never trips it, and a
+	// single automated sender that is still making progress (ci#915) is treated
+	// as an ongoing run rather than a loop.
 	if senderUser.IsAutomated {
 		if decision := botloop.DetectForChat(deps.DB, incomingMessage.ChatId, botloop.ConfigFromEnv(), time.Now()); decision.Loop {
 			logging.Warnf("bot-reply loop breaker (ci#747): refusing to answer chat %s (%s: %s)", payload.ChatUUID, decision.Reason, decision.Detail)
