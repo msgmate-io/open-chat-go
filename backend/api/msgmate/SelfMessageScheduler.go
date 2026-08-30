@@ -250,6 +250,22 @@ func (s *SelfMessageScheduler) Active(key string) (SelfMessageSchedule, bool) {
 	return slot.schedule, true
 }
 
+// ActiveTaskID returns the asynq task ID of a bot's active schedule. Fire
+// rotates this ID on every fire (ci#744), so the runtime must re-read it after a
+// successful fire instead of assuming the ID it registered with.
+func (s *SelfMessageScheduler) ActiveTaskID(key string) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot, ok := s.slots[key]
+	if !ok {
+		return "", false
+	}
+	return slot.scheduleID, true
+}
+
 // NextRun returns the next fire instant of a bot's active schedule.
 func (s *SelfMessageScheduler) NextRun(key string) (time.Time, bool) {
 	if s == nil {
@@ -286,9 +302,15 @@ func (s *SelfMessageScheduler) Fire(key string, scheduleID string) (SelfMessageS
 	slot.nextRun = nextRun
 	slot.fires++
 	if s.enqueue != nil {
-		if err := s.enqueue(slot.schedule, nextRun, slot.scheduleID); err != nil {
+		// ci#744: a fresh task ID per fire. The delivery of the previous fire is
+		// usually still active (a bot reply runs for minutes), so reusing the
+		// prior ID makes asynq reject the next fire with ErrTaskIDConflict and
+		// the schedule stalls forever after its first run.
+		nextTaskID := selfMessageTaskID(slot.schedule, s.nextNonce())
+		if err := s.enqueue(slot.schedule, nextRun, nextTaskID); err != nil {
 			return slot.schedule, true, err
 		}
+		slot.scheduleID = nextTaskID
 	}
 	return slot.schedule, true, nil
 }
