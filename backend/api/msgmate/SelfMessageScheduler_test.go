@@ -262,6 +262,44 @@ func TestSelfMessageSchedulerSingleActiveReplacesOlderSchedule(t *testing.T) {
 	}
 }
 
+func TestSelfMessageSchedulerFireRotatesTaskID(t *testing.T) {
+	now := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
+	scheduler := NewSelfMessageScheduler()
+	var ids []string
+	scheduler.SetNow(func() time.Time { return now })
+	scheduler.SetEnqueue(func(_ SelfMessageSchedule, _ time.Time, scheduleID string) error {
+		ids = append(ids, scheduleID)
+		return nil
+	})
+	schedule := SelfMessageSchedule{BotUserID: 7, ChatUUID: "chat-1", Prompt: "resume", Cron: "*/5 * * * *"}
+	registered, err := scheduler.Schedule(schedule)
+	if err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+	if _, applied, err := scheduler.Fire(schedule.Key(), registered); err != nil || !applied {
+		t.Fatalf("fire: applied=%v err=%v", applied, err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected two enqueues (register + fire), got %v", ids)
+	}
+	// ci#744: asynq rejects a reused task ID while the previous delivery is still
+	// active, so a fire must never re-enqueue under the registration ID.
+	if ids[0] == ids[1] {
+		t.Fatalf("ci#744: fire reused task ID %q; asynq would reject it", ids[0])
+	}
+	activeID, ok := scheduler.ActiveTaskID(schedule.Key())
+	if !ok || activeID != ids[1] {
+		t.Fatalf("active task id = %q (ok=%v), want the rotated %q", activeID, ok, ids[1])
+	}
+	// The runtime follows the rotation: the next fire presents the rotated ID.
+	if _, applied, err := scheduler.Fire(schedule.Key(), activeID); err != nil || !applied {
+		t.Fatalf("second fire: applied=%v err=%v", applied, err)
+	}
+	if ids[1] == ids[2] {
+		t.Fatalf("ci#744: second fire reused task ID %q", ids[1])
+	}
+}
+
 func TestSelfMessageSchedulerDropsSupersededFire(t *testing.T) {
 	now := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
 	scheduler, fires, _ := selfMessageTestScheduler(t, now)
