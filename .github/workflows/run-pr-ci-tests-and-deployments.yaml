@@ -905,6 +905,9 @@ jobs:
           else
             export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
           fi
+          # The matrix integration uses mautrix-go with the pure-Go goolm
+          # implementation (the CI runner has no libolm C headers).
+          export GOFLAGS="${GOFLAGS} -tags=goolm"
           echo "GOFLAGS=${GOFLAGS}" >> "$GITHUB_ENV"
 
           go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
