@@ -162,6 +162,17 @@ func WorkerCli() *cli.Command {
 				logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 			}
 
+			// ci#747 RC1/RC2/RC3 belt-and-braces: the self-message scheduler
+			// above (RC1) plus the bounded tool-retry/turn-cap continuation
+			// (RC2: failed-tool-call cap still emits the partial summary+blocker
+			// and enqueues one bot:reply continuation; RC3: bounded retry/backoff
+			// on 402/429/5xx and workspace saturation) are the recovery
+			// mechanisms that keep the lead (and tracked workers) driving an
+			// interaction forward when a provider or sandbox degrades. None of
+			// them may abort this worker: an unknown scheduled bot in a fresh CI
+			// database, a degraded provider and a saturated workspace all degrade
+			// to the same log-and-keep-serving loop (backend/cmd/self_message_wiring_test.go).
+
 			logging.Infof("Starting asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 			if err := server.Run(processor.NewServeMux()); err != nil {
 				return fmt.Errorf("asynq worker failed: %w", err)
