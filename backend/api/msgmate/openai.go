@@ -589,7 +589,7 @@ func processStreamingRequest(
 	if backend == "openai" {
 		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
-	applySamplingParamsToRequestBody(requestBody, samplingParams, backend)
+	applySamplingParamsToRequestBody(requestBody, samplingParams, backend, model)
 
 	// Setup request
 	jsonData, err := json.Marshal(requestBody)

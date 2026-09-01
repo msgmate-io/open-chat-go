@@ -7,6 +7,7 @@ import (
 	_ "github.com/msgmate-io/admin-db-managemnt-integration"
 	_ "github.com/msgmate-io/email-integration"
 	_ "github.com/msgmate-io/go-client-integration"
+	_ "github.com/msgmate-io/matrix-integration"
 	_ "github.com/msgmate-io/mcp-integration"
 	_ "github.com/msgmate-io/opencode-integration"
 	_ "github.com/msgmate-io/rest-api-tool-integration"

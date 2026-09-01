@@ -129,3 +129,39 @@ func TestSyncDefaultBotModelsByProviderKeysRequiresBotUsername(t *testing.T) {
 		t.Fatal("expected error when bot username is empty")
 	}
 }
+
+func TestSyncBotModelsFromBotMirrorsDefaultModelAssignments(t *testing.T) {
+	DB := SetupDatabase(DBConfig{
+		Backend:  "sqlite",
+		FilePath: filepath.Join(t.TempDir(), "bot_model_access_sync.db"),
+		Debug:    false,
+		ResetDB:  true,
+	})
+
+	createDefaultModelForTest(t, DB, "shared-model", "openai", []string{"bot"}, "")
+	createDefaultModelForTest(t, DB, "remove-from-target", "litellm", []string{"ssh_integration_bot"}, "")
+	createDefaultModelForTest(t, DB, "already-shared", "ollama", []string{"bot", "ssh_integration_bot"}, "")
+
+	result, err := SyncBotModelsFromBot(DB, "bot", "ssh_integration_bot")
+	if err != nil {
+		t.Fatalf("model access sync failed: %v", err)
+	}
+	if result.Assigned != 1 || result.Unassigned != 1 {
+		t.Fatalf("unexpected sync counts: %+v", result)
+	}
+
+	rows, err := GetModelConfigsForBot(DB, "ssh_integration_bot")
+	if err != nil {
+		t.Fatalf("failed loading target model configs: %v", err)
+	}
+	modelIDs := map[string]bool{}
+	for _, row := range rows {
+		modelIDs[row.ModelID] = true
+	}
+	if !modelIDs["shared-model"] || !modelIDs["already-shared"] {
+		t.Fatalf("expected target to inherit source models, got %+v", modelIDs)
+	}
+	if modelIDs["remove-from-target"] {
+		t.Fatalf("expected stale target-only model assignment to be removed")
+	}
+}
