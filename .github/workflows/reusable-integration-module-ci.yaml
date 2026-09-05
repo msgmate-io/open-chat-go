@@ -60,9 +60,12 @@ on:
       decoupled:
         description: >-
           ci#423: build against the integration's minimal compile inputs only
-          (skip profile materialization) and require the decoupling guard to
-          pass. Set this for an integration whose `replace backend` cleanup has
-          landed; it is the per-integration prebuild precondition.
+          (skip profile materialization). This is a hard gate: a decoupled build
+          defaults REQUIRE_DECOUPLED to DECOUPLED, so the decoupling guard
+          failing is a job failure and the module cannot silently re-couple to
+          backend/.... Set it for an integration whose `replace backend` cleanup
+          has landed; it is the per-integration prebuild precondition from the
+          ci#345 design and is safe to enable the moment decoupling lands.
         required: false
         type: boolean
         default: false
@@ -105,4 +108,7 @@ jobs:
           INTEGRATION_PROFILE: ${{ inputs.profile }}
           RUN_TESTS: ${{ inputs.run_tests }}
           DECOUPLED: ${{ inputs.decoupled }}
+          # ci#423 step 6: the decoupling guard is a hard gate on the decoupled
+          # path; make the mapping explicit so workflow readers see the contract.
+          REQUIRE_DECOUPLED: ${{ inputs.decoupled }}
         run: bash development/scripts/integration_module_ci.sh
