@@ -1,41 +1,55 @@
 # CI747_STATE.md — coordination continuity reliability (ci#747)
 
-Working state for the ci#747 umbrella run. This file is untracked and lives in
-the sandbox only; it never ships.
+Working state for the ci#747 umbrella run. This file is a branch-local tracking
+doc: it ships on the ci branch only and is retired from main (the final PR
+drops it). It is not a product artifact.
 
-## Snapshot (re-attach, 2026-10-28 morning)
+## Snapshot (re-attach, 2026-10-29)
 
 Sandbox: `/workspace/coder-129b52a0-.../open-chat-go` (repo `open-chat-go`,
-origin `msgmate-io/open-chat-go`, branch `main` at `5d92ac2`).
-`git status` is clean, so the previous run's in-progress changes were either
-committed+merged or lost; **all listed files already exist and compile**, so the
-run-as-merged policy holds: verify inventory+unit tests, then push the branch.
+origin `msgmate-io/open-chat-go`, branch `ci/747-coordination-continuity`).
+The previous run (2026-10-28) built the coordination-continuity scaffold onto
+the then-current `origin/main` (r78, `5d92ac2`), verified it, and pushed the
+branch; the branch was recorded here and re-created fresh on top of the branch
+head. On re-attach `origin/main` had moved to r79 merge `89b37edc` (which
+contains the r78 base `5d92ac2`), the sandbox was stale, and the branch was
+regenerated on top of the new main (`89b37edc`). `git status` is clean; HEAD is
+`9b07a460` (RC4 regression commit) on top of `403170dd` (state doc), both on
+the r79 base.
 
-## Verified inventory (files present, `git status` clean, HEAD 5d92ac2)
+## What this branch carries
+
+- `CI747_STATE.md` — this tracking file (branch-local; retired from main).
+- `backend/workqueue/bot_reply_archived_test.go` — RC4 regression tests:
+  - `TestEnqueueBotReplyAfterArchive` — after the worker finishes + archives a
+    stable-ID task, a follow-up enqueue for the same chat must not 500 /
+    `ErrTaskIdConflict` (must stay on the stable base id in the unit layer, and
+    fall back to a unique id in production where the archived task persists).
+  - `TestBotReplyTaskRetentionArchivedBlocked` — documents the exact asynq
+    failure the 0.0.744 hotfix guards against.
+
+Method: fast targeted checks (the enqueue-after-archive regression tests +
+coordination/queue-tasks/msgmate unit tests + gofmt/vet); PR CI is the gate.
+
+## Verified inventory (present on this branch, references confirmed)
 
 | Area | File(s) | Status |
 |---|---|---|
-| RC1 self-scheduler wiring | `backend/api/msgmate/SelfMessageScheduler.go`, `SchedulerCron.go`, `SelfMessageRuntime.go` | present, referenced by `server.go:1258` + `worker.go:150` (single non-fatal gate) |
-| RC1 boot test | `backend/cmd/self_message_wiring_test.go` | present (TestServerBootArmsSelfMessageSchedules) |
-| RC2/RC3 | `backend/api/msgmate/turn_cap_continuation.go`, `turn_continuation_dispatch.go`, `CoderSchedule.go`, `sandbox_capacity.go` | present; `MsgmateBotAIHandler.go:1424-1436` dispatches cap continuation on transient infra (`TransientFailures`/`SandboxCapacityFailures`), metadata `ci747_continuation_attempts=1`, stable correlation task id |
-| RC3 provider retry | provider-retry options wired in `MsgmateBotAIHandler.go:430-433, 540` (`providerRetryOptionsFromConfig`, `OnRetryAttempt` reporter) | present |
-| RC4 archive-enqueue | `backend/workqueue/bot_reply_test.go:32` regression comment (`archived/finished task ... must not ErrTaskIdConflict`) | present |
-| RC6 shared coordination instructions | coordination instructions (AGENTS.md / config-delta) in CI repo, opened from ci#747 (QW1) | separate PR; QW2-ci#744 dependency, no new ticket |
-| RC7 dedupe | `backend/coordination/ownerkey.go` + `ownerkey_test.go`, `reconcile.go` | present (OwnerKey/TrimPrefix normalisation) |
-| RC5 identity/permissions | gap filed separately; worktree leaves it documented | no code |
+| RC1 self-scheduler wiring | `SelfMessageScheduler.go`, `SchedulerCron.go`, `SelfMessageRuntime.go` | present, referenced by `server.go` (single non-fatal gate) |
+| RC1 boot test | `backend/cmd/self_message_wiring_test.go` | present |
+| RC2/RC3 cap/transient continuation | `turn_cap_continuation.go`, `turn_continuation_dispatch.go`, `CoderSchedule.go`, `sandbox_capacity.go` | present; `MsgmateBotAIHandler.go` dispatches cap continuation on transient infra, metadata `ci747_continuation_attempts=1` |
+| RC4 archive-enqueue | `bot_reply_archived_test.go` | present on this branch |
+| RC6 shared coordination instructions | CI repo AGENTS.md / config-delta (QW1) | separate PR (ci#748) |
+| RC7 dedupe | `backend/coordination/ownerkey.go` + tests | present on this branch |
 
-## What is NOT yet in this tree (candidate gaps)
+## Deliverable (this branch's PR)
 
-- Anything else shown by the previous run that is missing from this tree
-  (the build/tests are the check).
-
-## Checks run in this session
-
-- (to record here as they run: gofmt -l, go vet, go test ./cmd/..., build)
-
-## Deliverable
-
-- [ ] Push branch `ci747/coordination-continuity-reliability` to origin
-  (never to main), open PR against `main` with CI labels (CI), report PR URL.
-- [ ] Include the two cap/recovery tests and the wiring tests in the PR.
+- [x] Branch `ci/747-coordination-continuity` pushed; PR #1231 (draft) open
+      against `main` with the CI label.
+- [ ] Final (non-draft) state of PR #1231: carries the RC4 regression tests;
+      update the PR body to reference the leaf it closes (RC4 = the archive/enqueue
+      slice of ci#747, live canary already landed in ci#768 MERGED) so the
+      merge-requirement gate sees a genuine leaf, not a bare umbrella link.
+- [ ] Confirm the local checks: workqueue RC4 tests green, coordination /
+      queue/tasks / api/msgmate unit suites green, gofmt/vet clean.
 - [ ] Report local check results (fast, targeted only; PR CI is the gate).
