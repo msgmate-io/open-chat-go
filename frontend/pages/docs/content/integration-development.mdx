@@ -116,7 +116,10 @@ Migration recipe for one integration:
    `backend` requirement and the `replace backend => ...` directive from
    `go.mod`, and re-run the guard: it must print `decoupled`.
 4. Set `REQUIRE_DECOUPLED=true` for that integration in the module CI so the
-   report becomes an enforced gate.
+   report becomes an enforced gate. With the ci#423 step 6 mapping this is now
+   automatic: `decoupled: true` on the module CI defaults `REQUIRE_DECOUPLED` to
+   `DECOUPLED`, so the guard is a hard gate from the moment the decoupled build
+   is enabled.
 
 Test-only `backend/...` imports are tolerated during the migration: the guard
 measures the shipped artifact (`go list -deps`, without `-test`).
