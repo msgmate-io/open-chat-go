@@ -95,7 +95,7 @@
       "version": "",
       "import": "github.com/msgmate-io/docker-sandbox-integration",
       "source": "submodule",
-      "local_path": "clients/integrations/docker_sandbox_integration",
+      "local_path": "clients/docker_sandbox_integration",
       "default_enabled": true,
       "private": false
     }
