@@ -187,7 +187,10 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		targetUserUUID = target.UUID
 	}
 
-	share, err := ensureOwnedChatShare(DB, chat, resolveChatActingUserID(DB, user), accessMode, targetUserID, contentMode)
+	// ci#865: resolve the acting user once and reuse it for both the
+	// share ownership here and the share-instance delete in Unpublish.
+	actingUserID := resolveChatActingUserID(DB, user)
+	share, err := ensureOwnedChatShare(DB, chat, actingUserID, accessMode, targetUserID, contentMode)
 	if err != nil {
 		writeChatErrorJSON(w, http.StatusInternalServerError, "Failed to publish chat")
 		return
@@ -231,16 +234,17 @@ func (h *ChatsHandler) Unpublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ci#865: scope like the rest of the chats API — through the
-	// acting user — and answer in JSON so the generated client can
+	// ci#865: scope the delete like the rest of the chats API — through
+	// the acting user — and answer in JSON so the generated client can
 	// decode the failure instead of dying in its JSON parser.
+	actingUserID := resolveChatActingUserID(DB, user)
 	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
 		writeChatErrorJSON(w, http.StatusNotFound, "Chat not found")
 		return
 	}
 
-	if err := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, resolveChatActingUserID(DB, user)).Delete(&database.SharedChatInstance{}).Error; err != nil {
+	if err := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, actingUserID).Delete(&database.SharedChatInstance{}).Error; err != nil {
 		writeChatErrorJSON(w, http.StatusInternalServerError, "Failed to unpublish chat")
 		return
 	}
