@@ -1121,12 +1121,39 @@ jobs:
           cache: npm
           cache-dependency-path: development/ci/e2e/package.json
 
-      - name: Install Playwright test dependencies
+      - name: Install npm dependencies for E2E
         working-directory: development/ci/e2e
         run: |
           set -euo pipefail
-          npm install
+          npm ci || npm install
+
+      - name: Get Playwright version
+        id: playwright-version
+        working-directory: development/ci/e2e
+        run: |
+          set -euo pipefail
+          echo "version=$(npx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser binaries
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-browsers-${{ steps.playwright-version.outputs.version }}
+
+      - name: Install Playwright browsers with deps (cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: development/ci/e2e
+        run: |
+          set -euo pipefail
           npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps (cache hit)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: development/ci/e2e
+        run: |
+          set -euo pipefail
+          npx playwright install-deps chromium
 
       - name: Login to GHCR for backend image pull
         run: |
