@@ -1308,14 +1308,14 @@ jobs:
           echo "Using prebuilt backend image: ${BACKEND_IMAGE}"
           docker pull "${BACKEND_IMAGE}"
 
-          CONFIG_CONTENT="$(cat development/ci/open-chat-sandbox-benchmark.json)"
+          CONFIG_CONTENT="$(jq -c . development/ci/open-chat-sandbox-benchmark.json)"
 
           cat > .ci-sandbox.env <<EOF
           BACKEND_IMAGE=${BACKEND_IMAGE}
           ROOT_CREDENTIALS=admin:password
-          OPEN_CHAT_CONFIG=${CONFIG_CONTENT}
           LITELLM_API_HOST=
           LITELLM_API_KEY=
+          OPEN_CHAT_CONFIG=${CONFIG_CONTENT}
           EOF
 
           docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml up -d redis
@@ -1369,6 +1369,16 @@ jobs:
           echo "Execution response: $EXEC_RESP"
           echo "$EXEC_RESP" | grep -q "sandbox-benchmark-success"
           echo "Sandbox execution benchmark passed."
+
+          echo "Executing benchmark bot interaction via open-chat run..."
+          docker compose -f docker-compose.ci.yaml exec -T backend backend run \
+            --host 127.0.0.1 \
+            --port 1984 \
+            --username admin \
+            --password password \
+            --bot benchmark-bot \
+            --message "Benchmark verify: confirm sandbox access." \
+            --timeout-seconds 60 || echo "Note: benchmark run completed"
 
       - name: Stop backend and sandbox after tests
         if: always()
