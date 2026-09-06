@@ -55,3 +55,6 @@
 [submodule "clients/integrations/matrix_integration"]
 	path = clients/integrations/matrix_integration
 	url = https://github.com/msgmate-io/open-chat-go-matrix-integration
+[submodule "clients/docker_sandbox_integration"]
+	path = clients/docker_sandbox_integration
+	url = https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration
