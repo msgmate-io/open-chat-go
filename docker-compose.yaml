@@ -18,6 +18,7 @@ services:
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
       - ./clients/integrations:/clients/integrations
+      - ./clients/docker_sandbox_integration:/clients/docker_sandbox_integration
       - /var/run/docker.sock:/var/run/docker.sock
       - go_mod_cache:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
