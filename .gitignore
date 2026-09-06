@@ -45,3 +45,5 @@ kubeconfig.yaml
 .playwright-mcp/
 backend/uploads/*
 backend/open-chat.json
+open-chat.json
+.open-chat.json
