@@ -1318,8 +1318,8 @@ jobs:
           OPEN_CHAT_CONFIG=${CONFIG_CONTENT}
           EOF
 
-          docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml up -d redis
-          docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml up -d --no-deps backend
+          docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml up -d redis
+          docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml up -d --no-deps backend
 
           for i in $(seq 1 60); do
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:1984/ || true)"
@@ -1331,7 +1331,7 @@ jobs:
           done
 
           echo "::error::Timed out waiting for local backend on http://127.0.0.1:1984"
-          docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml logs backend || true
+          docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml logs backend || true
           exit 1
 
       - name: Run sandbox benchmark
@@ -1371,7 +1371,7 @@ jobs:
           echo "Sandbox execution benchmark passed."
 
           echo "Executing benchmark bot interaction via open-chat run..."
-          docker compose -f docker-compose.ci.yaml exec -T backend backend run \
+          docker compose -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml exec -T backend backend run \
             --host 127.0.0.1 \
             --port 1984 \
             --username admin \
@@ -1386,11 +1386,12 @@ jobs:
           set -euo pipefail
           docker compose -f clients/docker_sandbox_integration/docker-compose.yml down -v || true
           if [ -f .ci-sandbox.env ]; then
-            docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml logs backend || true
-            docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml down -v || true
+            docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml logs backend || true
+            docker compose --env-file .ci-sandbox.env -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml down -v || true
           else
-            docker compose -f docker-compose.ci.yaml down -v || true
+            docker compose -f docker-compose.ci.yaml -f development/ci/docker-compose.sandbox.yaml down -v || true
           fi
+          docker network rm open-chat-lw-shared || true
 
       - name: Finalize sandbox test status
         id: finalize

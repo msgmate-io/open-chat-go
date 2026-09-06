@@ -22,7 +22,6 @@ services:
       OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
     networks:
       - app-network
-      - open-chat-lw-shared
 
   redis:
     image: redis:7-alpine
@@ -40,5 +39,3 @@ services:
 networks:
   app-network:
     driver: bridge
-  open-chat-lw-shared:
-    name: open-chat-lw-shared
