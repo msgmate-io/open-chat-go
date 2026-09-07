@@ -1383,13 +1383,12 @@ jobs:
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
       IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
-      # Pin the opencode runtime model to a model reachable with the litellm
-      # key (mirrors the ai-test-real suite).
-      SANDBOX_OPENCODE_PROVIDER: litellm
-      SANDBOX_OPENCODE_MODEL: qwen38-flash-next_local
+      # Pin the benchmark opencode runtime model: deepseek via openrouter.
+      SANDBOX_OPENCODE_PROVIDER: openrouter
+      SANDBOX_OPENCODE_MODEL: deepseek/deepseek-v4-flash-0731
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -1409,6 +1408,55 @@ jobs:
           set -euo pipefail
           bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
 
+      - name: Post repo_changes_summary to the PR
+        if: matrix.test == 'repo_changes_summary' && steps.test.outcome == 'success' && needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+          SOURCE_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          summary="$(
+            jq -r '.last_bot.text // empty' \
+              ".sandbox-results/repo_changes_summary.last_bot.json"
+          )"          if [ -z "$summary" ]; then
+            echo "::warning::No summary text available; skipping PR comment."
+            exit 0
+          fi
+          if [ "${#summary}" -gt 55000 ]; then
+            summary="${summary:0:55000}
+          ... (truncated)"
+          fi
+          export TPL_SUMMARY_BODY="$summary"
+          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/009-sandbox-repo-changes-summary.md)"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comments_json="$({
+            curl -fsSL \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments"
+          })"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-sandbox-summary-repo_changes_summary -->")))][0].id // ""' <<< "$comments_json")"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
+              -d "$payload" >/dev/null
+            echo "Updated PR summary comment ${comment_id}."
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments" \
+              -d "$payload" >/dev/null
+            echo "Posted new PR summary comment."
+          fi
+
       - name: Upload sandbox test result
         if: always()
         uses: actions/upload-artifact@v4
@@ -1417,6 +1465,7 @@ jobs:
           path: |
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
+            ${{ github.workspace }}/.sandbox-results/*.last_bot.json
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
