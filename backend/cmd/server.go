@@ -640,6 +640,8 @@ func ServerCli() *cli.Command {
 				"LITELLM_API_HOST":                  {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"MSGMATE_CLUSTER_API_KEY":           {Value: os.Getenv("MSGMATE_CLUSTER_API_KEY"), Sensitive: true},
 				"MSGMATE_CLUSTER_HOST":              {Value: os.Getenv("MSGMATE_CLUSTER_HOST"), Sensitive: true},
+				"OPENROUTER_API_KEY":                {Value: os.Getenv("OPENROUTER_API_KEY"), Sensitive: true},
+				"IONOS_API_KEY":                     {Value: os.Getenv("IONOS_API_KEY"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY":                {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
 					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),

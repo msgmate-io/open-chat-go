@@ -24,6 +24,8 @@ services:
       - go_build_cache:/root/.cache/go-build
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      IONOS_API_KEY: ${IONOS_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_API_HOST: ${ANTHROPIC_API_HOST}
       LITELLM_API_KEY: ${LITELLM_API_KEY}
