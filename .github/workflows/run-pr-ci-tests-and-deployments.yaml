@@ -1520,7 +1520,6 @@ jobs:
         with:
           path: ${{ github.workspace }}/.sandbox-results
           pattern: sandbox-result-*
-          merge-multiple: true
 
       - name: Build and post summary table
         env:
@@ -1532,8 +1531,12 @@ jobs:
           header="| Test | Status | Model | Runtime | Interaction | Notes |"
           sep="|---|---|---|---|---|---|"
           : > /tmp/summary-rows.txt
-          for f in "$results_dir"/*.tsv; do
-            [ -e "$f" ] || continue
+          # Artifacts are extracted per artifact into their own subdirectory
+          # (no merge-multiple: merging multiple artifacts into one directory
+          # has proven lossy in practice). TSV files are single-line; locate
+          # them with find so nested artifact dirs are handled uniformly.
+          for f in $(find "$results_dir" -name '*.tsv' | sort); do
+            artifact_dir="$(dirname "$f")"
             name="$(cut -f1 "$f")"
             status="$(cut -f2 "$f")"
             detail="$(cut -f3 "$f" | tr -d '\t\r\n' | head -c 60)"
@@ -1551,7 +1554,7 @@ jobs:
             # Upload the sanitized interaction export as a gist so reviewers can
             # open the full chat in the interaction renderer without login.
             interaction_link="-"
-            export_file="$results_dir/${name}.interaction.json"
+            export_file="$artifact_dir/${name}.interaction.json"
             if [ -s "$export_file" ] && jq -e . "$export_file" >/dev/null 2>&1; then
               raw_url="$(curl -fsSL -X POST \
                 -H "Authorization: Bearer ${COMMENT_TOKEN}" \
@@ -1563,6 +1566,8 @@ jobs:
               if [ -n "$raw_url" ]; then
                 encoded_raw_url="$(jq -Rr @uri <<< "$raw_url")"
                 interaction_link="[open](${RENDERER_BASE}/interaction_renderer/?url=${encoded_raw_url})"
+              else
+                echo "::warning::Could not create gist for ${name} interaction export (token may lack gist scope)."
               fi
             fi
             if [ "$status" = "passed" ]; then
