@@ -37,6 +37,19 @@ func TestSamplingParamsFromConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("max completion tokens override is extracted", func(t *testing.T) {
+		params := samplingParamsFromConfig(map[string]interface{}{
+			"use_max_completion_tokens": true,
+			"disabled_sampling_params":  []interface{}{"temperature", "top_p"},
+		})
+		if params.UseMaxCompletionTokens == nil || !*params.UseMaxCompletionTokens {
+			t.Fatalf("expected use_max_completion_tokens true, got %v", params.UseMaxCompletionTokens)
+		}
+		if params.DisabledSamplingParams == nil || len(*params.DisabledSamplingParams) != 2 {
+			t.Fatalf("expected two disabled sampling params, got %v", params.DisabledSamplingParams)
+		}
+	})
+
 	t.Run("zero values are set, not unset", func(t *testing.T) {
 		config := map[string]interface{}{
 			"temperature":       float64(0),
@@ -104,7 +117,7 @@ func TestApplySamplingParamsToRequestBody(t *testing.T) {
 
 	t.Run("openai-compatible backend forwards everything including zero temperature", func(t *testing.T) {
 		body := map[string]interface{}{"model": "m", "stream": true}
-		applySamplingParamsToRequestBody(body, fullParams, "litellm")
+		applySamplingParamsToRequestBody(body, fullParams, "litellm", "m")
 
 		if got, ok := body["temperature"].(float64); !ok || got != 0.0 {
 			t.Fatalf("expected temperature 0 to be forwarded, got %v", body["temperature"])
@@ -125,7 +138,7 @@ func TestApplySamplingParamsToRequestBody(t *testing.T) {
 
 	t.Run("anthropic backend drops unsupported penalties", func(t *testing.T) {
 		body := map[string]interface{}{"model": "m", "stream": true}
-		applySamplingParamsToRequestBody(body, fullParams, "anthropic")
+		applySamplingParamsToRequestBody(body, fullParams, "anthropic", "m")
 
 		if _, ok := body["temperature"]; !ok {
 			t.Fatalf("expected temperature to be forwarded for anthropic")
@@ -144,10 +157,86 @@ func TestApplySamplingParamsToRequestBody(t *testing.T) {
 		}
 	})
 
+	t.Run("selects token limit field by provider model and override", func(t *testing.T) {
+		trueValue := true
+		falseValue := false
+		testCases := []struct {
+			name     string
+			backend  string
+			model    string
+			override *bool
+			wantKey  string
+		}{
+			{name: "GPT-5 model", backend: "openai", model: "gpt-5.6-luna", wantKey: "max_completion_tokens"},
+			{name: "o-series model", backend: "openai", model: "o3-mini", wantKey: "max_completion_tokens"},
+			{name: "legacy OpenAI model", backend: "openai", model: "gpt-4o-mini", wantKey: "max_tokens"},
+			{name: "non-OpenAI backend", backend: "litellm", model: "gpt-5.6-luna", wantKey: "max_tokens"},
+			{name: "alias override enabled", backend: "openai", model: "company-reasoning-model", override: &trueValue, wantKey: "max_completion_tokens"},
+			{name: "detected model override disabled", backend: "openai", model: "gpt-5.6-luna", override: &falseValue, wantKey: "max_tokens"},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				params := SamplingParams{
+					MaxTokens:              &maxTokens,
+					UseMaxCompletionTokens: testCase.override,
+				}
+				body := map[string]interface{}{"model": testCase.model, "stream": true}
+				applySamplingParamsToRequestBody(body, params, testCase.backend, testCase.model)
+
+				if got, ok := body[testCase.wantKey].(int); !ok || got != maxTokens {
+					t.Fatalf("expected %s %d, got %v", testCase.wantKey, maxTokens, body[testCase.wantKey])
+				}
+				otherKey := "max_tokens"
+				if testCase.wantKey == otherKey {
+					otherKey = "max_completion_tokens"
+				}
+				if _, ok := body[otherKey]; ok {
+					t.Fatalf("expected %s to be absent, got %v", otherKey, body[otherKey])
+				}
+			})
+		}
+	})
+
+	t.Run("reasoning models suppress unsupported sampling params", func(t *testing.T) {
+		body := map[string]interface{}{"model": "gpt-5.6-luna", "stream": true}
+		applySamplingParamsToRequestBody(body, fullParams, "openai", "gpt-5.6-luna")
+
+		for _, key := range []string{"temperature", "top_p", "presence_penalty", "frequency_penalty"} {
+			if _, ok := body[key]; ok {
+				t.Fatalf("expected %s to be suppressed for GPT-5, got %v", key, body[key])
+			}
+		}
+		if _, ok := body["max_completion_tokens"]; !ok {
+			t.Fatalf("expected max_completion_tokens to remain in request, got %v", body)
+		}
+	})
+
+	t.Run("explicit disabled list replaces model defaults", func(t *testing.T) {
+		disabled := []string{"top_p"}
+		params := fullParams
+		params.DisabledSamplingParams = &disabled
+		body := map[string]interface{}{"model": "gpt-5.6-luna", "stream": true}
+		applySamplingParamsToRequestBody(body, params, "openai", "gpt-5.6-luna")
+
+		if _, ok := body["temperature"]; !ok {
+			t.Fatalf("expected explicit list to allow temperature")
+		}
+		if _, ok := body["top_p"]; ok {
+			t.Fatalf("expected explicit list to suppress top_p")
+		}
+		if _, ok := body["presence_penalty"]; !ok {
+			t.Fatalf("expected explicit list to allow presence_penalty")
+		}
+		if _, ok := body["frequency_penalty"]; !ok {
+			t.Fatalf("expected explicit list to allow frequency_penalty")
+		}
+	})
+
 	t.Run("empty params add no keys", func(t *testing.T) {
 		body := map[string]interface{}{"model": "m", "stream": true}
-		applySamplingParamsToRequestBody(body, SamplingParams{}, "openai")
-		for _, key := range []string{"temperature", "max_tokens", "top_p", "presence_penalty", "frequency_penalty"} {
+		applySamplingParamsToRequestBody(body, SamplingParams{}, "openai", "gpt-5")
+		for _, key := range []string{"temperature", "max_tokens", "max_completion_tokens", "top_p", "presence_penalty", "frequency_penalty"} {
 			if _, ok := body[key]; ok {
 				t.Fatalf("expected no %q key for empty params", key)
 			}
@@ -237,5 +326,64 @@ func TestProcessStreamingRequestForwardsSamplingParams(t *testing.T) {
 	}
 	if content.String() != "ok" {
 		t.Fatalf("expected streamed content ok, got %q", content.String())
+	}
+}
+
+func TestProcessStreamingRequestUsesMaxCompletionTokensForOpenAIModel(t *testing.T) {
+	var capturedBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &capturedBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	maxTokens := 4096
+	temperature := 0.7
+	topP := 0.9
+	presencePenalty := 0.2
+	frequencyPenalty := 0.3
+	params := SamplingParams{
+		MaxTokens:        &maxTokens,
+		Temperature:      &temperature,
+		TopP:             &topP,
+		PresencePenalty:  &presencePenalty,
+		FrequencyPenalty: &frequencyPenalty,
+	}
+	chunkChan := make(chan string, 16)
+	usageChan := make(chan *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	}, 16)
+	toolChan := make(chan ToolCall, 16)
+	errChan := make(chan error, 1)
+
+	messages := []map[string]interface{}{{"role": "user", "content": "hello"}}
+	_, err := processStreamingRequest(
+		server.URL, "gpt-5.6-luna", "openai", messages, nil, map[string]Tool{}, "test-key",
+		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params,
+	)
+	if err != nil {
+		t.Fatalf("processStreamingRequest failed: %v", err)
+	}
+
+	if got, ok := capturedBody["max_completion_tokens"].(float64); !ok || got != 4096 {
+		t.Fatalf("expected max_completion_tokens 4096 in request body, got %v", capturedBody["max_completion_tokens"])
+	}
+	if _, ok := capturedBody["max_tokens"]; ok {
+		t.Fatalf("expected max_tokens to be absent, got %v", capturedBody["max_tokens"])
+	}
+	for _, key := range []string{"temperature", "top_p", "presence_penalty", "frequency_penalty"} {
+		if _, ok := capturedBody[key]; ok {
+			t.Fatalf("expected %s to be absent for GPT-5, got %v", key, capturedBody[key])
+		}
+	}
+	streamOptions, ok := capturedBody["stream_options"].(map[string]interface{})
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("expected OpenAI stream usage options, got %v", capturedBody["stream_options"])
 	}
 }

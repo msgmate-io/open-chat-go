@@ -170,6 +170,24 @@ then
   append_go_tag "opencodeintegration"
 fi
 
+if python3 - "$EFFECTIVE_INTEGRATION_MANIFEST" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+modules = {
+    str(dep.get("module", "")).strip()
+    for dep in data.get("dependencies", [])
+    if isinstance(dep, dict)
+}
+sys.exit(0 if "github.com/msgmate-io/matrix-integration" in modules else 1)
+PY
+then
+  # The matrix integration uses mautrix-go with the pure-Go goolm
+  # implementation (no libolm C dependency in the build image).
+  append_go_tag "goolm"
+fi
+
 if [ -n "$GO_TAGS" ]; then
   export GOFLAGS="${GOFLAGS} -tags=${GO_TAGS}"
 fi
@@ -180,7 +198,18 @@ echo "Syncing external integration dependencies from effective integration manif
 go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync=false
 
 echo "Downloading and tidying effective module dependencies..."
-go mod download
+# Network hiccups (eg module proxy stream errors mid-download) can abort the
+# module fetch after minutes of transfer; retry instead of failing the build.
+mod_attempts=0
+until go mod download; do
+  mod_attempts=$((mod_attempts + 1))
+  if [ "$mod_attempts" -ge 3 ]; then
+    echo "go mod download failed after ${mod_attempts} attempts" >&2
+    exit 1
+  fi
+  echo "go mod download failed (attempt ${mod_attempts}/3); retrying in 15s..." >&2
+  sleep 15
+done
 if [ "${INTEGRATION_PROFILE}" != "full" ]; then
     echo "Skipping go mod tidy for ${INTEGRATION_PROFILE} profile to avoid resolving optional non-profile integrations."
 else

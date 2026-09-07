@@ -79,6 +79,9 @@ func validateBotBootstrapConfig(cfg botBootstrapConfig, source string) (botBoots
 		normalizedBackends = append(normalizedBackends, normalized)
 	}
 	cfg.AllowedModelBackends = normalizedBackends
+	if cfg.InheritDefaultBotModels && len(cfg.AllowedModelBackends) > 0 {
+		return cfg, fmt.Errorf("bot config %q: inherit_default_bot_models and allowed_model_backends are mutually exclusive", source)
+	}
 
 	return cfg, nil
 }
@@ -133,6 +136,22 @@ func syncBotDefaultModelAccessByBackend(tx *gorm.DB, botUsername string, allowed
 		}
 	}
 
+	return nil
+}
+
+func syncBotsInheritingDefaultModelAccess(DB *gorm.DB, defaultBotUsername string, configs []botBootstrapConfig) error {
+	for _, cfg := range configs {
+		if !cfg.InheritDefaultBotModels {
+			continue
+		}
+		targetBotUsername := strings.TrimSpace(cfg.Bot.Name)
+		if targetBotUsername == "" {
+			targetBotUsername = strings.TrimSpace(cfg.Bot.Username)
+		}
+		if _, err := database.SyncBotModelsFromBot(DB, defaultBotUsername, targetBotUsername); err != nil {
+			return fmt.Errorf("failed syncing inherited model access for bot %q: %w", targetBotUsername, err)
+		}
+	}
 	return nil
 }
 

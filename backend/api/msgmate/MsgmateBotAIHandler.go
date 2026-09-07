@@ -53,6 +53,19 @@ func resolveProviderEndpoint(backend, endpoint string) (string, error) {
 		}
 	}
 
+	// Fixed public base URLs for well-known OpenAI-compatible providers when no
+	// custom endpoint is configured.
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "openrouter":
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://openrouter.ai/api/v1/"
+		}
+	case "ionos":
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://openai.inference.de-txl.ionos.com/v1/"
+		}
+	}
+
 	return endpoint, nil
 }
 
