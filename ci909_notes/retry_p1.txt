@@ -1,0 +1,301 @@
+=== provider_retry.go 40-135 ===
+    40		StatusCode int
+    41		Body       string
+    42		// Attempts is how many provider requests were made before giving up
+    43		// (1 when retries are disabled or the first attempt failed fatally).
+    44		Attempts int
+    45	}
+    46	
+    47	func (e *ProviderRequestError) Error() string {
+    48		return fmt.Sprintf("non-200 response: %d %s", e.StatusCode, e.Body)
+    49	}
+    50	
+    51	// providerErrorInfo extracts the provider HTTP status, response body and the
+    52	// number of attempts that were made from a provider request error.
+    53	func providerErrorInfo(err error) (code int, body string, attempts int, ok bool) {
+    54		if err == nil {
+    55			return 0, "", 0, false
+    56		}
+    57		var pre *ProviderRequestError
+    58		if errors.As(err, &pre) {
+    59			return pre.StatusCode, pre.Body, pre.Attempts, true
+    60		}
+    61		// Legacy string form (tests and older error paths).
+    62		const legacyPrefix = "non-200 response: "
+    63		s := err.Error()
+    64		if !strings.HasPrefix(s, legacyPrefix) {
+    65			return 0, "", 0, false
+    66		}
+    67		rest := strings.TrimPrefix(s, legacyPrefix)
+    68		codePart := rest
+    69		if idx := strings.IndexByte(rest, ' '); idx >= 0 {
+    70			codePart = rest[:idx]
+    71			rest = rest[idx+1:]
+    72		} else {
+    73			rest = ""
+    74		}
+    75		parsedCode, convErr := strconv.Atoi(codePart)
+    76		if convErr != nil {
+    77			return 0, "", 0, false
+    78		}
+    79		return parsedCode, rest, 1, true
+    80	}
+    81	
+    82	// retryableProviderStatuses lists the HTTP status codes that are worth
+    83	// retrying: transient provider-side problems (rate limits, overload, gateway
+    84	// hiccups) and request timeouts.
+    85	func isRetryableProviderStatus(code int) bool {
+    86		switch code {
+    87		case http.StatusRequestTimeout,
+    88			// ci#747 RC3: a key-limit / out-of-credit provider response (402) is
+    89			// how the provider signalled the outage that parked the agents. It is
+    90			// recovered automatically once the account is topped up again, so it
+    91			// takes the same bounded retry/backoff as 429 and 5xx instead of
+    92			// dead-ending the turn.
+    93			http.StatusPaymentRequired,
+    94			http.StatusTooManyRequests,
+    95			http.StatusInternalServerError,
+    96			http.StatusBadGateway,
+    97			http.StatusServiceUnavailable,
+    98			http.StatusGatewayTimeout:
+    99			return true
+   100		}
+   101		return false
+   102	}
+   103	
+   104	// transientNetworkErrorMarkers are connection-level failures that are worth
+   105	// one more attempt (the provider host was momentarily unreachable).
+   106	var transientNetworkErrorMarkers = []string{
+   107		"connection reset by peer",
+   108		"broken pipe",
+   109		"unexpected eof",
+   110		"connection aborted",
+   111		"tls handshake timeout",
+   112		"connection timed out",
+   113		"server closed idle connection",
+   114		"proxyconnect tcp",
+   115	}
+   116	
+   117	// isPreStreamProviderFailure reports whether err was produced while the
+   118	// provider request was being established (HTTP status check or connect), i.e.
+   119	// before any response content was streamed. Only such failures may be
+   120	// retried: a mid-stream drop must never be retried, because the already
+   121	// streamed partial output would be duplicated.
+   122	func isPreStreamProviderFailure(err error) bool {
+   123		if err == nil {
+   124			return false
+   125		}
+   126		msg := err.Error()
+   127		if strings.Contains(msg, "non-200 response: ") {
+   128			return true
+   129		}
+   130		return strings.Contains(msg, "request failed: ")
+   131	}
+   132	
+   133	// isRetryableProviderRequestError reports whether the failed request should
+   134	// be attempted again. Non-transient provider errors (bad request, auth
+   135	// failures, provider configuration problems) are never retried.
+
+=== provider_retry.go 135-190 ===
+   135	// failures, provider configuration problems) are never retried.
+   136	func isRetryableProviderRequestError(err error) bool {
+   137		if err == nil {
+   138			return false
+   139		}
+   140		code, _, _, isProviderStatus := providerErrorInfo(err)
+   141		if isProviderStatus {
+   142			return isRetryableProviderStatus(code)
+   143		}
+   144		msgLower := strings.ToLower(err.Error())
+   145		if !strings.Contains(msgLower, "request failed: ") {
+   146			return false
+   147		}
+   148		for _, marker := range transientNetworkErrorMarkers {
+   149			if strings.Contains(msgLower, marker) {
+   150				return true
+   151			}
+   152		}
+   153		return false
+   154	}
+   155	
+   156	// providerRetryBackoffDelay computes the exponential back-off delay before
+   157	// retry attempt+1. attempt is 1-based (the delay after the first failure).
+   158	func providerRetryBackoffDelay(attempt int, base, max time.Duration) time.Duration {
+   159		if attempt < 1 {
+   160			attempt = 1
+   161		}
+   162		if base <= 0 {
+   163			base = 2 * time.Second
+   164		}
+   165		if attempt > 20 {
+   166			attempt = 1
+   167		}
+   168		delay := base * time.Duration(1<<(attempt-1))
+   169		if max > 0 && delay > max {
+   170			delay = max
+   171		}
+   172		return delay
+   173	}
+   174	
+   175	// effectiveProviderRetryAttempts clamps the chat-configured attempt count.
+   176	func effectiveProviderRetryAttempts(opts ProviderRetryOptions) int {
+   177		if !opts.Enabled || opts.MaxAttempts < 2 {
+   178			return 1
+   179		}
+   180		attempts := opts.MaxAttempts
+   181		if attempts > maxProviderRetryAttempts {
+   182			attempts = maxProviderRetryAttempts
+   183		}
+   184		return attempts
+   185	}
+   186	
+   187	// extractProviderErrorDetail parses a provider error response body and
+   188	// returns the most descriptive (provider, message) pair available. OpenAI
+   189	// compatible APIs put the message in error.message; OpenRouter nests the
+   190	// upstream provider name and raw error under metadata.
+
+=== provider_retry.go 190-260 ===
+   190	// upstream provider name and raw error under metadata.
+   191	func extractProviderErrorDetail(code int, body string) (string, string) {
+   192		summary := fmt.Sprintf("HTTP %d", code)
+   193		if strings.TrimSpace(body) == "" {
+   194			return summary, ""
+   195		}
+   196		trimmed := strings.TrimSpace(body)
+   197		var payload struct {
+   198			Error    json.RawMessage `json:"error"`
+   199			Message  string          `json:"message"`
+   200			Metadata struct {
+   201				ProviderName string `json:"provider_name"`
+   202				Raw          string `json:"raw"`
+   203			} `json:"metadata"`
+   204		}
+   205		if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+   206			// Not JSON: show a truncated version of the raw body. The cut stops on a
+   207			// UTF-8 rune boundary (ci#680): providers echo request content in error
+   208			// bodies, so a mid-rune cut would surface invalid UTF-8 to the user.
+   209			if len(trimmed) > 300 {
+   210				trimmed = headOfString(trimmed, 300) + "…"
+   211			}
+   212			return summary, trimmed
+   213		}
+   214	
+   215		providerMessage := payload.Message
+   216		providerName := payload.Metadata.ProviderName
+   217		if len(payload.Error) > 0 {
+   218			var errObj struct {
+   219				Message  string      `json:"message"`
+   220				Code     interface{} `json:"code"`
+   221				Metadata struct {
+   222					ProviderName string `json:"provider_name"`
+   223					Raw          string `json:"raw"`
+   224				} `json:"metadata"`
+   225			}
+   226			if json.Unmarshal(payload.Error, &errObj) == nil && strings.TrimSpace(errObj.Message) != "" {
+   227				providerMessage = strings.TrimSpace(errObj.Message)
+   228				if errObj.Metadata.ProviderName != "" {
+   229					providerName = errObj.Metadata.ProviderName
+   230				}
+   231			} else {
+   232				// error was a plain string (older APIs)
+   233				var errStr string
+   234				if json.Unmarshal(payload.Error, &errStr) == nil && strings.TrimSpace(errStr) != "" {
+   235					providerMessage = strings.TrimSpace(errStr)
+   236				}
+   237			}
+   238		}
+   239		if len(providerMessage) > 300 {
+   240			// headOfString: same rune-boundary rule as above - provider messages
+   241			// quote the request content.
+   242			providerMessage = headOfString(providerMessage, 300) + "…"
+   243		}
+   244		if providerMessage != "" {
+   245			summary = fmt.Sprintf("%s (%s)", summary, providerMessage)
+   246		}
+   247		return summary, providerName
+   248	}
+   249	
+   250	// describeProviderFailure turns a provider failure into a short human
+   251	// readable summary (used by widget messages) and reports the attempts used.
+   252	func describeProviderFailure(err error) (string, int) {
+   253		if err == nil {
+   254			return "", 0
+   255		}
+   256		code, body, attempts, ok := providerErrorInfo(err)
+   257		if !ok || attempts < 1 {
+   258			attempts = 1
+   259		}
+   260		if code == 0 {
+
+=== provider_retry.go 260-330 ===
+   260		if code == 0 {
+   261			return "", attempts
+   262		}
+   263		summary, _ := extractProviderErrorDetail(code, body)
+   264		return summary, attempts
+   265	}
+   266	
+   267	// Failure reason values recorded in message metadata ("failure_reason") and
+   268	// reused to pick user-facing guidance. They distinguish a genuine provider-side
+   269	// failure (or a recognised transient network problem) from an unclassified
+   270	// internal error, so the chat never speculates about credits or outages.
+   271	const (
+   272		FailureReasonContextWindow    = "context_window_exceeded"
+   273		FailureReasonProviderError    = "provider_error"
+   274		FailureReasonTransientNetwork = "transient_network_error"
+   275		FailureReasonTimeout          = "turn_timeout"
+   276		FailureReasonInternal         = "internal_error"
+   277		// FailureReasonLeakedCompaction marks a turn whose assistant output was only
+   278		// a leaked context-compaction transcript (ci#562): the model volunteered its
+   279		// own bookkeeping instead of an answer, twice in a row, so the turn is
+   280		// stopped with guidance instead of being persisted with no text.
+   281		FailureReasonLeakedCompaction = "leaked_compaction_transcript"
+   282		// FailureReasonRepetitionLoop marks a round whose stream collapsed into an
+   283		// unbounded repetition loop and was cut off early (ci#670). It is recorded
+   284		// on the provider request for metrics; the turn itself finishes normally
+   285		// with a short answer carrying the "stopped: repeated output detected" note.
+   286		FailureReasonRepetitionLoop = "repetition_loop"
+   287	)
+   288	
+   289	// GenerationFailureClassification is the outcome of classifying a failed
+   290	// generation. ProviderSummary and ProviderAttempts are only meaningful for
+   291	// FailureReasonProviderError.
+   292	type GenerationFailureClassification struct {
+   293		Reason           string
+   294		ProviderSummary  string
+   295		ProviderAttempts int
+   296	}
+   297	
+   298	// ClassifyGenerationFailure maps a generation error onto a stable failure
+   299	// reason. Only errors that are genuinely provider-side (a provider HTTP
+   300	// response) or a recognised transient network problem may later be described as
+   301	// a provider issue; everything else is reported as internal so the user is not
+   302	// told credits/outage are the cause.
+   303	func ClassifyGenerationFailure(err error) GenerationFailureClassification {
+   304		if err == nil {
+   305			return GenerationFailureClassification{Reason: FailureReasonInternal}
+   306		}
+   307		// A turn deadline (the bot reply task's asynq timeout) is not a provider
+   308		// fault and not a user stop: report it as its own reason so the chat never
+   309		// shows a bogus "I paused this response" for a turn that simply ran out of
+   310		// time (ci#642). The context.Canceled case is handled by the caller as a
+   311		// genuine stop, so it is deliberately not classified here.
+   312		if errors.Is(err, context.DeadlineExceeded) {
+   313			return GenerationFailureClassification{Reason: FailureReasonTimeout}
+   314		}
+   315		if isContextWindowExceededError(err) {
+   316			return GenerationFailureClassification{Reason: FailureReasonContextWindow}
+   317		}
+   318		// A turn whose assistant output was only a leaked context-compaction
+   319		// transcript has its own reason: it is neither a provider fault nor an
+   320		// internal error, and the guidance tells the user the work done so far is
+   321		// kept and how to continue (ci#562).
+   322		if errors.Is(err, errLeakedCompactionTranscript) {
+   323			return GenerationFailureClassification{Reason: FailureReasonLeakedCompaction}
+   324		}
+   325		summary, attempts := describeProviderFailure(err)
+   326		if attempts < 1 {
+   327			attempts = 1
+   328		}
+   329		if summary != "" {
+   330			return GenerationFailureClassification{
