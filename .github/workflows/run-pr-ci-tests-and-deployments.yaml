@@ -1383,6 +1383,8 @@ jobs:
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+      IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
       # Pin the opencode runtime model to a model reachable with the litellm
       # key (mirrors the ai-test-real suite).

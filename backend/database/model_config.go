@@ -179,6 +179,10 @@ func managedProviderAPIKeyEnv(backend string) (string, bool) {
 		return "LITELLM_API_KEY", true
 	case "msgmate_cluster":
 		return "MSGMATE_CLUSTER_API_KEY", true
+	case "openrouter":
+		return "OPENROUTER_API_KEY", true
+	case "ionos":
+		return "IONOS_API_KEY", true
 	default:
 		return "", false
 	}
