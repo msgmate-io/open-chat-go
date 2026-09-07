@@ -114,6 +114,16 @@ var transientNetworkErrorMarkers = []string{
 	"proxyconnect tcp",
 }
 
+// providerSaturationErrorType is the *ProviderSaturationError admitted by
+// isRetryableProviderRequestError. It is a back-pressure decision that is not a
+// provider fault: the effective per-key slot cap (ci#620/ci#602) was exhausted
+// and no slot freed up within the queue timeout, so the request was not even
+// sent to the provider. Saturation must therefore never be absorbed by the
+// provider retry loop and must never be surfaced as a provider HTTP status;
+// it retries as a distinct, immediately-flagged back-pressure condition so the
+// chat/pipeline can lower concurrency instead of assuming an outage.
+var providerSaturationErrorType = (*ProviderSaturationError)(nil)
+
 // isPreStreamProviderFailure reports whether err was produced while the
 // provider request was being established (HTTP status check or connect), i.e.
 // before any response content was streamed. Only such failures may be
@@ -140,6 +150,15 @@ func isRetryableProviderRequestError(err error) bool {
 	code, _, _, isProviderStatus := providerErrorInfo(err)
 	if isProviderStatus {
 		return isRetryableProviderStatus(code)
+	}
+	// ci#909: provider admission saturation is retryable back-pressure, not a
+	// provider fault. It means "the per-key cap is exhausted, no slot freed up
+	// within the queue timeout, the request never reached the provider"; the
+	// ask is to lower concurrent agents, and a retry with backoff is harmless
+	// (and honest) when nothing else can make progress. Keeping it out of the
+	// non-200 status set means it is never mistaken for a provider HTTP error.
+	if errors.As(err, &providerSaturationErrorType) {
+		return true
 	}
 	msgLower := strings.ToLower(err.Error())
 	if !strings.Contains(msgLower, "request failed: ") {
@@ -269,11 +288,19 @@ func describeProviderFailure(err error) (string, int) {
 // failure (or a recognised transient network problem) from an unclassified
 // internal error, so the chat never speculates about credits or outages.
 const (
-	FailureReasonContextWindow    = "context_window_exceeded"
-	FailureReasonProviderError    = "provider_error"
-	FailureReasonTransientNetwork = "transient_network_error"
-	FailureReasonTimeout          = "turn_timeout"
-	FailureReasonInternal         = "internal_error"
+	FailureReasonContextWindow = "context_window_exceeded"
+	FailureReasonProviderError = "provider_error"
+	// FailureReasonProviderBackpressure marks a turn stopped because the
+	// provider admission slot cap was exhausted and no slot freed up within
+	// the queue timeout (ci#909): the request never reached the provider, so
+	// this must never be reported as a provider fault (no credit/outage
+	// speculation) and never be absorbed into a provider-HTTP retry loop. The
+	// guidance is to lower concurrent agents (or raise the cap), and the chat
+	// keeps the work done so far.
+	FailureReasonProviderBackpressure = "provider_backpressure"
+	FailureReasonTransientNetwork     = "transient_network_error"
+	FailureReasonTimeout              = "turn_timeout"
+	FailureReasonInternal             = "internal_error"
 	// FailureReasonLeakedCompaction marks a turn whose assistant output was only
 	// a leaked context-compaction transcript (ci#562): the model volunteered its
 	// own bookkeeping instead of an answer, twice in a row, so the turn is
@@ -321,6 +348,16 @@ func ClassifyGenerationFailure(err error) GenerationFailureClassification {
 	// kept and how to continue (ci#562).
 	if errors.Is(err, errLeakedCompactionTranscript) {
 		return GenerationFailureClassification{Reason: FailureReasonLeakedCompaction}
+	}
+	if errors.As(err, &providerSaturationErrorType) {
+		// ci#909: provider admission saturation (the per-key slot cap was
+		// exhausted and no slot freed up within the queue timeout) is
+		// back-pressure, not a provider fault: the request never reached the
+		// provider, so reporting it as a provider error would blame credits or
+		// an outage that never happened. Its own reason lets the chat tell the
+		// user to lower concurrency instead and keeps ProviderAttempts honest
+		// (no attempts were made against the provider).
+		return GenerationFailureClassification{Reason: FailureReasonProviderBackpressure}
 	}
 	summary, attempts := describeProviderFailure(err)
 	if attempts < 1 {
