@@ -20,6 +20,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
+      OPENCODE_PERMISSION_MODE: ${OPENCODE_PERMISSION_MODE:-}
     networks:
       - app-network
 
