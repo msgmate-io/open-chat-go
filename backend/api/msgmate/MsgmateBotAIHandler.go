@@ -1307,6 +1307,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				} else {
 					text += "\n\n" + guidance
 				}
+			case FailureReasonProviderBackpressure:
+				// ci#909: the per-key provider admission slot cap was
+				// exhausted and no slot freed up within the queue timeout, so
+				// the request never reached the provider. This is OpenChat's
+				// own concurrency back-pressure - never a provider fault, so
+				// the reply must not suggest switching model/provider or blame
+				// credits/outage (the provider_error metadata will not be
+				// populated either, because there is no provider status).
+				guidance := "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
+				reasoningEntry = "Response stopped due to provider admission back-pressure: the per-key slot cap was exhausted and no slot freed up within the queue timeout."
+				if text == "" {
+					text = guidance
+				} else {
+					text += "\n\n" + guidance
+				}
 			default:
 				detail := TruncateFailureDetail(streamErr.Error())
 				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
@@ -1345,6 +1360,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if streamFailure.ProviderSummary != "" {
 				metadata["provider_error"] = streamFailure.ProviderSummary
 			}
+			// ci#909: provider admission saturation is back-pressure (the
+			// request never reached the provider), so it must never populate
+			// the provider-oriented error_code / provider_error metadata the
+			// way a real provider HTTP status does.
 			if code, body, attempts, isProviderErr := providerErrorInfo(streamErr); isProviderErr {
 				metadata["error_code"] = code
 				if summary, providerName := extractProviderErrorDetail(code, body); summary != "" {
@@ -1359,6 +1378,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					metadata["provider_retry_attempts"] = attempts
 				}
 			} else if streamFailure.ProviderAttempts > 1 {
+				metadata["provider_retry_attempts"] = streamFailure.ProviderAttempts
+			}
+			// ci#909: surface the back-pressure decision itself as structured
+			// metadata (the per-key cap and the time spent waiting for a free
+			// admission slot), so the pipeline can lower concurrency without
+			// parsing an error string.
+			var saturationErr *ProviderSaturationError
+			if errors.As(streamErr, &saturationErr) {
+				metadata["provider_backpressure"] = map[string]interface{}{
+					"key":             saturationErr.Key,
+					"max_concurrency": saturationErr.MaxConcurrency,
+					"in_flight":       saturationErr.InFlight,
+					"queue_waiting":   saturationErr.QueueWaiting,
+					"waited":          saturationErr.Waited.Round(time.Millisecond).String(),
+				}
 				metadata["provider_retry_attempts"] = streamFailure.ProviderAttempts
 			}
 		}
