@@ -70,6 +70,18 @@ func TestIsRetryableProviderRequestError(t *testing.T) {
 	if !isRetryableProviderRequestError(fmt.Errorf("request failed: Post \"https://x\": connection reset by peer")) {
 		t.Fatal("transient connect failures should be retryable")
 	}
+	// ci#909: provider admission saturation is retryable back-pressure, not a
+	// provider fault and not a provider HTTP status: the per-key slot cap was
+	// exhausted and no slot freed up within the queue timeout, so the request
+	// never reached the provider. It must take the bounded retry path as an
+	// honest back-pressure signal (surfaced immediately, distinct from
+	// 402/429/5xx) instead of being absorbed and blurred by the provider loop.
+	if !isRetryableProviderRequestError(&ProviderSaturationError{Key: "openrouter:https://openrouter.ai/api/v1/:sk-x", MaxConcurrency: 3, InFlight: 3, QueueWaiting: 12, Waited: 15 * time.Second, Source: "agent"}) {
+		t.Fatal("provider admission saturation should be retryable back-pressure")
+	}
+	if isRetryableProviderRequestError(fmt.Errorf("provider admission slot cap exhausted (key=openrouter) after 15s")) {
+		t.Fatal("saturation must be detected by type, not by message text")
+	}
 }
 
 func TestIsPreStreamProviderFailure(t *testing.T) {
@@ -182,6 +194,24 @@ func TestClassifyGenerationFailure(t *testing.T) {
 			name:       "user cancel is not classified as a timeout",
 			err:        context.Canceled,
 			wantReason: FailureReasonInternal,
+		},
+		{
+			// ci#909: provider admission saturation is back-pressure (the
+			// per-key slot cap was exhausted and no slot freed up within the
+			// queue timeout, so the request never reached the provider). It
+			// must never be conflated with a provider fault: no credit/outage
+			// speculation, and no provider-HTTP retry absorption.
+			name:       "provider admission saturation is back-pressure",
+			err:        &ProviderSaturationError{Key: "openrouter:https://openrouter.ai/api/v1/:sk-x", MaxConcurrency: 3, InFlight: 3, QueueWaiting: 12, Waited: 15 * time.Second, Source: "agent"},
+			wantReason: FailureReasonProviderBackpressure,
+		},
+		{
+			// ci#909: a *wrapped* saturation error must classify identically
+			// (the messages bubble the native coder error up through several
+			// layers of fmt.Errorf wrapping).
+			name:       "wrapped provider admission saturation is back-pressure",
+			err:        fmt.Errorf("turn failed: %w", &ProviderSaturationError{Key: "openrouter:https://openrouter.ai/api/v1/:sk-x", MaxConcurrency: 3, InFlight: 3, QueueWaiting: 12, Waited: 15 * time.Second, Source: "agent"}),
+			wantReason: FailureReasonProviderBackpressure,
 		},
 	}
 
