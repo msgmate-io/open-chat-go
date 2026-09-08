@@ -230,6 +230,10 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
 	samplingParams := samplingParamsFromConfig(configMap)
+	providerRetryOptions := providerRetryOptionsFromConfig(configMap)
+	if providerRetryOptions.Enabled {
+		providerRetryOptions.OnRetryAttempt = aih.makeProviderRetryReporter(message.Content.ChatUUID)
+	}
 
 	if toolCallMaxTotal < 1 {
 		toolCallMaxTotal = int64(DefaultToolCallMaxTotal)
@@ -287,6 +291,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		interactionCompleteTools,
 		GetGlobalMsgmateHandler(),
 		samplingParams,
+		providerRetryOptions,
 	)
 
 	// Process the streaming response
@@ -770,7 +775,26 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				providerGuidance = "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
 				reasoningEntry = "Response stopped because the model context window was exceeded."
 			}
-			if text == "" {
+			providerSummary, providerAttempts := describeProviderFailure(streamErr)
+			if failureReason == "upstream_provider_error" && providerSummary != "" {
+				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s.", providerSummary)
+				if providerAttempts > 1 {
+					providerGuidance = fmt.Sprintf(
+						"The AI provider failed on all %d attempts (last error: %s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits. You can retry in a moment or switch to a different model or provider.",
+						providerAttempts, providerSummary)
+				} else {
+					providerGuidance = fmt.Sprintf(
+						"The AI provider returned an error (%s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits.",
+						providerSummary,
+					)
+				}
+				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s (attempts: %d).", providerSummary, providerAttempts)
+				if text == "" {
+					text = fmt.Sprintf("I could not generate a reply: my AI provider request failed. %s Please try again in a moment or switch to another model.", providerGuidance)
+				} else {
+					text += "\n\n" + providerGuidance
+				}
+			} else if text == "" {
 				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
 			} else {
 				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
@@ -790,6 +814,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			metadata["error"] = true
 			metadata["failure_reason"] = failureReason
 			metadata["error_detail"] = streamErr.Error()
+			if code, body, attempts, isProviderErr := providerErrorInfo(streamErr); isProviderErr {
+				metadata["error_code"] = code
+				if summary, providerName := extractProviderErrorDetail(code, body); summary != "" {
+					metadata["provider_error"] = summary
+					if providerName != "" {
+						metadata["provider_name"] = providerName
+					}
+				}
+				if attempts > 1 {
+					metadata["provider_retry_attempts"] = attempts
+				}
+			}
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {

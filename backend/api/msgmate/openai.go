@@ -254,6 +254,7 @@ func streamChatCompletion(
 	interactionCompleteTools []string,
 	handler *MsgmateHandler,
 	samplingParams SamplingParams,
+	retryOpts ProviderRetryOptions,
 ) (<-chan string, <-chan *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -324,6 +325,8 @@ func streamChatCompletion(
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
+		var toolCallResult *toolCallResult
+		var err error
 
 		for {
 			if totalToolCalls >= toolCallMaxTotal {
@@ -335,15 +338,47 @@ func streamChatCompletion(
 				return
 			}
 
-			// Make initial request
+			// Make initial request (with provider retries when enabled).
 			fmt.Println("\n=== STARTING NEW REQUEST ROUND ===")
 			fmt.Printf("Current tool-call counts: total=%d/%d failed=%d/%d\n", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
-			toolCallResult, err := processStreamingRequest(
-				host, model, backend, currentMessages, tools, toolMap, apiKey,
-				executedToolResults,
-				chunkChan, usageChan, toolChan, errChan,
-				samplingParams,
-			)
+			maxAttempts := effectiveProviderRetryAttempts(retryOpts)
+			attempts := 0
+			for {
+				attempts++
+				toolCallResult, err = processStreamingRequest(
+					host, model, backend, currentMessages, tools, toolMap, apiKey,
+					executedToolResults,
+					chunkChan, usageChan, toolChan, errChan,
+					samplingParams,
+				)
+				if err == nil {
+					break
+				}
+				// Never retry mid-stream failures (they may have already
+				// emitted partial output) or context-window errors (they have
+				// their own trim-and-retry handling below).
+				if isContextWindowExceededError(err) || !isPreStreamProviderFailure(err) || !isRetryableProviderRequestError(err) {
+					break
+				}
+				if attempts >= maxAttempts {
+					break
+				}
+				delay := providerRetryBackoffDelay(attempts, retryOpts.BaseBackoff, retryOpts.MaxBackoff)
+				retryAt := time.Now().Add(delay)
+				log.Printf(
+					"Provider request failed (attempt %d/%d): %v; retrying in %s",
+					attempts, maxAttempts, err, delay,
+				)
+				if retryOpts.OnRetryAttempt != nil {
+					retryOpts.OnRetryAttempt(attempts, maxAttempts, err, retryAt)
+				}
+				time.Sleep(delay)
+			}
+			// Record how many attempts were made so the final error message
+			// can describe the retries.
+			if preErr, ok := err.(*ProviderRequestError); ok {
+				preErr.Attempts = attempts
+			}
 			if err != nil && isContextWindowExceededError(err) {
 				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
 				if trimmed {
@@ -614,7 +649,11 @@ func processStreamingRequest(
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("non-200 response: %d %s", resp.StatusCode, string(bodyBytes))
+		return nil, &ProviderRequestError{
+			StatusCode: resp.StatusCode,
+			Body:       string(bodyBytes),
+			Attempts:   1,
+		}
 	}
 
 	reader := bufio.NewReader(resp.Body)

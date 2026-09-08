@@ -23,6 +23,7 @@ type NewMessage struct {
 		MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
 		ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
 		Attachments *[]FileAttachment       `json:"attachments,omitempty"`
+		DataType    string                  `json:"data_type,omitempty"`
 	} `json:"content"`
 }
 
@@ -156,7 +157,7 @@ func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, SessionID, Text strin
 	return encMsg
 }
 
-func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}, ToolCalls *[]interface{}, Attachments *[]FileAttachment) []byte {
+func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []string, MetaData *map[string]interface{}, ToolCalls *[]interface{}, Attachments *[]FileAttachment, DataType string) []byte {
 	msg := NewMessage{
 		Type: "new_message",
 		Content: struct {
@@ -167,6 +168,7 @@ func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []str
 			MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
 			ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
 			Attachments *[]FileAttachment       `json:"attachments,omitempty"`
+			DataType    string                  `json:"data_type,omitempty"`
 		}{
 			ChatUUID:    ChatUUID,
 			SenderUUID:  SenderUUID,
@@ -175,6 +177,7 @@ func (m *Messages) NewMessage(ChatUUID, SenderUUID, Text string, Reasoning []str
 			MetaData:    MetaData,
 			ToolCalls:   ToolCalls,
 			Attachments: Attachments,
+			DataType:    DataType,
 		},
 	}
 
