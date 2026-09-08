@@ -176,6 +176,13 @@ func terminalTextGuidance(streamErr error, outcome *TurnOutcome) string {
 		switch classification.Reason {
 		case FailureReasonContextWindow:
 			return "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output. The work already done is kept."
+		case FailureReasonProviderBackpressure:
+			// ci#909: the per-key provider admission slot cap was exhausted and
+			// no slot freed up within the queue timeout, so the request never
+			// reached the provider. This is OpenChat's own concurrency
+			// back-pressure, never a provider fault: the user (or pipeline)
+			// must lower concurrent agents, not switch model/provider.
+			return "Too many AI requests are queued for this provider key right now, so this turn was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
 		case FailureReasonProviderError:
 			return fmt.Sprintf("The AI provider failed the request (%s). This error comes from the AI provider, not from OpenChat - retry in a moment or switch model/provider. The work already done is kept.", classification.ProviderSummary)
 		case FailureReasonTransientNetwork:
