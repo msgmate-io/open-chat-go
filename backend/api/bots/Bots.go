@@ -303,6 +303,12 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 		}
 	}
 
+	if raw, exists := config["track_usage"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("default_shared_config.track_usage must be a boolean")
+		}
+	}
+
 	if err := validateStringArray(config, "disabled_sampling_params"); err != nil {
 		return err
 	}

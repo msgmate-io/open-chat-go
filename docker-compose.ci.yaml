@@ -5,7 +5,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "1984:1984"
+      - "${BACKEND_PORT:-1984}:1984"
     environment:
       ROOT_CREDENTIALS: "admin:password"
       HOST: "0.0.0.0"
@@ -30,7 +30,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "${REDIS_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
