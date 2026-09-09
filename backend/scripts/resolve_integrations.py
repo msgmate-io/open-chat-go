@@ -17,7 +17,9 @@ CORE_MODULES = {
 # Some modules are published from repositories whose names differ from module path.
 # Keep these in replace form when local submodule paths are unavailable.
 REMOTE_FALLBACK_REPLACES = {
-    "github.com/msgmate-io/go-client-integration": "github.com/msgmate-io/open-chat-go-golang-client@v0.0.0-20260718164154-96485c47c58a",
+    # Pseudo-version must point at a commit that contains every API the backend
+    # compiles against (currently goclient.SendMessage.DataType).
+    "github.com/msgmate-io/go-client-integration": "github.com/msgmate-io/open-chat-go-golang-client@v0.0.0-20260908092312-c424af42efd1",
 }
 
 

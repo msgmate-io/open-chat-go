@@ -330,7 +330,11 @@ jobs:
             DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
             SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
             SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
-            SHOULD_E2E_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x '(e2e|test-e2e|test)' || true)"
+            # E2E has several accepted label aliases (e2e/test-e2e/test); when
+            # more than one alias label is present the grep would return
+            # multiple lines and a multi-line GITHUB_OUTPUT value breaks the
+            # job ("Invalid format"). Keep alias support, emit one token only.
+            SHOULD_E2E_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x '(e2e|test-e2e|test)' | head -n1 || true)"
             SHOULD_SANDBOX_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'sandbox-test' || true)"
             SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
             SHOULD_RELEASE_ANDROID="$(jq -r '
@@ -342,6 +346,26 @@ jobs:
             SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
             SHOULD_AI_TEST_REAL="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-real' || true)"
             SHOULD_TEST_CORE_ONLY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test-core-only' || true)"
+            # Production promotion PRs (base.ref == 'production') always run the
+            # full suite. Their labels are added in one burst right after the PR
+            # is opened, so each per-label event payload carries only a partial
+            # label snapshot - deriving the flags from the event payload races
+            # with cancel-in-progress and can skip every suite (all-suite gate
+            # then fails). The flags below are authoritative instead; the
+            # promotion PR must never deploy (production deploy happens after
+            # this PR merges via the merged-deployment flow).
+            if [ "${{ github.event.pull_request.base.ref }}" = "production" ]; then
+              echo "Production promotion PR: forcing full test suite, deploy disabled."
+              SHOULD_DEPLOY=""
+              SHOULD_TEST="test"
+              SHOULD_E2E_TEST="e2e"
+              SHOULD_SANDBOX_TEST="sandbox-test"
+              SHOULD_BUILD="build"
+              SHOULD_RELEASE_ANDROID="release-android"
+              SHOULD_AI_TEST_MOCK="ai-test-mock"
+              SHOULD_AI_TEST_REAL="ai-test-real"
+              SHOULD_TEST_CORE_ONLY="test-core-only"
+            fi
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
             DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
             if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
@@ -845,7 +869,8 @@ jobs:
       (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-      contains(github.event.pull_request.labels.*.name, 'test')))
+      (github.event.pull_request.base.ref == 'production' ||
+      contains(github.event.pull_request.labels.*.name, 'test'))))
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
       go_status: ${{ steps.finalize.outputs.go_status }}
@@ -975,7 +1000,8 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.build-backend-image-once.result == 'success' &&
       github.event_name == 'pull_request' && github.event.action != 'closed' &&
-      contains(github.event.pull_request.labels.*.name, 'ai-test-mock')
+      (github.event.pull_request.base.ref == 'production' ||
+      contains(github.event.pull_request.labels.*.name, 'ai-test-mock'))
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
@@ -1353,6 +1379,10 @@ jobs:
   run-pr-ci-sandbox-tests-after-deploy:
     name: Sandbox Test ${{ matrix.test }} After Deploy
     runs-on: ubuntu-latest
+    # Hard cap for the whole matrix job. The LLM interaction itself is capped
+    # at 12 min via SANDBOX_INTERACTION_TIMEOUT; the extra minutes cover
+    # sandbox/backend startup, verification and artifact upload.
+    timeout-minutes: 18
     needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-tests-discover, sandbox-image-ensure, approve-and-dispatch-deploy]
     if: |
       always() &&
@@ -1377,18 +1407,20 @@ jobs:
       # tracked checkout (avoids the accidental-submodule footgun).
       SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
       SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
-      # Home-cluster litellm models are slow: observed repo test needed >25min
-      # (clone+submodules+summary turns). 3600s leaves comfortable headroom.
-      SANDBOX_INTERACTION_TIMEOUT: "3600"
+      # 12-minute cap per sandbox test interaction: all benchmark tasks are
+      # designed to finish well within that on the pinned openrouter model
+      # (observed: basic_smoke ≈1min, repo_changes_summary ≈3min).
+      SANDBOX_INTERACTION_TIMEOUT: "720"
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
       IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
       OPENCODE_PERMISSION_MODE: auto
-      # Pin the benchmark opencode runtime model: deepseek via openrouter.
+      # Pin the benchmark opencode runtime model: nemotron 3.5 lightning (free
+      # tier) via openrouter - matches the sandbox test config.json pins.
       SANDBOX_OPENCODE_PROVIDER: openrouter
-      SANDBOX_OPENCODE_MODEL: deepseek/deepseek-v4-flash-0731
+      SANDBOX_OPENCODE_MODEL: nvidia/nemotron-3.5-lightning:free
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
@@ -1424,6 +1456,11 @@ jobs:
           if [ -z "$summary" ]; then
             echo "::warning::No summary text available; skipping PR comment."
             exit 0
+          fi
+          # Defensive: if the model wrapped the summary in a markdown code
+          # fence, unwrap it so the comment renders the markdown directly.
+          if printf '%s' "$summary" | head -n1 | grep -q '^```'; then
+            summary="$(printf '%s' "$summary" | sed '1d' | sed '${/^```[[:space:]]*$/d}')"
           fi
           if [ "${#summary}" -gt 55000 ]; then
             summary="${summary:0:55000}
@@ -1471,6 +1508,7 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
             ${{ github.workspace }}/.sandbox-results/*.interaction.json
+          include-hidden-files: true
           if-no-files-found: warn
 
   sandbox-tests-summary:
@@ -1484,6 +1522,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.BOT_TOKEN || github.token }}
       BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
       SOURCE_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
       PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
@@ -1493,7 +1532,6 @@ jobs:
         with:
           path: ${{ github.workspace }}/.sandbox-results
           pattern: sandbox-result-*
-          merge-multiple: true
 
       - name: Build and post summary table
         env:
@@ -1505,8 +1543,12 @@ jobs:
           header="| Test | Status | Model | Runtime | Interaction | Notes |"
           sep="|---|---|---|---|---|---|"
           : > /tmp/summary-rows.txt
-          for f in "$results_dir"/*.tsv; do
-            [ -e "$f" ] || continue
+          # Artifacts are extracted per artifact into their own subdirectory
+          # (no merge-multiple: merging multiple artifacts into one directory
+          # has proven lossy in practice). TSV files are single-line; locate
+          # them with find so nested artifact dirs are handled uniformly.
+          for f in $(find "$results_dir" -name '*.tsv' | sort); do
+            artifact_dir="$(dirname "$f")"
             name="$(cut -f1 "$f")"
             status="$(cut -f2 "$f")"
             detail="$(cut -f3 "$f" | tr -d '\t\r\n' | head -c 60)"
@@ -1524,18 +1566,20 @@ jobs:
             # Upload the sanitized interaction export as a gist so reviewers can
             # open the full chat in the interaction renderer without login.
             interaction_link="-"
-            export_file="$results_dir/${name}.interaction.json"
+            export_file="$artifact_dir/${name}.interaction.json"
             if [ -s "$export_file" ] && jq -e . "$export_file" >/dev/null 2>&1; then
-              raw_url="$(curl -fsSL -X POST \
-                -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              gist_code="$(curl -sS -o /tmp/gist-resp.json -w '%{http_code}' -X POST \
+                -H "Authorization: Bearer ${GIST_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/gists" \
                 -d "$(jq -n --arg content "$(cat "$export_file")" \
-                  '{files:{"interaction.json":{content: $content}}}')" \
-                | jq -r '.files["interaction.json"].raw_url // empty')" || true
+                  '{files:{"interaction.json":{content: $content}}}')")" || gist_code="curl-error"
+              raw_url="$(jq -r '.files["interaction.json"].raw_url // empty' /tmp/gist-resp.json 2>/dev/null || true)"
               if [ -n "$raw_url" ]; then
                 encoded_raw_url="$(jq -Rr @uri <<< "$raw_url")"
                 interaction_link="[open](${RENDERER_BASE}/interaction_renderer/?url=${encoded_raw_url})"
+              else
+                echo "::warning::Could not create gist for ${name} interaction export (http=${gist_code}; token may lack gist scope). Response: $(head -c 300 /tmp/gist-resp.json 2>/dev/null || true)"
               fi
             fi
             if [ "$status" = "passed" ]; then
@@ -1646,7 +1690,10 @@ jobs:
       - name: Enforce test label and passing tests
         run: |
           set -euo pipefail
-          if ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test)'; then
+          # Production promotion PRs run the full suite without relying on
+          # labels (burst label-adds race with the event payload snapshot).
+          if [ "${{ github.event.pull_request.base.ref }}" != "production" ] &&
+             ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test)'; then
             echo "::error::PR is missing the required test label."
             exit 1
           fi

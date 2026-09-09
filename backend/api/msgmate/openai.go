@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+// TokenUsage describes the token accounting returned by a provider for a
+// single completion request.
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type ToolCall struct {
 	ToolName  string
 	ToolInput interface{}
@@ -102,19 +110,11 @@ func isConfirmActionPayload(raw string) bool {
 	return typeValue == "confirm-action"
 }
 
-func toolRequest(host string, model string, backend string, messages []map[string]string, tools []interface{}, apiKey string) (<-chan ToolCallsResult, <-chan *struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}, <-chan error) {
+func toolRequest(host string, model string, backend string, messages []map[string]string, tools []interface{}, apiKey string) (<-chan ToolCallsResult, <-chan *TokenUsage, <-chan error) {
 	// Channel for tool calls result
 	toolCallsChan := make(chan ToolCallsResult)
 	// Channel for usage info
-	usageChan := make(chan *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	})
+	usageChan := make(chan *TokenUsage)
 	// Channel for errors
 	errChan := make(chan error, 1)
 
@@ -191,11 +191,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 					} `json:"tool_calls"`
 				} `json:"message"`
 			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			} `json:"usage"`
+			Usage *TokenUsage `json:"usage"`
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
@@ -254,17 +250,11 @@ func streamChatCompletion(
 	interactionCompleteTools []string,
 	handler *MsgmateHandler,
 	samplingParams SamplingParams,
-) (<-chan string, <-chan *struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}, <-chan ToolCall, <-chan error) {
+	retryOpts ProviderRetryOptions,
+	meta providerRequestMeta,
+) (<-chan string, <-chan *TokenUsage, <-chan ToolCall, <-chan error) {
 	chunkChan := make(chan string)
-	usageChan := make(chan *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	})
+	usageChan := make(chan *TokenUsage)
 	toolChan := make(chan ToolCall)
 	errChan := make(chan error, 1)
 
@@ -324,6 +314,8 @@ func streamChatCompletion(
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
+		var toolCallResult *toolCallResult
+		var err error
 
 		for {
 			if totalToolCalls >= toolCallMaxTotal {
@@ -335,15 +327,48 @@ func streamChatCompletion(
 				return
 			}
 
-			// Make initial request
+			// Make initial request (with provider retries when enabled).
 			fmt.Println("\n=== STARTING NEW REQUEST ROUND ===")
 			fmt.Printf("Current tool-call counts: total=%d/%d failed=%d/%d\n", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
-			toolCallResult, err := processStreamingRequest(
-				host, model, backend, currentMessages, tools, toolMap, apiKey,
-				executedToolResults,
-				chunkChan, usageChan, toolChan, errChan,
-				samplingParams,
-			)
+			maxAttempts := effectiveProviderRetryAttempts(retryOpts)
+			attempts := 0
+			for {
+				attempts++
+				toolCallResult, err = processStreamingRequest(
+					host, model, backend, currentMessages, tools, toolMap, apiKey,
+					executedToolResults,
+					chunkChan, usageChan, toolChan, errChan,
+					samplingParams,
+					providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts},
+				)
+				if err == nil {
+					break
+				}
+				// Never retry mid-stream failures (they may have already
+				// emitted partial output) or context-window errors (they have
+				// their own trim-and-retry handling below).
+				if isContextWindowExceededError(err) || !isPreStreamProviderFailure(err) || !isRetryableProviderRequestError(err) {
+					break
+				}
+				if attempts >= maxAttempts {
+					break
+				}
+				delay := providerRetryBackoffDelay(attempts, retryOpts.BaseBackoff, retryOpts.MaxBackoff)
+				retryAt := time.Now().Add(delay)
+				log.Printf(
+					"Provider request failed (attempt %d/%d): %v; retrying in %s",
+					attempts, maxAttempts, err, delay,
+				)
+				if retryOpts.OnRetryAttempt != nil {
+					retryOpts.OnRetryAttempt(attempts, maxAttempts, err, retryAt)
+				}
+				time.Sleep(delay)
+			}
+			// Record how many attempts were made so the final error message
+			// can describe the retries.
+			if preErr, ok := err.(*ProviderRequestError); ok {
+				preErr.Attempts = attempts
+			}
 			if err != nil && isContextWindowExceededError(err) {
 				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
 				if trimmed {
@@ -358,6 +383,7 @@ func streamChatCompletion(
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
 						samplingParams,
+						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
 					)
 				}
 			}
@@ -549,6 +575,7 @@ type toolCallResult struct {
 	error             string
 	err               error
 	aiResponse        string
+	usage             *TokenUsage
 }
 
 func processStreamingRequest(
@@ -559,14 +586,11 @@ func processStreamingRequest(
 	apiKey string,
 	executedToolResults map[string]string,
 	chunkChan chan<- string,
-	usageChan chan<- *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	},
+	usageChan chan<- *TokenUsage,
 	toolChan chan<- ToolCall,
 	errChan chan<- error,
 	samplingParams SamplingParams,
+	meta providerRequestMeta,
 ) (*toolCallResult, error) {
 	if backend == "testbackend" {
 		reader, err := buildTestBackendStreamingReader(messages, toolMap)
@@ -591,14 +615,39 @@ func processStreamingRequest(
 	}
 	applySamplingParamsToRequestBody(requestBody, samplingParams, backend, model)
 
+	middlewareCtx := &ProviderRequestContext{
+		ChatUUID:    meta.ChatUUID,
+		Endpoint:    host,
+		Backend:     backend,
+		Model:       model,
+		TrackUsage:  meta.TrackUsage,
+		RequestBody: requestBody,
+	}
+	runProviderRequestMiddleware(middlewareCtx)
+
+	requestStart := time.Now()
+	reportOutcome := func(statusCode int, requestErr error, usage *TokenUsage, response map[string]interface{}) {
+		reportProviderRequestResult(
+			middlewareCtx,
+			meta.Attempt,
+			statusCode,
+			requestErr,
+			time.Since(requestStart),
+			usage,
+			response,
+		)
+	}
+
 	// Setup request
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
+		reportOutcome(0, fmt.Errorf("failed to marshal request body: %w", err), nil, nil)
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
 	if err != nil {
+		reportOutcome(0, fmt.Errorf("failed to create request: %w", err), nil, nil)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -608,17 +657,56 @@ func processStreamingRequest(
 	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		reportOutcome(0, fmt.Errorf("request failed: %w", err), nil, nil)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("non-200 response: %d %s", resp.StatusCode, string(bodyBytes))
+		reportOutcome(resp.StatusCode, &ProviderRequestError{
+			StatusCode: resp.StatusCode,
+			Body:       string(bodyBytes),
+			Attempts:   1,
+		}, nil, nil)
+		return nil, &ProviderRequestError{
+			StatusCode: resp.StatusCode,
+			Body:       string(bodyBytes),
+			Attempts:   1,
+		}
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	return processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+	result, streamErr := processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+
+	var usage *TokenUsage
+	var response map[string]interface{}
+	if result != nil {
+		usage = result.usage
+		response = map[string]interface{}{
+			"used_tool":       result.usedTool,
+			"stop_after_tool": result.stopAfterTool,
+		}
+		if result.aiResponse != "" {
+			response["content"] = result.aiResponse
+		}
+		if result.toolName != "" {
+			toolCallRepr := map[string]interface{}{
+				"id":        result.id,
+				"name":      result.toolName,
+				"arguments": result.arguments,
+				"result":    result.result,
+				"status":    result.status,
+			}
+			if strings.TrimSpace(result.error) != "" {
+				toolCallRepr["error"] = result.error
+			}
+			response["tool_call"] = toolCallRepr
+		}
+	}
+	reportOutcome(0, streamErr, usage, response)
+
+	return result, streamErr
 }
 
 func normalizeMessagesForBackend(messages []map[string]interface{}, backend string) []map[string]interface{} {
@@ -710,11 +798,7 @@ func processStreamingResponseReader(
 	toolMap map[string]Tool,
 	executedToolResults map[string]string,
 	chunkChan chan<- string,
-	usageChan chan<- *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	},
+	usageChan chan<- *TokenUsage,
 	toolChan chan<- ToolCall,
 ) (*toolCallResult, error) {
 	result := &toolCallResult{}
@@ -751,11 +835,7 @@ func processStreamingResponseReader(
 					ToolCalls []interface{} `json:"tool_calls"`
 				} `json:"delta"`
 			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			} `json:"usage"`
+			Usage *TokenUsage `json:"usage"`
 		}
 
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -763,6 +843,7 @@ func processStreamingResponseReader(
 		}
 
 		if chunk.Usage != nil {
+			result.usage = chunk.Usage
 			usageChan <- chunk.Usage
 		}
 

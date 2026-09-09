@@ -83,11 +83,7 @@ func TestProcessStreamingResponseReader_ExecutesDynamicRESTToolCall(t *testing.T
 	}, "\n")
 
 	chunkChan := make(chan string, 4)
-	usageChan := make(chan *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	}, 2)
+	usageChan := make(chan *TokenUsage, 2)
 	toolChan := make(chan ToolCall, 2)
 
 	result, err := processStreamingResponseReader(
