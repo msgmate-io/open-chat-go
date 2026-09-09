@@ -231,6 +231,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
 	samplingParams := samplingParamsFromConfig(configMap)
 	providerRetryOptions := providerRetryOptionsFromConfig(configMap)
+	trackUsage := mapGetOrDefault[bool](configMap, "track_usage", false)
 	if providerRetryOptions.Enabled {
 		providerRetryOptions.OnRetryAttempt = aih.makeProviderRetryReporter(message.Content.ChatUUID)
 	}
@@ -292,6 +293,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		GetGlobalMsgmateHandler(),
 		samplingParams,
 		providerRetryOptions,
+		providerRequestMeta{ChatUUID: message.Content.ChatUUID, TrackUsage: trackUsage},
 	)
 
 	// Process the streaming response
@@ -615,11 +617,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 }
 
 // processStreamingResponse processes the streaming response from the AI
-func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
+func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
 	var allToolCalls []interface{}
 	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
 	var reasoningEntries []string
@@ -630,12 +628,39 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var hadToolCall bool
 	var currentBuffer strings.Builder
 	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
-	thinkTagPattern := regexp.MustCompile(`(?is)<think>(.*?)</think>`)
-	var tokenUsage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+	var partialSeq int64
+	nextPartialSeq := func() int64 {
+		partialSeq++
+		return partialSeq
 	}
+	streamSnapshot := newPartialMessagePersister(
+		message.Content.ChatUUID,
+		partialSessionID,
+		aih.botContext.BotUser.ID,
+	)
+	persistStreamSnapshot := func() {
+		entries := reasoningEntries
+		if inProgress := strings.TrimSpace(currentThoughtStep.String()); inProgress != "" {
+			entries = make([]string, len(reasoningEntries)+1)
+			copy(entries, reasoningEntries)
+			entries[len(reasoningEntries)] = inProgress
+		}
+		streamSnapshot.snapshot(partialSeq, fullText.String()+currentBuffer.String(), entries, allToolCalls)
+	}
+	flushStreamSnapshot := func() {
+		entries := reasoningEntries
+		if inProgress := strings.TrimSpace(currentThoughtStep.String()); inProgress != "" {
+			entries = make([]string, len(reasoningEntries)+1)
+			copy(entries, reasoningEntries)
+			entries[len(reasoningEntries)] = inProgress
+		}
+		streamSnapshot.flushNow(partialSeq, fullText.String()+currentBuffer.String(), entries, allToolCalls)
+	}
+	disposeStreamSnapshot := func() {
+		streamSnapshot.dispose()
+	}
+	thinkTagPattern := regexp.MustCompile(`(?is)<think>(.*?)</think>`)
+	var tokenUsage *TokenUsage
 
 	aih.botContext.WSHandler.MessageHandler.SendMessage(
 		aih.botContext.WSHandler,
@@ -757,6 +782,8 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		totalTime := time.Since(startTime)
 
 		finalizePartial()
+		flushStreamSnapshot()
+		disposeStreamSnapshot()
 
 		text, extractedThoughts := extractThinkSections(fullText.String())
 		appendThoughtEntries(extractedThoughts)
@@ -872,6 +899,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		totalTime := time.Since(startTime)
 		if reasoning {
 			thinkingElapsed := currentThinkingDuration()
+			seq := nextPartialSeq()
 			aih.botContext.WSHandler.MessageHandler.SendMessage(
 				aih.botContext.WSHandler,
 				message.Content.SenderUUID,
@@ -879,6 +907,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					message.Content.ChatUUID,
 					message.Content.SenderUUID,
 					partialSessionID,
+					seq,
 					chunk,
 					[]string{""},
 					&map[string]interface{}{
@@ -890,9 +919,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					nil,
 				),
 			)
+			persistStreamSnapshot()
 			return
 		}
 
+		seq := nextPartialSeq()
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -900,6 +931,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				message.Content.ChatUUID,
 				message.Content.SenderUUID,
 				partialSessionID,
+				seq,
 				chunk,
 				[]string{},
 				&map[string]interface{}{
@@ -910,6 +942,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				nil,
 			),
 		)
+		persistStreamSnapshot()
 	}
 
 	sendThinkingChunk := func(chunk string) {
@@ -920,6 +953,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		currentThoughtStep.WriteString(chunk)
 		totalTime := time.Since(startTime)
 		thinkingElapsed := currentThinkingDuration()
+		seq := nextPartialSeq()
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -927,6 +961,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				message.Content.ChatUUID,
 				message.Content.SenderUUID,
 				partialSessionID,
+				seq,
 				"",
 				[]string{chunk},
 				&map[string]interface{}{
@@ -938,6 +973,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				nil,
 			),
 		)
+		persistStreamSnapshot()
 	}
 
 	processChunk := func(chunk string) {
@@ -1093,6 +1129,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if len(confirmableActions) > 0 {
 					partialMeta["confirmable_actions"] = confirmableActions
 				}
+				seq := nextPartialSeq()
 				aih.botContext.WSHandler.MessageHandler.SendMessage(
 					aih.botContext.WSHandler,
 					message.Content.SenderUUID,
@@ -1100,6 +1137,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						message.Content.ChatUUID,
 						message.Content.SenderUUID,
 						partialSessionID,
+						seq,
 						"",
 						[]string{""},
 						&partialMeta,
@@ -1107,6 +1145,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						nil,
 					),
 				)
+				persistStreamSnapshot()
 			}
 		case err, ok := <-errs:
 			if ok && err != nil {
@@ -1261,6 +1300,7 @@ func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMa
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
 			partialSessionID,
+			0,
 			"",
 			[]string{""},
 			&map[string]interface{}{

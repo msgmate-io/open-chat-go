@@ -33,6 +33,7 @@ type NewPartialMessage struct {
 		ChatUUID    string                  `json:"chat_uuid"`
 		SenderUUID  string                  `json:"sender_uuid"`
 		SessionID   string                  `json:"session_id,omitempty"`
+		Seq         int64                   `json:"seq,omitempty"`
 		Text        string                  `json:"text"`
 		Reasoning   []string                `json:"reasoning"`
 		MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
@@ -129,13 +130,14 @@ func (m *Messages) EndPartialMessage(ChatUUID, SenderUUID, SessionID string) []b
 	return encMsg
 }
 
-func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, SessionID, Text string, Reasoning []string, MetaData *map[string]interface{}, ToolCalls *[]interface{}, Attachments *[]FileAttachment) []byte {
+func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, SessionID string, Seq int64, Text string, Reasoning []string, MetaData *map[string]interface{}, ToolCalls *[]interface{}, Attachments *[]FileAttachment) []byte {
 	msg := NewPartialMessage{
 		Type: "new_partial_message",
 		Content: struct {
 			ChatUUID    string                  `json:"chat_uuid"`
 			SenderUUID  string                  `json:"sender_uuid"`
 			SessionID   string                  `json:"session_id,omitempty"`
+			Seq         int64                   `json:"seq,omitempty"`
 			Text        string                  `json:"text"`
 			Reasoning   []string                `json:"reasoning"`
 			MetaData    *map[string]interface{} `json:"meta_data,omitempty"`
@@ -145,6 +147,7 @@ func (m *Messages) NewPartialMessage(ChatUUID, SenderUUID, SessionID, Text strin
 			ChatUUID:    ChatUUID,
 			SenderUUID:  SenderUUID,
 			SessionID:   SessionID,
+			Seq:         Seq,
 			Text:        Text,
 			Reasoning:   Reasoning,
 			MetaData:    MetaData,
