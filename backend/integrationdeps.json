@@ -98,6 +98,15 @@
       "local_path": "clients/docker_sandbox_integration",
       "default_enabled": true,
       "private": false
+    },
+    {
+      "module": "github.com/msgmate-io/git-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/git-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/git_integration",
+      "default_enabled": true,
+      "private": false
     }
   ]
 }

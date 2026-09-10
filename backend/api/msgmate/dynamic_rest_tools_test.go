@@ -175,7 +175,7 @@ func TestDynamicRESTToolCensorsConfiguredResponseFields(t *testing.T) {
 	}`, server.URL)
 
 	safetyJSON, err := json.Marshal(map[string]interface{}{
-		"allow_private_ips":      true,
+		"allow_private_ips":     true,
 		"response_censor_paths": []string{"token", "user.ssn", "users.*.email"},
 	})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestDynamicRESTToolRejectsCensorOnNonJSONResponse(t *testing.T) {
 	}`, server.URL)
 
 	safetyJSON, err := json.Marshal(map[string]interface{}{
-		"allow_private_ips":      true,
+		"allow_private_ips":     true,
 		"response_censor_paths": []string{"token"},
 	})
 	if err != nil {

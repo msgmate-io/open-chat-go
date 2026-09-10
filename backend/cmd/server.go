@@ -227,16 +227,6 @@ func GetServerFlags() []cli.Flag {
 			Name:    "add-ssh-default-owner",
 			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
 		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("ADD_OPENCODE_PROJECTS_FROM_CONFIG"),
-			Name:    "add-opencode-projects-from-config",
-			Usage:   "path(s) or inline JSON object/array defining opencode projects; can be repeated",
-		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("ADD_OPENCODE_DEFAULT_OWNER"),
-			Name:    "add-opencode-default-owner",
-			Usage:   "default opencode bootstrap owner username/email/name; can be repeated",
-		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
 			Name:    "extra-models-json",
@@ -605,14 +595,6 @@ func ServerCli() *cli.Command {
 					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
 					Sensitive: false,
 				},
-				"ADD_OPENCODE_PROJECTS_FROM_CONFIG": {
-					Value:     strings.Join(c.StringSlice("add-opencode-projects-from-config"), ","),
-					Sensitive: true,
-				},
-				"ADD_OPENCODE_DEFAULT_OWNER": {
-					Value:     strings.Join(c.StringSlice("add-opencode-default-owner"), ","),
-					Sensitive: false,
-				},
 				"EXTRA_MODELS_JSON": {Value: c.String("extra-models-json"), Sensitive: false},
 				"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
@@ -835,11 +817,11 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			opencodeDefaultOwners := append([]string{}, c.StringSlice("add-opencode-default-owner")...)
-			opencodeDefaultOwners = append(opencodeDefaultOwners, openChatBootstrap.OpencodeDefaultOwners...)
-			opencodeProjectSpecs := append([]string{}, c.StringSlice("add-opencode-projects-from-config")...)
-			opencodeProjectSpecs = append(opencodeProjectSpecs, openChatBootstrap.OpencodeProjectSpecs...)
-			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, opencodeDefaultOwners, opencodeProjectSpecs); err != nil {
+			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs); err != nil {
+				return err
+			}
+
+			if err := applyGitBootstrapSources(DB, adminUser.Username); err != nil {
 				return err
 			}
 
