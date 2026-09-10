@@ -239,11 +239,28 @@ func flattenConfigEnv(cfg openChatConfig) (map[string]string, error) {
 			if envKey == "" {
 				return nil, fmt.Errorf("config integrations.%s.%s does not map to a declared runtime env var", integrationNameRaw, key)
 			}
-			updates[envKey] = fmt.Sprintf("%v", value)
+			updates[envKey] = stringifyConfigValue(value)
 		}
 	}
 
 	return updates, nil
+}
+
+// stringifyConfigValue renders a config value for an env var. Scalar values are
+// rendered like before; objects/arrays are JSON-encoded so integrations can
+// declare list/structured runtime env vars (eg bootstrap specs) via their
+// open-chat.json integrations section.
+func stringifyConfigValue(value interface{}) string {
+	switch value.(type) {
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, nil:
+		return fmt.Sprintf("%v", value)
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Sprintf("%v", value)
+		}
+		return string(encoded)
+	}
 }
 
 func normalizeOwners(raw []string) []string {
