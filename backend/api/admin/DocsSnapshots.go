@@ -577,14 +577,14 @@ func RefreshDocsSnapshotByTag(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(snapshotStatsResponse{
-		Snapshot:    snapshot,
-		TablesCount: tablesCount,
-		Relations:   relationsCount,
-		TagsCount:   tagsCount,
-		OutputPath:  relPath,
+		Snapshot:     snapshot,
+		TablesCount:  tablesCount,
+		Relations:    relationsCount,
+		TagsCount:    tagsCount,
+		OutputPath:   relPath,
 		AbsolutePath: absPath,
 		WrittenBytes: len(jsonBytes) + 1,
 		FileMtime:    fileMtime,
-		GeneratedAt: generatedAt,
+		GeneratedAt:  generatedAt,
 	})
 }
