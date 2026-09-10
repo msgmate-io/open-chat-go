@@ -1423,6 +1423,13 @@ jobs:
       # tier) via openrouter - matches the sandbox test config.json pins.
       SANDBOX_OPENCODE_PROVIDER: openrouter
       SANDBOX_OPENCODE_MODEL: nvidia/nemotron-3.5-lightning:free
+      # gh_pr_comment test: the git integration pre-authenticates the gh CLI on
+      # the sandbox VM with this token and the verification re-reads the posted
+      # comment with it. BOT_TOKEN already has PR comment rights (used by the
+      # summary-posting step); a dedicated secret can override it.
+      SANDBOX_GH_TOKEN: ${{ secrets.SANDBOX_GH_TOKEN || secrets.BOT_TOKEN || github.token }}
+      SANDBOX_GH_PR_REPO: ${{ github.repository }}
+      SANDBOX_GH_PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
