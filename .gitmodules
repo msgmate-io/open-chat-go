@@ -61,3 +61,6 @@
 [submodule "clients/integrations/git_integration"]
 	path = clients/integrations/git_integration
 	url = https://github.com/msgmate-io/open-chat-go-git-integration
+[submodule "clients/integrations/kubernetes_integration"]
+	path = clients/integrations/kubernetes_integration
+	url = https://github.com/msgmate-io/open-chat-go-kubernetes-integration
