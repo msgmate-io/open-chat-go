@@ -82,6 +82,7 @@ env:
   BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
   DEPLOYMENT_PR: msgmate-io-pr-deployment
   DEPLOYMENT_STAGING: msgmate-io-staging
+  DEPLOYMENT_CI: msgmate-io-ci
   DEPLOYMENT_PRODUCTION: msgmate-io-production
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TPL_STEP_ANDROID_RELEASE: '- [ ] ~~`(6) android release` `skipped`~~'
@@ -2525,6 +2526,7 @@ jobs:
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
+      ci_deployment_name: ${{ steps.context.outputs.ci_deployment_name }}
       target_ref: ${{ steps.context.outputs.target_ref }}
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_url: ${{ steps.context.outputs.deployment_url }}
@@ -2553,6 +2555,7 @@ jobs:
 
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
+          echo "ci_deployment_name=${{ env.DEPLOYMENT_CI }}" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
           echo "ci_repository=$CI_REPOSITORY_DEFAULT" >> "$GITHUB_OUTPUT"
           echo "deployment_url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
@@ -3061,6 +3064,161 @@ jobs:
         timeout-minutes: 25
         env:
           DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+        run: |
+          set -euo pipefail
+          trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
+
+          interruptible_sleep() {
+            local remaining="$1"
+            while [ "$remaining" -gt 0 ]; do
+              sleep 1
+              remaining=$((remaining - 1))
+            done
+          }
+
+          github_api_get() {
+            curl -fsSL --connect-timeout 10 --max-time 30 \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$1"
+          }
+
+          ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_url=""
+          expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+
+          for attempt in $(seq 1 40); do
+            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+              [
+                .workflow_runs[]
+                | select((.display_title // .name // "") | endswith($dispatch_id))
+                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                | @tsv
+              ][0] // ""
+            ' <<< "$runs_json")"
+
+            if [ -z "$run_line" ]; then
+              echo "Attempt $attempt/40: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
+              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
+                echo "Recent CI workflow titles:"
+                jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
+              fi
+              interruptible_sleep 15
+              continue
+            fi
+
+            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            echo "Attempt $attempt/40: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
+            if [ "$run_status" != "completed" ]; then
+              interruptible_sleep 15
+              continue
+            fi
+
+            echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
+            if [ "$run_conclusion" = "success" ]; then
+              exit 0
+            fi
+            echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
+            exit 1
+          done
+
+          echo "Timed out waiting for dispatched CI deployment workflow."
+          if [ -n "$run_url" ]; then
+            echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
+          fi
+          exit 1
+
+  dispatch-merged-ci-deployment:
+    name: Dispatch Merged CI Deployment
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment]
+    if: |
+      needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
+      needs.resolve-merged-deployment.outputs.merge_target == 'main'
+    concurrency:
+      group: merged-deploy-dispatch-${{ needs.resolve-merged-deployment.outputs.ci_deployment_name }}
+      cancel-in-progress: true
+    environment:
+      name: ${{ needs.resolve-merged-deployment.outputs.ci_deployment_name }}
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      CI_REF: ${{ vars.CI_REF || 'main' }}
+      DISPATCH_RUN_ID: ci-merged-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Cancel superseded CI deployment runs for this branch
+        env:
+          CI_REPO: ${{ needs.resolve-merged-deployment.outputs.ci_repository }}
+          DEPLOYMENT_NAME: ${{ env.DEPLOYMENT_CI }}
+        run: |
+          set -euo pipefail
+          for status in in_progress queued; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
+            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+              '.workflow_runs[]
+              | select((.display_title // "") | startswith("Deploy " + $deployment))
+              | select((.display_title // "") | contains("PR#") | not)
+              | .id' <<< "$runs_json" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "Cancelling superseded CI deployment run ${run_id} (${status})."
+                curl -fsSL -X POST \
+                  -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${CI_REPO}/actions/runs/${run_id}/cancel" \
+                  >/dev/null || true
+              fi
+            done
+          done
+
+      - name: Dispatch deployment workflow in CI repository
+        run: |
+          set -euo pipefail
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg deploymentName "${{ env.DEPLOYMENT_CI }}" \
+              --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg sourceRepository "${{ github.repository }}" \
+              --arg botUser "$BOT_USER" \
+              --arg dispatchRunId "$DISPATCH_RUN_ID" \
+              '{
+                ref: $ref,
+                inputs: {
+                  DEPLOYMENT_NAME: $deploymentName,
+                  TARGET_REF: $targetRef,
+                  SOURCE_REPOSITORY: $sourceRepository,
+                  SOURCE_PR_NUMBER: "",
+                  BOT_USER: $botUser,
+                  DISPATCH_RUN_ID: $dispatchRunId
+                }
+              }'
+          )"
+          echo "Dispatching CI deploy with run id suffix: ${DISPATCH_RUN_ID}"
+          status_code="$(curl -s -o /tmp/merged_ci_deploy_dispatch.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ needs.resolve-merged-deployment.outputs.ci_repository }}/actions/workflows/test-api-deploy.yaml/dispatches" \
+            -d "$payload")"
+          if [ "$status_code" != "204" ]; then
+            echo "::error::Failed to dispatch merged CI deploy workflow (status $status_code)."
+            cat /tmp/merged_ci_deploy_dispatch.json || true
+            exit 1
+          fi
+
+      - name: Wait for dispatched CI deployment workflow
+        id: wait_ci_deploy
+        timeout-minutes: 25
+        env:
+          DEPLOYMENT_NAME: ${{ env.DEPLOYMENT_CI }}
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
