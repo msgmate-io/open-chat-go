@@ -22,6 +22,12 @@ import (
 //	problems := nativecoder.ValidateDevSetupMatrix(plans) // defects
 //	gaps := nativecoder.DevSetupMatrixGaps(plans)         // repos without a plan
 //
+// For a repository the table does cover, the generated sandbox set-up script
+// pre-pulls the repo's submodules up front (DevSetupScript: the `git submodule
+// update --init --recursive` block right after the sandbox environment lines)
+// so the integration profile set-up can materialize the batteries-included
+// checkouts — the private CI tooling, the Helm chart and the mobile client —
+// before the LLM starts working.
 // RenderDevSetupMatrixMarkdown renders the same data as the operator-facing
 // table, and the unit test keeps the public profile list, the per-repo default
 // table and the sandbox palette from drifting apart. Like the sibling plan
