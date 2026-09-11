@@ -290,8 +290,16 @@ func mcpSessionKey(config mcpIntegrationConfig, auth map[string]interface{}) str
 	io.WriteString(digest, config.Transport)
 	io.WriteString(digest, "\x00")
 	io.WriteString(digest, config.URL)
-	for name, value := range parseMCPAuthHeaders(auth) {
-		io.WriteString(digest, "\x00"+name+"="+value)
+	// Map iteration order is non-deterministic; sort the header names so the
+	// same auth input always yields the same session key.
+	authHeaders := parseMCPAuthHeaders(auth)
+	names := make([]string, 0, len(authHeaders))
+	for name := range authHeaders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		io.WriteString(digest, "\x00"+name+"="+authHeaders[name])
 	}
 	return hex.EncodeToString(digest.Sum(nil))
 }
