@@ -163,6 +163,24 @@ func TestDevSetupScriptWarnsWhenUnprovisionable(t *testing.T) {
 	}
 }
 
+// TestDevSetupScriptSubmodulePrePull pins the ci#756 submodule pre-pull: the
+// script must materialize the repo's submodules before the integration profile
+// set-up runs, guard the pull on a `.gitmodules` file so a submodule-absorbed
+// revision does not fail the sandbox, and degrade to the upstream discovery in
+// build_tools.sh when `git` is not present in the freshly-cloned image.
+func TestDevSetupScriptSubmodulePrePull(t *testing.T) {
+	script := DevSetupScript(DevSetupSpecForRepo("msgmate-io/open-chat-go"))
+	if !strings.Contains(script, "git submodule update --init --recursive") {
+		t.Fatalf("script must pre-pull the repository's submodules, got %q", script)
+	}
+	if !strings.Contains(script, `command -v git >/dev/null 2>&1`) {
+		t.Fatal("submodule pull must degrade when git is absent from the image")
+	}
+	if !strings.Contains(script, "submodule pull failed; continuing with upstream discovery") {
+		t.Fatal("a failed recursive submodule pull must warn and continue instead of failing the sandbox")
+	}
+}
+
 // TestDevSetupScriptIsValidShell parses every generated variant with the shell
 // it will actually run under. The set-up script is assembled from many string
 // fragments (quoting, `for` loops, `$(...)`), so a typo would only surface as an
