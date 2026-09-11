@@ -1437,6 +1437,11 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # Full history: the repo_changes_summary benchmark summarizes the
+          # last 3 commits from the pre-staged sandbox clone; a shallow
+          # checkout would surface a single grafted root commit (full tree
+          # diff) instead of the real commit history.
+          fetch-depth: 0
 
       - name: Login to GHCR for backend image pull
         run: |
