@@ -9,6 +9,7 @@ import (
 	_ "github.com/msgmate-io/email-integration"
 	_ "github.com/msgmate-io/git-integration"
 	_ "github.com/msgmate-io/go-client-integration"
+	_ "github.com/msgmate-io/kubernetes-integration"
 	_ "github.com/msgmate-io/matrix-integration"
 	_ "github.com/msgmate-io/mcp-integration"
 	_ "github.com/msgmate-io/opencode-integration"
