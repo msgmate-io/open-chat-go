@@ -781,6 +781,10 @@ submodule). Only the public submodules are checked out with the clone (the Go
 interfaces, the Python/JS clients and the build-tools). Private repositories
 (the private integrations manifest / CI, the Helm chart, the mobile client and
 the LLM coding context) are materialized on demand by the profile setup step.
+The native coder sandbox set-up script pre-pulls the repository's public
+submodules (guarded on `.gitmodules` and on `git` being present) before that
+profile step runs, so the agent starts on a fully materialized checkout
+(see `backend/nativecoder/devsetup.go`, `DevSetupScript`).
 
 ```bash
 git clone --recurse-submodules https://github.com/msgmate-io/open-chat-go.git
@@ -819,7 +823,11 @@ python3 -m venv .venv
   profile membership ships from the private `ci` repository, the generated
   coder set-up script retries `full-ci` when the manifest does not know
   `full-development` yet (see *Coding-agent and sandbox documentation is
-  private* above).
+  private* above). The generated script also pre-pulls the repository's
+  submodules (`git submodule update --init --recursive`, guarded on both a
+  `.gitmodules` file and `git` being present) before the profile set-up runs,
+  so the batteries-included checkouts are materialized before the LLM starts
+  working (see `backend/nativecoder/devsetup.go`, `DevSetupScript`).
 - The per-repo default is configurable per bot or interaction: a
   `coder_dev_setup` map may carry a `profiles` table next to its `profile`
   default (`profiles: {msgmate-io/open-chat-go: full-development,
