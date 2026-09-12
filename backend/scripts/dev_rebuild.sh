@@ -174,6 +174,22 @@ then
   append_go_tag "gitintegration"
 fi
 
+if python3 - "$EFFECTIVE_INTEGRATION_MANIFEST" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+modules = {
+    str(dep.get("module", "")).strip()
+    for dep in data.get("dependencies", [])
+    if isinstance(dep, dict)
+}
+sys.exit(0 if "github.com/msgmate-io/kubernetes-integration" in modules else 1)
+PY
+then
+  append_go_tag "kubernetesintegration"
+fi
+
 if [[ -n "$GO_TAGS" ]]; then
   export GOFLAGS="${GOFLAGS} -tags=${GO_TAGS}"
 fi
