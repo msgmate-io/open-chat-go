@@ -75,5 +75,131 @@
       "system_prompt": "You are a helpful assistant.",
       "temperature": 0.7
     }
+  },
+  {
+    "title": "gpt-5.6-luna",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-luna",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "gpt-5.6-sol",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.6-sol",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "gpt-5.5",
+    "description": "Auto-discovered model from openai provider.",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openai",
+      "context": 10,
+      "endpoint": "https://api.openai.com/v1",
+      "max_tokens": 4096,
+      "model": "gpt-5.5",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "deepseek/deepseek-v4-flash-0731",
+    "description": "DeepSeek V4 Flash 0731 is a sparse mixture-of-experts model from DeepSeek, with 13B active parameters out of 284B total. This re-post-trained revision is suited for coding, reasoning, and agent workflows....",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openrouter",
+      "context": 10,
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_tokens": 4096,
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "nvidia/nemotron-3.5-lightning",
+    "description": "NVIDIA Nemotron 3.5 Lightning is an open mixture-of-experts model from NVIDIA, with 3B active parameters out of 30B total. It is suited for high-throughput agentic workloads and specialized tasks that...",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openrouter",
+      "context": 10,
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_tokens": 4096,
+      "model": "nvidia/nemotron-3.5-lightning",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "nvidia/nemotron-3.5-lightning:free",
+    "description": "NVIDIA Nemotron 3.5 Lightning is an open mixture-of-experts model from NVIDIA, with 3B active parameters out of 30B total. It is suited for high-throughput agentic workloads and specialized tasks that...",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openrouter",
+      "context": 10,
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_tokens": 4096,
+      "model": "nvidia/nemotron-3.5-lightning:free",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
+  },
+  {
+    "title": "deepseek/deepseek-v4-flash",
+    "description": "DeepSeek V4 Flash is an efficiency-optimized Mixture-of-Experts model from DeepSeek with 284B total parameters and 13B activated parameters, supporting a 1M-token context window. It is designed for fast inference and...",
+    "bot_usernames": [
+      "bot"
+    ],
+    "is_public": true,
+    "configuration": {
+      "backend": "openrouter",
+      "context": 10,
+      "endpoint": "https://openrouter.ai/api/v1",
+      "max_tokens": 4096,
+      "model": "deepseek/deepseek-v4-flash",
+      "reasoning": true,
+      "system_prompt": "You are a helpful assistant.",
+      "temperature": 0.7
+    }
   }
 ]

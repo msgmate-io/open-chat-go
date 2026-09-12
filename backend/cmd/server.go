@@ -227,16 +227,6 @@ func GetServerFlags() []cli.Flag {
 			Name:    "add-ssh-default-owner",
 			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
 		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("ADD_OPENCODE_PROJECTS_FROM_CONFIG"),
-			Name:    "add-opencode-projects-from-config",
-			Usage:   "path(s) or inline JSON object/array defining opencode projects; can be repeated",
-		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("ADD_OPENCODE_DEFAULT_OWNER"),
-			Name:    "add-opencode-default-owner",
-			Usage:   "default opencode bootstrap owner username/email/name; can be repeated",
-		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
 			Name:    "extra-models-json",
@@ -605,14 +595,6 @@ func ServerCli() *cli.Command {
 					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
 					Sensitive: false,
 				},
-				"ADD_OPENCODE_PROJECTS_FROM_CONFIG": {
-					Value:     strings.Join(c.StringSlice("add-opencode-projects-from-config"), ","),
-					Sensitive: true,
-				},
-				"ADD_OPENCODE_DEFAULT_OWNER": {
-					Value:     strings.Join(c.StringSlice("add-opencode-default-owner"), ","),
-					Sensitive: false,
-				},
 				"EXTRA_MODELS_JSON": {Value: c.String("extra-models-json"), Sensitive: false},
 				"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
@@ -640,6 +622,8 @@ func ServerCli() *cli.Command {
 				"LITELLM_API_HOST":                  {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"MSGMATE_CLUSTER_API_KEY":           {Value: os.Getenv("MSGMATE_CLUSTER_API_KEY"), Sensitive: true},
 				"MSGMATE_CLUSTER_HOST":              {Value: os.Getenv("MSGMATE_CLUSTER_HOST"), Sensitive: true},
+				"OPENROUTER_API_KEY":                {Value: os.Getenv("OPENROUTER_API_KEY"), Sensitive: true},
+				"IONOS_API_KEY":                     {Value: os.Getenv("IONOS_API_KEY"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY":                {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
 					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
@@ -711,6 +695,7 @@ func ServerCli() *cli.Command {
 				Debug:    c.Bool("debug"),
 				ResetDB:  c.Bool("reset-db"),
 			})
+			database.SetGlobalDB(DB)
 
 			if err := database.SeedModelConfigs(DB); err != nil {
 				return err
@@ -809,7 +794,9 @@ func ServerCli() *cli.Command {
 				return err
 			}
 			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			integrationBotConfigs := make([]botBootstrapConfig, 0, len(integrationBotDecls))
 			for _, decl := range integrationBotDecls {
+				integrationBotConfigs = append(integrationBotConfigs, decl.Config)
 				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
 				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
 					return err
@@ -830,11 +817,15 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			opencodeDefaultOwners := append([]string{}, c.StringSlice("add-opencode-default-owner")...)
-			opencodeDefaultOwners = append(opencodeDefaultOwners, openChatBootstrap.OpencodeDefaultOwners...)
-			opencodeProjectSpecs := append([]string{}, c.StringSlice("add-opencode-projects-from-config")...)
-			opencodeProjectSpecs = append(opencodeProjectSpecs, openChatBootstrap.OpencodeProjectSpecs...)
-			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, opencodeDefaultOwners, opencodeProjectSpecs); err != nil {
+			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs); err != nil {
+				return err
+			}
+
+			if err := applyGitBootstrapSources(DB, adminUser.Username); err != nil {
+				return err
+			}
+
+			if err := applyKubernetesBootstrapSources(DB, adminUser.Username); err != nil {
 				return err
 			}
 
@@ -850,6 +841,9 @@ func ServerCli() *cli.Command {
 				providerSyncResult.SkippedUnmanaged,
 				providerSyncResult.SkippedInvalid,
 			)
+			if err := syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs); err != nil {
+				return err
+			}
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err

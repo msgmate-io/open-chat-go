@@ -50,7 +50,9 @@ type runContactRow struct {
 }
 
 type runCreateInteractionRequest struct {
-	Message string `json:"message"`
+	Message         string                  `json:"message"`
+	ToolInit        *map[string]interface{} `json:"tool_init,omitempty"`
+	ConfigOverrides map[string]interface{}  `json:"config_overrides,omitempty"`
 }
 
 type runCreateInteractionResponse struct {
@@ -58,9 +60,10 @@ type runCreateInteractionResponse struct {
 }
 
 type runLegacyCreateChatRequest struct {
-	ContactToken string `json:"contact_token"`
-	FirstMessage string `json:"first_message"`
-	ChatType     string `json:"chat_type"`
+	ContactToken string                 `json:"contact_token"`
+	FirstMessage string                 `json:"first_message"`
+	ChatType     string                 `json:"chat_type"`
+	SharedConfig map[string]interface{} `json:"shared_config,omitempty"`
 }
 
 type runLegacyCreateChatResponse struct {
@@ -81,6 +84,80 @@ type runMessageRow struct {
 	SenderIsAutomated bool   `json:"sender_is_automated"`
 	Text              string `json:"text"`
 	DataType          string `json:"data_type"`
+}
+
+type runChatConfig struct {
+	SharedConfig     map[string]interface{}
+	ToolInit         map[string]interface{}
+	ToolInitProvided bool
+	ConfigOverrides  map[string]interface{}
+}
+
+func resolveRunChatConfig(spec string, stdin io.Reader) (runChatConfig, error) {
+	trimmed := strings.TrimSpace(spec)
+	if trimmed == "" {
+		return runChatConfig{}, nil
+	}
+
+	var (
+		raw    []byte
+		source string
+		err    error
+	)
+	if trimmed == "-" {
+		if stdin == nil {
+			return runChatConfig{}, fmt.Errorf("cannot read --chat-config from stdin")
+		}
+		raw, err = io.ReadAll(stdin)
+		source = "stdin"
+	} else {
+		raw, source, err = resolveBootstrapSpecBytes(trimmed)
+	}
+	if err != nil {
+		return runChatConfig{}, fmt.Errorf("failed to resolve --chat-config: %w", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var sharedConfig map[string]interface{}
+	if err := decoder.Decode(&sharedConfig); err != nil {
+		return runChatConfig{}, fmt.Errorf("invalid chat config JSON in %s: expected one object: %w", source, err)
+	}
+	if sharedConfig == nil {
+		return runChatConfig{}, fmt.Errorf("invalid chat config JSON in %s: expected one object", source)
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return runChatConfig{}, fmt.Errorf("invalid chat config JSON in %s: unexpected trailing JSON", source)
+		}
+		return runChatConfig{}, fmt.Errorf("invalid chat config JSON in %s: %w", source, err)
+	}
+
+	overrides := make(map[string]interface{}, len(sharedConfig))
+	for key, value := range sharedConfig {
+		overrides[key] = value
+	}
+	var toolInit map[string]interface{}
+	toolInitProvided := false
+	if rawToolInit, exists := overrides["tool_init"]; exists {
+		toolInitProvided = true
+		var ok bool
+		toolInit, ok = rawToolInit.(map[string]interface{})
+		if !ok {
+			return runChatConfig{}, fmt.Errorf("invalid chat config JSON in %s: tool_init must be an object", source)
+		}
+		delete(overrides, "tool_init")
+	}
+	if len(overrides) == 0 {
+		overrides = nil
+	}
+
+	return runChatConfig{
+		SharedConfig:     sharedConfig,
+		ToolInit:         toolInit,
+		ToolInitProvided: toolInitProvided,
+		ConfigOverrides:  overrides,
+	}, nil
 }
 
 type runHTTPClient struct {
@@ -294,13 +371,14 @@ func resolveBotForRun(ctx context.Context, c *runHTTPClient, identifier string) 
 	return runBotLookup{}, fmt.Errorf("bot not found: %s", identifier)
 }
 
-func createRunInteraction(ctx context.Context, c *runHTTPClient, lookup runBotLookup, message string) (string, error) {
+func createRunInteraction(ctx context.Context, c *runHTTPClient, lookup runBotLookup, message string, chatConfig runChatConfig) (string, error) {
 	if lookup.Legacy {
 		var legacy runLegacyCreateChatResponse
 		_, err := c.requestJSON(ctx, http.MethodPost, "/api/v1/chats/create", runLegacyCreateChatRequest{
 			ContactToken: lookup.ContactToken,
 			FirstMessage: message,
 			ChatType:     "interaction",
+			SharedConfig: chatConfig.SharedConfig,
 		}, &legacy)
 		if err != nil {
 			return "", err
@@ -313,7 +391,15 @@ func createRunInteraction(ctx context.Context, c *runHTTPClient, lookup runBotLo
 
 	var interaction runCreateInteractionResponse
 	path := "/api/v1/bots/" + url.PathEscape(lookup.Identifier) + "/interactions"
-	_, err := c.requestJSON(ctx, http.MethodPost, path, runCreateInteractionRequest{Message: message}, &interaction)
+	var toolInit *map[string]interface{}
+	if chatConfig.ToolInitProvided {
+		toolInit = &chatConfig.ToolInit
+	}
+	_, err := c.requestJSON(ctx, http.MethodPost, path, runCreateInteractionRequest{
+		Message:         message,
+		ToolInit:        toolInit,
+		ConfigOverrides: chatConfig.ConfigOverrides,
+	}, &interaction)
 	if err != nil {
 		return "", err
 	}
@@ -418,6 +504,11 @@ func RunCli() *cli.Command {
 				Sources:  cli.EnvVars("OPEN_CHAT_RUN_MESSAGE"),
 			},
 			&cli.StringFlag{
+				Name:    "chat-config",
+				Usage:   "per-chat JSON object as inline JSON, a file path, or - for stdin",
+				Sources: cli.EnvVars("OPEN_CHAT_RUN_CHAT_CONFIG"),
+			},
+			&cli.StringFlag{
 				Name:    "username",
 				Usage:   "login username (required with --password when no --api-token is provided)",
 				Sources: cli.EnvVars("OPEN_CHAT_RUN_USERNAME"),
@@ -460,6 +551,10 @@ func RunCli() *cli.Command {
 			botIdentifier := strings.TrimSpace(c.String("bot"))
 			if botIdentifier == "" {
 				botIdentifier = "bot"
+			}
+			chatConfig, err := resolveRunChatConfig(c.String("chat-config"), os.Stdin)
+			if err != nil {
+				return err
 			}
 
 			timeoutSeconds := c.Int("timeout-seconds")
@@ -507,7 +602,7 @@ func RunCli() *cli.Command {
 			if err != nil {
 				return err
 			}
-			chatUUID, err := createRunInteraction(ctx, api, lookup, message)
+			chatUUID, err := createRunInteraction(ctx, api, lookup, message, chatConfig)
 			if err != nil {
 				return err
 			}

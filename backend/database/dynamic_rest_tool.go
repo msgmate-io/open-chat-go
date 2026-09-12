@@ -13,7 +13,7 @@ type DynamicRESTTool struct {
 	Description                    string          `json:"description" gorm:"type:text"`
 	AdminOnly                      bool            `json:"admin_only" gorm:"default:false"`
 	RequiresConfirmation           bool            `json:"requires_confirmation" gorm:"default:false"`
-	StopOnFirstConfirmableToolCall bool           `json:"stop_on_first_confirmable_tool_call" gorm:"default:false"`
+	StopOnFirstConfirmableToolCall bool            `json:"stop_on_first_confirmable_tool_call" gorm:"default:false"`
 	ConfirmationBlockMessage       string          `json:"confirmation_block_message" gorm:"type:text"`
 	Enabled                        bool            `json:"enabled" gorm:"default:true;index"`
 	OpenAPISourceType              string          `json:"openapi_source_type" gorm:"size:16"`
