@@ -14,3 +14,16 @@ import (
 func writeBotAPIError(w http.ResponseWriter, status int, code string, message string) {
 	apierror.Write(w, status, code, message)
 }
+
+// writeBotAPIDetailedError writes the same JSON envelope as writeBotAPIError
+// but additionally carries the underlying server-side cause in the detail
+// field. writeCreateInteractionError uses it for the generic 500 so the next
+// Live Runtime Canary run reports the real create-interaction failure instead
+// of an empty body (open-chat-go-ci#865).
+func writeBotAPIDetailedError(w http.ResponseWriter, status int, code string, message string, detail string) {
+	if detail == "" {
+		writeBotAPIError(w, status, code, message)
+		return
+	}
+	apierror.WriteDetailed(w, status, code, message, detail)
+}
