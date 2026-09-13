@@ -1,0 +1,43 @@
+== LOCAL ==
+main
+3847850 ci#747: umbrella drive record — coordination-continuity reliability (RC1–RC7, QW1–QW4) (#1254)
+?? ci893_notes/
+== BENCHMARK PKG ON DISK ==
+aggregate.go aggregate_test.go registry.go types.go 
+== MAIN has benchmark-results/eval page? ==
+0
+0
+== CI REPO SWEEP/WORKFLOW ==
+.github/workflows/free-model-benchmark.yaml
+config-deltas/open-chat-free-model-provider.yaml
+scripts/free_model_capability_sweep.sh
+scripts/tests/test_free_model_capability_sweep.py
+== CI REPO RUNS free-model ==
+{"conclusion":"cancelled","createdAt":"2026-10-27T12:42:07Z","id":40505841526,"status":"completed","title":"Free Model Benchmark"}
+{"conclusion":"cancelled","createdAt":"2026-10-27T02:19:52Z","id":40437794239,"status":"completed","title":"Free Model Benchmark"}
+{"conclusion":"cancelled","createdAt":"2026-10-27T01:37:28Z","id":40433669026,"status":"completed","title":"Free Model Benchmark"}
+{"conclusion":"cancelled","createdAt":"2026-10-27T01:37:26Z","id":40433665806,"status":"completed","title":"Free Model Benchmark"}
+== CI REPO RUNS private-sandbox free-ish ==
+== RESULTS BRANCH HEAD ==
+{"date":"2026-10-31T09:59:17Z","msg":"ci(sandbox): private results 20261031095917-41188808407"}
+{"date":"2026-10-30T23:53:14Z","msg":"ci(sandbox): private results pr-1261-17b9d829b9e68edcee713ce7176ba053a3f37362-41144343953"}
+== CI893 NOTES TREE ==
+ci893_notes/probe_state.txt
+ci893_notes/landing/README.md
+ci893_notes/landing/+Page.tsx
+ci893_notes/landing/product_landing_pages_integration.go
+ci893_notes/ci_workflow/private-sandbox-tests.yaml
+ci893_notes/ci_workflow/free-model-benchmark.yaml
+ci893_notes/private_ci/test_dirs.txt
+ci893_notes/private_ci/free_model_capability_sweep.sh
+ci893_notes/private_ci/free_model_capability_sweep.current.sh
+ci893_notes/private_ci/free_model_capability_sweep.ci.sh
+ci893_notes/private_ci/free_model_capability_sweep.ci2.sh
+ci893_notes/private_ci/run_test.sh
+ci893_notes/snapshot_b.txt
+ci893_notes/snapshot_a.txt
+== LANDING REPO eval files ==
+frontend/pages/evaluations_and_benchmarks
+frontend/pages/evaluations_and_benchmarks/+Page.tsx
+frontend_assets/evaluations_and_benchmarks
+frontend_assets/evaluations_and_benchmarks/index.html

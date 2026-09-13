@@ -1,0 +1,32 @@
+== git state ==
+main
+3847850 ci#747: umbrella drive record — coordination-continuity reliability (RC1–RC7, QW1–QW4) (#1254)
+e2decab Merge pull request #1255 from msgmate-io/ci/756-dev-setup-audit-closeout
+a031972 ci#756: document sandbox submodule pre-pull in the clone section
+4552ab1 ci#756: pre-pull repo submodules in the coder sandbox set-up
+6b89916 Merge pull request #1231 from msgmate-io/ci/747-coordination-continuity
+3d8d138 docs(ci747): refresh state for Pin Freshness Gate hardening fast-forward (ci#747)
+?? ci893_notes/
+== benchmark pkg + cmd ==
+aggregate.go
+aggregate_test.go
+registry.go
+types.go
+NO cmd/benchmark
+== benchmark-results dir ==
+== workflow file present? ==
+no free-model workflow
+== monorepo PRs mentioning 893 ==
+893 MERGED feat/ci-749-chat-details-tabs feat(chat): tabbed chat details page with tool browser, init & MCP tabs (ci#749)
+1173 CLOSED ci893-free-model-capability-harness ci#893: free-model capability sweep harness (OpenRouter free tier)
+1176 MERGED chore/consolidate-2026-10-26-r73 chore: consolidate r73 (ci#893 free-model sweep, ci#756 docs) — VERSION 0.0.785
+911 MERGED chore/consolidate-r55-2026-10-20 chore(consolidate): r55 - 16 public PRs + absorb #897/#894/#892 + VERSION 0.0.754
+1178 CLOSED main [Production deploy] Promote main → production — merging updates msgmate.io
+1172 MERGED chore/consolidate-2026-10-25-r72 chore: consolidate r72 (ci#890, ci#514, ci#394, ci#865, ci#756, ci#423)
+1177 CLOSED ci893-free-model-capability-harness feat(ci893): add free-model capability sweep harness
+863 CLOSED feature/ci-749-chat-details-page feat(chat): improve chat details page with tabbed details panel (ci#749)
+== landing repo PRs mentioning 893 ==
+11 OPEN draft=false feat/ci901-matrix-hardcoded-artifact feat(ci901): render the free-model capability matrix on /evaluations_and_benchmarks
+10 CLOSED draft=false feat/ci901-capability-matrix-frontend feat(ci901): render the free-model capability matrix on /evaluations_and_benchmarks
+8 CLOSED draft=false feat/ci901-free-model-capability-report-v2 feat: render free-model capability matrix on /evaluations_and_benchmarks (ci#901)
+9 CLOSED draft=false feat/ci901-free-model-capability-matrix feat(evaluations_and_benchmarks): render free-model capability matrix (ci#901)

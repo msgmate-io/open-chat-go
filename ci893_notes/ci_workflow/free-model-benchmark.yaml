@@ -1,0 +1,80 @@
+name: Free Model Benchmark
+
+# ci#893: the single entry point for the free OpenRouter model capability sweep
+# that feeds the /evaluations_and_benchmarks landing page (ci#901).
+#
+# It wraps scripts/free_model_capability_sweep.sh, which dispatches one
+# Private Sandbox Tests run per free model (this repository's own
+# private-sandbox-tests.yaml), collects the published ci/sandbox-results
+# reports and aggregates them into a machine-readable capability artifact:
+#
+#   benchmark-results/free-models-<date>.json   (rows: model -> test -> status)
+#   benchmark-results/free-models-<date>.md     (human-readable table)
+#
+# The whole benchmark therefore lives in open-chat-go-ci: the sweep script, its
+# workflow (private-sandbox-tests.yaml) and this wrapper. The sweep is long
+# running (one sandbox suite per model) and must not run from an agent turn:
+# dispatch it and report the run link.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: Comma-separated model ids (empty = the default free-model list)
+        required: false
+        default: ""
+      tags:
+        description: Sandbox test tag filter (empty = all tests)
+        required: false
+        default: ""
+      collect_only:
+        description: Only collect existing ci/sandbox-results reports; never dispatch a run
+        required: false
+        type: boolean
+        default: false
+      target_ref:
+        description: open-chat-go ref the sandbox workflow builds from
+        required: false
+        default: main
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  sweep:
+    name: Free model capability sweep
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      MODELS: ${{ github.event.inputs.models }}
+      TAGS: ${{ github.event.inputs.tags }}
+      COLLECT_ONLY: ${{ github.event.inputs.collect_only }}
+      TARGET_REF: ${{ github.event.inputs.target_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run the sweep
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-results
+          args=(--output-dir benchmark-results --target-ref "${TARGET_REF:-main}" --tags "${TAGS:-}")
+          if [ "${COLLECT_ONLY:-false}" = "true" ]; then
+            args+=(--collect-only)
+          else
+            args+=(--dispatch)
+          fi
+          if [ -n "${MODELS:-}" ]; then
+            args+=(--models "${MODELS}")
+          fi
+          scripts/free_model_capability_sweep.sh "${args[@]}"
+
+      - name: Upload the capability artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-model-capability-${{ github.run_id }}
+          path: benchmark-results/
+          if-no-files-found: warn
+          retention-days: 30
