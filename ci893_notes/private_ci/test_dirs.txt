@@ -1,0 +1,16 @@
+basic_smoke
+fibonacci_json
+gh_code_review
+gh_pr_comment
+image_file_attachment
+kubernetes_deploy
+lw_rest_api_email_pin
+lw_rest_api_ensure_user
+lw_rest_api_tool_init
+parallel_sessions
+parallel_smoke
+playwright_blog_research
+playwright_mcp_bootstrap
+playwright_mcp_sandbox
+repo_changes_summary
+session_continuation
