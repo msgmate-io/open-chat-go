@@ -168,6 +168,15 @@ func parseRunID(detailsURL string) int64 {
 type statusFact struct {
 	Context string
 	State   string
+	// CombinedEmpty is true when the combined-status response carried no
+	// statuses at all (`statuses:[]`), regardless of its aggregate `state`
+	// field. GitHub's combined-status endpoint is momentarily stale for a
+	// freshly created commit and can report `pending` with zero contexts (the
+	// ci#928 just-squash-merged incident); such a report names no check, so it
+	// must never be treated as a required-context failure or a pending block —
+	// the check-runs list is the authoritative source for a commit that has no
+	// commit statuses.
+	CombinedEmpty bool
 }
 
 // rulesetCache stores the required contexts per branch: one planning pass reads
@@ -289,6 +298,14 @@ func (c *GitHubAPIClient) branchCheckStates(ctx context.Context, branch, sha str
 
 // commitChecks reads the check-runs and the (latest-per-context) legacy commit
 // statuses of a commit.
+//
+// ci#928: the combined-status response for a commit that has no commit statuses
+// can be momentarily stale right after a squash merge and report `state:
+// pending` with `statuses:[]` (no status contexts at all). The empty list is
+// recorded on the returned facts (CombinedEmpty) so the aggregation treats it
+// as "no legacy statuses" instead of a pending block: a commit that has no
+// statuses cannot have a pending one, and the check-runs list is authoritative
+// for whether any check is running.
 func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]checkRunFact, []statusFact, error) {
 	var runs struct {
 		CheckRuns []struct {
@@ -328,6 +345,7 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 	facts = newestCheckRuns(facts)
 
 	var status struct {
+		State    string `json:"state"`
 		Statuses []struct {
 			Context string `json:"context"`
 			State   string `json:"state"`
@@ -341,6 +359,14 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 	for _, item := range status.Statuses {
 		out = append(out, statusFact{Context: strings.TrimSpace(item.Context), State: item.State})
 	}
+	if len(status.Statuses) == 0 {
+		// The stale `pending`/`statuses:[]` report (ci#928) is represented as
+		// "no legacy statuses", never as a pending aggregate that could veto
+		// a merge of a commit that has no pending contexts. The aggregate
+		// `state` field of an empty list carries no information the facts
+		// cannot already derive.
+		out = append(out, statusFact{CombinedEmpty: true})
+	}
 	return facts, out, nil
 }
 
@@ -348,6 +374,13 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 // "combined status" API did: check-runs win when there are any (a non-completed
 // run is pending, a red conclusion is a failure), otherwise the commit statuses
 // decide. It mirrors combinedChecksState so both paths stay consistent.
+//
+// ci#928: a combined-status report of `pending` with no statuses is not a
+// pending check — GitHub's endpoint can report it momentarily for a freshly
+// created commit even though nothing is running. The empty report is therefore
+// overridden by the check-runs list (authoritative when present) and otherwise
+// reads as "unknown" rather than "pending", so a just-squash-merged or no-PR
+// commit with no checks cannot be held as pending.
 func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 	if len(runs) > 0 {
 		state := "success"
@@ -361,24 +394,57 @@ func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 		}
 		return state
 	}
-	state := "pending"
+	// No check runs: the legacy statuses (if any) decide. A commit with no
+	// statuses at all reports "unknown" — never "pending" — because nothing is
+	// actually running and the aggregate `state` field of an empty list is a
+	// stale cache artifact (ci#928).
+	statuses = dropCombinedEmpty(statuses)
+	if len(statuses) == 0 {
+		return "unknown"
+	}
+	state := "success"
 	for _, status := range statuses {
 		switch statusFactState(status) {
 		case "failure":
 			return "failure"
 		case "pending":
 			state = "pending"
-		default:
-			state = "success"
 		}
 	}
 	return state
+}
+
+// dropCombinedEmpty removes the empty-status sentinel (ci#928) and any status
+// entry with no state (an artifact of a combined-status response that carried
+// no contexts at all) from a fact list, leaving only real statuses. A commit
+// whose entire report was empty therefore yields no statuses, which the
+// aggregation reads as "unknown" rather than the stale report's `pending`.
+func dropCombinedEmpty(statuses []statusFact) []statusFact {
+	real := statuses[:0]
+	for _, status := range statuses {
+		if status.CombinedEmpty {
+			continue
+		}
+		if status.State == "" {
+			continue
+		}
+		real = append(real, status)
+	}
+	return real
 }
 
 // evaluateRequiredContexts aggregates exactly the required contexts of a commit:
 // a required context that has not reported yet is *pending* (never assumed
 // green), a red one is a failure, and any red required context fails the whole
 // evaluation.
+//
+// ci#928: a context that has **not reported at all** (no check-run, no commit
+// status, or a commit whose combined-status list is empty) is not a pending
+// required check — GitHub's combined-status endpoint can report `pending` with
+// zero statuses for a freshly created commit. A required context that has never
+// reported therefore cannot hold a merge; it stays un-reported (not-found,
+// which resolves to pending only when the ruleset names it AND a check actually
+// exists to be pending).
 func evaluateRequiredContexts(required []RequiredCheck, runs []checkRunFact, statuses []statusFact) (string, []string) {
 	hasFailure := false
 	hasPending := false
@@ -449,6 +515,16 @@ func requiredContextState(check RequiredCheck, runs []checkRunFact, statuses []s
 	for _, status := range statuses {
 		if strings.EqualFold(status.Context, check.Context) {
 			return statusFactState(status), true
+		}
+	}
+	// ci#928: a commit with no commit statuses at all (the stale
+	// `pending`/`statuses:[]` combined-status report right after a squash merge)
+	// carries no status for this required context, however the aggregate `state`
+	// field read. The check-runs list is the authoritative source for a commit
+	// that has no statuses, so the context has simply not reported.
+	for _, status := range statuses {
+		if status.CombinedEmpty {
+			return "", false
 		}
 	}
 	return "", false
