@@ -1308,11 +1308,12 @@ jobs:
   sandbox-image-ensure:
     name: Ensure Sandbox Image
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
-      needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != ''
+      (needs.build-backend-image-once.result == 'success' ||
+       needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != '')
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
@@ -1352,6 +1353,15 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Refresh sandbox-latest alias for existing image
+        if: steps.probe.outputs.exists == 'true'
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-.*/:sandbox-latest/')"
+          docker buildx imagetools create -t "$LATEST_URL" "$IMAGE_URL"
+
       - name: Set up Docker Buildx
         if: steps.probe.outputs.exists != 'true'
         uses: docker/setup-buildx-action@v3
@@ -1362,11 +1372,13 @@ jobs:
           IMAGE_URL: ${{ steps.image.outputs.image_url }}
         run: |
           set -euo pipefail
+          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-.*/:sandbox-latest/')"
           attempt=0
           until docker buildx build \
             --push \
             -f clients/docker_sandbox_integration/sandboxes/coding/Dockerfile \
             -t "$IMAGE_URL" \
+            -t "$LATEST_URL" \
             clients/docker_sandbox_integration/sandboxes/coding; do
             attempt=$((attempt + 1))
             if [ "$attempt" -ge 3 ]; then
