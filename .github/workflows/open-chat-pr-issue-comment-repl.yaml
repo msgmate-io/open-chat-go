@@ -11,7 +11,7 @@ permissions:
   pull-requests: write
 
 env:
-  OPEN_CHAT_BOT_USER: ${{ secrets.OPEN_CHAT_BOT || 'cur1ousdude' }}
+  OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude' }}
   OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
   OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || 'issue-repl-bot' }}
 
@@ -26,8 +26,8 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
-      github.event.comment.user.login != env.OPEN_CHAT_BOT_USER &&
-      contains(github.event.comment.body, format('@{0}', env.OPEN_CHAT_BOT_USER))
+      github.event.comment.user.login != vars.OPEN_CHAT_BOT_GITHUB_USER &&
+      contains(github.event.comment.body, format('@{0}', vars.OPEN_CHAT_BOT_GITHUB_USER))
     steps:
       - name: Install Open-Chat python client
         env:
