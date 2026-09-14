@@ -164,6 +164,35 @@
                 }
             }
         },
+        "/api/interaction/{chat_share_uuid}/badge.svg": {
+            "get": {
+                "description": "Render an SVG badge showing the current processing state of a shared interaction",
+                "produces": [
+                    "image/svg+xml"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Interaction state badge",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Shared chat UUID",
+                        "name": "chat_share_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SVG badge",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/interaction/{chat_share_uuid}/messages": {
             "get": {
                 "description": "Retrieve paginated messages for a shared interaction chat",
