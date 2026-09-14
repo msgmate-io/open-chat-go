@@ -129,6 +129,9 @@ func TestReportJSONKeepsCoverageFlatAndNestsPhase1(t *testing.T) {
 	if _, ok := decoded["ready_to_close"]; !ok {
 		t.Fatalf("ready_to_close missing, got keys %v", keysOf(decoded))
 	}
+	if _, ok := decoded["drive"]; !ok {
+		t.Fatalf("drive missing, got keys %v", keysOf(decoded))
+	}
 }
 
 // The report's JSON shape is the job's contract for downstream consumers.
@@ -150,6 +153,16 @@ func TestReportJSONShape(t *testing.T) {
 			Measured bool   `json:"measured"`
 		} `json:"phases"`
 		ReadyToClose bool `json:"ready_to_close"`
+		Drive        struct {
+			Ticket     string                       `json:"ticket"`
+			Phase      string                       `json:"phase"`
+			Phases     []struct{ ID, State string } `json:"phases"`
+			Categories []struct {
+				Category  string `json:"category"`
+				RetiredBy string `json:"retired_by"`
+				Shipped   bool   `json:"shipped"`
+			} `json:"categories"`
+		} `json:"drive"`
 	}
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("unmarshal report: %v", err)
@@ -162,6 +175,31 @@ func TestReportJSONShape(t *testing.T) {
 	}
 	if decoded.Phases[0].ID == "phase_0_measure" && decoded.Phases[0].Ready {
 		t.Fatal("the measure phase retires nothing and must not report ready")
+	}
+	// The drive record rides along in the same output: ticket id present, phase
+	// states come from the allowed set, and a category that is retired only by
+	// the phase that declares it retires it (the machine-checked invariant).
+	if decoded.Drive.Ticket == "" || decoded.Drive.Phase == "" {
+		t.Fatalf("drive record must carry the ticket and phase ids: %s", encoded)
+	}
+	seenPhases := make(map[string]bool)
+	for _, phase := range decoded.Drive.Phases {
+		if phase.ID == "" || phase.State == "" {
+			t.Fatalf("drive phase row missing id or state: %+v", phase)
+		}
+		switch phase.State {
+		case "shipped", "measured", "open":
+		default:
+			t.Fatalf("drive phase %q has invalid state %q", phase.ID, phase.State)
+		}
+		seenPhases[phase.ID] = true
+	}
+	retiresByPhase := make(map[string][]string)
+	for _, category := range decoded.Drive.Categories {
+		if category.RetiredBy != "" && !seenPhases[category.RetiredBy] {
+			t.Fatalf("drive category %q retires in unknown phase %q", category.Category, category.RetiredBy)
+		}
+		retiresByPhase[category.RetiredBy] = append(retiresByPhase[category.RetiredBy], category.Category)
 	}
 }
 
