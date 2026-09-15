@@ -1,0 +1,169 @@
+# Reusable Open-Chat Issue Plan workflow.
+#
+# Caller repos use this like:
+#
+#   jobs:
+#     open-chat-issue-plan:
+#       uses: msgmate-io/open-chat-go/.github/workflows/reusable-open-chat-issue-plan.yaml@main
+#       secrets: inherit   # or pass OPEN_CHAT_API_TOKEN (+ optional BOT_TOKEN) explicitly
+#
+# Configuration resolution order for every input:
+#   caller repo variables (vars.OPEN_CHAT_*)  ->  inputs.<name>  ->  built-in default
+#
+# The Open-Chat server is expected to be pre-configured: the plan bot
+# (with its agent/sandbox/playbook) and the git credentials it needs
+# must exist on the server side.
+name: Reusable Open-Chat Issue Plan
+
+on:
+  workflow_call:
+    inputs:
+      bot_user:
+        description: GitHub login of the bot used for gh/git authentication on the server (falls back to vars.OPEN_CHAT_BOT_GITHUB_USER, then 'cur1ousdude')
+        required: false
+        type: string
+        default: ""
+      allowed_author:
+        description: GitHub login whose assignment may trigger the plan agent (falls back to vars.OPEN_CHAT_ALLOWED_AUTHOR, then 'tbscode')
+        required: false
+        type: string
+        default: ""
+      host:
+        description: Open-Chat server base URL (falls back to vars.OPEN_CHAT_HOST, then 'https://ci.msgmate.io')
+        required: false
+        type: string
+        default: ""
+      plan_bot:
+        description: Name of the Open-Chat bot to start the plan interaction with (falls back to vars.OPEN_CHAT_PLAN_BOT, then 'issue-plan-bot')
+        required: false
+        type: string
+        default: ""
+    secrets:
+      OPEN_CHAT_API_TOKEN:
+        description: Open-Chat API token used to create the interaction
+        required: true
+      BOT_TOKEN:
+        description: GitHub token used to install the python client and post the badge comment (falls back to the caller's github.token)
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude' }}
+  # Security: only this author may (have) assigned the plan bot (hard filter).
+  OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
+  OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
+  OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || inputs.plan_bot || 'issue-plan-bot' }}
+
+concurrency:
+  group: open-chat-issue-plan-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  open-chat-issue-plan:
+    name: Open-Chat Issue Plan
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'assigned' &&
+      github.event.assignee.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude') &&
+      github.event.sender.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode')
+    steps:
+      - name: Install Open-Chat python client
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          pip install "git+https://x-access-token:${GH_TOKEN}@github.com/msgmate-io/open-chat-go-python-client.git"
+
+      - name: Trigger plan agent for assigned issue
+        id: interaction
+        env:
+          OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
+          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
+          OPEN_CHAT_PLAN_BOT: ${{ env.OPEN_CHAT_PLAN_BOT }}
+          BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          REPO: ${{ github.repository }}
+          ASSIGNED_BY: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPEN_CHAT_API_TOKEN" ]; then
+            echo "::error::OPEN_CHAT_API_TOKEN secret is not set in this repository."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          from client.client import OpenChatClient, TokenAuth
+
+          header = (
+              "You are a planning agent for a GitHub issue that the bot was assigned to.\n"
+              "Your durable playbook is part of your agent definition (system_prompt); follow it.\n"
+              "Investigate the issue below thoroughly in the repository (read code, search for\n"
+              "related places, reproduce where possible) and produce a COMPLETE final plan.\n"
+              "Your final reply MUST be the full plan in markdown structured as:\n"
+              "## Summary\n## Investigation findings\n## Proposed changes (file-by-file)\n"
+              "## Verification / test plan\n## Risks & open questions\n"
+              "Do NOT implement anything in this reply; planning only.\n"
+              "The workflow that triggered you only posts the reference badge; once finished,\n"
+              "post the full plan yourself as a comment on the GitHub issue "
+              "(Issue number below) with your gh-authenticated bot identity, plus the\n"
+              "final opencode session as a follow-up if useful.\n"
+              "You are authenticated on GitHub via the gh CLI as the bot user \""
+              + os.environ["BOT_USER"] + "\".\n"
+              "\n"
+              "Context:\n"
+              + "- Repository: " + os.environ["REPO"] + "\n"
+              + "- Kind: issue\n"
+              + "- Issue number: " + os.environ["ISSUE_NUMBER"] + "\n"
+              + "- Issue title: " + os.environ["ISSUE_TITLE"] + "\n"
+              + "- Assigned by: " + os.environ["ASSIGNED_BY"] + "\n"
+              + "\nIssue body (verbatim):\n```\n"
+          )
+          message = header + (os.environ["ISSUE_BODY"] or "(empty)").strip() + "\n```\n"
+
+          client = OpenChatClient(
+              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
+              auth=TokenAuth(token=os.environ["OPEN_CHAT_API_TOKEN"]),
+          )
+          me = client.me()
+          print("Authenticated as:", me.name)
+          bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
+          interaction = bot.create_interaction(message=message, share=True)
+          print("Created interaction chat:", interaction.uuid)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"chat_uuid={interaction.uuid}\n")
+              share_uuid = getattr(interaction, "_chat_share_uuid", None)
+              if share_uuid:
+                  out.write(f"chat_share_uuid={share_uuid}\n")
+                  out.write(f"shared_url={interaction.shared_url()}\n")
+          PY
+
+      - name: Post reference badge comment on the issue
+        if: steps.interaction.outputs.chat_uuid != ''
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
+          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
+          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
+          BADGE_URL="${INTERACTION_URL}/badge.svg"
+          COMMENT_BODY="$(printf '%s\n' \
+            "<!-- open-chat-issue-plan -->" \
+            "[![open-chat planning session](%s)](%s)" \
+            "*Plan agent started for this issue assignment; click the badge above to watch live progress on the Open-Chat server. The plan agent will post the full plan in this issue when it finishes.*")"
+          COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
+          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+            -d "$payload"
