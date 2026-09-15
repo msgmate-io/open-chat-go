@@ -38,6 +38,16 @@ on:
         required: false
         type: string
         default: ""
+      auto_implement:
+        description: Attach a server-side post-interaction action that posts the finished plan as an implement-dispatch comment on the issue (starts the coding agent on a separate PR)
+        required: false
+        type: boolean
+        default: true
+      agent_context:
+        description: Optional extra context block appended verbatim to the agent message header (repo-specific notes for cloned agents)
+        required: false
+        type: string
+        default: ""
     secrets:
       OPEN_CHAT_API_TOKEN:
         description: Open-Chat API token used to create the interaction
@@ -88,6 +98,8 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
+          AGENT_CONTEXT: ${{ inputs.agent_context }}
+          AUTO_IMPLEMENT: ${{ inputs.auto_implement }}
           REPO: ${{ github.repository }}
           ASSIGNED_BY: ${{ github.event.sender.login }}
         run: |
@@ -105,15 +117,14 @@ jobs:
               "Your durable playbook is part of your agent definition (system_prompt); follow it.\n"
               "Investigate the issue below thoroughly in the repository (read code, search for\n"
               "related places, reproduce where possible) and produce a COMPLETE final plan.\n"
-              "Your final reply MUST be the full plan in markdown structured as:\n"
+              "Your FINAL chat reply MUST be the full plan in markdown structured as:\n"
               "## Summary\n## Investigation findings\n## Proposed changes (file-by-file)\n"
               "## Verification / test plan\n## Risks & open questions\n"
-              "Do NOT implement anything in this reply; planning only.\n"
-              "The workflow that triggered you only posts the reference badge; once finished,\n"
-              "post the full plan yourself as a comment on the GitHub issue "
-              "(Issue number below) with your gh-authenticated bot identity, plus the\n"
-              "final opencode session as a follow-up if useful.\n"
-              "You are authenticated on GitHub via the gh CLI as the bot user \""
+              "Do NOT implement anything and do NOT post anything to GitHub yourself; planning only.\n"
+              "When the interaction finishes, Open-Chat posts your final message (the plan) as a\n"
+              "comment on the GitHub issue (Issue number below) and automatically dispatches a\n"
+              "coding agent that implements the plan on a separate PR.\n"
+              "You are authenticated on GitHub via the gh CLI (read-only usage) as the bot user \""
               + os.environ["BOT_USER"] + "\".\n"
               "\n"
               "Context:\n"
@@ -124,7 +135,9 @@ jobs:
               + "- Assigned by: " + os.environ["ASSIGNED_BY"] + "\n"
               + "\nIssue body (verbatim):\n```\n"
           )
-          message = header + (os.environ["ISSUE_BODY"] or "(empty)").strip() + "\n```\n"
+          issue_body = (os.environ["ISSUE_BODY"] or "(empty)").strip()
+          agent_context = (os.environ.get("AGENT_CONTEXT") or "").strip()
+          message = header + "\n" + (agent_context + "\n\n" if agent_context else "") + issue_body + "\n```\n"
 
           client = OpenChatClient(
               base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
@@ -133,7 +146,30 @@ jobs:
           me = client.me()
           print("Authenticated as:", me.name)
           bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          interaction = bot.create_interaction(message=message, share=True)
+          auto_implement = os.environ.get("AUTO_IMPLEMENT", "true") in ("true", "True", "1")
+          overrides = None
+          if auto_implement:
+              post_action = {
+                  "kind": "github_issue_comment",
+                  "repo": os.environ["REPO"],
+                  "number": int(os.environ["ISSUE_NUMBER"]),
+                  # The posted comment re-enters the repo workloop: it is
+                  # picked up by the issue comment REPL workflow (bot user +
+                  # marker) and dispatched to the implementation agent, which
+                  # executes the plan on a separate PR.
+                  "header": (
+                      "<!-- open-chat-post-interaction -->\n"
+                      "## Plan from `" + os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot") + "`\n"
+                      "<!-- open-chat-issue-implement -->"
+                  ),
+                  "footer": (
+                      "*Posted automatically by Open-Chat when the planning interaction finished.*\n\n"
+                      "@" + os.environ["BOT_USER"] + " please implement this issue according to the plan "
+                      "above on a separate PR."
+                  ),
+              }
+              overrides = {"post_action": post_action}
+          interaction = bot.create_interaction(message=message, overrides=overrides, share=True)
           print("Created interaction chat:", interaction.uuid)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"chat_uuid={interaction.uuid}\n")
@@ -158,7 +194,7 @@ jobs:
           COMMENT_BODY="$(printf '%s\n' \
             "<!-- open-chat-issue-plan -->" \
             "[![open-chat planning session](%s)](%s)" \
-            "*Plan agent started for this issue assignment; click the badge above to watch live progress on the Open-Chat server. The plan agent will post the full plan in this issue when it finishes.*")"
+            "*Plan agent started for this issue assignment; click the badge above to watch live progress on the Open-Chat server. When the agent finishes Open-Chat posts the plan as an issue comment and automatically dispatches the implementation agent on a separate PR.*")"
           COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
           curl -fsSL -X POST \
