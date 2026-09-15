@@ -1463,9 +1463,15 @@ jobs:
 
       - name: Run sandbox test ${{ matrix.test }}
         id: test
+        # Independent wall-clock backstop below the 22-minute job cap: even if a
+        # test hook wedges (eg docker exec against an unresponsive k3s API
+        # server), the harness is killed and the job fails fast instead of
+        # hanging until the runner cancels everything.
+        timeout-minutes: 18
         run: |
           set -euo pipefail
-          bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
+          timeout --foreground --kill-after=30 1020 \
+            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
 
       - name: Post repo_changes_summary to the PR
         if: matrix.test == 'repo_changes_summary' && steps.test.outcome == 'success' && needs.run-pr-ci-tests-and-deployments.outputs.pr_number != ''
