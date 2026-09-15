@@ -1,0 +1,21 @@
+# Optional override for local dual-repo development with
+# a-little-world/little-world-backend (or any other stack on the shared
+# network): attach the Open-Chat backend to the shared docker network the CI
+# sandbox composes also use, so other stacks can reach it via the
+# `open-chat-go-backend` DNS alias.
+#
+# Usage:
+#   docker network create open-chat-lw-shared   # once, if not present
+#   docker compose -f docker-compose.yaml -f docker-compose.lw-shared.yaml up
+services:
+  backend:
+    networks:
+      open-chat-lw-shared:
+        aliases:
+          - open-chat-go-backend
+          - backend
+
+networks:
+  open-chat-lw-shared:
+    name: open-chat-lw-shared
+    external: true
