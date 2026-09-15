@@ -133,7 +133,7 @@ func readyPR(number int) PullRequest {
 		Number:           number,
 		Title:            fmt.Sprintf("feat: ready #%d", number),
 		Author:           "cur1ousdude",
-		BaseRef:          "main",
+		BaseRef:          "dev",
 		Mergeable:        true,
 		MergeStateStatus: MergeStateClean,
 		ChecksState:      "success",
@@ -185,7 +185,7 @@ func TestRunnerDefersWhileAConsolidationIsOpen(t *testing.T) {
 		Title:        "chore(consolidate): earlier batch",
 		Author:       "cur1ousdude",
 		HeadRef:      "chore/consolidate-2026-10-17",
-		BaseRef:      "main",
+		BaseRef:      "dev",
 		Mergeable:    true,
 		ChecksState:  "pending",
 		CreatedAt:    time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
@@ -231,7 +231,7 @@ func TestRunnerMergesOneGreenConsolidation(t *testing.T) {
 		Title:        "chore(consolidate): ready",
 		Author:       "cur1ousdude",
 		HeadRef:      "chore/consolidate-2026-10-18",
-		BaseRef:      "main",
+		BaseRef:      "dev",
 		Mergeable:    true,
 		ChecksState:  "success",
 		CreatedAt:    time.Date(2026, 10, 18, 8, 0, 0, 0, time.UTC),
@@ -305,7 +305,7 @@ func TestRunnerNoClientIsSkipped(t *testing.T) {
 // lines the CI merge gate and the post-merge closure rely on (ci#813).
 func TestConsolidationBodyClosesEveryLinkedIssue(t *testing.T) {
 	plan := ConsolidationPlan{
-		Base:         "main",
+		Base:         "dev",
 		Include:      []PullRequest{readyPR(11), readyPR(12)},
 		LinkedIssues: []int{11, 12},
 	}
