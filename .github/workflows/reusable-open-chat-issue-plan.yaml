@@ -185,12 +185,14 @@ jobs:
           COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
           CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
+          SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
           OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
           INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
-          BADGE_URL="${INTERACTION_URL}/badge.svg"
+          SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
+          BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
           COMMENT_BODY="$(printf '%s\n' \
             "<!-- open-chat-issue-plan -->" \
             "[![open-chat planning session](%s)](%s)" \

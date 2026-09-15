@@ -266,11 +266,13 @@ jobs:
           BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
           SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
           CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
+          SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
           OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
         run: |
           set -euo pipefail
           INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
-          BADGE_URL="${INTERACTION_URL}/badge.svg"
+          SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
+          BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
           COMMENT_BODY="$(printf '%s\n' \
             "[![open-chat interaction](%s)](%s)" \
             "*Agent responding for a request mentioning the bot; click the badge above to watch live progress on the Open-Chat server.*" \
