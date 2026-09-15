@@ -87,9 +87,9 @@ jobs:
       github.event.action == 'created' &&
       !contains(github.event.comment.body, 'ci-fix-blocked') &&
       (
-        github.event.comment.user.login == (inputs.allowed_author != '' && inputs.allowed_author || vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') ||
+        github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode') ||
         (
-          github.event.comment.user.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
+          github.event.comment.user.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude') &&
           contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->')
         )
       )
