@@ -133,15 +133,28 @@ func validatePasswordStrength(password string) error {
 // configuration file or repository.
 
 // @doc:open-chat-server-command-options
-// The `open-chat server` command controls API startup, database configuration,
-// bootstrap credentials, frontend proxying, and embedded Asynq worker behavior.
+// The single `open-chat` binary exposes the runtime, a background worker, a
+// one-shot interaction runner and an API client. Configuration is resolved from
+// `open-chat.json` first, then environment variables, then explicit CLI flags
+// (the later source wins); existing environment variables are preserved unless
+// `--config-override-env` / OPEN_CHAT_CONFIG_OVERRIDE_ENV is set.
 //
-// Runtime behavior is driven by CLI flags and environment variables:
-// - DB backend/path and debug/reset toggles
+// Subcommands:
+// - server: API, optional embedded Asynq worker and compiled frontend
+// - worker: background worker only, for split API/worker deployments
+// - run: create a single interaction and print the bot reply
+// - client: authenticated API calls for scripts and pipelines
+//
+// `open-chat server` runtime behavior is driven by CLI flags and their matching
+// environment variables:
+// - DB backend/path and debug/reset toggles, plus SETUP_TEST_USERS
 // - host/port binding and bootstrap credentials for root, bot, and extra users
 // - optional EXTRA_MODELS_JSON / --extra-models-json (path or inline JSON array)
-// - Redis connection options used by Asynq and Asynqmon
+// - optional bot/SSH/opencode bootstrap config files or inline JSON specs
+// - Redis connection options used by Asynq and Asynqmon, with auto/external/
+//   embedded modes
 // - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
+// - browser token lifetimes, CORS allowlist and PUBLIC_BASE_URL
 func GetServerFlags() []cli.Flag {
 	flags := []cli.Flag{
 		&cli.StringFlag{
