@@ -52,6 +52,11 @@ on:
         required: false
         type: string
         default: ""
+      agent_context:
+        description: Optional extra context block appended verbatim to the agent message header (repo-specific notes for cloned agents)
+        required: false
+        type: string
+        default: ""
     secrets:
       OPEN_CHAT_API_TOKEN:
         description: Open-Chat API token used to create the interaction
@@ -87,10 +92,13 @@ jobs:
       github.event.action == 'created' &&
       !contains(github.event.comment.body, 'ci-fix-blocked') &&
       (
-        github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode') ||
+        github.event.comment.user.login == (inputs.allowed_author != '' && inputs.allowed_author || vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') ||
         (
-          github.event.comment.user.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude') &&
-          contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->')
+          github.event.comment.user.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
+          (
+            contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->') ||
+            contains(github.event.comment.body, '<!-- open-chat-issue-implement -->')
+          )
         )
       )
     steps:
@@ -139,6 +147,7 @@ jobs:
           OPEN_CHAT_BOT: ${{ env.OPEN_CHAT_BOT }}
           OPEN_CHAT_REVIEW_BOT: ${{ env.OPEN_CHAT_REVIEW_BOT }}
           OPEN_CHAT_REVIEW_PHRASE: ${{ env.OPEN_CHAT_REVIEW_PHRASE }}
+          AGENT_CONTEXT: ${{ inputs.agent_context }}
         run: |
           set -euo pipefail
           if [ -z "$OPEN_CHAT_API_TOKEN" ]; then
@@ -203,6 +212,10 @@ jobs:
               "\n"
           )
           header = review_header if mode == "review" else implement_header
+
+          agent_context = (os.environ.get("AGENT_CONTEXT") or "").strip()
+          if agent_context:
+              header = header + "\n" + agent_context + "\n\n"
 
           context = (
               "Context:\n"
