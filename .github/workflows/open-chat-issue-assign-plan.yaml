@@ -62,6 +62,7 @@ jobs:
 
           header = (
               "You are a planning agent for a GitHub issue that the bot was assigned to.\n"
+              "Your durable playbook is part of your agent definition (system_prompt); follow it.\n"
               "Investigate the issue below thoroughly in the repository (read code, search for\n"
               "related places, reproduce where possible) and produce a COMPLETE final plan.\n"
               "Your final reply MUST be the full plan in markdown structured as:\n"
