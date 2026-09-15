@@ -70,6 +70,7 @@ func TestInteractionBadgeRoutesServeFromAPIAliasAndPublicPath(t *testing.T) {
 	for _, path := range paths {
 		recorder := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "badge.example.com"
 		router.ServeHTTP(recorder, req)
 
 		body := recorder.Body.String()
@@ -84,6 +85,9 @@ func TestInteractionBadgeRoutesServeFromAPIAliasAndPublicPath(t *testing.T) {
 		}
 		if !strings.Contains(body, ">finished</text>") {
 			t.Fatalf("%s: expected finished state text in badge, got: %s", path, body)
+		}
+		if !strings.Contains(body, "badge.example.com") {
+			t.Fatalf("%s: expected server host in detailed badge, got: %s", path, body)
 		}
 	}
 }
