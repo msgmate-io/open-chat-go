@@ -3012,6 +3012,17 @@
                 }
             }
         },
+        "bots.BotInteractionAttachment": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "file_id": {
+                    "type": "string"
+                }
+            }
+        },
         "bots.BotInteractionChatShare": {
             "type": "object",
             "properties": {
@@ -3043,6 +3054,12 @@
         "bots.CreateBotInteractionRequest": {
             "type": "object",
             "properties": {
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bots.BotInteractionAttachment"
+                    }
+                },
                 "auto_share": {
                     "type": "boolean"
                 },
