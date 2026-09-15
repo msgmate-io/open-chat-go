@@ -68,8 +68,8 @@ jobs:
     if: >-
       github.event_name == 'issues' &&
       github.event.action == 'assigned' &&
-      github.event.assignee.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
-      github.event.sender.login == (inputs.allowed_author != '' && inputs.allowed_author || vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode')
+      github.event.assignee.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude') &&
+      github.event.sender.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode')
     steps:
       - name: Install Open-Chat python client
         env:
