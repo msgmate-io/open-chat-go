@@ -245,7 +245,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			SenderId:   user.ID,
 			ReceiverId: otherUser.ID,
 			Text:       &data.FirstMessage,
-			MetaData:   metaData,
+			MetaData:   database.JSONRaw(metaData),
 		}
 		DB.Create(&message)
 		createdMessage = &message
