@@ -208,7 +208,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	if data.MetaData != nil {
 		metadataBytes, err := json.Marshal(data.MetaData)
 		if err == nil {
-			message.MetaData = metadataBytes
+			message.MetaData = database.JSONRaw(metadataBytes)
 		}
 	}
 
@@ -244,7 +244,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 
 		metadataBytes, err := json.Marshal(attachmentData)
 		if err == nil {
-			message.MetaData = metadataBytes
+			message.MetaData = database.JSONRaw(metadataBytes)
 		}
 	}
 
@@ -267,7 +267,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		metadata["tool_init_update"] = redactToolInitPayload(data.ToolInit)
 		metadata["tool_init_effective"] = redactToolInitPayload(effectiveToolInit)
 		if encoded, marshalErr := json.Marshal(metadata); marshalErr == nil {
-			message.MetaData = encoded
+			message.MetaData = database.JSONRaw(encoded)
 		}
 	}
 
