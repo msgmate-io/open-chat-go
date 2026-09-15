@@ -203,6 +203,49 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+type SharedInteractionAccessResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	HasAccess     bool   `json:"has_access"`
+	ChatUUID      string `json:"chat_uuid,omitempty"`
+}
+
+// GetSharedInteractionAccess reports whether the current viewer is
+// authenticated and whether the viewer can open the full interaction chat.
+//
+//	@Summary      Get shared interaction access
+//	@Description  Report whether the viewer is authenticated and has access to the full interaction
+//	@Tags         chats
+//	@Accept       json
+//	@Produce      json
+//	@Param        chat_share_uuid path string true "Shared chat UUID"
+//	@Success      200 {object} SharedInteractionAccessResponse "Viewer access info"
+//	@Router       /api/interaction/{chat_share_uuid}/access [get]
+func (h *ChatsHandler) GetSharedInteractionAccess(w http.ResponseWriter, r *http.Request) {
+	response := SharedInteractionAccessResponse{}
+	user := util.GetOptionalUser(r)
+	response.Authenticated = user != nil
+
+	DB, err := util.GetDB(r)
+	if err != nil {
+		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		return
+	}
+
+	shareUUID := r.PathValue("chat_share_uuid")
+	if shareUUID != "" {
+		if chat, _, chatErr := getSharedChatByUUID(DB, shareUUID); chatErr == nil {
+			response.ChatUUID = chat.UUID
+			if user != nil && (chat.User1Id == user.ID || chat.User2Id == user.ID) {
+				response.HasAccess = true
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(response)
+}
+
 // ListSharedInteractionMessages returns paginated public messages for a shared interaction.
 //
 //	@Summary      List shared interaction messages
