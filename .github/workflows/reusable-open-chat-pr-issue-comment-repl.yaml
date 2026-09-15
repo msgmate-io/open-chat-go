@@ -1,9 +1,64 @@
-name: Open-Chat PR/Issue Comment REPL
+# Reusable Open-Chat PR/Issue Comment REPL workflow.
+#
+# Caller repos use this like:
+#
+#   on:
+#     issue_comment:
+#       types: [created]
+#
+#   jobs:
+#     open-chat-repl:
+#       uses: msgmate-io/open-chat-go/.github/workflows/reusable-open-chat-pr-issue-comment-repl.yaml@main
+#       secrets: inherit   # or pass OPEN_CHAT_API_TOKEN (+ optional BOT_TOKEN) explicitly
+#
+# Configuration resolution order for every input:
+#   caller repo variables (vars.OPEN_CHAT_*)  ->  inputs.<name>  ->  built-in default
+#
+# The Open-Chat server is expected to be pre-configured: the coding/review
+# bots (with their agents, sandboxes and git credentials) must exist on the
+# server side.
+name: Reusable Open-Chat Comment REPL
 
 on:
-  issue_comment:
-    types:
-      - created
+  workflow_call:
+    inputs:
+      bot_user:
+        description: GitHub login of the bot used for gh/git authentication on the server (falls back to vars.OPEN_CHAT_BOT_GITHUB_USER, then 'cur1ousdude')
+        required: false
+        type: string
+        default: ""
+      allowed_author:
+        description: GitHub login whose comments may trigger the coding agent (falls back to vars.OPEN_CHAT_ALLOWED_AUTHOR, then 'tbscode')
+        required: false
+        type: string
+        default: ""
+      host:
+        description: Open-Chat server base URL (falls back to vars.OPEN_CHAT_HOST, then 'https://ci.msgmate.io')
+        required: false
+        type: string
+        default: ""
+      bot:
+        description: Name of the Open-Chat coding bot (falls back to vars.OPEN_CHAT_CODING_BOT, then 'issue-repl-bot')
+        required: false
+        type: string
+        default: ""
+      review_bot:
+        description: Name of the Open-Chat bot used when the comment explicitly requests a PR review (falls back to vars.OPEN_CHAT_REVIEW_BOT, then 'issue-review-bot')
+        required: false
+        type: string
+        default: ""
+      review_phrase:
+        description: Phrase inside the comment body that routes the request to the review bot (falls back to vars.OPEN_CHAT_REVIEW_PHRASE, then 'please review')
+        required: false
+        type: string
+        default: ""
+    secrets:
+      OPEN_CHAT_API_TOKEN:
+        description: Open-Chat API token used to create the interaction
+        required: true
+      BOT_TOKEN:
+        description: GitHub token used to install the python client, fetch PR context and post the badge comment (falls back to the caller's github.token)
+        required: false
 
 permissions:
   contents: read
@@ -11,16 +66,13 @@ permissions:
   pull-requests: write
 
 env:
-  OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude' }}
+  OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude' }}
   # Security: only comments by this author may trigger the agent (hard filter).
-  OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode' }}
-  OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
-  OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || 'issue-repl-bot' }}
-  # Bot used when the comment explicitly requests a PR review (agent config
-  # carrying the review behaviour lives in development/ci/open-chat-ci.json).
-  OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || 'issue-review-bot' }}
-  # Phrase inside the comment body that routes the request to the review bot.
-  OPEN_CHAT_REVIEW_PHRASE: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || 'please review' }}
+  OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
+  OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
+  OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || inputs.bot || 'issue-repl-bot' }}
+  OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || 'issue-review-bot' }}
+  OPEN_CHAT_REVIEW_PHRASE: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || inputs.review_phrase || 'please review' }}
 
 concurrency:
   group: open-chat-repl-${{ github.event.issue.number }}
@@ -35,9 +87,9 @@ jobs:
       github.event.action == 'created' &&
       !contains(github.event.comment.body, 'ci-fix-blocked') &&
       (
-        github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') ||
+        github.event.comment.user.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode') ||
         (
-          github.event.comment.user.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
+          github.event.comment.user.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude') &&
           contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->')
         )
       )
@@ -52,7 +104,7 @@ jobs:
       - name: Fetch issue / PR context
         id: context
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
