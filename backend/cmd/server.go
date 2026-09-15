@@ -113,6 +113,25 @@ func validatePasswordStrength(password string) error {
 	return nil
 }
 
+// @doc:open-chat-provider-env-vars
+// Model provider credentials are read from the process environment (or the
+// matching bootstrap/runtime configuration) when a managed provider backend is
+// used. Set the variables for the providers you intend to serve:
+//
+// - OPENAI_API_KEY
+// - ANTHROPIC_API_KEY and optional ANTHROPIC_API_HOST
+// - DEEPINFRA_API_KEY
+// - GROQ_API_KEY
+// - LITELLM_API_KEY and optional LITELLM_API_HOST
+// - MSGMATE_CLUSTER_API_KEY and optional MSGMATE_CLUSTER_HOST
+// - OPENROUTER_API_KEY
+// - IONOS_API_KEY
+// - OPEN_CHAT_SEAL_KEY for sealing sensitive values at rest
+//
+// These values are treated as secrets by the bootstrap tooling. Provide them
+// through your orchestrator's secret store instead of committing them to a
+// configuration file or repository.
+
 // @doc:open-chat-server-command-options
 // The `open-chat server` command controls API startup, database configuration,
 // bootstrap credentials, frontend proxying, and embedded Asynq worker behavior.
