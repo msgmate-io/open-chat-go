@@ -15,6 +15,8 @@ services:
       - "1984:1984"
     volumes:
       - ./backend:/backend
+      - ./development/ci/open-chat-ci.json:/open-chat-ci-config.json:ro
+      - ./development/ci/open-chat-ci.local.json:/open-chat-ci-config.local.json:ro
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
       - ./clients/integrations:/clients/integrations
@@ -24,6 +26,7 @@ services:
       - go_build_cache:/root/.cache/go-build
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
+      OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       IONOS_API_KEY: ${IONOS_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
