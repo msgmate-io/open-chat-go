@@ -106,10 +106,11 @@ jobs:
 
           implement_header = (
               "You are a recurring coding agent responding to a GitHub comment that mentioned you.\n"
-              "Your task is to fully complete the user request described in the comment below\n"
-              "(implement, test and where needed open a PR) and, after you have finished, post\n"
-              "a follow-up comment in the same thread explaining what you did to complete the\n"
-              "request.\n"
+              "Your durable playbook is part of your agent definition (system_prompt); follow it.\n"
+              "Task: fully complete the request described in the comment below (implement,\n"
+              "test and where needed open or update a PR with ALL applicable CI labels) and,\n"
+              "when finished, post a follow-up comment in the same thread summarizing what\n"
+              "you did and how to proceed (CI labels deployed, verification pending).\n"
               "You are authenticated on GitHub via the gh CLI as the bot user \""
               + os.environ["BOT_USER"] + "\"; use that identity for any git/gh operations\n"
               "and for the follow-up comment.\n"
@@ -117,13 +118,10 @@ jobs:
           )
           review_header = (
               "You are a GitHub PR review agent responding to a review request that mentioned you.\n"
-              "Perform a genuine, hands-on code review of the pull request and post it as a real\n"
-              "GitHub review (gh pr review with --comment/--approve/--request-changes as fitting).\n"
-              "Before reviewing, create a FRESH full clone of the repository in a new directory\n"
-              "(git clone --recurse-submodules <repo>) and checkout the exact PR head commit\n"
-              "given below so you review the real code incl. every submodule; never review from\n"
-              "an existing workspace copy. Use gh pr view/diff for context and reference concrete\n"
-              "files and lines in your review body.\n"
+              "Your durable playbook is part of your agent definition (system_prompt); follow it:\n"
+              "perform a genuine hands-on review of the pull request (fresh full clone + checkout\n"
+              "of the head commit below) and post it as a real GitHub review (gh pr review with\n"
+              "--comment/--approve/--request-changes as fitting), referencing concrete files/lines.\n"
               "You are authenticated on GitHub via the gh CLI as the bot user \""
               + os.environ["BOT_USER"] + "\"; use that identity for all git/gh operations.\n"
               "\n"
