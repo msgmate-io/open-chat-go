@@ -124,6 +124,29 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 	return nil
 }
 
+// NormalizeMessageMetaDataMigration normalizes legacy messages.meta_data rows
+// that were stored as TEXT instead of BLOB. On newer Go versions
+// json.RawMessage (jsontext.Value) can only be scanned from []byte, so a
+// single TEXT row would otherwise break message listing, interaction status
+// and latest-message preloads for the whole chat. The tolerant JSONRaw type
+// already reads both, but normalizing keeps storage consistent and every write
+// is persisted as BLOB.
+type NormalizeMessageMetaDataMigration struct{}
+
+func (NormalizeMessageMetaDataMigration) Migrate(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable("messages") {
+		return nil
+	}
+	switch db.Dialector.Name() {
+	case "sqlite":
+		return db.Exec("UPDATE messages SET meta_data = CAST(meta_data AS BLOB) WHERE meta_data IS NOT NULL AND typeof(meta_data) = 'text'").Error
+	default:
+		// JSONB columns (eg. postgres) cannot hold text-typed values, so there
+		// is nothing to normalize.
+		return nil
+	}
+}
+
 type FileUploadMigration struct{}
 
 func (FileUploadMigration) Migrate(db *gorm.DB) error {
@@ -247,6 +270,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&PublicProfile{}},
 	TableMigration{&Contact{}},
 	ChatAndMessageMigration{}, // Migrates: 'Chat', 'SharedChatConfig', 'Message'
+	NormalizeMessageMetaDataMigration{},
 	TableMigration{&StreamingMessage{}},
 	TableMigration{&ChatSettings{}},
 	TableMigration{&SharedChatInstance{}},
