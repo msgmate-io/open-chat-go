@@ -316,7 +316,7 @@ jobs:
           if [ -n "$existing_step_test" ]; then
             TPL_STEP_TEST="$existing_step_test"
           else
-            TPL_STEP_TEST="- [x] \`(4) test\` [\`passed\`](${DEPLOY_URL}/docs#go-tests?test_status=passed&pr_id=${SOURCE_PR_NUMBER})"
+            TPL_STEP_TEST="- [x] \`(4) test\` \`passed\`"
           fi
 
           existing_step_build="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].body // "" | split("\n") | map(select(startswith("- [") and contains("`(2) build`"))) | .[0] // ""' <<< "$comments_json")"
