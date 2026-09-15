@@ -101,7 +101,6 @@ jobs:
           )
         )
       )
-      )
     steps:
       - name: Install Open-Chat python client
         env:
