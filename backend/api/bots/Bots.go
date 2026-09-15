@@ -1,6 +1,7 @@
 package bots
 
 import (
+	"backend/api/chats"
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/integrations"
@@ -70,11 +71,17 @@ type UpdateBotRequest struct {
 	IsActive            *bool                  `json:"is_active,omitempty"`
 }
 
+type BotInteractionAttachment struct {
+	FileID      string `json:"file_id"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
 type CreateBotInteractionRequest struct {
-	Message         string                 `json:"message"`
-	ToolInit        map[string]interface{} `json:"tool_init,omitempty"`
-	ConfigOverrides map[string]interface{} `json:"config_overrides,omitempty"`
-	AutoShare       bool                   `json:"auto_share,omitempty"`
+	Message         string                     `json:"message"`
+	ToolInit        map[string]interface{}     `json:"tool_init,omitempty"`
+	ConfigOverrides map[string]interface{}     `json:"config_overrides,omitempty"`
+	AutoShare       bool                       `json:"auto_share,omitempty"`
+	Attachments     []BotInteractionAttachment `json:"attachments,omitempty"`
 }
 
 type BotInteractionChatShare struct {
@@ -1349,6 +1356,24 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			ReceiverId: runtime.BotUserId,
 			Text:       &req.Message,
 		}
+		if len(req.Attachments) > 0 {
+			chatAttachments := make([]chats.FileAttachment, len(req.Attachments))
+			for i, attachment := range req.Attachments {
+				chatAttachments[i] = chats.FileAttachment{
+					FileID:      attachment.FileID,
+					DisplayName: attachment.DisplayName,
+				}
+			}
+			enriched, attachErr := chats.EnrichAndShareAttachments(tx, user.ID, runtime.BotUserId, chatAttachments)
+			if attachErr != nil {
+				return attachErr
+			}
+			metaBytes, marshalErr := json.Marshal(map[string]interface{}{"attachments": enriched})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			message.MetaData = metaBytes
+		}
 		if err := tx.Create(&message).Error; err != nil {
 			return err
 		}
@@ -1366,7 +1391,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	if err != nil {
-		http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			http.Error(w, "Invalid file attachment", http.StatusBadRequest)
+		case errors.Is(err, chats.ErrAttachmentNotOwned):
+			http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+		default:
+			http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+		}
 		return
 	}
 
