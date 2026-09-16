@@ -418,6 +418,7 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("GET /chats/list", chatsHandler.List)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/list", chatsHandler.ListMessages)
+	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/messages/streaming", chatsHandler.GetStreamingMessage)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}", chatsHandler.GetChat)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/status", chatsHandler.GetInteractionStatus)
 	v1PrivateApis.HandleFunc("GET /chats/states", chatsHandler.GetChatStates)
@@ -556,6 +557,15 @@ func BackendRouting(
 		mux.Handle("GET /api/interaction/{chat_share_uuid}", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteraction))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/messages", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.ListSharedInteractionMessages))))
 		mux.Handle("GET /api/interaction/{chat_share_uuid}/status", commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionStatus))))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/access", commonMiddlewares(Logging(OptionalAuthMiddleware(http.HandlerFunc(chatsHandler.GetSharedInteractionAccess)))))
+		// The badge is embedded by external consumers (GitHub workflows, the
+		// Python client) that derive it from the human-facing interaction share
+		// URL, i.e. `/interaction/{uuid}/badge.svg` without the `/api` prefix.
+		// Serve it from both paths with the same public handler so existing
+		// embeds keep working while `/api/...` stays the canonical URL.
+		badgeHandler := commonMiddlewares(Logging(http.HandlerFunc(chatsHandler.GetSharedInteractionBadge)))
+		mux.Handle("GET /api/interaction/{chat_share_uuid}/badge.svg", badgeHandler)
+		mux.Handle("GET /interaction/{chat_share_uuid}/badge.svg", badgeHandler)
 
 		mux.Handle("/api/v1/", http.StripPrefix("/api/v1", commonMiddlewares(Logging(AuthMiddleware(v1PrivateApis)))))
 	} else {

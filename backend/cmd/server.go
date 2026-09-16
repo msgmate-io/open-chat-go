@@ -113,16 +113,48 @@ func validatePasswordStrength(password string) error {
 	return nil
 }
 
-// @doc:open-chat-server-command-options
-// The `open-chat server` command controls API startup, database configuration,
-// bootstrap credentials, frontend proxying, and embedded Asynq worker behavior.
+// @doc:open-chat-provider-env-vars
+// Model provider credentials are read from the process environment (or the
+// matching bootstrap/runtime configuration) when a managed provider backend is
+// used. Set the variables for the providers you intend to serve:
 //
-// Runtime behavior is driven by CLI flags and environment variables:
-// - DB backend/path and debug/reset toggles
+// - OPENAI_API_KEY
+// - ANTHROPIC_API_KEY and optional ANTHROPIC_API_HOST
+// - DEEPINFRA_API_KEY
+// - GROQ_API_KEY
+// - LITELLM_API_KEY and optional LITELLM_API_HOST
+// - MSGMATE_CLUSTER_API_KEY and optional MSGMATE_CLUSTER_HOST
+// - OPENROUTER_API_KEY
+// - IONOS_API_KEY
+// - OPEN_CHAT_SEAL_KEY for sealing sensitive values at rest
+//
+// These values are treated as secrets by the bootstrap tooling. Provide them
+// through your orchestrator's secret store instead of committing them to a
+// configuration file or repository.
+
+// @doc:open-chat-server-command-options
+// The single `open-chat` binary exposes the runtime, a background worker, a
+// one-shot interaction runner and an API client. Configuration is resolved from
+// `open-chat.json` first, then environment variables, then explicit CLI flags
+// (the later source wins); existing environment variables are preserved unless
+// `--config-override-env` / OPEN_CHAT_CONFIG_OVERRIDE_ENV is set.
+//
+// Subcommands:
+// - server: API, optional embedded Asynq worker and compiled frontend
+// - worker: background worker only, for split API/worker deployments
+// - run: create a single interaction and print the bot reply
+// - client: authenticated API calls for scripts and pipelines
+//
+// `open-chat server` runtime behavior is driven by CLI flags and their matching
+// environment variables:
+// - DB backend/path and debug/reset toggles, plus SETUP_TEST_USERS
 // - host/port binding and bootstrap credentials for root, bot, and extra users
 // - optional EXTRA_MODELS_JSON / --extra-models-json (path or inline JSON array)
-// - Redis connection options used by Asynq and Asynqmon
+// - optional bot/SSH/opencode bootstrap config files or inline JSON specs
+// - Redis connection options used by Asynq and Asynqmon, with auto/external/
+//   embedded modes
 // - optional embedded worker via START_WORKER and ASYNQ_CONCURRENCY
+// - browser token lifetimes, CORS allowlist and PUBLIC_BASE_URL
 func GetServerFlags() []cli.Flag {
 	flags := []cli.Flag{
 		&cli.StringFlag{
@@ -178,7 +210,7 @@ func GetServerFlags() []cli.Flag {
 			Name:    "root-credentials",
 			Aliases: []string{"rc"},
 			Usage:   "root credentials",
-			Value:   "admin:random",
+			Value:   defaultRootCredentialsValue,
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("DEFAULT_BOT_CREDENTIALS"),
@@ -226,16 +258,6 @@ func GetServerFlags() []cli.Flag {
 			Sources: cli.EnvVars("ADD_SSH_DEFAULT_OWNER"),
 			Name:    "add-ssh-default-owner",
 			Usage:   "default SSH bootstrap owner username/email/name; can be repeated",
-		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("ADD_OPENCODE_PROJECTS_FROM_CONFIG"),
-			Name:    "add-opencode-projects-from-config",
-			Usage:   "path(s) or inline JSON object/array defining opencode projects; can be repeated",
-		},
-		&cli.StringSliceFlag{
-			Sources: cli.EnvVars("ADD_OPENCODE_DEFAULT_OWNER"),
-			Name:    "add-opencode-default-owner",
-			Usage:   "default opencode bootstrap owner username/email/name; can be repeated",
 		},
 		&cli.StringFlag{
 			Sources: cli.EnvVars("EXTRA_MODELS_JSON"),
@@ -311,6 +333,56 @@ func parseCredentials(raw, label string) (string, string, error) {
 		return "", "", fmt.Errorf("%s must be in format username:password", label)
 	}
 	return parts[0], parts[1], nil
+}
+
+const defaultRootCredentialsValue = "admin:random"
+
+// resolveRootCredentials determines the credentials used to bootstrap the
+// (singleton) admin account. ROOT_CREDENTIALS (env or flag) takes precedence;
+// otherwise the "admin" entry from the bootstrap.users configuration is used.
+// When neither source is available the server fails to start instead of
+// silently generating an unknown admin password.
+func resolveRootCredentials(c *cli.Command, userSpecs []string) (string, error) {
+	rootCreds := c.String("root-credentials")
+	if strings.TrimSpace(os.Getenv("ROOT_CREDENTIALS")) != "" {
+		return rootCreds, nil
+	}
+	if rootCreds != "" && rootCreds != defaultRootCredentialsValue {
+		// Explicitly provided via flag/alias.
+		return rootCreds, nil
+	}
+
+	// Without an explicit ROOT_CREDENTIALS the admin account is bootstrapped
+	// from the open-chat.json "bootstrap.users" entry for "admin" when present.
+	adminConfig, err := findAdminBootstrapUser(userSpecs)
+	if err != nil {
+		return "", err
+	}
+	if adminConfig == nil {
+		return "", errors.New("ROOT_CREDENTIALS is not set and no 'admin' user is declared in bootstrap.users; provide one of them so the admin account can be bootstrapped")
+	}
+
+	fmt.Printf("Bootstrapping admin user from bootstrap.users entry (ROOT_CREDENTIALS not set)\n")
+	return adminConfig.Username + ":" + adminConfig.Password, nil
+}
+
+// findAdminBootstrapUser scans the bootstrap.users specs for an entry that
+// bootstraps the "admin" user and returns its configuration, or nil when none
+// of the specs declare an admin entry.
+func findAdminBootstrapUser(specs []string) (*userBootstrapConfig, error) {
+	for _, spec := range specs {
+		configs, err := loadUserBootstrapConfigsFromSpec(spec)
+		if err != nil {
+			return nil, err
+		}
+		for _, cfg := range configs {
+			if strings.EqualFold(strings.TrimSpace(cfg.Username), "admin") && strings.TrimSpace(cfg.Password) != "" {
+				found := cfg
+				return &found, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 func normalizeSessionCookieDomain(host string) string {
@@ -605,14 +677,6 @@ func ServerCli() *cli.Command {
 					Value:     strings.Join(c.StringSlice("add-ssh-default-owner"), ","),
 					Sensitive: false,
 				},
-				"ADD_OPENCODE_PROJECTS_FROM_CONFIG": {
-					Value:     strings.Join(c.StringSlice("add-opencode-projects-from-config"), ","),
-					Sensitive: true,
-				},
-				"ADD_OPENCODE_DEFAULT_OWNER": {
-					Value:     strings.Join(c.StringSlice("add-opencode-default-owner"), ","),
-					Sensitive: false,
-				},
 				"EXTRA_MODELS_JSON": {Value: c.String("extra-models-json"), Sensitive: false},
 				"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
 				"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
@@ -640,6 +704,8 @@ func ServerCli() *cli.Command {
 				"LITELLM_API_HOST":                  {Value: os.Getenv("LITELLM_API_HOST"), Sensitive: true},
 				"MSGMATE_CLUSTER_API_KEY":           {Value: os.Getenv("MSGMATE_CLUSTER_API_KEY"), Sensitive: true},
 				"MSGMATE_CLUSTER_HOST":              {Value: os.Getenv("MSGMATE_CLUSTER_HOST"), Sensitive: true},
+				"OPENROUTER_API_KEY":                {Value: os.Getenv("OPENROUTER_API_KEY"), Sensitive: true},
+				"IONOS_API_KEY":                     {Value: os.Getenv("IONOS_API_KEY"), Sensitive: true},
 				"OPEN_CHAT_SEAL_KEY":                {Value: os.Getenv("OPEN_CHAT_SEAL_KEY"), Sensitive: true},
 				"MOBILE_ROUTE_API_WS_TO_UPSTREAM": {
 					Value:     os.Getenv("MOBILE_ROUTE_API_WS_TO_UPSTREAM"),
@@ -711,6 +777,7 @@ func ServerCli() *cli.Command {
 				Debug:    c.Bool("debug"),
 				ResetDB:  c.Bool("reset-db"),
 			})
+			database.SetGlobalDB(DB)
 
 			if err := database.SeedModelConfigs(DB); err != nil {
 				return err
@@ -743,9 +810,16 @@ func ServerCli() *cli.Command {
 			fmt.Printf("Starting server on %s\n", fullHost)
 			fmt.Printf("Find API reference at %s/reference\n", fullHost)
 
+			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
+
+			rootCredentials, err := resolveRootCredentials(c, openChatBootstrap.UserSpecs)
+			if err != nil {
+				return err
+			}
+
 			adminUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
 				Label:            "root-credentials",
-				Credentials:      c.String("root-credentials"),
+				Credentials:      rootCredentials,
 				IsAdmin:          true,
 				SingletonAdmin:   true,
 				ValidateStrength: !c.Bool("debug"),
@@ -796,8 +870,6 @@ func ServerCli() *cli.Command {
 				}
 			}
 
-			openChatBootstrap := runtimecfg.GetOpenChatBootstrap()
-
 			userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
 			if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
 				return err
@@ -809,7 +881,9 @@ func ServerCli() *cli.Command {
 				return err
 			}
 			integrationBotDecls := integrations.BotBootstrapDeclarations()
+			integrationBotConfigs := make([]botBootstrapConfig, 0, len(integrationBotDecls))
 			for _, decl := range integrationBotDecls {
+				integrationBotConfigs = append(integrationBotConfigs, decl.Config)
 				sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
 				if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
 					return err
@@ -830,11 +904,15 @@ func ServerCli() *cli.Command {
 				return err
 			}
 
-			opencodeDefaultOwners := append([]string{}, c.StringSlice("add-opencode-default-owner")...)
-			opencodeDefaultOwners = append(opencodeDefaultOwners, openChatBootstrap.OpencodeDefaultOwners...)
-			opencodeProjectSpecs := append([]string{}, c.StringSlice("add-opencode-projects-from-config")...)
-			opencodeProjectSpecs = append(opencodeProjectSpecs, openChatBootstrap.OpencodeProjectSpecs...)
-			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, opencodeDefaultOwners, opencodeProjectSpecs); err != nil {
+			if err := applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs); err != nil {
+				return err
+			}
+
+			if err := applyGitBootstrapSources(DB, adminUser.Username); err != nil {
+				return err
+			}
+
+			if err := applyKubernetesBootstrapSources(DB, adminUser.Username); err != nil {
 				return err
 			}
 
@@ -850,6 +928,9 @@ func ServerCli() *cli.Command {
 				providerSyncResult.SkippedUnmanaged,
 				providerSyncResult.SkippedInvalid,
 			)
+			if err := syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs); err != nil {
+				return err
+			}
 
 			if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
 				return err

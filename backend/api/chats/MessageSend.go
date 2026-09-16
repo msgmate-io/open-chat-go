@@ -6,11 +6,10 @@ import (
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -23,6 +22,10 @@ type SendMessage struct {
 	ToolInit    map[string]interface{}  `json:"tool_init,omitempty"`
 	ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
 	Attachments *[]FileAttachment       `json:"attachments,omitempty"`
+	// DataType selects the stored message type. Currently supported: "text"
+	// (default) and "event" (system/widget messages such as provider retry
+	// indicators). Unknown values fall back to "text".
+	DataType *string `json:"data_type,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
@@ -32,7 +35,13 @@ type SendMessageWithReasoning struct {
 	ToolInit    map[string]interface{}  `json:"tool_init,omitempty"`
 	ToolCalls   *[]interface{}          `json:"tool_calls,omitempty"`
 	Attachments *[]FileAttachment       `json:"attachments,omitempty"`
+	// See SendMessage.DataType.
+	DataType *string `json:"data_type,omitempty"`
 }
+
+// supportedSendMessageDataTypes lists the data types a client may request via
+// messages/send. Anything else is stored as a regular text message.
+var supportedSendMessageDataTypes = map[string]bool{"text": true, "event": true}
 
 type FileAttachment struct {
 	FileID      string `json:"file_id"`
@@ -49,6 +58,7 @@ type MessageData interface {
 	GetMetaData() *map[string]interface{}
 	GetToolCalls() *[]interface{}
 	GetAttachments() *[]FileAttachment
+	GetDataType() string
 }
 
 // Add GetText and GetReasoning methods to both types
@@ -75,6 +85,13 @@ func (m SendMessage) GetAttachments() *[]FileAttachment {
 	return m.Attachments
 }
 
+func (m SendMessage) GetDataType() string {
+	if m.DataType == nil {
+		return "text"
+	}
+	return strings.TrimSpace(strings.ToLower(*m.DataType))
+}
+
 func (m SendMessageWithReasoning) GetText() string {
 	return m.Text
 }
@@ -93,6 +110,13 @@ func (m SendMessageWithReasoning) GetToolCalls() *[]interface{} {
 
 func (m SendMessageWithReasoning) GetAttachments() *[]FileAttachment {
 	return m.Attachments
+}
+
+func (m SendMessageWithReasoning) GetDataType() string {
+	if m.DataType == nil {
+		return "text"
+	}
+	return strings.TrimSpace(strings.ToLower(*m.DataType))
 }
 
 // Send a message to a chat
@@ -154,11 +178,16 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		receiver = chat.User1
 	}
 
+	messageDataType := "text"
+	if data.DataType != nil && supportedSendMessageDataTypes[strings.TrimSpace(strings.ToLower(*data.DataType))] {
+		messageDataType = strings.TrimSpace(*data.DataType)
+	}
 	var message database.Message = database.Message{
 		ChatId:     chat.ID,
 		SenderId:   user.ID,
 		ReceiverId: receiverId,
 		Text:       &data.Text,
+		DataType:   messageDataType,
 	}
 
 	var effectiveToolInit map[string]interface{}
@@ -179,55 +208,22 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	if data.MetaData != nil {
 		metadataBytes, err := json.Marshal(data.MetaData)
 		if err == nil {
-			message.MetaData = metadataBytes
+			message.MetaData = database.JSONRaw(metadataBytes)
 		}
 	}
 
 	// Handle file attachments
 	if data.Attachments != nil {
-		// Validate that all attachments belong to the user and enrich with file details
-		enrichedAttachments := make([]FileAttachment, len(*data.Attachments))
-		for i, attachment := range *data.Attachments {
-			var uploadedFile database.UploadedFile
-			if err := DB.Where("file_id = ?", attachment.FileID).First(&uploadedFile).Error; err != nil {
-				http.Error(w, "Invalid file attachment", http.StatusBadRequest)
-				return
-			}
-
-			if uploadedFile.OwnerID != user.ID {
+		// Validate that all attachments belong to the user, share them with the
+		// receiver and enrich them with file details.
+		enrichedAttachments, attachErr := EnrichAndShareAttachments(DB, user.ID, receiverId, *data.Attachments)
+		if attachErr != nil {
+			if errors.Is(attachErr, ErrAttachmentNotOwned) {
 				http.Error(w, "Access denied to file attachment", http.StatusForbidden)
-				return
-			}
-
-			// Share the file with the receiver
-			var existingAccess database.FileAccess
-			result := DB.Where("user_id = ? AND uploaded_file_id = ?", receiverId, uploadedFile.ID).First(&existingAccess)
-			if result.Error != nil {
-				// File access doesn't exist, create it
-				fileAccess := database.FileAccess{
-					UserID:         receiverId,
-					UploadedFileID: uploadedFile.ID,
-					Permission:     "view",
-					CreatedAt:      time.Now(),
-				}
-				if err := DB.Create(&fileAccess).Error; err != nil {
-					log.Printf("Error sharing file %s (ID: %d) with user %d: %v", attachment.FileID, uploadedFile.ID, receiverId, err)
-					// Don't fail the message send if file sharing fails
-				} else {
-					log.Printf("Successfully shared file %s (ID: %d) with user %d", attachment.FileID, uploadedFile.ID, receiverId)
-				}
 			} else {
-				log.Printf("File %s (ID: %d) already shared with user %d", attachment.FileID, uploadedFile.ID, receiverId)
+				http.Error(w, "Invalid file attachment", http.StatusBadRequest)
 			}
-
-			// Enrich attachment with file details
-			enrichedAttachments[i] = FileAttachment{
-				FileID:      attachment.FileID,
-				DisplayName: attachment.DisplayName,
-				FileName:    uploadedFile.FileName,
-				FileSize:    uploadedFile.Size,
-				MimeType:    uploadedFile.MIMEType,
-			}
+			return
 		}
 
 		// Store enriched attachments in metadata
@@ -248,7 +244,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 
 		metadataBytes, err := json.Marshal(attachmentData)
 		if err == nil {
-			message.MetaData = metadataBytes
+			message.MetaData = database.JSONRaw(metadataBytes)
 		}
 	}
 
@@ -271,7 +267,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		metadata["tool_init_update"] = redactToolInitPayload(data.ToolInit)
 		metadata["tool_init_effective"] = redactToolInitPayload(effectiveToolInit)
 		if encoded, marshalErr := json.Marshal(metadata); marshalErr == nil {
-			message.MetaData = encoded
+			message.MetaData = database.JSONRaw(encoded)
 		}
 	}
 
@@ -354,9 +350,9 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			}
 			return *message.Text
 		}(),
-		Reasoning:  message.Reasoning,
-		ToolCalls:  &toolCalls,
-		MetaData:   &messageMetaData,
+		Reasoning: message.Reasoning,
+		ToolCalls: &toolCalls,
+		MetaData:  &messageMetaData,
 	}
 
 	json.NewEncoder(w).Encode(listedMessage)
@@ -577,6 +573,7 @@ func SendWebsocketMessage(ch *wsapi.WebSocketHandler, receiverId string, chatUui
 			data.GetMetaData(),
 			data.GetToolCalls(),
 			wsAttachments,
+			data.GetDataType(),
 		),
 	)
 }

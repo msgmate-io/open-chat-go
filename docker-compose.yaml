@@ -15,13 +15,20 @@ services:
       - "1984:1984"
     volumes:
       - ./backend:/backend
+      - ./development/ci/open-chat-ci.json:/open-chat-ci-config.json:ro
+      - ./development/ci/open-chat-ci.local.json:/open-chat-ci-config.local.json:ro
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
       - ./clients/integrations:/clients/integrations
+      - ./clients/docker_sandbox_integration:/clients/docker_sandbox_integration
+      - /var/run/docker.sock:/var/run/docker.sock
       - go_mod_cache:/go/pkg/mod
       - go_build_cache:/root/.cache/go-build
     environment:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY}
+      OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      IONOS_API_KEY: ${IONOS_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_API_HOST: ${ANTHROPIC_API_HOST}
       LITELLM_API_KEY: ${LITELLM_API_KEY}
@@ -48,10 +55,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      app-network:
-      open-chat-lw-shared:
-        aliases:
-          - open-chat-go-backend
+      - app-network
   frontend:
     build:
       dockerfile: dev.dockerfile
@@ -102,9 +106,6 @@ services:
 
 networks:
   app-network:
-    driver: bridge
-  open-chat-lw-shared:
-    name: open-chat-lw-shared
     driver: bridge
 
 volumes:

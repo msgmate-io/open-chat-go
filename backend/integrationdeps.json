@@ -80,6 +80,42 @@
       "local_path": "clients/integrations/voice_integration",
       "default_enabled": false,
       "private": true
+    },
+    {
+      "module": "github.com/msgmate-io/matrix-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/matrix-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/matrix_integration",
+      "default_enabled": true,
+      "private": false
+    },
+    {
+      "module": "github.com/msgmate-io/docker-sandbox-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/docker-sandbox-integration",
+      "source": "submodule",
+      "local_path": "clients/docker_sandbox_integration",
+      "default_enabled": true,
+      "private": false
+    },
+    {
+      "module": "github.com/msgmate-io/git-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/git-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/git_integration",
+      "default_enabled": true,
+      "private": false
+    },
+    {
+      "module": "github.com/msgmate-io/kubernetes-integration",
+      "version": "",
+      "import": "github.com/msgmate-io/kubernetes-integration",
+      "source": "submodule",
+      "local_path": "clients/integrations/kubernetes_integration",
+      "default_enabled": true,
+      "private": false
     }
   ]
 }
