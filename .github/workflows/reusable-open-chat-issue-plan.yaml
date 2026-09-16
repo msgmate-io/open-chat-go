@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: ""
+      allowed_authors:
+        description: Comma-separated GitHub logins whose assignment may trigger the plan agent (falls back to vars.OPEN_CHAT_ALLOWED_AUTHORS, then to allowed_author)
+        required: false
+        type: string
+        default: ""
       host:
         description: Open-Chat server base URL (falls back to vars.OPEN_CHAT_HOST, then 'https://ci.msgmate.io')
         required: false
@@ -62,8 +67,11 @@ permissions:
 
 env:
   OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude' }}
-  # Security: only this author may (have) assigned the plan bot (hard filter).
+  # Security: only these authors may (have) assigned the plan bot (hard
+  # filter). Comma-separated list; single-author configs (vars.OPEN_CHAT_
+  # ALLOWED_AUTHOR / allowed_author) are kept as fallback for compatibility.
   OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
+  OPEN_CHAT_ALLOWED_AUTHORS: ${{ vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode') }}
   OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
   OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || inputs.plan_bot || format('{0}-plan-bot', github.event.repository.name) }}
 
@@ -79,7 +87,7 @@ jobs:
       github.event_name == 'issues' &&
       github.event.action == 'assigned' &&
       github.event.assignee.login == (vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude') &&
-      github.event.sender.login == (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode')
+      contains(format(',{0},', (vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode'))), format(',{0},', github.event.sender.login))
     steps:
       - name: Install Open-Chat python client
         env:
