@@ -417,7 +417,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			ReceiverId: botUserID,
 			DataType:   "event",
 			Text:       &eventRequestedText,
-			MetaData:   eventRequestedMetaBytes,
+			MetaData:   database.JSONRaw(eventRequestedMetaBytes),
 		}
 		if err := tx.Create(&eventRequestedMessage).Error; err != nil {
 			return err
@@ -453,7 +453,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 				ReceiverId: humanUserID,
 				DataType:   "event",
 				Text:       &eventFailedText,
-				MetaData:   eventFailedMetaBytes,
+				MetaData:   database.JSONRaw(eventFailedMetaBytes),
 			}
 			if err := tx.Create(&eventFailedMessage).Error; err != nil {
 				return err
@@ -490,7 +490,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			ReceiverId: humanUserID,
 			DataType:   "event",
 			Text:       &messageText,
-			MetaData:   execMetaBytes,
+			MetaData:   database.JSONRaw(execMetaBytes),
 		}
 
 		if err := tx.Create(&msg).Error; err != nil {

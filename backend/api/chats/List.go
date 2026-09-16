@@ -149,8 +149,19 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Find(&chats)
 
 	if q.Error != nil {
-		http.Error(w, q.Error.Error(), http.StatusInternalServerError)
-		return
+		// A single corrupt message row must never blank the whole chat list.
+		// Retry without the latest-message preload so the list still renders.
+		log.Printf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
+		chats = nil
+		q = query.Scopes(database.Paginate(&chats, &pagination, DB)).
+			Preload("User1").
+			Preload("User2").
+			Preload("SharedConfig").
+			Find(&chats)
+		if q.Error != nil {
+			http.Error(w, q.Error.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	listedChats := make([]ListedChat, len(chats))
