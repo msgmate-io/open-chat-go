@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: ""
+      allowed_authors:
+        description: Comma-separated GitHub logins whose comments may trigger the coding agent (falls back to vars.OPEN_CHAT_ALLOWED_AUTHORS, then to allowed_author)
+        required: false
+        type: string
+        default: ""
       host:
         description: Open-Chat server base URL (falls back to vars.OPEN_CHAT_HOST, then 'https://ci.msgmate.io')
         required: false
@@ -72,8 +77,11 @@ permissions:
 
 env:
   OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude' }}
-  # Security: only comments by this author may trigger the agent (hard filter).
+  # Security: only comments by these authors may trigger the agent (hard
+  # filter). Comma-separated list; single-author configs (vars.OPEN_CHAT_
+  # ALLOWED_AUTHOR / allowed_author) are kept as fallback for compatibility.
   OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
+  OPEN_CHAT_ALLOWED_AUTHORS: ${{ vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode') }}
   OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
   OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || inputs.bot || format('{0}-repl-bot', github.event.repository.name) }}
   OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || format('{0}-review-bot', github.event.repository.name) }}
@@ -92,7 +100,7 @@ jobs:
       github.event.action == 'created' &&
       !contains(github.event.comment.body, 'ci-fix-blocked') &&
       (
-        github.event.comment.user.login == (inputs.allowed_author != '' && inputs.allowed_author || vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode') ||
+        contains(format(',{0},', (vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode'))), format(',{0},', github.event.comment.user.login)) ||
         (
           github.event.comment.user.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
           (
