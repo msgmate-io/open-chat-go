@@ -520,6 +520,28 @@ var capabilityScenarios = []CapabilityScenario{
 		Tracks: []int{390, 602, 662},
 	},
 	{
+		ID:         "msgmate_coder_ask",
+		Title:      "A coder_ask question carries its options through to the user",
+		Role:       "repl",
+		Capability: "confirmation_policy",
+		Tags:       []string{"live", "sandbox", "ask"},
+		Tools:      []string{"coder_ask"},
+		Prompt: "Real-world capability scenario CODER ASK (ci#925). Pose exactly one question with coder_ask and " +
+			"stop. The question must present at least two distinct concrete options (each a short, actionable choice " +
+			"a user can pick from), for example: option 1: 'Write the marker to cap_ask.txt with coder_write'; " +
+			"option 2: 'Report the marker in this chat message only'. Marker nonce for this scenario: " +
+			capabilityMarkerToken + ". Ask the question now and do not answer it yourself, do not call any other " +
+			"tool, and do not finish with the marker token on its own line: the expected end-state is the question " +
+			"with its options pending for the user.",
+		Acceptance: []string{
+			"the only tool call invoked is coder_ask",
+			"the coder_ask question carries two or more distinct concrete options",
+			"the turn ends with the question pending for the user (never self-answered)",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 925},
+	},
+	{
 		ID:         "emergency_recovery_watchdog",
 		Title:      "A restricted second-deployment bot monitors and recovers a crashed server",
 		Role:       "admin",
