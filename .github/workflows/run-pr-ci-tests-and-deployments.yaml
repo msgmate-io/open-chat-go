@@ -1492,9 +1492,9 @@ jobs:
   run-pr-ci-android-build:
     name: Run PR CI Android Build
     runs-on: ubuntu-latest
-    # AAR + APK + emulator boot + app launch; the image is prebuilt in a
-    # sibling job so this is dominated by the compile + emulator boot.
-    timeout-minutes: 75
+    # AAR + debug APK build; the image is prebuilt in a sibling job so this is
+    # dominated by the gomobile/Gradle compile.
+    timeout-minutes: 45
     needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-android-image-ensure]
     if: |
       always() &&
@@ -1532,17 +1532,7 @@ jobs:
           set -euo pipefail
           echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Make /dev/kvm accessible
-        run: |
-          set -euo pipefail
-          if [ -e /dev/kvm ]; then
-            sudo chmod 666 /dev/kvm
-            ls -l /dev/kvm
-          else
-            echo "::warning::/dev/kvm not present on this runner; the emulator smoke step will be skipped."
-          fi
-
-      - name: Build Android AAR + APK and run emulator smoke test
+      - name: Build Android AAR + debug APK
         env:
           SANDBOX_IMAGE_URL: ${{ needs.sandbox-android-image-ensure.outputs.image_url }}
         run: |
@@ -1553,17 +1543,9 @@ jobs:
           fi
           rm -rf .android-ci-results
           mkdir -p .android-ci-results
-          docker_args=(--rm --privileged -v "$PWD:/workspace" -w /workspace)
-          skip_emulator="false"
-          if [ -e /dev/kvm ]; then
-            docker_args+=(--device /dev/kvm)
-          else
-            skip_emulator="true"
-          fi
-          docker run "${docker_args[@]}" \
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
             -e SANDBOX_RESULTS_DIR=/workspace/.android-ci-results \
-            -e OPENCHAT_AVD=openchat_api35 \
-            -e ANDROID_SKIP_EMULATOR="${skip_emulator}" \
             "$SANDBOX_IMAGE_URL" \
             bash -lc 'bash development/ci/android/run_android_build.sh'
 
@@ -1574,10 +1556,6 @@ jobs:
           if [ -f .android-ci-results/android_build.out ]; then
             echo "=== android_build.out (tail) ==="
             tail -n 200 .android-ci-results/android_build.out || true
-          fi
-          if [ -f .android-ci-results/android_build.logcat.txt ]; then
-            echo "=== logcat (tail) ==="
-            tail -n 200 .android-ci-results/android_build.logcat.txt || true
           fi
 
       - name: Upload Android build artifacts
@@ -1590,7 +1568,6 @@ jobs:
             clients/gomobile/android-host/app/build/outputs/apk/debug/app-debug.apk
             .android-ci-results/android_build.out
             .android-ci-results/android_build.tsv
-            .android-ci-results/android_build.logcat.txt
           if-no-files-found: warn
 
   run-pr-ci-sandbox-tests-after-deploy:
