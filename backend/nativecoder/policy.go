@@ -34,7 +34,10 @@ const AutoConsolidationEnvKey = "OCI_MSGMATE_CODER_AUTO_CONSOLIDATION"
 // consolidation PR open.
 const (
 	// DefaultAutoConsolidationBase is the branch a consolidation PR targets.
-	DefaultAutoConsolidationBase = "main"
+	// `dev` is the integration trunk (ci#833, ci#931): feature and consolidation
+	// PRs land on `dev`, and the automatic `dev` -> `main` promotion PR is the
+	// only deployment hop.
+	DefaultAutoConsolidationBase = "dev"
 	// DefaultAutoConsolidationScope restricts the policy to the repository the
 	// agent works in (an optional repo allow-list narrows it further).
 	DefaultAutoConsolidationScope = "repo"
@@ -53,18 +56,15 @@ const (
 )
 
 // DefaultAutoConsolidationLabels is the standard label set a consolidation PR
-// carries. `deploy` and `sandbox-test` are the expensive post-deploy suites and
-// are used *only* on consolidation PRs targeting main (see DEVELOPMENT.md,
-// "Pull-request CI labels and deployment policy").
+// carries. A consolidation PR targets `dev` (the integration trunk, ci#833 /
+// ci#931) and carries only the lightweight verification labels `test` and `e2e`;
+// the heavy post-deploy suites (`deploy`, `sandbox-test`, `build`,
+// `test-core-only`, `ai-test-mock`, `ai-test-real`) belong exclusively to the
+// automatic `dev` -> `main` promotion PR (see DEVELOPMENT.md, "Pull-request CI
+// labels and deployment policy").
 var DefaultAutoConsolidationLabels = []string{
 	"test",
-	"build",
 	"e2e",
-	"test-core-only",
-	"ai-test-mock",
-	"ai-test-real",
-	"sandbox-test",
-	"deploy",
 }
 
 // AutoConsolidationPolicy is the resolved auto-consolidation policy of a native
