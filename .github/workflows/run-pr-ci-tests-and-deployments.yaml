@@ -1389,6 +1389,187 @@ jobs:
             sleep 15
           done
 
+  sandbox-android-image-ensure:
+    name: Ensure Android Sandbox Image
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
+       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+        (github.event.pull_request.base.ref == 'production' ||
+         contains(github.event.pull_request.labels.*.name, 'test') ||
+         contains(github.event.pull_request.labels.*.name, 'build') ||
+         contains(github.event.pull_request.labels.*.name, 'release-android'))))
+    outputs:
+      image_url: ${{ steps.image.outputs.image_url }}
+    steps:
+      # The Android SDK + NDK + emulator + system image is multi-GB; reclaim
+      # the runner's preinstalled toolchains before pulling/building it.
+      - name: Free runner disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout sandbox-integration submodule
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Resolve android sandbox image tag from content hash
+        id: image
+        run: |
+          set -euo pipefail
+          HASH="$(find clients/docker_sandbox_integration/sandboxes/android -type f \
+            -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-android-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "android sandbox image content hash: ${HASH}"
+
+      - name: Login to GHCR
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Check whether android sandbox image already exists
+        id: probe
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "$IMAGE_URL" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Android sandbox image ${IMAGE_URL} already in registry; skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refresh android sandbox-latest alias for existing image
+        if: steps.probe.outputs.exists == 'true'
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-android-.*/:sandbox-android-latest/')"
+          docker buildx imagetools create -t "$LATEST_URL" "$IMAGE_URL"
+
+      - name: Set up Docker Buildx
+        if: steps.probe.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push android sandbox image (with retries)
+        if: steps.probe.outputs.exists != 'true'
+        env:
+          IMAGE_URL: ${{ steps.image.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          LATEST_URL="$(echo "$IMAGE_URL" | sed 's/:sandbox-android-.*/:sandbox-android-latest/')"
+          attempt=0
+          until docker buildx build \
+            --push \
+            -f clients/docker_sandbox_integration/sandboxes/android/Dockerfile \
+            -t "$IMAGE_URL" \
+            -t "$LATEST_URL" \
+            clients/docker_sandbox_integration/sandboxes/android; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::android sandbox image build failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            echo "android sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
+            sleep 15
+          done
+
+  run-pr-ci-android-build:
+    name: Run PR CI Android Build
+    runs-on: ubuntu-latest
+    # AAR + debug APK build; the image is prebuilt in a sibling job so this is
+    # dominated by the gomobile/Gradle compile.
+    timeout-minutes: 45
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, sandbox-android-image-ensure]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
+      (needs.sandbox-android-image-ensure.result == 'success' || needs.sandbox-android-image-ensure.result == 'skipped') &&
+      ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
+       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+        (github.event.pull_request.base.ref == 'production' ||
+         contains(github.event.pull_request.labels.*.name, 'test') ||
+         contains(github.event.pull_request.labels.*.name, 'build') ||
+         contains(github.event.pull_request.labels.*.name, 'release-android'))))
+    steps:
+      - name: Free runner disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Login to GHCR for sandbox image pull
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build Android AAR + debug APK
+        env:
+          SANDBOX_IMAGE_URL: ${{ needs.sandbox-android-image-ensure.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SANDBOX_IMAGE_URL}" ]; then
+            echo "::error::android sandbox image URL is empty; image-ensure job did not publish an image." >&2
+            exit 1
+          fi
+          rm -rf .android-ci-results
+          mkdir -p .android-ci-results
+          docker run --rm --privileged \
+            -v "$PWD:/workspace" -w /workspace \
+            -e SANDBOX_RESULTS_DIR=/workspace/.android-ci-results \
+            "$SANDBOX_IMAGE_URL" \
+            bash -lc 'bash development/ci/android/run_android_build.sh'
+
+      - name: Dump android build logs on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          if [ -f .android-ci-results/android_build.out ]; then
+            echo "=== android_build.out (tail) ==="
+            tail -n 200 .android-ci-results/android_build.out || true
+          fi
+
+      - name: Upload Android build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-artifacts
+          path: |
+            clients/gomobile/dist/openchatmobile.aar
+            clients/gomobile/android-host/app/build/outputs/apk/debug/app-debug.apk
+            .android-ci-results/android_build.out
+            .android-ci-results/android_build.tsv
+          if-no-files-found: warn
+
   run-pr-ci-sandbox-tests-after-deploy:
     name: Sandbox Test ${{ matrix.test }} After Deploy
     runs-on: ubuntu-latest
@@ -2086,6 +2267,7 @@ jobs:
       - run-pr-ci-core-only
       - run-pr-ci-sandbox-tests-after-deploy
       - run-pr-ci-ai-real-after-deploy
+      - run-pr-ci-android-build
     if: |
       always() &&
       github.event_name == 'pull_request' &&
@@ -2094,7 +2276,7 @@ jobs:
       - name: Require all requested suites to pass
         run: |
           set -euo pipefail
-          echo "Full suite gate: go=${{ needs.run-pr-ci-go-tests.result }} ai-mock=${{ needs.run-pr-ci-ai-mock-tests.result }} e2e=${{ needs.run-pr-ci-e2e-tests.result }} core-only=${{ needs.run-pr-ci-core-only.result }} sandbox=${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }} ai-real=${{ needs.run-pr-ci-ai-real-after-deploy.result }}"
+          echo "Full suite gate: go=${{ needs.run-pr-ci-go-tests.result }} ai-mock=${{ needs.run-pr-ci-ai-mock-tests.result }} e2e=${{ needs.run-pr-ci-e2e-tests.result }} core-only=${{ needs.run-pr-ci-core-only.result }} sandbox=${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }} ai-real=${{ needs.run-pr-ci-ai-real-after-deploy.result }} android=${{ needs.run-pr-ci-android-build.result }}"
 
           require_suite() {
             local name="$1" result="$2"
@@ -2115,6 +2297,7 @@ jobs:
           require_suite "core-only image" "${{ needs.run-pr-ci-core-only.result }}"
           require_suite "sandbox tests" "${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }}"
           require_suite "real AI process tests" "${{ needs.run-pr-ci-ai-real-after-deploy.result }}"
+          require_suite "android build" "${{ needs.run-pr-ci-android-build.result }}"
 
           echo "Full suite gate satisfied."
 
