@@ -1328,7 +1328,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          HASH="$(find clients/docker_sandbox_integration/sandboxes/coding -type f \
+          HASH="$(find clients/integrations/docker_sandbox_integration/sandboxes/coding -type f \
             ! -name 'recent-repo-changes-summary.md' -print0 \
             | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
           IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
@@ -1376,10 +1376,10 @@ jobs:
           attempt=0
           until docker buildx build \
             --push \
-            -f clients/docker_sandbox_integration/sandboxes/coding/Dockerfile \
+            -f clients/integrations/docker_sandbox_integration/sandboxes/coding/Dockerfile \
             -t "$IMAGE_URL" \
             -t "$LATEST_URL" \
-            clients/docker_sandbox_integration/sandboxes/coding; do
+            clients/integrations/docker_sandbox_integration/sandboxes/coding; do
             attempt=$((attempt + 1))
             if [ "$attempt" -ge 3 ]; then
               echo "::error::sandbox image build failed after ${attempt} attempts" >&2
@@ -1429,7 +1429,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          HASH="$(find clients/docker_sandbox_integration/sandboxes/android -type f \
+          HASH="$(find clients/integrations/docker_sandbox_integration/sandboxes/android -type f \
             -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
           IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-android-${HASH}" >> "$GITHUB_OUTPUT"
@@ -1476,10 +1476,10 @@ jobs:
           attempt=0
           until docker buildx build \
             --push \
-            -f clients/docker_sandbox_integration/sandboxes/android/Dockerfile \
+            -f clients/integrations/docker_sandbox_integration/sandboxes/android/Dockerfile \
             -t "$IMAGE_URL" \
             -t "$LATEST_URL" \
-            clients/docker_sandbox_integration/sandboxes/android; do
+            clients/integrations/docker_sandbox_integration/sandboxes/android; do
             attempt=$((attempt + 1))
             if [ "$attempt" -ge 3 ]; then
               echo "::error::android sandbox image build failed after ${attempt} attempts" >&2
