@@ -379,3 +379,35 @@ func TestCIMsgmateYamlConfigLoads(t *testing.T) {
 		t.Fatalf("docker_sandbox kubeconfig alias did not resolve: %q", kube[:min(len(kube), 40)])
 	}
 }
+
+// TestResolveConfigSourceInlineYAML guards against passing the whole YAML
+// config document inline (e.g. via the OPEN_CHAT_CONFIG env var): content with
+// line breaks cannot be a file path and must be parsed as an inline document,
+// and extremely long single-line specs must fall back to inline parsing
+// instead of surfacing "file name too long".
+func TestResolveConfigSourceInlineYAML(t *testing.T) {
+	multiLine := "env:\n  NODE_VERSION: \"16\"\n"
+	content, source, err := resolveConfigSource(multiLine)
+	if err != nil {
+		t.Fatalf("inline multi-line YAML spec failed: %v", err)
+	}
+	if source != "inline --config YAML" {
+		t.Fatalf("unexpected source label %q", source)
+	}
+	cfg, err := loadOpenChatConfig(content, source)
+	if err != nil {
+		t.Fatalf("inline multi-line YAML config failed to load: %v", err)
+	}
+	if cfg.Env["NODE_VERSION"] != "16" {
+		t.Fatalf("env not parsed from inline YAML: %#v", cfg.Env)
+	}
+
+	long := "env: { SMOKE_KEY: " + strings.Repeat("A", 5000) + " }"
+	content, _, err = resolveConfigSource(long)
+	if err != nil {
+		t.Fatalf("long single-line inline YAML spec failed: %v", err)
+	}
+	if _, err := loadOpenChatConfig(content, "inline --config YAML"); err != nil {
+		t.Fatalf("long single-line inline YAML failed to load: %v", err)
+	}
+}

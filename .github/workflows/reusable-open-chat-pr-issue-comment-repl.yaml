@@ -17,6 +17,12 @@
 # The Open-Chat server is expected to be pre-configured: the coding/review
 # bots (with their agents, sandboxes and git credentials) must exist on the
 # server side.
+#
+# Trigger rule: an allowed_author's comment only dispatches an interaction when
+# it explicitly @mentions the bot GitHub user (or the review bot); set
+# require_mention=false / vars.OPEN_CHAT_REQUIRE_MENTION=false to restore the
+# legacy "any allowed-author comment triggers" behaviour. Dispatches by the bot
+# itself (fix-plan / implement markers) are unaffected.
 name: Reusable Open-Chat Comment REPL
 
 on:
@@ -62,6 +68,11 @@ on:
         required: false
         type: string
         default: ""
+      require_mention:
+        description: 'Require the trigger comment to explicitly @mention the bot GitHub user (or review bot) — falls back to vars.OPEN_CHAT_REQUIRE_MENTION, then true. Bots self-dispatch (fix-plan/implement markers) are unaffected.'
+        required: false
+        type: string
+        default: "true"
     secrets:
       OPEN_CHAT_API_TOKEN:
         description: Open-Chat API token used to create the interaction
@@ -86,6 +97,7 @@ env:
   OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || inputs.bot || format('{0}-repl-bot', github.event.repository.name) }}
   OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || format('{0}-review-bot', github.event.repository.name) }}
   OPEN_CHAT_REVIEW_PHRASE: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || inputs.review_phrase || 'please review' }}
+  OPEN_CHAT_REQUIRE_MENTION: ${{ vars.OPEN_CHAT_REQUIRE_MENTION || inputs.require_mention || 'true' }}
 
 concurrency:
   group: open-chat-repl-${{ github.event.issue.number }}
@@ -100,7 +112,16 @@ jobs:
       github.event.action == 'created' &&
       !contains(github.event.comment.body, 'ci-fix-blocked') &&
       (
-        contains(format(',{0},', (vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode'))), format(',{0},', github.event.comment.user.login)) ||
+        (
+          contains(format(',{0},', (vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode'))), format(',{0},', github.event.comment.user.login))
+          &&
+          (
+            (vars.OPEN_CHAT_REQUIRE_MENTION || inputs.require_mention || 'true') == 'false' ||
+            contains(github.event.comment.body, format('@{0}', (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude'))) ||
+            contains(github.event.comment.body, format('@{0}', (vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || format('{0}-review-bot', github.event.repository.name))))
+          )
+        )
+        ||
         (
           github.event.comment.user.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
           (
