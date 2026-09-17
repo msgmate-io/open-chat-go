@@ -203,3 +203,179 @@ func TestDockerSandboxConfigLoadsAndConnects(t *testing.T) {
 	}
 	t.Logf("Live SSH to %s succeeded! Output: %s", addr, strings.TrimSpace(string(output)))
 }
+
+// TestLoadOpenChatConfigAcceptsYAMLWithAnchors proves the loader accepts YAML
+// config documents (including anchors/aliases and multi-line strings) and
+// applies the same strict schema as JSON configs.
+func TestLoadOpenChatConfigAcceptsYAMLWithAnchors(t *testing.T) {
+	raw := []byte(`
+anchors:
+  shared_token: &shared-token "vault-token-8f2"
+  kubeconfig: &kubeconfig: |
+    apiVersion: v1
+    kind: Config
+integrations:
+  docker_sandbox:
+    kubeconfig: *kubeconfig
+  git:
+    bootstrap_tokens:
+      - name: ci-token
+        provider: github
+        token: *shared-token
+env:
+  NODE_VERSION: "16"
+bootstrap:
+  ssh:
+    owner: admin
+    keys:
+      - name: sandbox-key
+        comment: sandbox
+        private_key: *shared-token
+`)
+	raw = []byte(`
+anchors:
+  shared_token: &shared-token "vault-token-8f2"
+  kubeconfig: &kubeconfig |
+    apiVersion: v1
+    clusters: []
+integrations:
+  docker_sandbox:
+    kubeconfig: *kubeconfig
+  git:
+    bootstrap_tokens:
+      - name: ci-token
+        provider: github
+        token: *shared-token
+env:
+  NODE_VERSION: "16"
+`)
+
+	cfg, err := loadOpenChatConfig(raw, "yaml config")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected YAML config: %v", err)
+	}
+	if got := cfg.Integrations["git"]["bootstrap_tokens"]; got == nil {
+		t.Fatalf("expected git bootstrap_tokens from YAML")
+	}
+	if _, ok := cfg.Integrations["docker_sandbox"]["kubeconfig"]; !ok {
+		t.Fatalf("expected docker_sandbox kubeconfig alias to resolve")
+	}
+	tokens, ok := cfg.Integrations["git"]["bootstrap_tokens"].([]interface{})
+	if !ok || len(tokens) != 1 {
+		t.Fatalf("expected one git bootstrap token from YAML alias, got %#v", cfg.Integrations["git"]["bootstrap_tokens"])
+	}
+	tokenRow, _ := tokens[0].(map[string]interface{})
+	if tokenRow["token"] != "vault-token-8f2" {
+		t.Fatalf("bootstrap token alias did not resolve to the anchored value: %#v", tokenRow)
+	}
+	// anchors key must not crash the strict schema
+	if len(cfg.Anchors) == 0 {
+		t.Fatalf("expected anchors section to be carried through")
+	}
+}
+
+// TestLoadOpenChatConfigYamlTrailingAnchors covers the recommended authoring
+// style: all long artifacts (kubeconfigs, SSH keys, ...) live in a trailing
+// `anchors` block and are referenced inline with "$anchors.<name>" markers the
+// loader resolves after parsing (standard YAML aliases cannot be
+// forward-referenced).
+func TestLoadOpenChatConfigYamlTrailingAnchors(t *testing.T) {
+	raw := []byte(`
+integrations:
+  docker_sandbox:
+    kubeconfig: "$anchors.kubeconfig"
+  git:
+    bootstrap_tokens:
+      - name: ci-token
+        provider: github
+        token: "$anchors.ci_token"
+  kubernetes:
+    kubeconfig_yaml: "$anchors.nested"
+env:
+  NODE_VERSION: "16"
+bootstrap:
+  ssh:
+    owner: admin
+    keys:
+      - name: sandbox-key
+        private_key: "$anchors.ci_token"
+
+# Long artifacts referenced above live here at the very end.
+anchors:
+  ci_token: vault-token-8f2
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters: []
+  nested: "$anchors.kubeconfig"
+`)
+
+	cfg, err := loadOpenChatConfig(raw, "yaml config")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected trailing-anchor YAML config: %v", err)
+	}
+	if kube, _ := cfg.Integrations["docker_sandbox"]["kubeconfig"].(string); kube != "apiVersion: v1\nkind: Config\nclusters: []\n" {
+		t.Fatalf("kubeconfig $anchors reference did not resolve: %q", kube)
+	}
+	if token, _ := cfg.Integrations["git"]["bootstrap_tokens"].([]interface{})[0].(map[string]interface{})["token"].(string); token != "vault-token-8f2" {
+		t.Fatalf("token $anchors reference did not resolve: %q", token)
+	}
+	if key := cfg.Bootstrap.SSH; key == nil {
+		t.Fatalf("expected ssh bootstrap from trailing-anchor YAML config")
+	}
+	if nested := cfg.Integrations["kubernetes"]["kubeconfig_yaml"]; nested != "apiVersion: v1\nkind: Config\nclusters: []\n" {
+		t.Fatalf("nested $anchors reference did not resolve: %#v", nested)
+	}
+	for _, values := range []map[string]interface{}{cfg.Env, cfg.Integrations["docker_sandbox"]} {
+		for _, value := range values {
+			if str, ok := value.(string); ok && strings.HasPrefix(str, "$anchors.") {
+				t.Fatalf("unresolved $anchors reference found: %q", str)
+			}
+		}
+	}
+}
+
+// TestLoadOpenChatConfigYamlUnknownAnchorRef makes sure references to missing
+// anchors fail with a helpful message instead of silently passing through.
+func TestLoadOpenChatConfigYamlUnknownAnchorRef(t *testing.T) {
+	raw := []byte("env:\n  NODE_VERSION: \"$anchors.does_not_exist\"\n")
+	_, err := loadOpenChatConfig(raw, "yaml config")
+	if err == nil || !strings.Contains(err.Error(), "$anchors.") {
+		t.Fatalf("expected unknown-anchor reference error, got %v", err)
+	}
+}
+
+// TestLoadOpenChatConfigYamlUnknownNamedAnchorRef requires the error to name
+// the missing anchor so misconfigured reference names are easy to spot.
+func TestLoadOpenChatConfigYamlUnknownNamedAnchorRef(t *testing.T) {
+	raw := []byte("anchors:\n  other: x\nenv:\n  NODE_VERSION: \"$anchors.does_not_exist\"\n")
+	_, err := loadOpenChatConfig(raw, "yaml config")
+	if err == nil || !strings.Contains(err.Error(), "does_not_exist") {
+		t.Fatalf("expected unknown-anchor reference error, got %v", err)
+	}
+}
+
+// TestCIMsgmateYamlConfigLoads guards the YAML CI config variant (anchors +
+// multi-line kubeconfigs / SSH keys) against loader regressions.
+func TestCIMsgmateYamlConfigLoads(t *testing.T) {
+	path := filepath.Join("..", "development", "ci", "open-chat-ci.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("yaml CI config not present at %s: %v", path, err)
+	}
+	cfg, err := loadOpenChatConfig(raw, path)
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected YAML CI config: %v", err)
+	}
+	if len(cfg.Integrations) == 0 || cfg.Bootstrap == nil {
+		t.Fatalf("expected integrations + bootstrap in yaml CI config")
+	}
+	if _, ok := cfg.Integrations["docker_sandbox"]; !ok {
+		t.Fatalf("missing docker_sandbox integration")
+	}
+	// The kubeconfig must come from the alias, not from a literal "*ref".
+	dsb := cfg.Integrations["docker_sandbox"]
+	if kube, _ := dsb["kubeconfig"].(string); !strings.HasPrefix(kube, "apiVersion") {
+		t.Fatalf("docker_sandbox kubeconfig alias did not resolve: %q", kube[:min(len(kube), 40)])
+	}
+}
