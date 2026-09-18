@@ -597,6 +597,11 @@ func applyOpenChatConfigBootstrap(args []string) error {
 	if err := applyEnvUpdates(updates, bootstrap.OverrideEnv); err != nil {
 		return err
 	}
+	// Record the on-disk source so the admin settings API can persist changes
+	// back to it. Inline config documents are not persistable.
+	if trimmedSource := strings.TrimSpace(source); trimmedSource != "" && !strings.HasPrefix(trimmedSource, "inline") {
+		runtimecfg.SetConfigSource(trimmedSource)
+	}
 	runtimecfg.SetOpenChatBootstrap(toOpenChatBootstrapRuntime(cfg))
 
 	return nil
