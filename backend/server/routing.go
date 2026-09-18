@@ -450,6 +450,12 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("PUT /bots/{identifier}/config", botsHandler.SaveConfig)
 	v1PrivateApis.HandleFunc("DELETE /bots/{identifier}", botsHandler.Delete)
 	v1PrivateApis.HandleFunc("POST /bots/{identifier}/interactions", botsHandler.CreateInteraction)
+	// ci#865: canary-facing identity probe for the create-interaction path. It
+	// runs the exact acting-user + readable-bot resolution the POST handler
+	// performs, without creating an interaction, so the Live Runtime Canary can
+	// distinguish an identity-lookup failure from a backend create-interaction
+	// failure.
+	v1PrivateApis.HandleFunc("GET /bots/{identifier}/probe-create-interaction", botsHandler.ProbeCreateInteractionIdentity)
 
 	// Trusted agent dispatch/management surface. A coding/lead/admin agent (or
 	// the hive-mind integration acting for it) starts and manages other agents
