@@ -116,8 +116,22 @@ func TestCreateInteractionErrorNeverEmptyBody(t *testing.T) {
 	if env.Code != "failed_to_create_interaction" {
 		t.Fatalf("code = %q, want failed_to_create_interaction", env.Code)
 	}
-	// The body must not leak infrastructure detail.
+	// The body must not leak infrastructure detail in the generic message. The
+	// underlying cause is echoed in the opt-in `detail` field instead, so the
+	// canary can name it while the stable `error` field stays generic (ci#865
+	// follow-up).
 	if strings.Contains(env.Error, "3306") || strings.Contains(env.Error, "10.0.0.5") {
 		t.Fatalf("internal error detail leaked to the client: %q", env.Error)
+	}
+
+	var detailed apierror.ResponseWithDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detailed); err != nil {
+		t.Fatalf("body %q is not valid JSON: %v", rec.Body.String(), err)
+	}
+	if detailed.Code != "failed_to_create_interaction" {
+		t.Fatalf("code = %q, want failed_to_create_interaction", detailed.Code)
+	}
+	if !strings.Contains(detailed.Detail, "3306") || !strings.Contains(detailed.Detail, "10.0.0.5") {
+		t.Fatalf("detail should surface the underlying cause, got %q", detailed.Detail)
 	}
 }
