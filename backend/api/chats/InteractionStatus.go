@@ -278,6 +278,14 @@ func messageHasPendingConfirmation(message database.Message) bool {
 					return true
 				}
 			}
+			// A terminal OpenCode error (build/plan failure) leaves a pending
+			// opencode_needs_action marker; it requires user action, so the
+			// interaction renders as the blue "needs confirmation" state.
+			if needsAction, ok := meta["opencode_needs_action"].(map[string]interface{}); ok {
+				if status, _ := needsAction["status"].(string); status == "pending" {
+					return true
+				}
+			}
 		}
 	}
 	if message.ToolCalls != nil {
