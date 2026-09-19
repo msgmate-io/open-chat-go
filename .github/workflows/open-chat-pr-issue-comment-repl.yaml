@@ -1,0 +1,29 @@
+# Thin caller: the reusable implementation lives in
+# reusable-open-chat-pr-issue-comment-repl.yaml (usable as-is by other
+# repositories).
+name: Open-Chat PR/Issue Comment REPL
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  open-chat-repl:
+    name: Open-Chat Comment REPL
+    uses: ./.github/workflows/reusable-open-chat-pr-issue-comment-repl.yaml
+    with:
+      bot_user: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude' }}
+      allowed_author: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || 'tbscode' }}
+      host: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+      bot: ${{ vars.OPEN_CHAT_CODING_BOT || 'issue-repl-bot' }}
+      review_bot: ${{ vars.OPEN_CHAT_REVIEW_BOT || 'issue-review-bot' }}
+      review_phrase: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || 'please review' }}
+    secrets:
+      OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}

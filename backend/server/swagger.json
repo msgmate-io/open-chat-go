@@ -164,6 +164,73 @@
                 }
             }
         },
+        "/api/interaction/{chat_share_uuid}/access": {
+            "get": {
+                "description": "Report whether the viewer is authenticated and has access to the full interaction",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Get shared interaction access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Shared chat UUID",
+                        "name": "chat_share_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Viewer access info",
+                        "schema": {
+                            "$ref": "#/definitions/chats.SharedInteractionAccessResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/interaction/{chat_share_uuid}/badge.svg": {
+            "get": {
+                "description": "Render an SVG badge showing the current processing state, server host and runtime of a shared interaction. Pass ?variant=simple for the legacy two-segment badge.",
+                "produces": [
+                    "image/svg+xml"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Interaction state badge",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Shared chat UUID",
+                        "name": "chat_share_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Badge variant: detailed (default) or simple",
+                        "name": "variant",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "SVG badge",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/interaction/{chat_share_uuid}/messages": {
             "get": {
                 "description": "Retrieve paginated messages for a shared interaction chat",
@@ -273,6 +340,110 @@
                         "description": "Unable to resolve interaction status",
                         "schema": {
                             "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings": {
+            "get": {
+                "description": "Returns deployment capabilities and masked settings for every integration that declares runtime env vars.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrationsettings.IntegrationSettingsListResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/restart": {
+            "post": {
+                "description": "Asks the OS service manager to restart the server when service-managed; otherwise returns 409.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Restart the server",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/admin.restartServerResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/{integration_name}": {
+            "get": {
+                "description": "Returns masked settings and field descriptors for one integration.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Get integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrationsettings.IntegrationSettingsDetailResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Validates, applies, and (when possible) persists runtime values for one integration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Save integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.saveIntegrationSettingsResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/integration-settings/{integration_name}/reveal": {
+            "post": {
+                "description": "Reveals unmasked runtime values for one integration after password confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Reveal integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/integrationsettings.IntegrationSettingsDetailResponse"
                         }
                     }
                 }
@@ -970,6 +1141,47 @@
                     }
                 ],
                 "responses": {}
+            }
+        },
+        "/api/v1/chats/{chat_uuid}/messages/streaming": {
+            "get": {
+                "description": "Returns the throttled snapshot of the bot message currently being streamed, if any",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "messages"
+                ],
+                "summary": "Get currently streaming message snapshot",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chats.StreamingMessageResponse"
+                        }
+                    },
+                    "204": {
+                        "description": "No streaming message in flight",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
             }
         },
         "/api/v1/chats/{chat_uuid}/messages/{message_uuid}/rerun": {
@@ -2906,6 +3118,40 @@
         }
     },
     "definitions": {
+        "admin.restartServerResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "admin.saveIntegrationSettingsResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "integration": {
+                    "$ref": "#/definitions/integrationsettings.IntegrationSnapshot"
+                },
+                "persist_error": {
+                    "type": "string"
+                },
+                "persisted": {
+                    "type": "boolean"
+                },
+                "restart_required": {
+                    "type": "boolean"
+                }
+            }
+        },
         "bots.BotDTO": {
             "type": "object",
             "properties": {
@@ -2942,6 +3188,17 @@
                 }
             }
         },
+        "bots.BotInteractionAttachment": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "file_id": {
+                    "type": "string"
+                }
+            }
+        },
         "bots.BotInteractionChatShare": {
             "type": "object",
             "properties": {
@@ -2973,6 +3230,12 @@
         "bots.CreateBotInteractionRequest": {
             "type": "object",
             "properties": {
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/bots.BotInteractionAttachment"
+                    }
+                },
                 "auto_share": {
                     "type": "boolean"
                 },
@@ -3322,6 +3585,10 @@
                         "$ref": "#/definitions/chats.FileAttachment"
                     }
                 },
+                "data_type": {
+                    "description": "DataType selects the stored message type. Currently supported: \"text\"\n(default) and \"event\" (system/widget messages such as provider retry\nindicators). Unknown values fall back to \"text\".",
+                    "type": "string"
+                },
                 "meta_data": {
                     "type": "object",
                     "additionalProperties": true
@@ -3352,6 +3619,53 @@
                     "type": "string"
                 },
                 "chat_uuid": {
+                    "type": "string"
+                }
+            }
+        },
+        "chats.SharedInteractionAccessResponse": {
+            "type": "object",
+            "properties": {
+                "authenticated": {
+                    "type": "boolean"
+                },
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "has_access": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "chats.StreamingMessageResponse": {
+            "type": "object",
+            "properties": {
+                "reasoning": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sender_uuid": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {}
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "uuid": {
                     "type": "string"
                 }
             }
@@ -3733,6 +4047,127 @@
                     "items": {
                         "$ref": "#/definitions/integrations.IntegrationListRow"
                     }
+                }
+            }
+        },
+        "integrationsettings.DeploymentInfo": {
+            "type": "object",
+            "properties": {
+                "can_persist": {
+                    "type": "boolean"
+                },
+                "can_restart": {
+                    "type": "boolean"
+                },
+                "config_format": {
+                    "type": "string"
+                },
+                "config_source": {
+                    "type": "string"
+                },
+                "reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrationsettings.FieldDescriptor": {
+            "type": "object",
+            "properties": {
+                "advanced": {
+                    "type": "boolean"
+                },
+                "config_target": {
+                    "type": "string"
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "default": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "group": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "order": {
+                    "type": "integer"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "sensitive": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "integrationsettings.IntegrationSettingsDetailResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "integration": {
+                    "$ref": "#/definitions/integrationsettings.IntegrationSnapshot"
+                }
+            }
+        },
+        "integrationsettings.IntegrationSettingsListResponse": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/integrationsettings.DeploymentInfo"
+                },
+                "integrations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrationsettings.IntegrationSnapshot"
+                    }
+                }
+            }
+        },
+        "integrationsettings.IntegrationSnapshot": {
+            "type": "object",
+            "properties": {
+                "field_count": {
+                    "type": "integer"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/integrationsettings.FieldDescriptor"
+                    }
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },

@@ -53,6 +53,19 @@ func resolveProviderEndpoint(backend, endpoint string) (string, error) {
 		}
 	}
 
+	// Fixed public base URLs for well-known OpenAI-compatible providers when no
+	// custom endpoint is configured.
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "openrouter":
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://openrouter.ai/api/v1/"
+		}
+	case "ionos":
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = "https://openai.inference.de-txl.ionos.com/v1/"
+		}
+	}
+
 	return endpoint, nil
 }
 
@@ -217,6 +230,11 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
 	samplingParams := samplingParamsFromConfig(configMap)
+	providerRetryOptions := providerRetryOptionsFromConfig(configMap)
+	trackUsage := mapGetOrDefault[bool](configMap, "track_usage", false)
+	if providerRetryOptions.Enabled {
+		providerRetryOptions.OnRetryAttempt = aih.makeProviderRetryReporter(message.Content.ChatUUID)
+	}
 
 	if toolCallMaxTotal < 1 {
 		toolCallMaxTotal = int64(DefaultToolCallMaxTotal)
@@ -274,6 +292,8 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		interactionCompleteTools,
 		GetGlobalMsgmateHandler(),
 		samplingParams,
+		providerRetryOptions,
+		providerRequestMeta{ChatUUID: message.Content.ChatUUID, TrackUsage: trackUsage},
 	)
 
 	// Process the streaming response
@@ -597,11 +617,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 }
 
 // processStreamingResponse processes the streaming response from the AI
-func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
+func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
 	var allToolCalls []interface{}
 	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
 	var reasoningEntries []string
@@ -612,12 +628,39 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var hadToolCall bool
 	var currentBuffer strings.Builder
 	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
-	thinkTagPattern := regexp.MustCompile(`(?is)<think>(.*?)</think>`)
-	var tokenUsage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+	var partialSeq int64
+	nextPartialSeq := func() int64 {
+		partialSeq++
+		return partialSeq
 	}
+	streamSnapshot := newPartialMessagePersister(
+		message.Content.ChatUUID,
+		partialSessionID,
+		aih.botContext.BotUser.ID,
+	)
+	persistStreamSnapshot := func() {
+		entries := reasoningEntries
+		if inProgress := strings.TrimSpace(currentThoughtStep.String()); inProgress != "" {
+			entries = make([]string, len(reasoningEntries)+1)
+			copy(entries, reasoningEntries)
+			entries[len(reasoningEntries)] = inProgress
+		}
+		streamSnapshot.snapshot(partialSeq, fullText.String()+currentBuffer.String(), entries, allToolCalls)
+	}
+	flushStreamSnapshot := func() {
+		entries := reasoningEntries
+		if inProgress := strings.TrimSpace(currentThoughtStep.String()); inProgress != "" {
+			entries = make([]string, len(reasoningEntries)+1)
+			copy(entries, reasoningEntries)
+			entries[len(reasoningEntries)] = inProgress
+		}
+		streamSnapshot.flushNow(partialSeq, fullText.String()+currentBuffer.String(), entries, allToolCalls)
+	}
+	disposeStreamSnapshot := func() {
+		streamSnapshot.dispose()
+	}
+	thinkTagPattern := regexp.MustCompile(`(?is)<think>(.*?)</think>`)
+	var tokenUsage *TokenUsage
 
 	aih.botContext.WSHandler.MessageHandler.SendMessage(
 		aih.botContext.WSHandler,
@@ -739,6 +782,8 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		totalTime := time.Since(startTime)
 
 		finalizePartial()
+		flushStreamSnapshot()
+		disposeStreamSnapshot()
 
 		text, extractedThoughts := extractThinkSections(fullText.String())
 		appendThoughtEntries(extractedThoughts)
@@ -757,7 +802,26 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				providerGuidance = "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
 				reasoningEntry = "Response stopped because the model context window was exceeded."
 			}
-			if text == "" {
+			providerSummary, providerAttempts := describeProviderFailure(streamErr)
+			if failureReason == "upstream_provider_error" && providerSummary != "" {
+				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s.", providerSummary)
+				if providerAttempts > 1 {
+					providerGuidance = fmt.Sprintf(
+						"The AI provider failed on all %d attempts (last error: %s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits. You can retry in a moment or switch to a different model or provider.",
+						providerAttempts, providerSummary)
+				} else {
+					providerGuidance = fmt.Sprintf(
+						"The AI provider returned an error (%s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits.",
+						providerSummary,
+					)
+				}
+				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s (attempts: %d).", providerSummary, providerAttempts)
+				if text == "" {
+					text = fmt.Sprintf("I could not generate a reply: my AI provider request failed. %s Please try again in a moment or switch to another model.", providerGuidance)
+				} else {
+					text += "\n\n" + providerGuidance
+				}
+			} else if text == "" {
 				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
 			} else {
 				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
@@ -777,6 +841,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			metadata["error"] = true
 			metadata["failure_reason"] = failureReason
 			metadata["error_detail"] = streamErr.Error()
+			if code, body, attempts, isProviderErr := providerErrorInfo(streamErr); isProviderErr {
+				metadata["error_code"] = code
+				if summary, providerName := extractProviderErrorDetail(code, body); summary != "" {
+					metadata["provider_error"] = summary
+					if providerName != "" {
+						metadata["provider_name"] = providerName
+					}
+				}
+				if attempts > 1 {
+					metadata["provider_retry_attempts"] = attempts
+				}
+			}
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
@@ -823,6 +899,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		totalTime := time.Since(startTime)
 		if reasoning {
 			thinkingElapsed := currentThinkingDuration()
+			seq := nextPartialSeq()
 			aih.botContext.WSHandler.MessageHandler.SendMessage(
 				aih.botContext.WSHandler,
 				message.Content.SenderUUID,
@@ -830,6 +907,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					message.Content.ChatUUID,
 					message.Content.SenderUUID,
 					partialSessionID,
+					seq,
 					chunk,
 					[]string{""},
 					&map[string]interface{}{
@@ -841,9 +919,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					nil,
 				),
 			)
+			persistStreamSnapshot()
 			return
 		}
 
+		seq := nextPartialSeq()
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -851,6 +931,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				message.Content.ChatUUID,
 				message.Content.SenderUUID,
 				partialSessionID,
+				seq,
 				chunk,
 				[]string{},
 				&map[string]interface{}{
@@ -861,6 +942,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				nil,
 			),
 		)
+		persistStreamSnapshot()
 	}
 
 	sendThinkingChunk := func(chunk string) {
@@ -871,6 +953,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		currentThoughtStep.WriteString(chunk)
 		totalTime := time.Since(startTime)
 		thinkingElapsed := currentThinkingDuration()
+		seq := nextPartialSeq()
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -878,6 +961,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				message.Content.ChatUUID,
 				message.Content.SenderUUID,
 				partialSessionID,
+				seq,
 				"",
 				[]string{chunk},
 				&map[string]interface{}{
@@ -889,6 +973,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				nil,
 			),
 		)
+		persistStreamSnapshot()
 	}
 
 	processChunk := func(chunk string) {
@@ -1044,6 +1129,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if len(confirmableActions) > 0 {
 					partialMeta["confirmable_actions"] = confirmableActions
 				}
+				seq := nextPartialSeq()
 				aih.botContext.WSHandler.MessageHandler.SendMessage(
 					aih.botContext.WSHandler,
 					message.Content.SenderUUID,
@@ -1051,6 +1137,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						message.Content.ChatUUID,
 						message.Content.SenderUUID,
 						partialSessionID,
+						seq,
 						"",
 						[]string{""},
 						&partialMeta,
@@ -1058,6 +1145,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 						nil,
 					),
 				)
+				persistStreamSnapshot()
 			}
 		case err, ok := <-errs:
 			if ok && err != nil {
@@ -1212,6 +1300,7 @@ func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMa
 			message.Content.ChatUUID,
 			message.Content.SenderUUID,
 			partialSessionID,
+			0,
 			"",
 			[]string{""},
 			&map[string]interface{}{

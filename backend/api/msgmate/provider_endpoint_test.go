@@ -69,3 +69,33 @@ func TestResolveProviderEndpointPassthrough(t *testing.T) {
 		t.Fatalf("expected passthrough endpoint, got %q", got)
 	}
 }
+
+func TestResolveProviderEndpointOpenRouterDefault(t *testing.T) {
+	got, err := resolveProviderEndpoint("openrouter", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://openrouter.ai/api/v1/" {
+		t.Fatalf("expected default openrouter endpoint, got %q", got)
+	}
+}
+
+func TestResolveProviderEndpointIonosDefault(t *testing.T) {
+	got, err := resolveProviderEndpoint("ionos", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://openai.inference.de-txl.ionos.com/v1/" {
+		t.Fatalf("expected default ionos endpoint, got %q", got)
+	}
+}
+
+func TestResolveProviderEndpointOpenRouterCustomWins(t *testing.T) {
+	got, err := resolveProviderEndpoint("openrouter", "https://custom.example/v1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://custom.example/v1" {
+		t.Fatalf("expected custom endpoint to win, got %q", got)
+	}
+}

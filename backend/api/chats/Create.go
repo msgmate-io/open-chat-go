@@ -6,10 +6,10 @@ import (
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
@@ -214,16 +214,21 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		var metaData []byte
 		if len(data.Attachments) > 0 {
 			log.Printf("Processing %d attachments for first message", len(data.Attachments))
-			attachmentsData := make([]map[string]interface{}, len(data.Attachments))
-			for i, attachment := range data.Attachments {
-				log.Printf("Processing attachment %d: %+v", i, attachment)
-				attachmentsData[i] = map[string]interface{}{
-					"file_id": attachment.FileID,
+			// Validate ownership, share with the receiver and enrich with the
+			// uploaded file's mime type / name / size so the bot reply pipeline
+			// can process (eg vision) attachments.
+			enriched, attachErr := EnrichAndShareAttachments(DB, user.ID, otherUser.ID, data.Attachments)
+			if attachErr != nil {
+				if errors.Is(attachErr, ErrAttachmentNotOwned) {
+					http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+				} else {
+					http.Error(w, "Invalid file attachment", http.StatusBadRequest)
 				}
+				return
 			}
 
 			metaDataMap := map[string]interface{}{
-				"attachments": attachmentsData,
+				"attachments": enriched,
 			}
 
 			metaData, err = json.Marshal(metaDataMap)
@@ -240,47 +245,12 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			SenderId:   user.ID,
 			ReceiverId: otherUser.ID,
 			Text:       &data.FirstMessage,
-			MetaData:   metaData,
+			MetaData:   database.JSONRaw(metaData),
 		}
 		DB.Create(&message)
 		createdMessage = &message
 		chat.LatestMessageId = &message.ID
 		DB.Save(&chat)
-
-		// If this is an AI interaction chat with attachments, share files with the bot user
-		if data.ChatType == "interaction" && len(data.Attachments) > 0 {
-			log.Printf("Sharing %d attachments with bot user for AI interaction", len(data.Attachments))
-
-			for _, attachment := range data.Attachments {
-				// Get the file record
-				var uploadedFile database.UploadedFile
-				if err := DB.Where("file_id = ?", attachment.FileID).First(&uploadedFile).Error; err != nil {
-					log.Printf("Warning: File %s not found for sharing with bot user", attachment.FileID)
-					continue
-				}
-
-				// Check if file is already shared with the bot user
-				var existingAccess database.FileAccess
-				result := DB.Where("user_id = ? AND uploaded_file_id = ?", otherUser.ID, uploadedFile.ID).First(&existingAccess)
-				if result.Error != nil {
-					// File access doesn't exist, create it
-					fileAccess := database.FileAccess{
-						UserID:         otherUser.ID,
-						UploadedFileID: uploadedFile.ID,
-						Permission:     "view",
-						CreatedAt:      time.Now(),
-					}
-					if err := DB.Create(&fileAccess).Error; err != nil {
-						log.Printf("Error sharing file %s (ID: %d) with bot user %d: %v", attachment.FileID, uploadedFile.ID, otherUser.ID, err)
-						// Don't fail the chat creation if file sharing fails
-					} else {
-						log.Printf("Successfully shared file %s (ID: %d) with bot user %d for AI interaction", attachment.FileID, uploadedFile.ID, otherUser.ID)
-					}
-				} else {
-					log.Printf("File %s (ID: %d) already shared with bot user %d", attachment.FileID, uploadedFile.ID, otherUser.ID)
-				}
-			}
-		}
 	}
 
 	resolvedSharedConfig, resolveSharedErr := resolveSharedConfigForChat(DB, otherUser, data.SharedConfig)

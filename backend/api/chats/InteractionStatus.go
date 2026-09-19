@@ -15,12 +15,12 @@ import (
 )
 
 type InteractionStatusResponse struct {
-	ChatUUID             string `json:"chat_uuid"`
-	IsActive             bool   `json:"is_active"`
-	State                string `json:"state"`
-	LatestMessageUUID    string `json:"latest_message_uuid,omitempty"`
+	ChatUUID              string `json:"chat_uuid"`
+	IsActive              bool   `json:"is_active"`
+	State                 string `json:"state"`
+	LatestMessageUUID     string `json:"latest_message_uuid,omitempty"`
 	LatestMessageFinished *bool  `json:"latest_message_finished,omitempty"`
-	Source               string `json:"source"`
+	Source                string `json:"source"`
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
@@ -275,6 +275,14 @@ func messageHasPendingConfirmation(message database.Message) bool {
 			}
 			if permission, ok := meta["opencode_permission"].(map[string]interface{}); ok {
 				if status, _ := permission["status"].(string); status == "pending" {
+					return true
+				}
+			}
+			// A terminal OpenCode error (build/plan failure) leaves a pending
+			// opencode_needs_action marker; it requires user action, so the
+			// interaction renders as the blue "needs confirmation" state.
+			if needsAction, ok := meta["opencode_needs_action"].(map[string]interface{}); ok {
+				if status, _ := needsAction["status"].(string); status == "pending" {
 					return true
 				}
 			}

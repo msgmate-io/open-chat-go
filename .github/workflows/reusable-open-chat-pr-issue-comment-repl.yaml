@@ -1,0 +1,316 @@
+# Reusable Open-Chat PR/Issue Comment REPL workflow.
+#
+# Caller repos use this like:
+#
+#   on:
+#     issue_comment:
+#       types: [created]
+#
+#   jobs:
+#     open-chat-repl:
+#       uses: msgmate-io/open-chat-go/.github/workflows/reusable-open-chat-pr-issue-comment-repl.yaml@main
+#       secrets: inherit   # or pass OPEN_CHAT_API_TOKEN (+ optional BOT_TOKEN) explicitly
+#
+# Configuration resolution order for every input:
+#   caller repo variables (vars.OPEN_CHAT_*)  ->  inputs.<name>  ->  built-in default
+#
+# The Open-Chat server is expected to be pre-configured: the coding/review
+# bots (with their agents, sandboxes and git credentials) must exist on the
+# server side.
+#
+# Trigger rule: an allowed_author's comment only dispatches an interaction when
+# it explicitly @mentions the bot GitHub user (or the review bot); set
+# require_mention=false / vars.OPEN_CHAT_REQUIRE_MENTION=false to restore the
+# legacy "any allowed-author comment triggers" behaviour. Dispatches by the bot
+# itself (fix-plan / implement markers) are unaffected.
+name: Reusable Open-Chat Comment REPL
+
+on:
+  workflow_call:
+    inputs:
+      bot_user:
+        description: GitHub login of the bot used for gh/git authentication on the server (falls back to vars.OPEN_CHAT_BOT_GITHUB_USER, then 'cur1ousdude')
+        required: false
+        type: string
+        default: ""
+      allowed_author:
+        description: GitHub login whose comments may trigger the coding agent (falls back to vars.OPEN_CHAT_ALLOWED_AUTHOR, then 'tbscode')
+        required: false
+        type: string
+        default: ""
+      allowed_authors:
+        description: Comma-separated GitHub logins whose comments may trigger the coding agent (falls back to vars.OPEN_CHAT_ALLOWED_AUTHORS, then to allowed_author)
+        required: false
+        type: string
+        default: ""
+      host:
+        description: Open-Chat server base URL (falls back to vars.OPEN_CHAT_HOST, then 'https://ci.msgmate.io')
+        required: false
+        type: string
+        default: ""
+      bot:
+        description: Name of the Open-Chat coding bot (falls back to vars.OPEN_CHAT_CODING_BOT, then '<caller-repo>-repl-bot')
+        required: false
+        type: string
+        default: ""
+      review_bot:
+        description: Name of the Open-Chat bot used when the comment explicitly requests a PR review (falls back to vars.OPEN_CHAT_REVIEW_BOT, then '<caller-repo>-review-bot')
+        required: false
+        type: string
+        default: ""
+      review_phrase:
+        description: Phrase inside the comment body that routes the request to the review bot (falls back to vars.OPEN_CHAT_REVIEW_PHRASE, then 'please review')
+        required: false
+        type: string
+        default: ""
+      agent_context:
+        description: Optional extra context block appended verbatim to the agent message header (repo-specific notes for cloned agents)
+        required: false
+        type: string
+        default: ""
+      require_mention:
+        description: 'Require the trigger comment to explicitly @mention the bot GitHub user (or review bot) — falls back to vars.OPEN_CHAT_REQUIRE_MENTION, then true. Bots self-dispatch (fix-plan/implement markers) are unaffected.'
+        required: false
+        type: string
+        default: "true"
+    secrets:
+      OPEN_CHAT_API_TOKEN:
+        description: Open-Chat API token used to create the interaction
+        required: true
+      BOT_TOKEN:
+        description: GitHub token used to install the python client, fetch PR context and post the badge comment (falls back to the caller's github.token)
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  OPEN_CHAT_BOT_USER: ${{ vars.OPEN_CHAT_BOT_GITHUB_USER || inputs.bot_user || 'cur1ousdude' }}
+  # Security: only comments by these authors may trigger the agent (hard
+  # filter). Comma-separated list; single-author configs (vars.OPEN_CHAT_
+  # ALLOWED_AUTHOR / allowed_author) are kept as fallback for compatibility.
+  OPEN_CHAT_ALLOWED_AUTHOR: ${{ vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode' }}
+  OPEN_CHAT_ALLOWED_AUTHORS: ${{ vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode') }}
+  OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || inputs.host || 'https://ci.msgmate.io' }}
+  OPEN_CHAT_BOT: ${{ vars.OPEN_CHAT_CODING_BOT || inputs.bot || format('{0}-repl-bot', github.event.repository.name) }}
+  OPEN_CHAT_REVIEW_BOT: ${{ vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || format('{0}-review-bot', github.event.repository.name) }}
+  OPEN_CHAT_REVIEW_PHRASE: ${{ vars.OPEN_CHAT_REVIEW_PHRASE || inputs.review_phrase || 'please review' }}
+  OPEN_CHAT_REQUIRE_MENTION: ${{ vars.OPEN_CHAT_REQUIRE_MENTION || inputs.require_mention || 'true' }}
+
+concurrency:
+  group: open-chat-repl-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  open-chat-repl:
+    name: Open-Chat Comment REPL
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      !contains(github.event.comment.body, 'ci-fix-blocked') &&
+      (
+        (
+          contains(format(',{0},', (vars.OPEN_CHAT_ALLOWED_AUTHORS || inputs.allowed_authors || (vars.OPEN_CHAT_ALLOWED_AUTHOR || inputs.allowed_author || 'tbscode'))), format(',{0},', github.event.comment.user.login))
+          &&
+          (
+            (vars.OPEN_CHAT_REQUIRE_MENTION || inputs.require_mention || 'true') == 'false' ||
+            contains(github.event.comment.body, format('@{0}', (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude'))) ||
+            contains(github.event.comment.body, format('@{0}', (vars.OPEN_CHAT_REVIEW_BOT || inputs.review_bot || format('{0}-review-bot', github.event.repository.name))))
+          )
+        )
+        ||
+        (
+          github.event.comment.user.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
+          (
+            contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->') ||
+            contains(github.event.comment.body, '<!-- open-chat-issue-implement -->')
+          )
+        )
+      )
+    steps:
+      - name: Install Open-Chat python client
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          pip install "git+https://x-access-token:${GH_TOKEN}@github.com/msgmate-io/open-chat-go-python-client.git"
+
+      - name: Fetch issue / PR context
+        id: context
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          ISSUE_JSON="$(curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}")"
+          {
+            echo "pr_sha=$(jq -r '.pull_request.head.sha // ""' <<< "$ISSUE_JSON")"
+            echo "pr_branch=$(jq -r '.pull_request.head.ref // ""' <<< "$ISSUE_JSON")"
+            echo "is_pr=$([ -n "$(jq -r '.pull_request.head.sha // ""' <<< "$ISSUE_JSON")" ] && echo true || echo false)"
+            echo "pr_url=$(jq -r '.pull_request.html_url // ""' <<< "$ISSUE_JSON")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Assemble agent message and dispatch Open-Chat interaction
+        id: interaction
+        env:
+          OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          REPO: ${{ github.repository }}
+          IS_PR: ${{ steps.context.outputs.is_pr }}
+          PR_SHA: ${{ steps.context.outputs.pr_sha }}
+          PR_BRANCH: ${{ steps.context.outputs.pr_branch }}
+          PR_URL: ${{ steps.context.outputs.pr_url }}
+          BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
+          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
+          OPEN_CHAT_BOT: ${{ env.OPEN_CHAT_BOT }}
+          OPEN_CHAT_REVIEW_BOT: ${{ env.OPEN_CHAT_REVIEW_BOT }}
+          OPEN_CHAT_REVIEW_PHRASE: ${{ env.OPEN_CHAT_REVIEW_PHRASE }}
+          AGENT_CONTEXT: ${{ inputs.agent_context }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPEN_CHAT_API_TOKEN" ]; then
+            echo "::error::OPEN_CHAT_API_TOKEN secret is not set in this repository."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          from client.client import OpenChatClient, TokenAuth
+
+          api_token = os.environ["OPEN_CHAT_API_TOKEN"]
+
+          body_lower = os.environ["COMMENT_BODY"].lower()
+          is_pr = os.environ.get("IS_PR") == "true"
+          fix_plan_post = "<!-- open-chat-ci-fix-plan-post -->" in os.environ["COMMENT_BODY"]
+          review_requested = (
+              is_pr
+              and os.environ["OPEN_CHAT_REVIEW_BOT"] != ""
+              and os.environ["OPEN_CHAT_REVIEW_PHRASE"].lower() in body_lower
+          )
+          mode = "review" if review_requested else "implement"
+          bot_name = os.environ["OPEN_CHAT_REVIEW_BOT"] if review_requested else os.environ.get("OPEN_CHAT_BOT", "issue-repl-bot")
+          kind = "pull request" if is_pr else "issue"
+
+          implement_header = (
+              "You are a recurring coding agent responding to a GitHub comment that mentioned you.\n"
+              "Your durable playbook is part of your agent definition (system_prompt); follow it.\n"
+              "Task: fully complete the request described in the comment below (implement,\n"
+              "test and where needed open or update a PR with ALL applicable CI labels) and,\n"
+              "when finished, post a follow-up comment in the same thread summarizing what\n"
+              "you did and how to proceed (CI labels deployed, verification pending).\n"
+              "You are authenticated on GitHub via the gh CLI as the bot user \""
+              + os.environ["BOT_USER"] + "\"; use that identity for any git/gh operations\n"
+              "and for the follow-up comment.\n"
+          )
+          if fix_plan_post:
+              implement_header += (
+                  "\n"
+                  "IMPORTANT - this is an automatic CI fix-plan dispatch (comment marker\n"
+                  "'open-chat-ci-fix-plan-post'). Workflow:\n"
+                  "1. Check whether a '[CI fix plan]' issue for this PR already exists and is\n"
+                  "   open (gh issue list --search). If none exists, create it: title\n"
+                  "   '[CI fix plan] PR #" + os.environ["ISSUE_NUMBER"] + " <short cause>' ; body: the plan text\n"
+                  "   from the triggering comment verbatim, prefixed with the PR link, the\n"
+                  "   failing run/comment url and the latest attempt number.\n"
+                  "2. Comment on the PR linking the fix-plan issue.\n"
+                  "3. Implement the fix-plan issue step-by-step on the PR branch, commit with\n"
+                  "   detailed messages and PUSH so CI re-runs (submodule changes pushed and\n"
+                  "   gitlinks bumped first, see your playbook).\n"
+                  "4. When the CI passes, comment 'fix implemented' on the fix-plan issue and\n"
+                  "   close it; otherwise the automatic fix cycle repeats (see playbook).\n"
+              )
+          implement_header += "\n"
+          review_header = (
+              "You are a GitHub PR review agent responding to a review request that mentioned you.\n"
+              "Your durable playbook is part of your agent definition (system_prompt); follow it:\n"
+              "perform a genuine hands-on review of the pull request (fresh full clone + checkout\n"
+              "of the head commit below) and post it as a real GitHub review (gh pr review with\n"
+              "--comment/--approve/--request-changes as fitting), referencing concrete files/lines.\n"
+              "You are authenticated on GitHub via the gh CLI as the bot user \""
+              + os.environ["BOT_USER"] + "\"; use that identity for all git/gh operations.\n"
+              "\n"
+          )
+          header = review_header if mode == "review" else implement_header
+
+          agent_context = (os.environ.get("AGENT_CONTEXT") or "").strip()
+          if agent_context:
+              header = header + "\n" + agent_context + "\n\n"
+
+          context = (
+              "Context:\n"
+              + "- Repository: " + os.environ["REPO"] + "\n"
+              + "- Interaction mode: " + mode + "\n"
+              + "- Kind: " + kind + "\n"
+              + "- Issue/PR number: " + os.environ["ISSUE_NUMBER"] + "\n"
+              + "- Issue/PR title: " + os.environ["ISSUE_TITLE"] + "\n"
+          )
+          if is_pr:
+              context += (
+                  "- PR head branch: " + os.environ["PR_BRANCH"] + "\n"
+                  + "- PR head commit: " + os.environ["PR_SHA"] + "\n"
+                  + "- PR url: " + os.environ["PR_URL"] + "\n"
+              )
+          context += (
+              "- Requested by (comment author): " + os.environ["COMMENT_AUTHOR"] + "\n"
+              + "- Triggering comment id: " + os.environ["COMMENT_ID"] + "\n"
+              + "- Triggering comment url: " + os.environ["COMMENT_URL"] + "\n"
+              + "\n"
+              + "Triggering comment (verbatim):\n"
+              + "```\n"
+          )
+          message = header + context + os.environ["COMMENT_BODY"].strip() + "\n```\n"
+
+          client = OpenChatClient(
+              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
+              auth=TokenAuth(token=api_token),
+          )
+          me = client.me()
+          print("Authenticated as:", me.name)
+          print("Interaction mode:", mode, "-> bot:", bot_name)
+          bot = client.get_bot(bot_name)
+          interaction = bot.create_interaction(message=message, share=True)
+          print("Created interaction chat:", interaction.uuid)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"chat_uuid={interaction.uuid}\n")
+              share_uuid = getattr(interaction, "_chat_share_uuid", None)
+              if share_uuid:
+                  out.write(f"chat_share_uuid={share_uuid}\n")
+                  out.write(f"shared_url={interaction.shared_url()}\n")
+          PY
+
+      - name: Reply in thread with interaction badge
+        if: steps.interaction.outputs.chat_uuid != ''
+        env:
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          BOT_USER: ${{ env.OPEN_CHAT_BOT_USER }}
+          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
+          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
+          SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
+          OPEN_CHAT_HOST: ${{ env.OPEN_CHAT_HOST }}
+        run: |
+          set -euo pipefail
+          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
+          SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
+          BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
+          COMMENT_BODY="$(printf '%s\n' \
+            "[![open-chat interaction](%s)](%s)" \
+            "*Agent responding for a request mentioning the bot; click the badge above to watch live progress on the Open-Chat server.*" \
+            "The agent will follow up in this thread when it has completed the request.")"
+          COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
+          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+            -d "$payload"

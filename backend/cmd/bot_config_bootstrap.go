@@ -79,6 +79,9 @@ func validateBotBootstrapConfig(cfg botBootstrapConfig, source string) (botBoots
 		normalizedBackends = append(normalizedBackends, normalized)
 	}
 	cfg.AllowedModelBackends = normalizedBackends
+	if cfg.InheritDefaultBotModels && len(cfg.AllowedModelBackends) > 0 {
+		return cfg, fmt.Errorf("bot config %q: inherit_default_bot_models and allowed_model_backends are mutually exclusive", source)
+	}
 
 	return cfg, nil
 }
@@ -133,6 +136,63 @@ func syncBotDefaultModelAccessByBackend(tx *gorm.DB, botUsername string, allowed
 		}
 	}
 
+	return nil
+}
+
+// resolveBotAssignmentName resolves the model-assignment key for a bootstrap
+// bot config. Model assignments are keyed by the bot user's `name` (matching
+// CreateOrUpdateBotProfile), which is not necessarily cfg.Bot.Name (the bot
+// display/runtime name). Prefer the resolved user; fall back to cfg.Bot.Name
+// for installs where the user cannot be looked up yet.
+func resolveBotAssignmentName(DB *gorm.DB, cfg botBootstrapConfig) (target string, legacy string) {
+	legacy = strings.TrimSpace(cfg.Bot.Name)
+	if botUser, err := findUserByUsername(DB, cfg.Bot.Username); err == nil {
+		if name := strings.TrimSpace(botUser.Name); name != "" {
+			return name, legacy
+		}
+	}
+	if legacy != "" {
+		return legacy, ""
+	}
+	return strings.TrimSpace(cfg.Bot.Username), legacy
+}
+
+// cleanupStaleBotAssignmentKey removes a previously used assignment key from
+// all default model configs so old installs converge on the resolved key.
+func cleanupStaleBotAssignmentKey(db *gorm.DB, staleKey string, currentKey string) error {
+	staleKey = strings.TrimSpace(staleKey)
+	currentKey = strings.TrimSpace(currentKey)
+	if staleKey == "" || staleKey == currentKey {
+		return nil
+	}
+	rows := []database.ModelConfig{}
+	if err := db.Where("owner_user_id IS NULL AND is_default = ?", true).Find(&rows).Error; err != nil {
+		return err
+	}
+	for idx := range rows {
+		if !rows[idx].AssignedToBot(staleKey) {
+			continue
+		}
+		if _, err := database.UnassignBotFromModelConfig(db, rows[idx].UUID, staleKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncBotsInheritingDefaultModelAccess(DB *gorm.DB, defaultBotUsername string, configs []botBootstrapConfig) error {
+	for _, cfg := range configs {
+		if !cfg.InheritDefaultBotModels {
+			continue
+		}
+		targetBotUsername, legacyKey := resolveBotAssignmentName(DB, cfg)
+		if err := cleanupStaleBotAssignmentKey(DB, legacyKey, targetBotUsername); err != nil {
+			return fmt.Errorf("failed cleaning stale model assignments for bot %q: %w", targetBotUsername, err)
+		}
+		if _, err := database.SyncBotModelsFromBot(DB, defaultBotUsername, targetBotUsername); err != nil {
+			return fmt.Errorf("failed syncing inherited model access for bot %q: %w", targetBotUsername, err)
+		}
+	}
 	return nil
 }
 
