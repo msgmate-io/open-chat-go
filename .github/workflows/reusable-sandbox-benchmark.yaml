@@ -417,10 +417,15 @@ jobs:
             echo "::warning::No summary text available; skipping PR comment."
             exit 0
           fi
-          # Defensive: if the model wrapped the summary in a markdown code
-          # fence, unwrap it so the comment renders the markdown directly.
-          if printf '%s' "$summary" | head -n1 | grep -q '^```'; then
-            summary="$(printf '%s' "$summary" | sed '1d' | sed '${/^```[[:space:]]*$/d}')"
+          # Defensive: the model may wrap the summary in a markdown code fence,
+          # sometimes after a stray status sentence. Extract the first fenced
+          # block so the comment renders the markdown directly (the sandbox test
+          # verify unwraps the same way).
+          if printf '%s\n' "$summary" | grep -q '^```'; then
+            summary="$(printf '%s\n' "$summary" | awk '
+              /^```/ { if (seen) exit; seen=1; next }
+              seen { print }
+            ')"
           fi
           if [ "${#summary}" -gt 55000 ]; then
             summary="${summary:0:55000}
