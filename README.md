@@ -2,8 +2,8 @@
 
 > 10th generation of Open Chat, written in Go. Without [federation](https://github.com/msgmate-io/open-chat-go) for now; [would love to add it again though](https://blog.t1m.me/blog/designing-a-decentral-vpn-protocol-w-libp2p).
 
-- Production: [`msgmate.io`](https://msgmate.io) ( branch [`production`](https://github.com/msgmate-io/open-chat-go/tree/production) ) — [latest stable binary](https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-0.0.565/open-chat-0.0.566-linux-amd64)
-- Staging: [`stage.msgmate.io`](https://stage.msgmate.io) ( branch [`main`](https://github.com/msgmate-io/open-chat-go) ) — [latest unstable binary](https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-staging-0.0.595/open-chat-0.0.596-linux-amd64)
+- Production: [`msgmate.io`](https://msgmate.io) ( branch [`production`](https://github.com/msgmate-io/open-chat-go/tree/production) ) — [latest stable release](https://github.com/msgmate-io/open-chat-go/releases/latest)
+- Staging: [`stage.msgmate.io`](https://stage.msgmate.io) ( branch [`main`](https://github.com/msgmate-io/open-chat-go) ) — [latest unstable release](https://github.com/msgmate-io/open-chat-go/releases)
 - Docs: [`msgmate.io/docs`](https://msgmate.io/docs)
 - Getting started: [`msgmate.io/docs#getting-started`](https://msgmate.io/docs#getting-started)
 - Development: [`msgmate.io/docs#development`](https://msgmate.io/docs#development)
