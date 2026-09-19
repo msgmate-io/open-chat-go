@@ -307,6 +307,14 @@ if [ -n "$TARGET_GOARCH" ]; then export GOARCH="$TARGET_GOARCH"; else unset GOAR
 
 # Build ldflags for build-time defaults
 LDFLAGS=""
+TRIMPATH_FLAG=""
+
+# Release builds strip symbol tables and record reproducible paths.
+if [ "${OPEN_CHAT_RELEASE_BUILD:-0}" = "1" ]; then
+    echo "Release build enabled (OPEN_CHAT_RELEASE_BUILD=1): adding -trimpath -s -w"
+    TRIMPATH_FLAG="-trimpath"
+    LDFLAGS="$LDFLAGS -s -w"
+fi
 
 # Add build-time defaults if environment variables are set
 if [ -n "$BUILD_DEFAULT_BOT" ]; then
@@ -317,10 +325,10 @@ fi
 # Build with ldflags
 if [ -n "$LDFLAGS" ]; then
     echo "Building with ldflags: $LDFLAGS"
-    go build -ldflags "$LDFLAGS" -o backend .
+    go build $TRIMPATH_FLAG -ldflags "$LDFLAGS" -o backend .
 else
     echo "Building backend (no custom ldflags)"
-    go build -o backend .
+    go build $TRIMPATH_FLAG -o backend .
 fi
 
 echo "Full build complete!"
