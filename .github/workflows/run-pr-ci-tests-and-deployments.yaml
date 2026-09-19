@@ -2312,6 +2312,34 @@ jobs:
               echo "no-issue PR: linked-issue gate exempt."
               exit 0
             fi
+            # ci#898: a test-only PR (only *_test.go / go.mod / go.sum / CI
+            # workflow or dev scripts, no production code) carries the 'test'
+            # label but usually has no leaf issue, and forcing a synthetic one
+            # just to satisfy the gate would pollute the private tracker. Exempt
+            # it only when the diff actually is test/CI-only. The file list is
+            # re-diffed live against the PR base with git (never read from the
+            # event payload - see ci#659), so a 'test'-labeled PR that also
+            # touches production code still must link a leaf issue.
+            if grep -qx 'test' "${RUNNER_TEMP}/pr-labels.txt"; then
+              BASE_SHA="${{ github.event.pull_request.base.sha }}"
+              HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+              # The checkout above pins the PR head with a depth-1 fetch, so the
+              # base commit is not present locally: fetch it before diffing.
+              git fetch --depth=1 origin "${BASE_SHA}" >/dev/null 2>&1 || true
+              TESTONLY='^(\.github/|development/|scripts/|test/|backend/.*_test\.go|go\.mod$|go\.sum$|backend/go\.mod$|backend/go\.sum$)'
+              FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" 2>/dev/null || \
+                git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...${HEAD_SHA}" 2>/dev/null || true)"
+              if printf '%s\n' "$FILES" | grep -qE "$TESTONLY"; then
+                if printf '%s\n' "$FILES" | grep -viE "$TESTONLY" | grep -q .; then
+                  echo "Label 'test' on a PR that also touches non-test files; linked-issue gate applies."
+                else
+                  echo "Test-only PR: linked-issue gate exempt."
+                  exit 0
+                fi
+              else
+                echo "Label 'test' with no test/CI file in the diff; not treated as a test-only PR."
+              fi
+            fi
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
           # ci#824: a closing line must be standalone, exactly like

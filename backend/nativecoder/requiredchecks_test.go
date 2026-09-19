@@ -375,3 +375,57 @@ func TestNewestCheckRunsKeepsARealCancelledFailure(t *testing.T) {
 		t.Fatalf("combined state = %q, want failure", got)
 	}
 }
+
+// TestStalePendingCombinedStatusIsNotABlock is the ci#928 incident: right after
+// a squash merge the combined-status endpoint can report `state: pending` with
+// an empty `statuses` list for a commit that has no commit statuses at all,
+// while `/check-runs` correctly returns no runs. A required context that has
+// never reported via a legacy status is simply un-reported — it stays pending
+// until a check actually exists to be pending — and the stale aggregate
+// `pending` must never read as a *pending check* or a pending required context.
+func TestStalePendingCombinedStatusIsNotABlock(t *testing.T) {
+	// The exact ci#928 shape: `pending` with no statuses, no check runs.
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"pending","statuses":[]}`))
+	runs, facts, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want none", len(runs))
+	}
+	// The aggregate over all checks must read as unknown (no checks at all),
+	// never pending.
+	if got := combinedStateFromFacts(runs, facts); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown (a commit with no checks is not pending)", got)
+	}
+	// The required-context resolution must not turn the stale pending report
+	// into a pending required check: a context that has never reported is
+	// un-reported (not-found).
+	required := []RequiredCheck{{Context: "files-sync"}}
+	if _, found := requiredContextState(required[0], runs, facts); found {
+		t.Fatal("required context resolved from the stale empty status list; want not-found")
+	}
+}
+
+// TestCombinedEmptyNeverVetoesARedContext guards the safety side of ci#928: the
+// empty-status sentinel is dropped only when there is genuinely nothing else. A
+// real red legacy status still wins, and a commit whose combined-status list is
+// empty but that has real statuses constructed by hand is unaffected.
+func TestCombinedEmptyNeverVetoesARedContext(t *testing.T) {
+	// A real red legacy status next to the empty report: the red status decides.
+	statuses := []statusFact{
+		{Context: "private-sandbox-tests", State: "failure"},
+		{CombinedEmpty: true},
+	}
+	if got := combinedStateFromFacts(nil, statuses); got != "failure" {
+		t.Fatalf("combined state = %q, want failure", got)
+	}
+	if got := combinedStateFromFacts(nil, []statusFact{{CombinedEmpty: true}}); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown", got)
+	}
+	// A hand-built empty fact (no context, no state, no sentinel) is not a real
+	// status either: the aggregate collapses to unknown, never pending.
+	if got := combinedStateFromFacts(nil, []statusFact{{Context: "", State: ""}}); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown", got)
+	}
+}
