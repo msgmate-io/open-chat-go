@@ -23,41 +23,31 @@ We release all versions always ( after admin confirmation ):
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
 
-### Debian / Ubuntu (apt)
+### Windows
 
-Debian and Ubuntu packages are published to a signed APT repository hosted on
-GitHub Pages. Ubuntu 22.04/24.04 and Debian 12 are supported.
+winget is the recommended Windows channel (Scoop is a secondary, admin-free
+option). Until the package is listed, download the `windows-amd64` or
+`windows-arm64` asset from the [latest release](https://github.com/msgmate-io/open-chat-go/releases)
+and register the native Windows service from an **elevated** PowerShell:
 
-```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://msgmate-io.github.io/open-chat-go/apt/open-chat.asc \
-  | sudo tee /etc/apt/keyrings/open-chat.asc >/dev/null
-echo "deb [signed-by=/etc/apt/keyrings/open-chat.asc] https://msgmate-io.github.io/open-chat-go/apt stable main" \
-  | sudo tee /etc/apt/sources.list.d/open-chat.list
-sudo apt-get update
-sudo apt-get install open-chat
+```powershell
+# winget (once published)
+winget install Msgmate.OpenChat
+
+# or Scoop (once the bucket is published)
+scoop bucket add msgmate https://github.com/msgmate-io/scoop-bucket
+scoop install msgmate/open-chat
+
+# register and start the service (admin shell)
+open-chat install
+open-chat status   # service: running, server: running on 127.0.0.1:1984
 ```
 
-The package creates an `open-chat` system user, installs a systemd unit and
-starts the server on `127.0.0.1:1984`. State lives in `/var/lib/open-chat`
-(`data.db`) and configuration in `/etc/open-chat/open-chat.json`.
+`open-chat install` copies the binary to `%ProgramFiles%\OpenChat`, stores its
+data and config under `%ProgramData%\OpenChat` and registers the service with the
+Windows SCM. Because the service runs that copied binary, re-run
+`open-chat install --force` from an elevated shell after every
+`winget upgrade`/`scoop update` so the service picks up the new version.
 
-On first start a random admin password is generated and written to the journal:
-
-```bash
-sudo journalctl -u open-chat | grep "Generated random password"
-```
-
-Manage the service with systemd:
-
-```bash
-sudo systemctl status open-chat
-sudo systemctl restart open-chat
-open-chat status
-```
-
-Upgrades arrive through `apt upgrade`. `apt remove open-chat` keeps the
-database; `apt purge open-chat` removes `/var/lib/open-chat`.
-
-Maintainer documentation for building and signing packages lives in
-[`development/packaging/README.md`](development/packaging/README.md).
+See [`development/windows/README.md`](development/windows/README.md) for the full
+channel comparison, the winget/Scoop manifest templates and the upgrade runbook.
