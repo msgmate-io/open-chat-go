@@ -1,0 +1,35 @@
+# This manifest is maintained by development/windows/winget/render_manifest.sh
+# in msgmate-io/open-chat-go. Do not edit the version, URLs or checksums by
+# hand: run the script so they stay in sync with the published release assets.
+#
+# Default-locale manifest. The License/LicenseUrl placeholders are substituted by
+# the render script and MUST be replaced with the project's real SPDX identifier
+# once a LICENSE file is added (see development/windows/README.md).
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: Msgmate.OpenChat
+PackageVersion: "@VERSION@"
+PackageLocale: en-US
+Publisher: Msgmate
+PublisherUrl: https://github.com/msgmate-io
+PublisherSupportUrl: https://github.com/msgmate-io/open-chat-go/issues
+Author: msgmate.io
+PackageName: Open Chat
+PackageUrl: https://github.com/msgmate-io/open-chat-go
+License: "@LICENSE@"
+LicenseUrl: "@LICENSE_URL@"
+Copyright: Copyright (c) msgmate.io
+ShortDescription: Open source, privacy focused Chat-GPT alternative with tools and integrations
+Description: >-
+  Open Chat is a self-hosted, privacy focused Chat-GPT alternative written in Go.
+  Its single binary embeds the web frontend and exposes a REST API. The same CLI
+  can register and manage the server as a native Windows service using
+  `open-chat install`.
+Moniker: open-chat
+Tags:
+  - ai
+  - chat
+  - llm
+  - self-hosted
+ReleaseNotesUrl: https://github.com/msgmate-io/open-chat-go/releases/tag/@RELEASE_TAG@
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
