@@ -166,6 +166,7 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 
 	if result.Error != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
 	}
 
 	var receiverId uint
