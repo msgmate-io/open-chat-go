@@ -1,0 +1,174 @@
+name: Homebrew macOS Install Verification
+
+# Verifies the end-to-end Homebrew installation on real macOS runners:
+#   brew install msgmate-io/tap/open-chat
+#   brew services start open-chat   (registers + starts the launchd service)
+#   open-chat status                (service/server health)
+#
+# It runs on every push to main, on demand, on a weekly schedule (to catch tap
+# drift), and on PRs that touch this workflow or the Homebrew assets.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - ".github/workflows/homebrew-macos-verify.yaml"
+      - "development/homebrew/**"
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      tap_repository:
+        description: Homebrew tap repository (owner/repo)
+        required: false
+        default: msgmate-io/homebrew-tap
+      formula:
+        description: Formula name inside the tap
+        required: false
+        default: open-chat
+      service_port:
+        description: Port the server should listen on
+        required: false
+        default: "1984"
+  workflow_call:
+    inputs:
+      tap_repository:
+        description: Homebrew tap repository (owner/repo)
+        required: false
+        type: string
+        default: msgmate-io/homebrew-tap
+      formula:
+        description: Formula name inside the tap
+        required: false
+        type: string
+        default: open-chat
+      service_port:
+        description: Port the server should listen on
+        required: false
+        type: string
+        default: "1984"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: homebrew-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: brew install (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: intel
+    env:
+      TAP_REPOSITORY: ${{ inputs.tap_repository || 'msgmate-io/homebrew-tap' }}
+      FORMULA: ${{ inputs.formula || 'open-chat' }}
+      SERVICE_PORT: ${{ inputs.service_port || '1984' }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+
+    steps:
+      - name: Show runner information
+        run: |
+          set -euo pipefail
+          echo "machine: $(uname -m)"
+          sw_vers
+          brew --version
+
+      - name: Resolve tap short name
+        id: tap
+        run: |
+          set -euo pipefail
+          tap_owner="${TAP_REPOSITORY%%/*}"
+          echo "short=${tap_owner}/tap" >> "$GITHUB_OUTPUT"
+          echo "Installing ${tap_owner}/tap/${FORMULA} from ${TAP_REPOSITORY}"
+
+      - name: Install open-chat via Homebrew
+        run: |
+          set -euo pipefail
+          brew tap "${TAP_REPOSITORY}"
+          brew install "${{ steps.tap.outputs.short }}/${FORMULA}"
+          brew list --versions "${FORMULA}"
+
+      - name: Verify the installed CLI and formula test
+        run: |
+          set -euo pipefail
+          command -v open-chat
+          open-chat --help | head -n 5
+          brew test "${FORMULA}"
+
+      - name: Start and register the service with brew services
+        run: |
+          set -euo pipefail
+          brew services start "${FORMULA}"
+
+      - name: Verify launchd registration
+        run: |
+          set -euo pipefail
+          brew services list | tee /tmp/brew-services.txt
+          grep -Eq "^${FORMULA}[[:space:]]+started" /tmp/brew-services.txt
+          plist="${HOME}/Library/LaunchAgents/homebrew.mxcl.${FORMULA}.plist"
+          test -f "${plist}"
+          ls -l "${plist}"
+          launchctl list | grep -F "homebrew.mxcl.${FORMULA}"
+
+      - name: Wait for the server to answer
+        run: |
+          set -euo pipefail
+          endpoint="http://127.0.0.1:${SERVICE_PORT}/api/version"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "${endpoint}" >/tmp/open-chat-version.json 2>/dev/null; then
+              echo "Server answered on attempt ${attempt}: $(cat /tmp/open-chat-version.json)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::open-chat did not answer on ${endpoint}"
+          echo "--- brew services list ---"
+          brew services list || true
+          echo "--- launchd plist ---"
+          cat "${HOME}/Library/LaunchAgents/homebrew.mxcl.${FORMULA}.plist" || true
+          echo "--- open-chat.log ---"
+          tail -n 200 "$(brew --prefix)/var/log/open-chat.log" 2>/dev/null || true
+          echo "--- open-chat.err.log ---"
+          tail -n 200 "$(brew --prefix)/var/log/open-chat.err.log" 2>/dev/null || true
+          exit 1
+
+      - name: Verify open-chat status reports the server running
+        run: |
+          set -euo pipefail
+          open-chat status --port "${SERVICE_PORT}" | tee /tmp/open-chat-status.txt
+          grep -Eq "server:[[:space:]]+running on 127.0.0.1:${SERVICE_PORT}" /tmp/open-chat-status.txt
+
+      - name: Stop the service
+        if: always()
+        run: brew services stop "${FORMULA}" || true
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Homebrew macOS install verification"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Runner | \`${{ matrix.runner }}\` (${{ matrix.arch }}) |"
+            echo "| Tap | \`${TAP_REPOSITORY}\` |"
+            echo "| Formula | \`${FORMULA}\` |"
+            echo "| Port | \`${SERVICE_PORT}\` |"
+            echo "| Result | \`${{ job.status }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
