@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Open Chat
+GenericName=Chat Server
+Comment=Self-hosted, extensible chat server
+Exec=open-chat
+Icon=open-chat
+Terminal=true
+Categories=Network;InstantMessaging;
+Keywords=chat;server;self-hosted;messaging;
+StartupNotify=false
