@@ -38,11 +38,13 @@ jobs:
             experimental-features = nix-command flakes
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
+      # Optional: set the repository variable CACHIX_CACHE (e.g. "open-chat-go")
+      # and the CACHIX_AUTH_TOKEN secret to publish build results to Cachix.
       - name: Configure Cachix
-        if: ${{ secrets.CACHIX_AUTH_TOKEN != '' }}
+        if: ${{ vars.CACHIX_CACHE != '' }}
         uses: cachix/cachix-action@v15
         with:
-          name: open-chat-go
+          name: ${{ vars.CACHIX_CACHE }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Check flake
