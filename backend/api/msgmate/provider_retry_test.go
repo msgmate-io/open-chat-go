@@ -155,9 +155,15 @@ func TestClassifyGenerationFailure(t *testing.T) {
 			wantReason: FailureReasonLeakedCompaction,
 		},
 		{
-			name:        "provider http failure",
+			// ci#927 / ci#619/#620: an HTTP 429 (rate limit) or 402 (credits
+			// exhausted) is a provider back-pressure condition, not a provider
+			// fault. Retrying it is fine, but when the retries are exhausted
+			// the turn must classify as back-pressure so the pipeline lowers
+			// concurrency instead of looping on a repeating per-request
+			// provider error.
+			name:        "provider http 429 is back-pressure",
 			err:         &ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"rate limited"}}`, Attempts: 2},
-			wantReason:  FailureReasonProviderError,
+			wantReason:  FailureReasonProviderBackpressure,
 			wantSummary: true,
 		},
 		{
@@ -367,4 +373,29 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+func TestIsProviderBackpressureStatus(t *testing.T) {
+	for _, code := range []int{402, 429} {
+		if !isProviderBackpressureStatus(code) {
+			t.Errorf("status %d should be classified as provider back-pressure", code)
+		}
+	}
+	for _, code := range []int{400, 401, 403, 404, 408, 500, 502, 503} {
+		if isProviderBackpressureStatus(code) {
+			t.Errorf("status %d should not be classified as provider back-pressure", code)
+		}
+	}
+}
+
+func TestIsRetryableBackpressureError(t *testing.T) {
+	if isRetryableBackpressureError(nil) {
+		t.Fatal("nil error is not a back-pressure condition")
+	}
+	if !isRetryableBackpressureError(&ProviderSaturationError{}) {
+		t.Fatal("admission saturation must be retryable back-pressure (ci#909/ci#927)")
+	}
+	if isRetryableBackpressureError(fmt.Errorf("boom")) {
+		t.Fatal("generic errors are not back-pressure")
+	}
 }
