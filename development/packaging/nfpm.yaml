@@ -1,0 +1,89 @@
+# nFPM configuration for the open-chat Debian package.
+#
+# Required environment variables:
+#   ARCH     target Go architecture (amd64, arm64, ...)
+#   VERSION  package version without a leading "v" (e.g. 0.0.611)
+#   BIN      absolute path to the built linux binary
+#
+# Build with:
+#   development/packaging/build-deb.sh
+name: open-chat
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+section: admin
+priority: optional
+maintainer: msgmate.io <dev@msgmate.io>
+description: |
+  Open Chat server and background worker.
+  Open Chat is a self-hosted chat, automation and integration server written in Go.
+vendor: msgmate.io
+homepage: https://github.com/msgmate-io/open-chat-go
+license: MIT
+depends:
+  - systemd
+  - adduser
+recommends:
+  - ca-certificates
+  - redis-server
+contents:
+  - src: ${BIN}
+    dst: /usr/bin/open-chat
+    expand: true
+    file_info:
+      mode: 0755
+  - src: open-chat.service
+    dst: /usr/lib/systemd/system/open-chat.service
+    file_info:
+      mode: 0644
+  - src: open-chat.json
+    dst: /etc/open-chat/open-chat.json
+    type: config
+    packager: deb
+    file_info:
+      owner: open-chat
+      group: open-chat
+      mode: 0600
+  - src: open-chat.json
+    dst: /etc/open-chat/open-chat.json
+    type: config|noreplace
+    packager: rpm
+    file_info:
+      owner: open-chat
+      group: open-chat
+      mode: 0600
+  - src: open-chat.sysusers
+    dst: /usr/lib/sysusers.d/open-chat.conf
+    file_info:
+      mode: 0644
+  - src: open-chat.tmpfiles
+    dst: /usr/lib/tmpfiles.d/open-chat.conf
+    file_info:
+      mode: 0644
+  - dst: /etc/open-chat
+    type: dir
+    file_info:
+      owner: root
+      group: open-chat
+      mode: 0750
+  - dst: /var/lib/open-chat
+    type: dir
+    file_info:
+      owner: open-chat
+      group: open-chat
+      mode: 0750
+scripts:
+  preinstall: scripts/preinstall.sh
+  postinstall: scripts/postinstall.sh
+  preremove: scripts/preremove.sh
+  postremove: scripts/postremove.sh
+overrides:
+  rpm:
+    depends:
+      - systemd
+    scripts:
+      preinstall: scripts/preinstall.sh
+      postinstall: scripts/postinstall.sh
+      preremove: scripts/preremove.sh
+      postremove: scripts/postremove.sh
