@@ -229,6 +229,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, package-deb]
     if: always()
+    outputs:
+      tag_name: ${{ steps.release_meta.outputs.tag_name }}
+      version: ${{ steps.release_meta.outputs.version }}
+      prerelease: ${{ steps.release_meta.outputs.prerelease }}
     steps:
       - name: Checkout repository (for source archive)
         uses: actions/checkout@v4
@@ -415,3 +419,17 @@ jobs:
             cat /tmp/pr_comment_update.json || true
             exit 1
           fi
+
+  homebrew:
+    name: Bump Homebrew formula
+    needs: [release]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_kind == 'production' && needs.release.outputs.tag_name != '' }}
+    uses: ./.github/workflows/homebrew-formula.yaml
+    with:
+      release_tag: ${{ needs.release.outputs.tag_name }}
+      source_repository: ${{ github.repository }}
+      tap_repository: msgmate-io/homebrew-tap
+      bot_user: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+      source_pr_number: ${{ github.event.inputs.source_pr_number }}
+    secrets:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
