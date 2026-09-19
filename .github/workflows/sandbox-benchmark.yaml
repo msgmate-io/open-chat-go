@@ -1,0 +1,104 @@
+# Manual dispatcher for the Docker Sandbox Benchmark suite.
+#
+# Thin wrapper around `reusable-sandbox-benchmark.yaml` so the suite can be run
+# on demand with a chosen ref/image, model, tag filter and result handling.
+#
+# Examples:
+#   - Run only the parallel tests on a prebuilt image:
+#       target_ref: main
+#       backend_image: ghcr.io/msgmate-io/open-chat-go:msgmate-io-ci-<sha>
+#       tags: parallel
+#       post_results: false
+#   - Run everything, post the summary to an issue:
+#       tags: ""
+#       post_results: true
+#       results_target: issue
+#       issue_number: "219"
+name: Sandbox Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Ref or SHA to check out (also used to build the backend image when none is given)
+        required: false
+        default: main
+      backend_image:
+        description: Prebuilt backend image to test; leave empty to build from target_ref
+        required: false
+        default: ""
+      sandbox_image_url:
+        description: Optional prebuilt coding sandbox image; leave empty to resolve/build by content hash
+        required: false
+        default: ""
+      opencode_provider:
+        description: opencode provider id (default openrouter; only its key is configured by default)
+        required: false
+        default: openrouter
+      opencode_model:
+        description: opencode model id to pin for the benchmark interactions
+        required: false
+        default: deepseek/deepseek-v4-flash
+      tags:
+        description: Comma-separated sandbox test tags to run (empty = all tests)
+        required: false
+        default: ""
+      sandbox_interaction_timeout:
+        description: Per-test interaction timeout in seconds
+        required: false
+        default: "720"
+      upload_artifacts:
+        description: Upload per-test result artifacts
+        required: false
+        type: boolean
+        default: true
+      post_results:
+        description: Post the benchmark summary (comment and/or step summary)
+        required: false
+        type: boolean
+        default: false
+      results_target:
+        description: Where to post results - pr, issue or step-summary
+        required: false
+        default: step-summary
+      pr_number:
+        description: Pull request number for result posting
+        required: false
+        default: ""
+      issue_number:
+        description: Issue number for result posting (used when results_target=issue)
+        required: false
+        default: ""
+      bot_user:
+        description: GitHub login that owns the bot comments
+        required: false
+        default: cur1ousdude
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  packages: write
+
+jobs:
+  sandbox-benchmark:
+    name: Sandbox Benchmark
+    uses: ./.github/workflows/reusable-sandbox-benchmark.yaml
+    with:
+      target_ref: ${{ inputs.target_ref }}
+      backend_image: ${{ inputs.backend_image }}
+      sandbox_image_url: ${{ inputs.sandbox_image_url }}
+      opencode_provider: ${{ inputs.opencode_provider }}
+      opencode_model: ${{ inputs.opencode_model }}
+      tags: ${{ inputs.tags }}
+      sandbox_interaction_timeout: ${{ inputs.sandbox_interaction_timeout }}
+      upload_artifacts: ${{ inputs.upload_artifacts }}
+      post_results: ${{ inputs.post_results }}
+      results_target: ${{ inputs.results_target }}
+      pr_number: ${{ inputs.pr_number }}
+      issue_number: ${{ inputs.issue_number }}
+      source_repo: ${{ github.repository }}
+      bot_user: ${{ inputs.bot_user }}
+      gh_pr_repo: ${{ github.repository }}
+      gh_pr_number: ${{ inputs.pr_number }}
+    secrets: inherit
