@@ -1,6 +1,7 @@
 package bots
 
 import (
+	"backend/api/chats"
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/integrations"
@@ -70,11 +71,17 @@ type UpdateBotRequest struct {
 	IsActive            *bool                  `json:"is_active,omitempty"`
 }
 
+type BotInteractionAttachment struct {
+	FileID      string `json:"file_id"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
 type CreateBotInteractionRequest struct {
-	Message         string                 `json:"message"`
-	ToolInit        map[string]interface{} `json:"tool_init,omitempty"`
-	ConfigOverrides map[string]interface{} `json:"config_overrides,omitempty"`
-	AutoShare       bool                   `json:"auto_share,omitempty"`
+	Message         string                     `json:"message"`
+	ToolInit        map[string]interface{}     `json:"tool_init,omitempty"`
+	ConfigOverrides map[string]interface{}     `json:"config_overrides,omitempty"`
+	AutoShare       bool                       `json:"auto_share,omitempty"`
+	Attachments     []BotInteractionAttachment `json:"attachments,omitempty"`
 }
 
 type BotInteractionChatShare struct {
@@ -170,6 +177,25 @@ func decodeSharedConfig(raw []byte) map[string]interface{} {
 	}
 	_ = json.Unmarshal(raw, &result)
 	return result
+}
+
+func applyInteractionConfigOverrides(
+	effectiveConfig map[string]interface{},
+	configOverrides map[string]interface{},
+	toolInit map[string]interface{},
+) map[string]interface{} {
+	for key, value := range configOverrides {
+		// tool_init has a dedicated request field. Ignoring it here avoids an
+		// override bypass and lets an omitted field preserve the bot default.
+		if key == "tool_init" {
+			continue
+		}
+		effectiveConfig[key] = value
+	}
+	if toolInit != nil {
+		effectiveConfig["tool_init"] = toolInit
+	}
+	return effectiveConfig
 }
 
 func toDTO(runtime database.BotRuntimeConfig) BotDTO {
@@ -275,6 +301,36 @@ func validateSharedConfigStructure(config map[string]interface{}) error {
 	if raw, exists := config["reasoning"]; exists {
 		if _, ok := raw.(bool); !ok {
 			return fmt.Errorf("default_shared_config.reasoning must be a boolean")
+		}
+	}
+
+	if raw, exists := config["use_max_completion_tokens"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("default_shared_config.use_max_completion_tokens must be a boolean")
+		}
+	}
+
+	if raw, exists := config["track_usage"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("default_shared_config.track_usage must be a boolean")
+		}
+	}
+
+	if err := validateStringArray(config, "disabled_sampling_params"); err != nil {
+		return err
+	}
+	if raw, exists := config["disabled_sampling_params"]; exists {
+		supported := map[string]bool{
+			"temperature":       true,
+			"top_p":             true,
+			"presence_penalty":  true,
+			"frequency_penalty": true,
+		}
+		for idx, item := range raw.([]interface{}) {
+			name := strings.ToLower(strings.TrimSpace(item.(string)))
+			if !supported[name] {
+				return fmt.Errorf("default_shared_config.disabled_sampling_params[%d] has unsupported parameter %q", idx, name)
+			}
 		}
 	}
 
@@ -1252,10 +1308,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	}
 
 	effectiveConfig := decodeSharedConfig(runtime.DefaultSharedConfig)
-	for k, v := range req.ConfigOverrides {
-		effectiveConfig[k] = v
-	}
-	effectiveConfig["tool_init"] = req.ToolInit
+	effectiveConfig = applyInteractionConfigOverrides(effectiveConfig, req.ConfigOverrides, req.ToolInit)
 	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, effectiveConfig)
 	if defaultsErr != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
@@ -1303,6 +1356,24 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			ReceiverId: runtime.BotUserId,
 			Text:       &req.Message,
 		}
+		if len(req.Attachments) > 0 {
+			chatAttachments := make([]chats.FileAttachment, len(req.Attachments))
+			for i, attachment := range req.Attachments {
+				chatAttachments[i] = chats.FileAttachment{
+					FileID:      attachment.FileID,
+					DisplayName: attachment.DisplayName,
+				}
+			}
+			enriched, attachErr := chats.EnrichAndShareAttachments(tx, user.ID, runtime.BotUserId, chatAttachments)
+			if attachErr != nil {
+				return attachErr
+			}
+			metaBytes, marshalErr := json.Marshal(map[string]interface{}{"attachments": enriched})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			message.MetaData = database.JSONRaw(metaBytes)
+		}
 		if err := tx.Create(&message).Error; err != nil {
 			return err
 		}
@@ -1320,7 +1391,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	if err != nil {
-		http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			http.Error(w, "Invalid file attachment", http.StatusBadRequest)
+		case errors.Is(err, chats.ErrAttachmentNotOwned):
+			http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+		default:
+			http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+		}
 		return
 	}
 
