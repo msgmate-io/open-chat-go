@@ -16,18 +16,28 @@ if [[ -z "${CURRENT_VERSION}" ]]; then
   exit 1
 fi
 
-IFS='.' read -r MAJOR MINOR PATCH <<< "${CURRENT_VERSION}"
-if [[ -z "${MAJOR}" || -z "${MINOR}" || -z "${PATCH}" ]]; then
-  echo "Error: unexpected version format '${CURRENT_VERSION}', expected major.minor.patch" >&2
-  exit 1
-fi
+# An explicit OPEN_CHAT_VERSION pins the exact version instead of incrementing;
+# this lets release tooling single-source the version.
+if [[ -n "${OPEN_CHAT_VERSION:-}" ]]; then
+  if [[ ! "${OPEN_CHAT_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: OPEN_CHAT_VERSION '${OPEN_CHAT_VERSION}' is not major.minor.patch" >&2
+    exit 1
+  fi
+  NEW_VERSION="${OPEN_CHAT_VERSION}"
+else
+  IFS='.' read -r MAJOR MINOR PATCH <<< "${CURRENT_VERSION}"
+  if [[ -z "${MAJOR}" || -z "${MINOR}" || -z "${PATCH}" ]]; then
+    echo "Error: unexpected version format '${CURRENT_VERSION}', expected major.minor.patch" >&2
+    exit 1
+  fi
 
-if ! [[ "${PATCH}" =~ ^[0-9]+$ ]]; then
-  echo "Error: patch segment is not numeric in version '${CURRENT_VERSION}'" >&2
-  exit 1
-fi
+  if ! [[ "${PATCH}" =~ ^[0-9]+$ ]]; then
+    echo "Error: patch segment is not numeric in version '${CURRENT_VERSION}'" >&2
+    exit 1
+  fi
 
-NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+  NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+fi
 TMP_FILE="$(mktemp)"
 sed "s|var VERSION = \"${CURRENT_VERSION}\"|var VERSION = \"${NEW_VERSION}\"|" "${VERSION_FILE}" > "${TMP_FILE}"
 mv "${TMP_FILE}" "${VERSION_FILE}"
