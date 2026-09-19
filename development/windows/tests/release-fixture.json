@@ -1,0 +1,26 @@
+{
+  "tag_name": "open-chat-0.0.613",
+  "name": "Production Release 0.0.613",
+  "assets": [
+    {
+      "name": "open-chat-0.0.614-windows-amd64.exe",
+      "browser_download_url": "https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-0.0.613/open-chat-0.0.614-windows-amd64.exe",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "open-chat-0.0.614-windows-arm64.exe",
+      "browser_download_url": "https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-0.0.613/open-chat-0.0.614-windows-arm64.exe",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "name": "open-chat-0.0.614-windows-amd64.zip",
+      "browser_download_url": "https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-0.0.613/open-chat-0.0.614-windows-amd64.zip",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "open-chat-0.0.614-windows-arm64.zip",
+      "browser_download_url": "https://github.com/msgmate-io/open-chat-go/releases/download/open-chat-0.0.613/open-chat-0.0.614-windows-arm64.zip",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ]
+}

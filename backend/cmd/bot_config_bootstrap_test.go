@@ -705,3 +705,98 @@ func TestApplyIntegrationBotBootstrapConfigsRestrictsAllowedModelBackends(t *tes
 		t.Fatalf("expected openai models to be excluded by allowed_model_backends")
 	}
 }
+
+func TestSyncBotsInheritingDefaultModelAccess(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	raw, _ := json.Marshal(map[string]interface{}{"model": "shared-model", "backend": "openai"})
+	if err := DB.Create(&database.ModelConfig{
+		Title:         "shared-model",
+		Description:   "shared-model",
+		ModelID:       "shared-model",
+		Configuration: raw,
+		BotUsernames:  database.StringSliceJSON{"bot"},
+		IsDefault:     true,
+	}).Error; err != nil {
+		t.Fatalf("failed to create model config: %v", err)
+	}
+
+	configs := []extiface.BotBootstrapConfig{
+		{
+			Bot: extiface.BotIdentityConfig{
+				Username: "ssh-bot",
+				Name:     "ssh_integration_bot",
+			},
+			InheritDefaultBotModels: true,
+		},
+		{
+			Bot: extiface.BotIdentityConfig{
+				Username: "unrelated-bot",
+				Name:     "unrelated_bot",
+			},
+		},
+	}
+	if err := syncBotsInheritingDefaultModelAccess(DB, "bot", configs); err != nil {
+		t.Fatalf("failed syncing inherited model access: %v", err)
+	}
+
+	assigned, err := database.GetModelConfigsForBot(DB, "ssh_integration_bot")
+	if err != nil || len(assigned) != 1 || assigned[0].ModelID != "shared-model" {
+		t.Fatalf("expected inherited model assignment, rows=%+v err=%v", assigned, err)
+	}
+	unrelated, err := database.GetModelConfigsForBot(DB, "unrelated_bot")
+	if err != nil || len(unrelated) != 0 {
+		t.Fatalf("expected unrelated bot assignments to remain unchanged, rows=%+v err=%v", unrelated, err)
+	}
+}
+
+func TestSyncBotsInheritingDefaultModelAccessResolvesBotUser(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	raw, _ := json.Marshal(map[string]interface{}{"model": "shared-model", "backend": "openai"})
+	if err := DB.Create(&database.ModelConfig{
+		Title:         "shared-model",
+		Description:   "shared-model",
+		ModelID:       "shared-model",
+		Configuration: raw,
+		BotUsernames:  database.StringSliceJSON{"bot", "ssh_integration_bot"},
+		IsDefault:     true,
+	}).Error; err != nil {
+		t.Fatalf("failed to create model config: %v", err)
+	}
+
+	if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		Label:       "inherit-test-bot",
+		Credentials: "inherit-test-bot:inherit-test-bot-password",
+		IsAutomated: true,
+	}); err != nil {
+		t.Fatalf("failed creating bot user: %v", err)
+	}
+
+	configs := []extiface.BotBootstrapConfig{{
+		Bot: extiface.BotIdentityConfig{
+			Username: "inherit-test-bot",
+			Name:     "inherit_test_bot_runtime",
+		},
+		InheritDefaultBotModels: true,
+	}}
+	if err := syncBotsInheritingDefaultModelAccess(DB, "bot", configs); err != nil {
+		t.Fatalf("failed syncing inherited model access: %v", err)
+	}
+
+	botUser, err := findUserByUsername(DB, "inherit-test-bot")
+	if err != nil {
+		t.Fatalf("failed to resolve bot user: %v", err)
+	}
+	assigned, err := database.GetModelConfigsForBot(DB, botUser.Name)
+	if err != nil || len(assigned) != 1 || assigned[0].ModelID != "shared-model" {
+		t.Fatalf("expected inherited model assignment keyed by resolved bot name %q, rows=%+v err=%v", botUser.Name, assigned, err)
+	}
+
+	stale, err := database.GetModelConfigsForBot(DB, "inherit_test_bot_runtime")
+	if err != nil || len(stale) != 0 {
+		t.Fatalf("expected stale legacy assignment key to be cleaned up, rows=%+v err=%v", stale, err)
+	}
+}

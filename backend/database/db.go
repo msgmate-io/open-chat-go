@@ -5,6 +5,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"log"
+	"sync"
 )
 
 type DBConfig struct {
@@ -18,6 +19,29 @@ type DBConfig struct {
 	FilePath string // for SQLite
 	Debug    bool
 	ResetDB  bool
+}
+
+// globalDB is set once the process-wide primary database handle is ready.
+// Components that run outside an HTTP request context (queue tasks, bot reply
+// workers, integration hooks) can use GetGlobalDB to obtain it.
+var (
+	globalDBMu sync.RWMutex
+	globalDB   *gorm.DB
+)
+
+// SetGlobalDB records the primary database handle for process-wide access.
+func SetGlobalDB(db *gorm.DB) {
+	globalDBMu.Lock()
+	defer globalDBMu.Unlock()
+	globalDB = db
+}
+
+// GetGlobalDB returns the primary database handle recorded via SetGlobalDB,
+// or nil if none has been set yet.
+func GetGlobalDB() *gorm.DB {
+	globalDBMu.RLock()
+	defer globalDBMu.RUnlock()
+	return globalDB
 }
 
 func SetupDatabase(config DBConfig) *gorm.DB {

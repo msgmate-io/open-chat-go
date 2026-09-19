@@ -13,6 +13,10 @@ func ApplyIntegrationBotBootstrapConfigs(DB *gorm.DB, sourcePrefix string, confi
 	return applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, configs, validateStrength)
 }
 
+func SyncBotsInheritingDefaultModelAccess(DB *gorm.DB, defaultBotUsername string, configs []extiface.BotBootstrapConfig) error {
+	return syncBotsInheritingDefaultModelAccess(DB, defaultBotUsername, configs)
+}
+
 func ApplySSHBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners []string, keySpecs []string, serverSpecs []string) error {
 	return applySSHBootstrapSources(DB, fallbackOwner, defaultOwners, keySpecs, serverSpecs, nil, nil)
 }

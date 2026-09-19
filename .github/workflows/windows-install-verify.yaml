@@ -1,0 +1,224 @@
+name: Windows Install Verification
+
+# Verifies the Windows distribution prerequisites for open-chat:
+#   - renders the winget + Scoop manifests from a release fixture (every run)
+#   - downloads a real release asset on windows-latest, runs `open-chat install`
+#     (registering the native service), waits for 127.0.0.1:1984 to answer and
+#     asserts `open-chat status` reports the service running.
+#
+# The heavy install job only runs on manual/ scheduled/ reusable invocations; on
+# pull requests the workflow only lints and renders the manifests, because the
+# end-to-end check needs a published release and an admin runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to verify (empty resolves the latest stable release)
+        required: false
+        default: ""
+      service_port:
+        description: Port the server should listen on
+        required: false
+        default: "1984"
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag to verify (empty resolves the latest stable release)
+        required: false
+        type: string
+        default: ""
+      service_port:
+        description: Port the server should listen on
+        required: false
+        type: string
+        default: "1984"
+  schedule:
+    - cron: "47 6 * * 1"
+  pull_request:
+    paths:
+      - ".github/workflows/windows-install-verify.yaml"
+      - "development/windows/**"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: windows-install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manifests:
+    name: Render winget + Scoop manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Shellcheck the Windows packaging scripts
+        run: |
+          shellcheck --version
+          shellcheck -S warning \
+            development/windows/winget/render_manifest.sh \
+            development/windows/tests/render_manifest_test.sh
+
+      - name: Render manifests from the release fixture
+        run: development/windows/tests/render_manifest_test.sh
+
+      - name: Render manifests to a directory
+        run: |
+          development/windows/winget/render_manifest.sh \
+            --release-json development/windows/tests/release-fixture.json \
+            --output-dir dist/windows-packages
+
+      - name: Upload rendered manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package-manifests
+          path: dist/windows-packages/**
+          if-no-files-found: error
+
+  install:
+    name: Windows service install verification
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 50
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || '' }}
+      SERVICE_PORT: ${{ inputs.service_port || '1984' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Confirm the runner is elevated
+        shell: pwsh
+        run: |
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            throw "windows-latest runner is not elevated; cannot register a Windows service"
+          }
+          [Environment]::OSVersion.VersionString
+          echo "machine: $env:PROCESSOR_ARCHITECTURE"
+
+      - name: Resolve and download a release asset
+        id: download
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $repo = $env:GITHUB_REPOSITORY
+          $tag = "$env:RELEASE_TAG"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            Write-Host "Resolving the latest stable release for $repo"
+            $tag = (gh api "repos/$repo/releases/latest" --jq .tag_name).Trim()
+          }
+          if ([string]::IsNullOrWhiteSpace($tag)) { throw "could not resolve a release tag" }
+          Write-Host "Verifying release $tag"
+
+          $release = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
+          $asset = $release.assets | Where-Object { $_.name -like "*windows-amd64.zip" } | Select-Object -First 1
+          $kind = "zip"
+          if (-not $asset) {
+            Write-Warning "No windows-amd64.zip asset in $tag; falling back to the bare .exe"
+            $asset = $release.assets | Where-Object { $_.name -like "*windows-amd64.exe" } | Select-Object -First 1
+            $kind = "exe"
+          }
+          if (-not $asset) { throw "release $tag has no windows-amd64 asset" }
+
+          $dir = Join-Path $env:RUNNER_TEMP "open-chat-verify"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $path = Join-Path $dir $asset.name
+          Write-Host "Downloading $($asset.browser_download_url)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $path
+
+          if ($kind -eq "zip") {
+            Expand-Archive -Path $path -DestinationPath $dir -Force
+          }
+          $exe = Get-ChildItem -Path $dir -Recurse -Filter "open-chat*.exe" |
+            Where-Object { $_.Name -ne $asset.name } | Select-Object -First 1
+          if (-not $exe) { $exe = Get-ChildItem -Path $dir -Recurse -Filter "open-chat*.exe" | Select-Object -First 1 }
+          if (-not $exe) { throw "open-chat.exe not found after extracting $($asset.name)" }
+
+          Write-Host "asset=$($asset.name)" >> $env:GITHUB_OUTPUT
+          Write-Host "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "Resolved $($asset.name) -> $($exe.FullName)"
+
+      - name: Verify the CLI runs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "${{ steps.download.outputs.exe }}" --help | Out-String | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "open-chat --help failed with exit code $LASTEXITCODE" }
+
+      - name: Install the service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "${{ steps.download.outputs.exe }}" install --force --root-credentials "admin:verification" 2>&1 | Out-String | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "open-chat install failed with exit code $LASTEXITCODE" }
+
+      - name: Wait for the server to answer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $endpoint = "http://127.0.0.1:$env:SERVICE_PORT/api/version"
+          for ($attempt = 1; $attempt -le 300; $attempt++) {
+            try {
+              $version = Invoke-RestMethod -Uri $endpoint -TimeoutSec 5
+              Write-Host "Server answered on attempt ${attempt}: $($version | ConvertTo-Json -Compress)"
+              exit 0
+            } catch {
+              if ($attempt % 30 -eq 0) {
+                Write-Host "still waiting for $endpoint (attempt $attempt/300, $($attempt * 5)s elapsed)"
+              }
+              Start-Sleep -Seconds 5
+            }
+          }
+          Write-Host "::error::open-chat did not answer on $endpoint"
+          Write-Host "--- service state ---"
+          sc.exe query OpenChat || true
+          Write-Host "--- work dir ---"
+          Get-ChildItem -Force "$env:ProgramData\OpenChat" -ErrorAction SilentlyContinue | Format-Table
+          throw "open-chat did not answer on $endpoint"
+
+      - name: Verify open-chat status reports the service running
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $output = & "${{ steps.download.outputs.exe }}" status --port "$env:SERVICE_PORT" 2>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch "service:\s+running") {
+            throw "open-chat status did not report 'service: running'"
+          }
+
+      - name: Uninstall and purge
+        if: always()
+        shell: pwsh
+        run: |
+          $exe = "${{ steps.download.outputs.exe }}"
+          if ([string]::IsNullOrWhiteSpace($exe) -or -not (Test-Path $exe)) {
+            Write-Host "no downloaded binary to uninstall with"
+            exit 0
+          }
+          & $exe uninstall --purge 2>&1 | Out-String | Write-Host
+          if ($LASTEXITCODE -ne 0) { Write-Warning "open-chat uninstall exited with $LASTEXITCODE" }
+
+      - name: Write job summary
+        if: always()
+        shell: pwsh
+        run: |
+          @(
+            "## Windows install verification",
+            "",
+            "| Field | Value |",
+            "| --- | --- |",
+            "| Runner | ``windows-latest`` |",
+            "| Release tag | ``$env:RELEASE_TAG`` (empty = latest stable) |",
+            "| Asset | ``${{ steps.download.outputs.asset }}`` |",
+            "| Port | ``$env:SERVICE_PORT`` |",
+            "| Result | ``${{ job.status }}`` |"
+          ) >> $env:GITHUB_STEP_SUMMARY
