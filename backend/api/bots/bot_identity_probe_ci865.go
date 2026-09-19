@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	"backend/server/util"
-
-	"gorm.io/gorm"
 )
 
 // BotIdentityProbeResponse is the JSON body of the identity probe the Live
