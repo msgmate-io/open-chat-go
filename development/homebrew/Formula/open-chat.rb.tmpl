@@ -37,6 +37,10 @@ class OpenChat < Formula
     keep_alive true
     log_path var/"log/open-chat.log"
     error_log_path var/"log/open-chat.err.log"
+    # Without ROOT_CREDENTIALS the server refuses to boot (it will not silently
+    # invent an unknown admin password). "admin:random" tells it to generate a
+    # random admin password on first boot and print it to the log above.
+    environment_variables ROOT_CREDENTIALS: "admin:random"
   end
 
   test do
