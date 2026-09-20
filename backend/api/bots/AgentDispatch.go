@@ -2,6 +2,7 @@ package bots
 
 import (
 	"backend/api/chats"
+	"backend/apierror"
 	"backend/chatstate"
 	"backend/database"
 	"backend/nativecoder"
@@ -1102,7 +1103,5 @@ func userDisplayName(user database.User) string {
 }
 
 func respondAgentJSON(w http.ResponseWriter, status int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	_ = apierror.WriteJSON(w, status, payload)
 }
