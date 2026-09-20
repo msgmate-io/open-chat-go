@@ -1,0 +1,45 @@
+NOTICE
+
+This repository is licensed under the GNU Lesser General Public License,
+version 3.0 or (at your option) any later version (LGPL-3.0-or-later).
+See LICENSE (LGPLv3) and LICENSE.GPL (GPLv3).
+
+The licensing of this project is currently being drafted. The statements
+below describe the intended terms and may change.
+
+Intellectual property
+  All original source code in this repository is the intellectual property
+  of Tim Schupp / Tim Benjamin Software, unless otherwise stated.
+
+Special licensing
+  LGPL-3.0-or-later may not fit every use case. Alternative, special, or
+  commercial licensing can be investigated and provided on request.
+  Contact: tim+licensing@timschupp.de
+
+Excluded components
+  The following components are NOT covered by the LGPL-3.0-or-later grant
+  of this repository. They are either proprietary, private, or separately
+  licensed, and are explicitly excluded:
+
+    frontend
+    development/helm
+    development/ci
+    clients/gomobile
+    clients/llm_coding_agents
+    clients/integrations/rest_api_tool_integration
+    clients/integrations/admin_db_managemnt_integration
+    clients/integrations/ssh_integration
+    clients/integrations/account_management
+    clients/integrations/email_integration
+    clients/integrations/voice_integration
+    clients/integrations/opencode_integration
+    clients/integrations/matrix_integration
+    clients/integrations/docker_sandbox_integration
+    clients/integrations/git_integration
+    clients/integrations/kubernetes_integration
+
+  Compiled or embedded frontend build output (backend/server/frontend),
+  which is generated from the private `frontend` submodule, is likewise
+  excluded from this license.
+
+  Third-party dependencies remain under their own respective licenses.
