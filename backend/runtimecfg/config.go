@@ -15,15 +15,20 @@ var (
 )
 
 type OpenChatBootstrap struct {
-	UserSpecs             []string
-	BotSpecs              []string
-	SSHDefaultOwners      []string
-	SSHKeySpecs           []string
-	SSHServerSpecs        []string
-	SSHKeyGrantSpecs      []string
-	SSHServerGrantSpecs   []string
-	OpencodeDefaultOwners []string
-	OpencodeProjectSpecs  []string
+	UserSpecs              []string
+	BotSpecs               []string
+	SSHDefaultOwners       []string
+	SSHKeySpecs            []string
+	SSHServerSpecs         []string
+	SSHKeyGrantSpecs       []string
+	SSHServerGrantSpecs    []string
+	OpencodeDefaultOwners  []string
+	OpencodeProjectSpecs   []string
+	GitDefaultOwners       []string
+	GitTokenSpecs          []string
+	GitRepositorySpecs     []string
+	GitWorkspaceSpecs      []string
+	GitWorkspaceGrantSpecs []string
 }
 
 func SetAll(next map[string]Value) {
@@ -83,15 +88,20 @@ func SetOpenChatBootstrap(next OpenChatBootstrap) {
 	mu.Lock()
 	defer mu.Unlock()
 	openChatBootstrap = OpenChatBootstrap{
-		UserSpecs:             append([]string(nil), next.UserSpecs...),
-		BotSpecs:              append([]string(nil), next.BotSpecs...),
-		SSHDefaultOwners:      append([]string(nil), next.SSHDefaultOwners...),
-		SSHKeySpecs:           append([]string(nil), next.SSHKeySpecs...),
-		SSHServerSpecs:        append([]string(nil), next.SSHServerSpecs...),
-		SSHKeyGrantSpecs:      append([]string(nil), next.SSHKeyGrantSpecs...),
-		SSHServerGrantSpecs:   append([]string(nil), next.SSHServerGrantSpecs...),
-		OpencodeDefaultOwners: append([]string(nil), next.OpencodeDefaultOwners...),
-		OpencodeProjectSpecs:  append([]string(nil), next.OpencodeProjectSpecs...),
+		UserSpecs:              append([]string(nil), next.UserSpecs...),
+		BotSpecs:               append([]string(nil), next.BotSpecs...),
+		SSHDefaultOwners:       append([]string(nil), next.SSHDefaultOwners...),
+		SSHKeySpecs:            append([]string(nil), next.SSHKeySpecs...),
+		SSHServerSpecs:         append([]string(nil), next.SSHServerSpecs...),
+		SSHKeyGrantSpecs:       append([]string(nil), next.SSHKeyGrantSpecs...),
+		SSHServerGrantSpecs:    append([]string(nil), next.SSHServerGrantSpecs...),
+		OpencodeDefaultOwners:  append([]string(nil), next.OpencodeDefaultOwners...),
+		OpencodeProjectSpecs:   append([]string(nil), next.OpencodeProjectSpecs...),
+		GitDefaultOwners:       append([]string(nil), next.GitDefaultOwners...),
+		GitTokenSpecs:          append([]string(nil), next.GitTokenSpecs...),
+		GitRepositorySpecs:     append([]string(nil), next.GitRepositorySpecs...),
+		GitWorkspaceSpecs:      append([]string(nil), next.GitWorkspaceSpecs...),
+		GitWorkspaceGrantSpecs: append([]string(nil), next.GitWorkspaceGrantSpecs...),
 	}
 }
 
@@ -99,14 +109,19 @@ func GetOpenChatBootstrap() OpenChatBootstrap {
 	mu.RLock()
 	defer mu.RUnlock()
 	return OpenChatBootstrap{
-		UserSpecs:             append([]string(nil), openChatBootstrap.UserSpecs...),
-		BotSpecs:              append([]string(nil), openChatBootstrap.BotSpecs...),
-		SSHDefaultOwners:      append([]string(nil), openChatBootstrap.SSHDefaultOwners...),
-		SSHKeySpecs:           append([]string(nil), openChatBootstrap.SSHKeySpecs...),
-		SSHServerSpecs:        append([]string(nil), openChatBootstrap.SSHServerSpecs...),
-		SSHKeyGrantSpecs:      append([]string(nil), openChatBootstrap.SSHKeyGrantSpecs...),
-		SSHServerGrantSpecs:   append([]string(nil), openChatBootstrap.SSHServerGrantSpecs...),
-		OpencodeDefaultOwners: append([]string(nil), openChatBootstrap.OpencodeDefaultOwners...),
-		OpencodeProjectSpecs:  append([]string(nil), openChatBootstrap.OpencodeProjectSpecs...),
+		UserSpecs:              append([]string(nil), openChatBootstrap.UserSpecs...),
+		BotSpecs:               append([]string(nil), openChatBootstrap.BotSpecs...),
+		SSHDefaultOwners:       append([]string(nil), openChatBootstrap.SSHDefaultOwners...),
+		SSHKeySpecs:            append([]string(nil), openChatBootstrap.SSHKeySpecs...),
+		SSHServerSpecs:         append([]string(nil), openChatBootstrap.SSHServerSpecs...),
+		SSHKeyGrantSpecs:       append([]string(nil), openChatBootstrap.SSHKeyGrantSpecs...),
+		SSHServerGrantSpecs:    append([]string(nil), openChatBootstrap.SSHServerGrantSpecs...),
+		OpencodeDefaultOwners:  append([]string(nil), openChatBootstrap.OpencodeDefaultOwners...),
+		OpencodeProjectSpecs:   append([]string(nil), openChatBootstrap.OpencodeProjectSpecs...),
+		GitDefaultOwners:       append([]string(nil), openChatBootstrap.GitDefaultOwners...),
+		GitTokenSpecs:          append([]string(nil), openChatBootstrap.GitTokenSpecs...),
+		GitRepositorySpecs:     append([]string(nil), openChatBootstrap.GitRepositorySpecs...),
+		GitWorkspaceSpecs:      append([]string(nil), openChatBootstrap.GitWorkspaceSpecs...),
+		GitWorkspaceGrantSpecs: append([]string(nil), openChatBootstrap.GitWorkspaceGrantSpecs...),
 	}
 }
