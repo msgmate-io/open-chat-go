@@ -24,21 +24,30 @@ rounds.
 
 1. `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`
    challenge on the MCP serve endpoint:
-   - `backend/server/browser_tokens.go` (allowlist rows incl.
-     `POST /integrations/msgmate_coder/mcp/serve/{endpoint_uuid}` + `mcpOAuthTokenRoutes`)
-   - `backend/api/user/OAuthServer.go` — `ProtectedResourceMetadata` / `AuthorizationServerMetadata`
+   - `backend/server/browser_tokens.go:112-114` (`mcpOAuthTokenRoutes`, incl.
+     `POST /integrations/msgmate_coder/mcp/serve/{endpoint_uuid}`) — the
+     default-deny allowlist means the MCP serve endpoint is the interactive
+     token's only reachable surface
+   - `backend/api/user/OAuthServer.go:133` — `ProtectedResourceMetadata` /
+     `AuthorizationServerMetadata:147`
 2. RFC 9728 protected-resource metadata (JSON, `authorization_servers`) —
    `OAuthServer.go:133`.
 3. RFC 8414 authorization-server metadata + `/authorize`, `/token`, `/register`
-   (dynamic client registration) — `OAuthServer.go:209/342/460`, wired in
-   `backend/server/routing.go:684-694`.
-4. MCP-scoped tokens: `backend/database/access_token.go` —
+   (dynamic client registration) — `OAuthServer.go:147/209/342/460`, wired in
+   `backend/server/routing.go:694-700` (public, registered outside the
+   mobile-proxy branch so MCP clients can always probe discovery).
+4. MCP-scoped tokens: `backend/database/access_token.go:64` —
    `AudienceMCPOAuth = "mcp-oauth"`, accepted via the existing token hash check;
    static bearer / `X-API-Key` / `?token=` path untouched (no regression).
 5. Discovery-shape tests: `backend/api/user/oauth_server_test.go` — 8 test
-   functions incl. `TestOAuthDiscoveryDocumentsShape`, PKCE code flow,
-   redirect_uri pinning, off-allowlist rejection, token-exchange hardening
-   (RFC 6749 4.1.3/5.1 from follow-ups `172ca877`, `efcd4d37`).
+   functions (`TestOAuthDiscoveryDocumentsShape:84`, `TestOAuthRegisterPinsRedirectURIs:134`,
+   `TestOAuthAuthorizeFlowAndTokenExchange:173`, `TestOAuthAuthorizeRejectsUnregisteredRedirectURI:262`,
+   `TestOAuthAuthorizeRedirectsToLoginWhenUnauthenticated:288`,
+   `TestOAuthTokenRejectsVerifierMismatch:316`, `TestOAuthTokenRequiresRegisteredClientAndRedirectURI:358`,
+   `TestPKCES256Matches:398`) — PKCE code flow, redirect_uri pinning (loopback
+   HTTP + HTTPS only, `isOAuthRedirectURI`), off-allowlist rejection,
+   token-exchange hardening (RFC 6749 4.1.3/5.1 from follow-ups `172ca877`,
+   `efcd4d37`).
 
 ## Why no new PR here
 
@@ -57,5 +66,7 @@ rounds.
 - This sandbox restarted on `main` (tip `3faca383` [Dev promotion] #1271) with
   `origin/dev` at `29f16e75`; the branch tip is a checkout of origin's main,
   so the OAuth files are present in the working tree.
-- No files were changed and nothing was pushed for this ticket; this state file
-  is the durable record of the verdict.
+- Delivery record: this state file is committed on branch
+  `docs/ci895-verdict` (commit `1e7ce7e4`) and opened as **PR #1279** against
+  `dev` (docs-only, `test` label, open at last check). No runtime code change
+  is made here because the feature is already merged upstream (see Verdict).
