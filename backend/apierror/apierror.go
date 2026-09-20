@@ -1,7 +1,7 @@
-// Package apierror renders the JSON error envelope every API-level rejection
-// uses, so that generated clients which call response.json() unconditionally
-// see the real HTTP error instead of a JSONDecodeError on an empty/plain-text
-// body (open-chat-go-ci#854, open-chat-go-ci#865).
+// Package apierror renders the JSON envelope every API-level answer uses, so
+// that generated clients which call response.json() unconditionally see the
+// real payload (or the real HTTP error) instead of a JSONDecodeError on an
+// empty/plain-text body (open-chat-go-ci#854, open-chat-go-ci#865).
 package apierror
 
 import (
@@ -11,7 +11,8 @@ import (
 	"backend/logging"
 )
 
-// Response is the JSON envelope. Code is a stable, machine readable identifier.
+// Response is the JSON error envelope. Code is a stable, machine readable
+// identifier that the canary and generated clients can match on.
 type Response struct {
 	Error string `json:"error"`
 	Code  string `json:"code,omitempty"`
@@ -29,6 +30,8 @@ type ResponseWithDetail struct {
 }
 
 // Write writes a JSON error response with a stable machine readable code.
+// A nil writer is tolerated (the write is skipped) so callers can pass through
+// an optional writer without a nil guard at every site.
 func Write(w http.ResponseWriter, status int, code string, message string) {
 	WriteDetailed(w, status, code, message, "")
 }
@@ -47,4 +50,27 @@ func WriteDetailed(w http.ResponseWriter, status int, code string, message strin
 	if err := json.NewEncoder(w).Encode(ResponseWithDetail{Response: Response{Error: message, Code: code}, Detail: detail}); err != nil {
 		logging.Errorf("failed to encode api error response: %v", err)
 	}
+}
+
+// WriteJSON writes a JSON success response with the same envelope discipline as
+// Write: the Content-Type is set before WriteHeader, and the encoding error is
+// logged instead of dropped. It reports whether the body was fully written.
+//
+// The bot surface (create/list/get/update/delete bot, save-config, agent
+// dispatch, create-interaction) writes its success payloads through WriteJSON
+// (ci#865): a naked json.NewEncoder(w).Encode(...) leaves the writer with an
+// empty body if the connection drops between WriteHeader and Encode, and a
+// generated client that calls response.json() on that empty 200 would silently
+// continue instead of surfacing the failure.
+func WriteJSON(w http.ResponseWriter, status int, payload interface{}) bool {
+	if w == nil {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		logging.Errorf("failed to encode json response (status %d): %v", status, err)
+		return false
+	}
+	return true
 }
