@@ -66,6 +66,9 @@ var (
 	ErrCoderTrustEmptyChat    = errors.New("coder session trust: chat id is required")
 	ErrCoderTrustUnknownClass = errors.New("coder session trust: unknown action class")
 	ErrCoderTrustEmptyClasses = errors.New("coder session trust: no action class given")
+	// ErrCoderTrustUnknownAction is returned by the coder_trust tool surface when
+	// an action is not grant, revoke or status.
+	ErrCoderTrustUnknownAction = errors.New("coder session trust: unknown action")
 )
 
 // coderTrustToolClasses maps a coder tool name to the action class it belongs
