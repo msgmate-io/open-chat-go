@@ -41,6 +41,57 @@ func TestLoadOpenChatConfigAcceptsBootstrapUsers(t *testing.T) {
 	}
 }
 
+// TestLoadOpenChatConfigAcceptsBootstrapGit proves the strict open-chat config
+// schema (decoded with DisallowUnknownFields) accepts the previously-rejected
+// `bootstrap.git` section and surfaces it as git bootstrap specs.
+func TestLoadOpenChatConfigAcceptsBootstrapGit(t *testing.T) {
+	raw := []byte(`
+bootstrap:
+  git:
+    owner: [admin]
+    tokens:
+      - name: github-main
+        provider: github
+        token: "$anchors.github-main-token"
+        account_username: cur1ousdude
+    repositories:
+      - name: my-app
+        remote_url: https://github.com/org/my-app.git
+        auth_mode: token
+        token_name: github-main
+    workspaces:
+      - name: my-app-dev
+        repository_name: my-app
+        ssh_server_name: devhost
+        project_path: /srv/git/my-app
+        git_user_name: cur1ousdude
+        git_user_email: "123456+cur1ousdude@users.noreply.github.com"
+anchors:
+  github-main-token: ghp_x
+`)
+
+	cfg, err := loadOpenChatConfig(raw, "bootstrap.git yaml")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected bootstrap.git: %v", err)
+	}
+	if cfg.Bootstrap == nil || cfg.Bootstrap.Git == nil {
+		t.Fatalf("expected bootstrap.git to be parsed")
+	}
+	out := toOpenChatBootstrapRuntime(cfg)
+	if len(out.GitTokenSpecs) != 1 || len(out.GitRepositorySpecs) != 1 || len(out.GitWorkspaceSpecs) != 1 {
+		t.Fatalf("bootstrap.git not mapped to runtime specs: %+v", out)
+	}
+	if !strings.Contains(out.GitTokenSpecs[0], "account_username") {
+		t.Fatalf("token account identity missing from git spec: %s", out.GitTokenSpecs[0])
+	}
+	if !strings.Contains(out.GitWorkspaceSpecs[0], "git_user_name") {
+		t.Fatalf("workspace identity missing from git spec: %s", out.GitWorkspaceSpecs[0])
+	}
+	if len(out.GitDefaultOwners) != 1 || out.GitDefaultOwners[0] != "admin" {
+		t.Fatalf("unexpected GitDefaultOwners: %+v", out.GitDefaultOwners)
+	}
+}
+
 // TestStagingOpenChatConfigLoads guards that the committed staging config stays
 // parseable by the real loader. It skips when the file is not present (e.g. the
 // dev container does not mount development/).
