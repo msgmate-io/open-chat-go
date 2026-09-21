@@ -940,6 +940,12 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
+	mcpDefaultOwners := append([]string{}, openChatBootstrap.MCPDefaultOwners...)
+	mcpServerSpecs := append([]string{}, openChatBootstrap.MCPServerSpecs...)
+	if err := applyMCPBootstrapSources(DB, adminUser.Username, mcpDefaultOwners, mcpServerSpecs); err != nil {
+		return err
+	}
+
 	if err := applyKubernetesBootstrapSources(DB, adminUser.Username); err != nil {
 		return err
 	}

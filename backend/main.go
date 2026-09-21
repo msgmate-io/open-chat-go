@@ -41,6 +41,13 @@ type openChatBootstrapConfig struct {
 	SSH      *openChatSSHBootstrapConfig      `json:"ssh,omitempty"`
 	Opencode *openChatOpencodeBootstrapConfig `json:"opencode,omitempty"`
 	Git      *openChatGitBootstrapConfig      `json:"git,omitempty"`
+	MCP      *openChatMCPBootstrapConfig      `json:"mcp,omitempty"`
+}
+
+type openChatMCPBootstrapConfig struct {
+	Owner   openChatOwnerList `json:"owner,omitempty"`
+	Owners  []string          `json:"owners,omitempty"`
+	Servers json.RawMessage   `json:"servers,omitempty"`
 }
 
 type openChatGitBootstrapConfig struct {
@@ -607,6 +614,16 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 		}
 		if len(bytes.TrimSpace(cfg.Bootstrap.Git.WorkspaceGrants)) > 0 {
 			out.GitWorkspaceGrantSpecs = append(out.GitWorkspaceGrantSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.WorkspaceGrants)))
+		}
+	}
+
+	if cfg.Bootstrap.MCP != nil {
+		owners := append([]string{}, cfg.Bootstrap.MCP.Owners...)
+		owners = append(owners, cfg.Bootstrap.MCP.Owner...)
+		out.MCPDefaultOwners = normalizeOwners(owners)
+
+		if len(bytes.TrimSpace(cfg.Bootstrap.MCP.Servers)) > 0 {
+			out.MCPServerSpecs = append(out.MCPServerSpecs, string(bytes.TrimSpace(cfg.Bootstrap.MCP.Servers)))
 		}
 	}
 
