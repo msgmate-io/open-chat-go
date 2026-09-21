@@ -92,6 +92,57 @@ anchors:
 	}
 }
 
+// TestLoadOpenChatConfigAcceptsBootstrapMCP proves the strict open-chat config
+// schema (decoded with DisallowUnknownFields) accepts the `bootstrap.mcp`
+// section and surfaces it as MCP bootstrap specs, so deployments can
+// pre-register Google Workspace MCP servers with OAuth client credentials.
+func TestLoadOpenChatConfigAcceptsBootstrapMCP(t *testing.T) {
+	raw := []byte(`
+bootstrap:
+  mcp:
+    owners: [admin]
+    servers:
+      - name: google-drive
+        template: google_workspace_drive
+        config:
+          auth:
+            client_id: "$anchors.google_client_id"
+            client_secret: "$anchors.google_client_secret"
+            redirect_uri: "https://chat.example.com/callback"
+      - name: google-sheets
+        template: google_workspace_sheets
+        config:
+          auth:
+            client_id: "$anchors.google_client_id"
+            client_secret: "$anchors.google_client_secret"
+anchors:
+  google_client_id: "123-abc.apps.googleusercontent.com"
+  google_client_secret: "GOCSPX-secret"
+`)
+
+	cfg, err := loadOpenChatConfig(raw, "bootstrap.mcp yaml")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected bootstrap.mcp: %v", err)
+	}
+	if cfg.Bootstrap == nil || cfg.Bootstrap.MCP == nil {
+		t.Fatalf("expected bootstrap.mcp to be parsed")
+	}
+	out := toOpenChatBootstrapRuntime(cfg)
+	if len(out.MCPServerSpecs) != 1 {
+		t.Fatalf("expected 1 mcp server spec, got %d", len(out.MCPServerSpecs))
+	}
+	if !strings.Contains(out.MCPServerSpecs[0], "google_workspace_drive") ||
+		!strings.Contains(out.MCPServerSpecs[0], "google_workspace_sheets") {
+		t.Fatalf("mcp server spec missing entries: %s", out.MCPServerSpecs[0])
+	}
+	if !strings.Contains(out.MCPServerSpecs[0], "client_secret") {
+		t.Fatalf("mcp server spec missing auth credentials: %s", out.MCPServerSpecs[0])
+	}
+	if len(out.MCPDefaultOwners) != 1 || out.MCPDefaultOwners[0] != "admin" {
+		t.Fatalf("unexpected MCPDefaultOwners: %+v", out.MCPDefaultOwners)
+	}
+}
+
 // TestStagingOpenChatConfigLoads guards that the committed staging config stays
 // parseable by the real loader. It skips when the file is not present (e.g. the
 // dev container does not mount development/).
