@@ -85,3 +85,36 @@ func LookupBackendStateProvider(backend string) (BackendStateFunc, bool) {
 	fn, ok := backendStateRegistry[backend]
 	return fn, ok
 }
+
+// BackendInterruptFunc requests cancellation of in-flight work owned by an
+// external chat backend for a chat (eg the user pressed the stop button). It
+// returns true when the backend owned and cancelled live work.
+type BackendInterruptFunc func(chatUUID string) bool
+
+var (
+	backendInterruptMu       sync.RWMutex
+	backendInterruptRegistry = map[string]BackendInterruptFunc{}
+)
+
+// RegisterBackendInterruptHandler registers the interrupt handler for an
+// external chat backend (keyed by the chat backend name, ie the shared config
+// "chat_backend" value).
+func RegisterBackendInterruptHandler(backend string, fn BackendInterruptFunc) {
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	if backend == "" || fn == nil {
+		return
+	}
+	backendInterruptMu.Lock()
+	defer backendInterruptMu.Unlock()
+	backendInterruptRegistry[backend] = fn
+}
+
+// LookupBackendInterruptHandler returns the registered interrupt handler for a
+// chat backend.
+func LookupBackendInterruptHandler(backend string) (BackendInterruptFunc, bool) {
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	backendInterruptMu.RLock()
+	defer backendInterruptMu.RUnlock()
+	fn, ok := backendInterruptRegistry[backend]
+	return fn, ok
+}
