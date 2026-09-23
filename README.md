@@ -22,3 +22,15 @@ We release all versions always ( after admin confirmation ):
 - PR branches: `open-chat-pr-alpha-release-<version-number>-<commit>`
 - Staging `main` are tagged as `open-chat-staging-<version-number>` ( `open-chat-pre-release:latest` )
 - Production `production` are released as `open-chat-<version-number>` ( `open-chat:latest` )
+
+### License
+
+Licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE)
+(`AGPL-3.0-or-later`).
+
+See [`NOTICE`](./NOTICE) and [`COPYRIGHT`](./COPYRIGHT) for the intellectual
+property owner, the current licensing draft status, special-licensing
+requests, and the copyright-owner exemption covering the proprietary
+(private) submodules. Alternative or commercial licensing can be
+investigated on request.
+

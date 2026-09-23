@@ -931,7 +931,18 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	if err := applyGitBootstrapSources(DB, adminUser.Username); err != nil {
+	gitDefaultOwners := append([]string{}, openChatBootstrap.GitDefaultOwners...)
+	gitTokenSpecs := append([]string{}, openChatBootstrap.GitTokenSpecs...)
+	gitRepositorySpecs := append([]string{}, openChatBootstrap.GitRepositorySpecs...)
+	gitWorkspaceSpecs := append([]string{}, openChatBootstrap.GitWorkspaceSpecs...)
+	gitWorkspaceGrantSpecs := append([]string{}, openChatBootstrap.GitWorkspaceGrantSpecs...)
+	if err := applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs); err != nil {
+		return err
+	}
+
+	mcpDefaultOwners := append([]string{}, openChatBootstrap.MCPDefaultOwners...)
+	mcpServerSpecs := append([]string{}, openChatBootstrap.MCPServerSpecs...)
+	if err := applyMCPBootstrapSources(DB, adminUser.Username, mcpDefaultOwners, mcpServerSpecs); err != nil {
 		return err
 	}
 
