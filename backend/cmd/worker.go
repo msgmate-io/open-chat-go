@@ -50,7 +50,7 @@ func WorkerCli() *cli.Command {
 				Usage:   "Backend base URL used by async bot tasks",
 				Value:   "http://127.0.0.1:1984",
 			},
-		}, append(GetRedisFlags(), GetTriggerPollFlags()...)...),
+		}, GetRedisFlags()...),
 		Action: func(_ context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
@@ -98,13 +98,12 @@ func WorkerCli() *cli.Command {
 				},
 			)
 
-			var triggerScheduler *asynq.Scheduler
-			if resolveTriggerPollEnabled(c) {
-				triggerScheduler, err = queue.StartTriggerScheduler(redisRuntime.ConnOpt, resolveTriggerPollInterval(c))
-				if err != nil {
-					return err
-				}
-				defer triggerScheduler.Shutdown()
+			integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
+			if err != nil {
+				return err
+			}
+			if integrationScheduler != nil {
+				defer integrationScheduler.Shutdown()
 			}
 
 			log.Printf("Starting asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
