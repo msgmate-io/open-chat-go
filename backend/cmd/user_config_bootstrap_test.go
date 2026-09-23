@@ -4,7 +4,10 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func setupUserConfigTestDB(t *testing.T) *database.DBConfig {
@@ -136,5 +139,97 @@ func TestApplyUserBootstrapConfigFilesRejectsMissingFields(t *testing.T) {
 	}
 	if err := applyUserBootstrapConfigFiles(DB, []string{`[{"username": "no_pass"}]`}, true); err == nil {
 		t.Fatalf("expected error for missing password")
+	}
+}
+
+func TestApplyUserBootstrapConfigFilesPreconfiguresTwoFactor(t *testing.T) {
+	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+
+	spec := `[
+		{"username": "mfa_user", "password": "StrongPass1!", "two_factor_secret": "jbswy3dpehpk3pxp"}
+	]`
+	if err := applyUserBootstrapConfigFiles(DB, []string{spec}, true); err != nil {
+		t.Fatalf("applyUserBootstrapConfigFiles failed: %v", err)
+	}
+
+	var user database.User
+	if err := DB.Where("username = ?", "mfa_user").First(&user).Error; err != nil {
+		t.Fatalf("expected mfa_user to exist: %v", err)
+	}
+	if !user.TwoFactorEnabled {
+		t.Fatalf("expected two_factor_enabled to be true")
+	}
+	if user.TwoFactorSecret != "JBSWY3DPEHPK3PXP" {
+		t.Fatalf("expected normalized secret JBSWY3DPEHPK3PXP, got %q", user.TwoFactorSecret)
+	}
+}
+
+func TestApplyUserBootstrapConfigFilesSeedsRecoveryCodesIdempotently(t *testing.T) {
+	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+
+	spec := `[
+		{
+			"username": "mfa_recovery_user",
+			"password": "StrongPass1!",
+			"two_factor_secret": "JBSWY3DPEHPK3PXP",
+			"two_factor_recovery_codes": ["11111111", "22222222"]
+		}
+	]`
+	if err := applyUserBootstrapConfigFiles(DB, []string{spec}, true); err != nil {
+		t.Fatalf("applyUserBootstrapConfigFiles failed: %v", err)
+	}
+	// Re-applying must not duplicate the seeded codes.
+	if err := applyUserBootstrapConfigFiles(DB, []string{spec}, true); err != nil {
+		t.Fatalf("second applyUserBootstrapConfigFiles failed: %v", err)
+	}
+
+	var user database.User
+	if err := DB.Where("username = ?", "mfa_recovery_user").First(&user).Error; err != nil {
+		t.Fatalf("expected mfa_recovery_user to exist: %v", err)
+	}
+
+	var codes []database.TwoFactorRecoveryCode
+	if err := DB.Where("user_id = ?", user.ID).Find(&codes).Error; err != nil {
+		t.Fatalf("failed to load recovery codes: %v", err)
+	}
+	if len(codes) != 2 {
+		t.Fatalf("expected 2 recovery codes after two applies, got %d", len(codes))
+	}
+
+	plaintext := map[string]bool{"11111111": false, "22222222": false}
+	for _, code := range codes {
+		for candidate := range plaintext {
+			if bcrypt.CompareHashAndPassword([]byte(code.CodeHash), []byte(candidate)) == nil {
+				plaintext[candidate] = true
+			}
+		}
+	}
+	for candidate, matched := range plaintext {
+		if !matched {
+			t.Fatalf("expected seeded recovery code %s to be stored", candidate)
+		}
+	}
+}
+
+func TestApplyUserBootstrapConfigFilesRejectsInvalidTwoFactorSecret(t *testing.T) {
+	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+
+	spec := `[
+		{"username": "bad_mfa_user", "password": "StrongPass1!", "two_factor_secret": "not-base32-1"}
+	]`
+	err := applyUserBootstrapConfigFiles(DB, []string{spec}, true)
+	if err == nil {
+		t.Fatalf("expected error for invalid two-factor secret")
+	}
+	if !strings.Contains(err.Error(), "bad_mfa_user") {
+		t.Fatalf("expected error to include the user label, got %q", err.Error())
+	}
+
+	var user database.User
+	if err := DB.Where("username = ?", "bad_mfa_user").First(&user).Error; err != nil {
+		t.Fatalf("expected bad_mfa_user to still be created: %v", err)
+	}
+	if user.TwoFactorEnabled {
+		t.Fatalf("expected two-factor to remain disabled for an invalid secret")
 	}
 }
