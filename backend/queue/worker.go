@@ -30,6 +30,9 @@ func (p *Processor) NewServeMux() *asynq.ServeMux {
 	mux.HandleFunc(workqueue.TypeEmailAutomation, func(ctx context.Context, task *asynq.Task) error {
 		return tasks.HandleEmailAutomation(ctx, task, deps)
 	})
+	mux.HandleFunc(workqueue.TypeGitTriggerPoll, func(ctx context.Context, task *asynq.Task) error {
+		return tasks.HandleGitTriggerPoll(ctx, task, deps)
+	})
 	return mux
 }
 
