@@ -105,14 +105,15 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 		}
 	}
 
-	// Bots that route chats through an external chat backend (eg the opencode
-	// integration bot) expose that chat backend on every profile model via the
-	// dedicated chat_backend key. The selected model only picks which LLM the
-	// external backend runs on (its provider stays in backend), so the chat
-	// start page must keep resolving the backend's chat UI (eg the opencode
-	// project selector) and new chats must stay bound to the chat backend
-	// regardless of which model config is selected.
+	// The bot runtime's default shared config is authoritative for the tools a
+	// chat actually runs (see resolveSharedConfigForChat). Models assigned to
+	// the bot come from shared default model configs whose tool list is not
+	// bot-specific, so mirror the runtime's tool-affecting fields onto every
+	// profile model. Without this the chat-start page cannot see that tools
+	// such as kubernetes_select_cluster require init values and never renders
+	// their selection widget.
 	if runtimeErr == nil {
+		mergeRuntimeConfigIntoProfileModels(runtime.DefaultSharedConfig, models)
 		if chatBackendName := runtimeChatBackendName(runtime.DefaultSharedConfig); chatBackendName != "" {
 			for i := range models {
 				models[i].Configuration.ChatBackend = chatBackendName
@@ -150,6 +151,38 @@ func CreateOrUpdateBotProfile(DB *gorm.DB, botUser database.User) error {
 	}
 
 	return nil
+}
+
+// mergeRuntimeConfigIntoProfileModels copies the tool-affecting fields from a
+// bot runtime's default shared config onto each profile model so the profile
+// reflects the tools a chat with this bot will actually use. Only fields the
+// runtime explicitly declares are overridden; anything else keeps the model
+// config value.
+func mergeRuntimeConfigIntoProfileModels(defaultSharedConfig []byte, models []BotModel) {
+	if len(defaultSharedConfig) == 0 || len(models) == 0 {
+		return
+	}
+	var runtimeProfile BotProfileConfig
+	if err := json.Unmarshal(defaultSharedConfig, &runtimeProfile); err != nil {
+		return
+	}
+	for i := range models {
+		if len(runtimeProfile.Tools) > 0 {
+			models[i].Configuration.Tools = append([]string(nil), runtimeProfile.Tools...)
+		}
+		if strings.TrimSpace(runtimeProfile.SystemPrompt) != "" {
+			models[i].Configuration.SystemPrompt = runtimeProfile.SystemPrompt
+		}
+		if len(runtimeProfile.Integrations) > 0 {
+			models[i].Configuration.Integrations = append([]string(nil), runtimeProfile.Integrations...)
+		}
+		if len(runtimeProfile.MCPTools) > 0 {
+			models[i].Configuration.MCPTools = runtimeProfile.MCPTools
+		}
+		if len(runtimeProfile.DynamicTools) > 0 {
+			models[i].Configuration.DynamicTools = runtimeProfile.DynamicTools
+		}
+	}
 }
 
 // runtimeChatBackendName resolves the external chat backend declared by a bot
