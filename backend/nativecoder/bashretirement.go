@@ -63,6 +63,7 @@ const (
 	BashCategoryScaffolding    = "scaffolding_fixtures"
 	BashCategoryEnvProbing     = "env_service_probing"
 	BashCategoryIntegrationCLI = "integration_clis"
+	BashCategoryGitHubWait     = "github_wait"
 	BashCategoryResidualShell  = "residual_shell"
 )
 
@@ -296,13 +297,14 @@ var bashUsageCategories = []BashUsageCategory{
 			"helm upgrade --install open-chat ./chart",
 		},
 		TargetTools: []string{
-			"kubernetes_get", "kubernetes_describe", "kubernetes_logs",
+			KubernetesToolGet, KubernetesToolDescribe, KubernetesToolLogs,
 			DockerToolCheck, DockerToolPS, DockerToolLogs, DockerToolBuild, DockerToolRun, DockerToolCompose, DockerToolExec,
 			"ssh_run",
 		},
 		Policy: "read for get/describe/logs/ps; write for exec/up/upgrade, per integration",
 		Notes: []string{
 			"each tool is owned by its integration (ci#423 Host boundary), never absorbed by the core",
+			"the kubernetes_get/describe/logs surface ships in kubetooling.go (kubernetes integration), mirroring docker_sandbox",
 		},
 	},
 	{
@@ -322,6 +324,30 @@ var bashUsageCategories = []BashUsageCategory{
 		Notes: []string{
 			"the classifier never claims an unrecognised binary or git subcommand as covered, it lands here",
 			"the escape hatch stays reachable so the migration cannot lose capability",
+		},
+	},
+	{
+		ID:          BashCategoryGitHubWait,
+		Title:       "GitHub wait & poll",
+		Description: "CI waiting and polling: `gh pr checks --watch`, `gh run watch`, `gh run list --watch`, and hand-rolled until/while poll loops over `gh run view`. These are the last shell escape hatch on the GitHub workflows: the dev agent should block-and-settle through a typed, cloud-event driven tool instead of busy-waiting in a shell.",
+		Tier:        CapabilityTierCore,
+		Phase:       "phase_6_github_wait",
+		Shipped:     false,
+		Policy:      "read-only: block until a workflow run or PR check set settles, then return the terminal state; never busy-wait, never poll in a loop",
+		Examples: []string{
+			"gh pr checks 873 --watch",
+			"gh run watch 123456789 --repo msgmate-io/open-chat-go",
+			"gh run list --watch --repo msgmate-io/open-chat-go",
+			"until gh run view 123 --json status -q .status | grep -q completed; do sleep 10; done",
+			"gh pr checks 873 --watch --interval 15",
+		},
+		TargetTools: []string{
+			GitHubAwaitToolName, GitHubAwaitToolPRChecks, GitHubAwaitToolRunWatch, "github_run_list",
+			"github_run_view",
+		},
+		Notes: []string{
+			"the classifier redirects --watch forms and until/while poll loops to this category, never to residual",
+			"the testing policy says CI is never polled: the typed surface reports the PR and what is pending instead",
 		},
 	},
 }
@@ -397,7 +423,7 @@ var bashRetirementPhases = []BashRetirementPhase{
 		},
 		Tracks: []int{514, 423},
 	},
-	{
+	{ // phase_5 close; phase_6_github_wait is added by ci#514 implementation
 		ID:         "phase_5_guarded_residual",
 		Order:      5,
 		Title:      "Guarded residual",
@@ -408,6 +434,20 @@ var bashRetirementPhases = []BashRetirementPhase{
 			"coder_shell enforces an allow-list of binaries/arguments and previews in plan mode",
 			"the residual share is measured and documented, and never silently grows",
 			"no capability was lost: the residual scenarios still complete through coder_shell",
+		},
+		Tracks: []int{514},
+	},
+	{
+		ID:         "phase_6_github_wait",
+		Order:      6,
+		Title:      "GitHub wait & poll (github_await)",
+		Goal:       "Close the last shell escape hatch on the GitHub workflows: CI waiting and polling. Every `gh pr checks --watch`, `gh run watch`, `gh run list --watch` and hand-rolled until/while poll loop is redirected to the typed, cloud-event driven github_await (block until a workflow run or PR checks settle, then return structured state, never busy-wait).",
+		Categories: []string{BashCategoryGitHubWait},
+		ExitCriteria: []string{
+			"github_await covers pr checks watch, run watch, run list watch and run view poll loops with structured, terminal state",
+			"the dev-agent prompts never instruct a raw poll loop or `gh ... --watch`; the testing policy says CI is never polled",
+			"the github_wait share of shell calls is below the retirement threshold",
+			"the typed surface reports the PR and what is pending, instead of waiting on CI",
 		},
 		Tracks: []int{514},
 	},
@@ -827,6 +867,14 @@ func classifyShellSegment(segment string) string {
 	}
 	if binary == "git" {
 		return ClassifyGitSubcommand(bashGitSubcommand(words[1:]))
+	}
+	if binary == "gh" {
+		// Wait/poll shapes class-first: `gh pr checks --watch`, `gh run
+		// watch`, `gh run list --watch` and until/while loops over those
+		// are github_wait before the plain github_cli mapping.
+		if shape := ClassifyGitHubAwaitSource(segment); shape.Kind != GitHubAwaitUnknown {
+			return BashCategoryGitHubWait
+		}
 	}
 	if category, known := bashBinaryCategories[binary]; known {
 		return category
