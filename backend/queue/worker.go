@@ -30,6 +30,9 @@ func (p *Processor) NewServeMux() *asynq.ServeMux {
 	mux.HandleFunc(workqueue.TypeEmailAutomation, func(ctx context.Context, task *asynq.Task) error {
 		return tasks.HandleEmailAutomation(ctx, task, deps)
 	})
+	mux.HandleFunc(workqueue.TypeIntegrationSchedule, func(ctx context.Context, task *asynq.Task) error {
+		return tasks.HandleIntegrationSchedule(ctx, task, deps)
+	})
 	return mux
 }
 
