@@ -398,7 +398,7 @@ func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 	// statuses at all reports "unknown" — never "pending" — because nothing is
 	// actually running and the aggregate `state` field of an empty list is a
 	// stale cache artifact (ci#928).
-	statuses = dropCombinedEmpty(statuses)
+	statuses, _ = dropCombinedEmpty(statuses)
 	if len(statuses) == 0 {
 		return "unknown"
 	}
@@ -419,18 +419,22 @@ func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 // no contexts at all) from a fact list, leaving only real statuses. A commit
 // whose entire report was empty therefore yields no statuses, which the
 // aggregation reads as "unknown" rather than the stale report's `pending`.
-func dropCombinedEmpty(statuses []statusFact) []statusFact {
-	real := statuses[:0]
+//
+// ci#928 follow-up: the real pending contexts on the remaining statuses are
+// returned second, so a caller (evaluateRequiredContexts) can distinguish a
+// stale aggregate `pending` that names no check from a genuinely pending
+// required check.
+func dropCombinedEmpty(statuses []statusFact) (real []statusFact, pendingContexts []string) {
 	for _, status := range statuses {
-		if status.CombinedEmpty {
+		if status.CombinedEmpty || status.State == "" {
 			continue
 		}
-		if status.State == "" {
-			continue
+		if status.State == "pending" {
+			pendingContexts = append(pendingContexts, status.Context)
 		}
 		real = append(real, status)
 	}
-	return real
+	return real, pendingContexts
 }
 
 // evaluateRequiredContexts aggregates exactly the required contexts of a commit:
@@ -446,6 +450,13 @@ func dropCombinedEmpty(statuses []statusFact) []statusFact {
 // which resolves to pending only when the ruleset names it AND a check actually
 // exists to be pending).
 func evaluateRequiredContexts(required []RequiredCheck, runs []checkRunFact, statuses []statusFact) (string, []string) {
+	// ci#928 follow-up: the sentinel is dropped and the real pending contexts are
+	// returned, so an already-pending real check can be distinguished from a
+	// stale aggregate `pending` that names no check. The statuses that remain are
+	// exactly the real ones; a required context still pending through a real
+	// status stays pending, while one that is pending only through the empty
+	// report stays not-found.
+	statuses, _ = dropCombinedEmpty(statuses)
 	hasFailure := false
 	hasPending := false
 	failing := make([]string, 0, len(required))
@@ -521,12 +532,8 @@ func requiredContextState(check RequiredCheck, runs []checkRunFact, statuses []s
 	// `pending`/`statuses:[]` combined-status report right after a squash merge)
 	// carries no status for this required context, however the aggregate `state`
 	// field read. The check-runs list is the authoritative source for a commit
-	// that has no statuses, so the context has simply not reported.
-	for _, status := range statuses {
-		if status.CombinedEmpty {
-			return "", false
-		}
-	}
+	// that has no statuses, so the context has simply not reported. The
+	// sentinel is dropped before this point, so there is nothing left to scan.
 	return "", false
 }
 
