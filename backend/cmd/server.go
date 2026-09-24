@@ -1077,6 +1077,14 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 	}
 
+	integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
+	if err != nil {
+		return err
+	}
+	if integrationScheduler != nil {
+		defer integrationScheduler.Shutdown()
+	}
+
 	serverErrCh := make(chan error, 1)
 	go func() {
 		err := s.Serve(listener)
