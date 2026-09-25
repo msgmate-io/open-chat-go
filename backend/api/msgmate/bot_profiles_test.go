@@ -212,6 +212,45 @@ func TestCreateOrUpdateBotProfileMergesRuntimeToolsIntoAssignedModels(t *testing
 	}
 }
 
+func TestMergeRuntimeConfigIntoProfileModelsDeepCopiesJSONMaps(t *testing.T) {
+	raw, err := json.Marshal(map[string]interface{}{
+		"mcp_tools": map[string]interface{}{
+			"cluster_server": map[string]interface{}{
+				"enabled": true,
+				"tags":    []interface{}{"kubernetes", "read"},
+			},
+		},
+		"dynamic_tools": map[string]interface{}{
+			"cluster_tool": map[string]interface{}{"endpoint": "https://example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed marshaling runtime config: %v", err)
+	}
+
+	models := []BotModel{{Title: "model-a"}, {Title: "model-b"}}
+	mergeRuntimeConfigIntoProfileModels(raw, models)
+
+	// Mutating one model's nested MCP tool map must not leak into the other
+	// model or back into the runtime config.
+	mcpA := models[0].Configuration.MCPTools["cluster_server"].(map[string]interface{})
+	mcpA["enabled"] = false
+	mcpA["tags"].([]interface{})[0] = "mutated"
+
+	mcpB := models[1].Configuration.MCPTools["cluster_server"].(map[string]interface{})
+	if mcpB["enabled"] != true {
+		t.Fatalf("model-b mcp_tools.enabled = %v, want true (shared map alias)", mcpB["enabled"])
+	}
+	if got := mcpB["tags"].([]interface{})[0]; got != "kubernetes" {
+		t.Fatalf("model-b mcp_tools.tags[0] = %v, want kubernetes (shared slice alias)", got)
+	}
+
+	models[0].Configuration.DynamicTools["cluster_tool"].(map[string]interface{})["endpoint"] = "https://mutated"
+	if got := models[1].Configuration.DynamicTools["cluster_tool"].(map[string]interface{})["endpoint"]; got != "https://example.com" {
+		t.Fatalf("model-b dynamic_tools endpoint = %v, want https://example.com", got)
+	}
+}
+
 func TestCreateOrUpdateBotProfileLeavesLLMBotBackendsUntouched(t *testing.T) {
 	DB := setupBotProfilesTestDB(t)
 	botUser := createBotProfilesTestBot(t, DB, "llm-backend-bot", map[string]interface{}{
