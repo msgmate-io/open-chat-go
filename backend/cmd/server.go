@@ -1017,7 +1017,8 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	gitRepositorySpecs := append([]string{}, openChatBootstrap.GitRepositorySpecs...)
 	gitWorkspaceSpecs := append([]string{}, openChatBootstrap.GitWorkspaceSpecs...)
 	gitWorkspaceGrantSpecs := append([]string{}, openChatBootstrap.GitWorkspaceGrantSpecs...)
-	if err := applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs); err != nil {
+	gitTriggerSpecs := append([]string{}, openChatBootstrap.GitTriggerSpecs...)
+	if err := applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs, gitTriggerSpecs); err != nil {
 		return err
 	}
 
