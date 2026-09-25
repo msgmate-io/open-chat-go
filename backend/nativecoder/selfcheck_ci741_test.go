@@ -252,4 +252,74 @@ func TestCI927DispatchWinsOverTheConfigDefault(t *testing.T) {
 	if strings.Contains(GitRemoteForRepo(repo), ci741MonorepoRepo) {
 		t.Fatalf("resolved remote = %q still points at the config default", GitRemoteForRepo(repo))
 	}
+
+	// And the bind surfaces that resolution in the harness's exact tool_init
+	// shape: the role's automatic sandbox clones the dispatched task repo, not
+	// the pre-selected monorepo.
+	bound := WithAutoSandboxRepo(config, repo)
+	if got := ci741BoundRepo(t, bound); got != GitRemoteForRepo(ci927TaskRepo) {
+		t.Fatalf("bound sandbox repo = %q, want %q (%q)", got, GitRemoteForRepo(ci927TaskRepo), ci927TaskRepo)
+	}
+}
+
+// TestCI927SelfCheckRoleBaseConfigCarriesTheAutonomousDispatch is the
+// development-lead half of the ci#927 regression: the interaction the
+// self-check dispatches for the dev-lead role must run without parking on a
+// per-action confirmation, otherwise a headless interaction parks on
+// "Waiting for your confirmation to run coder_bash" and never produces the
+// required report - the ci#506 failure mode that surfaced as the ci#622
+// `dev_lead_report` self-check failure. The shield is the base config the
+// suite dispatches: when it records `agent_dispatch.autonomous: true`, the
+// interaction resolves autonomous and the `coder_interaction: autonomous`
+// contract is promoted onto the chat's effective config.
+func TestCI927SelfCheckRoleBaseConfigCarriesTheAutonomousDispatch(t *testing.T) {
+	config := map[string]interface{}{
+		"model": "m",
+		AgentDispatchConfigKey: map[string]interface{}{
+			AgentDispatchAutonomousKey: true,
+		},
+	}
+	if !AutonomousEnabledForConfig(config) {
+		t.Fatal("the self-check role dispatch must resolve autonomous (agent_dispatch.autonomous)")
+	}
+	if got := ResolveAutonomousPolicy(config).Source; got != AutonomousSourceDispatchAutonomous {
+		t.Fatalf("autonomous source = %q, want %q", got, AutonomousSourceDispatchAutonomous)
+	}
+	if _, exists := config[CoderInteractionConfigKey]; exists {
+		t.Fatal("the policy resolve must not mutate the caller's config")
+	}
+	apply := map[string]interface{}{}
+	for key, value := range config {
+		apply[key] = value
+	}
+	if got := ApplyCoderAutonomousConfig(apply); got[CoderInteractionConfigKey] != CoderInteractionAutonomous {
+		t.Fatalf("apply did not promote coder_interaction: autonomous, got %#v", got)
+	}
+}
+
+// TestCI927BranchDispatchReachesTheSelfCheckRole pins the second input of the
+// dispatch surface the self-check harness relies on: a `branch:<ref>` tag on
+// the interaction reaches the automatic sandbox checkout of the role, exactly
+// like the `repo:<owner/name>` tag does. Every self-check role is dispatched
+// against the same fixture PR, and its sandbox has to clone the fixture
+// repository (pinned by the ci#741/ci#927 suite) at the PR's branch so the
+// inherited-mode roles (plan, consolidation, dev-lead) report on the PR's
+// actual content instead of the default branch.
+func TestCI927BranchDispatchReachesTheSelfCheckRole(t *testing.T) {
+	tags := []string{RepoTagPrefix + ci927TaskRepo, BranchTagPrefix + "selfcheck/plan"}
+	if got := AutoSandboxBranchForInteraction(tags, nil); got != "selfcheck/plan" {
+		t.Fatalf("AutoSandboxBranchForInteraction = %q, want the dispatched branch", got)
+	}
+
+	// The harness's exact tool_init shape is `{"coder_select_workspace":
+	// {"auto_sandbox": true}}` (no repo/branch pinned); with a branch tag the
+	// same bind must drop the fixture branch into the untouched repo pin.
+	harnessInit := map[string]interface{}{
+		AutoSandboxToolInitKey: map[string]interface{}{AutoSandboxFlagInput: true},
+	}
+	if bound, changed := BindAutoSandboxBranch(harnessInit, "selfcheck/plan"); !changed {
+		t.Fatal("BindAutoSandboxBranch left the harness's auto-sandbox tool_init unchanged")
+	} else if got := autoSandboxToolInitBranch(bound); got != "selfcheck/plan" {
+		t.Fatalf("harness-shaped tool_init branch = %q, want %q", got, "selfcheck/plan")
+	}
 }
