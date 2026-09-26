@@ -14,7 +14,10 @@ RUN ./generate_golang_routes.sh
 
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS frontend_empty
 WORKDIR /frontend
-RUN mkdir -p /frontend/dist/client && printf '{}\n' > /frontend/routes.json
+RUN mkdir -p /frontend/dist/client /frontend/scripts \
+    && printf '{}\n' > /frontend/routes.json \
+    && printf '#!/usr/bin/env bash\nset -euo pipefail\necho "[export-integration-pages] skipped (empty frontend stage)"\n' > /frontend/scripts/export_integration_pages.sh \
+    && chmod +x /frontend/scripts/export_integration_pages.sh
 
 FROM ${FRONTEND_STAGE} AS frontend_selected
 
@@ -41,7 +44,7 @@ COPY --from=frontend_selected /frontend/dist/client server/frontend/
 # change on every frontend rebuild, so the committed copies go stale and the
 # pages then 404 on their entry chunks. Re-exporting here guarantees the
 # embedded HTML always matches the chunks served from this exact image.
-COPY frontend/scripts/export_integration_pages.sh /build/frontend/scripts/export_integration_pages.sh
+COPY --from=frontend_selected /frontend/scripts/export_integration_pages.sh /build/frontend/scripts/export_integration_pages.sh
 RUN mkdir -p /build/frontend/dist \
     && ln -s /backend/server/frontend /build/frontend/dist/client \
     && ln -s /clients /build/clients
