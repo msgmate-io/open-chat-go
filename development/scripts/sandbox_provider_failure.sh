@@ -20,6 +20,11 @@
 #   (empty)      not a pure provider failure: at least one reply is missing or
 #                looks like an ordinary failure, so the test verdict stands.
 #
+#   empty_reply  every recorded bot reply came back empty for a turn ("model
+#                returned no text for this turn"). A pure empty completion is
+#                model variance, not a code regression: the workflow accepts it
+#                after both attempts instead of turning the gate red (ci#938).
+#
 # The patterns mirror the Go-side markers used by the backend when it decides
 # whether a provider error is retryable
 # (`backend/api/msgmate/provider_retry.go`) and the bot text it returns to the
@@ -44,6 +49,14 @@ sandbox_provider_inflight_pattern+='|in-flight request|in flight request|in-flig
 # A drained balance or a bad key: never retry, always infrastructure.
 sandbox_provider_account_pattern='HTTP (401|402)|positive balance|insufficient_quota|invalid_api_key'
 
+# The model answered nothing at all for a turn (a pure empty reply: the backend
+# reports "model returned no text for this turn"). Every attempt can hit this on
+# pure model variance (a refused or blank completion), so it is retryable and
+# accepted as variance, not a coder regression. Checked AFTER the provider
+# classes so a provider-side error that happens to mention an empty response
+# still keeps its real class (ci#938).
+sandbox_provider_empty_reply_pattern='model returned no text for this turn'
+
 # An outage, a rate limit or a connection-level failure: transient provider
 # infrastructure, not something the coder can influence.
 sandbox_provider_unreachable_pattern='HTTP (408|429|500|502|503|504)'
@@ -61,7 +74,7 @@ sandbox_provider_failure_class() {
   local dir="${1:-}"
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
 
-  local file files=0 account_hits=0 unreachable_hits=0
+  local file files=0 account_hits=0 unreachable_hits=0 empty_reply_hits=0
   for file in "$dir"/*.last_bot.json; do
     [ -f "$file" ] || continue
     files=$(( files + 1 ))
@@ -79,6 +92,8 @@ sandbox_provider_failure_class() {
       account_hits=$(( account_hits + 1 ))
     elif grep -qiE "$sandbox_provider_unreachable_pattern" "$file"; then
       unreachable_hits=$(( unreachable_hits + 1 ))
+    elif grep -qiE "$sandbox_provider_empty_reply_pattern" "$file"; then
+      empty_reply_hits=$(( empty_reply_hits + 1 ))
     fi
   done
 
@@ -87,5 +102,7 @@ sandbox_provider_failure_class() {
     printf 'account\n'
   elif [ "$unreachable_hits" -eq "$files" ]; then
     printf 'unreachable\n'
+  elif [ "$empty_reply_hits" -eq "$files" ]; then
+    printf 'empty_reply\n'
   fi
 }
