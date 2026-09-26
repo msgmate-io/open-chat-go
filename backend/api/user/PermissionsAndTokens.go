@@ -3,6 +3,9 @@ package user
 import (
 	"backend/database"
 	"backend/server/util"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -18,9 +21,27 @@ import (
 )
 
 const maxUserAccessTokens = 5
+
+// cliBrowserAuthStateTTL is how long a started CLI browser-authorization flow
+// stays valid before the server discards it. The CLI must obtain a fresh state
+// (and its paired secret) from the server before opening the browser.
 const cliBrowserAuthStateTTL = 5 * time.Minute
 
+// cliBrowserAuthTokenTTL is the lifetime of the account token minted by a
+// completed CLI browser-authorization flow. The flow binds the token to a
+// server-generated state and a paired secret the poller must present, but the
+// minted credential is still a full-account bearer, so it must never be a
+// long-lived token: a short expiry keeps any leaked token a short-lived one
+// (ci#936).
+const cliBrowserAuthTokenTTL = 15 * time.Minute
+
+// cliBrowserAuthResult is the completed result of one CLI browser-authorization
+// flow. The state alone is not enough to claim it: the poller must also
+// present the paired secret that was returned alongside the state when the
+// flow was started, so an attacker who merely guesses or observes a victim's
+// state cannot walk away with the minted token (ci#936).
 type cliBrowserAuthResult struct {
+	Secret    string
 	Token     string
 	Error     string
 	ExpiresAt time.Time
@@ -282,12 +303,12 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 		tokenName = "open-chat-cli"
 	}
 
-	if state == "" {
-		http.Error(w, "state is required", http.StatusBadRequest)
-		return
-	}
-	if !isValidCLIAuthState(state) {
-		http.Error(w, "invalid state", http.StatusBadRequest)
+	// The state is no longer caller-chosen (ci#936): the server generates it
+	// (together with a paired poll secret) when the flow starts, so an
+	// attacker cannot pre-register a victim's state and later claim the
+	// minted token by polling with only that state.
+	if state != "" {
+		http.Error(w, "state is now server-generated; start the flow without a state parameter", http.StatusBadRequest)
 		return
 	}
 	if redirectURI != "" && !isValidRedirectURL(redirectURI) {
@@ -307,28 +328,63 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bind the flow to this authenticated session/device: the server picks
+	// the state and a secret that the poller must present, so knowing the
+	// state alone is never enough to claim the minted token (ci#936).
+	flowState, err := newRandomCLIAuthState()
+	if err != nil {
+		http.Error(w, "Failed to start authorization flow", http.StatusInternalServerError)
+		return
+	}
+	flowSecret, err := newRandomCLIAuthSecret()
+	if err != nil {
+		http.Error(w, "Failed to start authorization flow", http.StatusInternalServerError)
+		return
+	}
+	storeCLIAuthResult(flowState, cliBrowserAuthResult{
+		Secret: flowSecret,
+	})
+
 	rawToken, prefix, tokenHash, genErr := database.GenerateRawAccessToken()
 	if genErr != nil {
-		handleCLIAuthResult(w, r, redirectURI, state, "Failed to generate token", "")
+		storeCLIAuthResult(flowState, cliBrowserAuthResult{
+			Secret: flowSecret,
+			Error:  "Failed to generate token",
+		})
+		handleCLIAuthResult(w, r, redirectURI, flowState, "", "")
 		return
 	}
 
+	// The minted credential is a full-account bearer, so it must never be a
+	// never-expiring token: a short expiry limits the blast radius of any
+	// leaked token (ci#936).
+	expiresAt := time.Now().Add(cliBrowserAuthTokenTTL)
 	accessToken := database.AccessToken{
 		UserId:      user.ID,
 		Name:        composeTokenName(tokenName, nil),
 		TokenPrefix: prefix,
 		TokenHash:   tokenHash,
+		ExpiresAt:   &expiresAt,
 	}
 	if createErr := DB.Create(&accessToken).Error; createErr != nil {
-		handleCLIAuthResult(w, r, redirectURI, state, "Failed to persist token", "")
+		storeCLIAuthResult(flowState, cliBrowserAuthResult{
+			Secret: flowSecret,
+			Error:  "Failed to persist token",
+		})
+		handleCLIAuthResult(w, r, redirectURI, flowState, "", "")
 		return
 	}
 
-	handleCLIAuthResult(w, r, redirectURI, state, "", rawToken)
+	storeCLIAuthResult(flowState, cliBrowserAuthResult{
+		Secret: flowSecret,
+		Token:  rawToken,
+	})
+	handleCLIAuthResult(w, r, redirectURI, flowState, "", rawToken)
 }
 
 func (h *UserHandler) CLIBrowserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	secret := strings.TrimSpace(r.URL.Query().Get("secret"))
 	if state == "" {
 		http.Error(w, "state is required", http.StatusBadRequest)
 		return
@@ -338,7 +394,10 @@ func (h *UserHandler) CLIBrowserAuthPoll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, found := popCLIAuthResult(state)
+	// The poller must present the paired secret that was returned when the
+	// flow started; knowing the state alone must never be enough to claim the
+	// minted token (ci#936).
+	result, found := popCLIAuthResult(state, secret)
 	w.Header().Set("Content-Type", "application/json")
 	if !found {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ready": false})
@@ -425,6 +484,35 @@ func isValidCLIAuthState(state string) bool {
 	return true
 }
 
+// newRandomCLIAuthState returns a fresh, unguessable state for a CLI
+// browser-authorization flow. The state is generated by the server instead of
+// being chosen by the caller, so an attacker cannot pre-register a victim's
+// state and later claim the minted token by polling with only that state
+// (ci#936).
+func newRandomCLIAuthState() (string, error) {
+	return randomURLSafeToken(24)
+}
+
+// newRandomCLIAuthSecret returns a fresh, unguessable secret that is paired
+// with the flow state. The poller must present this secret together with the
+// state before the server hands over the minted token (ci#936).
+func newRandomCLIAuthSecret() (string, error) {
+	return randomURLSafeToken(32)
+}
+
+// randomURLSafeToken returns n bytes of cryptographically random data encoded
+// in URL-safe base64 (unpadded), suitable for unguessable states and secrets.
+func randomURLSafeToken(n int) (string, error) {
+	if n <= 0 {
+		return "", fmt.Errorf("token length must be positive")
+	}
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
 func loginRedirectURL(target string) string {
 	escaped := url.QueryEscape(strings.TrimSpace(target))
 	return "/login?redirect=" + escaped + "&next=" + escaped
@@ -457,20 +545,48 @@ func writeCLIAuthResultPage(w http.ResponseWriter, ok bool, message string) {
 	_, _ = w.Write([]byte("<html><body><h2>" + title + "</h2><p>" + message + "</p></body></html>"))
 }
 
+// setCLIAuthResult stores the outcome of a CLI browser-authorization flow.
+// The flow state was generated by the server when the flow started; the
+// optional paired secret must be matched by the poller before the result is
+// handed out, so knowing the state alone is never enough (ci#936).
 func setCLIAuthResult(state, token, authErr string) {
 	now := time.Now()
 	cliBrowserAuthResults.mu.Lock()
 	defer cliBrowserAuthResults.mu.Unlock()
 
 	cleanupExpiredCLIAuthResultsLocked(now)
+	existing := cliBrowserAuthResults.state[state]
 	cliBrowserAuthResults.state[state] = cliBrowserAuthResult{
+		Secret:    existing.Secret,
 		Token:     strings.TrimSpace(token),
 		Error:     strings.TrimSpace(authErr),
 		ExpiresAt: now.Add(cliBrowserAuthStateTTL),
 	}
 }
 
-func popCLIAuthResult(state string) (cliBrowserAuthResult, bool) {
+// storeCLIAuthResult records or replaces the flow entry for state, preserving
+// any previously stored paired secret.
+func storeCLIAuthResult(state string, result cliBrowserAuthResult) {
+	now := time.Now()
+	cliBrowserAuthResults.mu.Lock()
+	defer cliBrowserAuthResults.mu.Unlock()
+
+	cleanupExpiredCLIAuthResultsLocked(now)
+	existing := cliBrowserAuthResults.state[state]
+	if result.Secret == "" {
+		result.Secret = existing.Secret
+	}
+	if result.ExpiresAt.IsZero() {
+		result.ExpiresAt = now.Add(cliBrowserAuthStateTTL)
+	}
+	cliBrowserAuthResults.state[state] = result
+}
+
+// popCLIAuthResult removes and returns the stored flow result, but only when
+// the caller presents the paired secret that was returned when the flow
+// started. A poll that knows only the state must never receive the minted
+// token (ci#936).
+func popCLIAuthResult(state, secret string) (cliBrowserAuthResult, bool) {
 	now := time.Now()
 	cliBrowserAuthResults.mu.Lock()
 	defer cliBrowserAuthResults.mu.Unlock()
@@ -480,8 +596,21 @@ func popCLIAuthResult(state string) (cliBrowserAuthResult, bool) {
 	if !found {
 		return cliBrowserAuthResult{}, false
 	}
+	if result.Secret != "" && !secretMatches(result.Secret, secret) {
+		return cliBrowserAuthResult{}, false
+	}
 	delete(cliBrowserAuthResults.state, state)
 	return result, true
+}
+
+func secretMatches(expected, provided string) bool {
+	if expected == "" {
+		// Backward compatibility for flows started before the paired-secret
+		// requirement: an empty expected secret means no secret was bound,
+		// so any provided value is accepted alongside the state.
+		return true
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
 }
 
 func cleanupExpiredCLIAuthResultsLocked(now time.Time) {
