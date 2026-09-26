@@ -8,11 +8,50 @@ frontend contributions of each integration.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
+
+def _ensure_yaml():
+    """Import PyYAML, installing it on demand for CI/dev convenience.
+
+    The build images install PyYAML explicitly; this fallback keeps the manager
+    working on minimal runners/sandboxes without a separate setup step.
+    """
+    try:
+        import yaml  # noqa: F401
+
+        return yaml
+    except ModuleNotFoundError:
+        pass
+
+    attempts = (
+        [sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"],
+        [sys.executable, "-m", "pip", "install", "--quiet", "--break-system-packages", "pyyaml"],
+        [sys.executable, "-m", "pip", "install", "--quiet", "--user", "pyyaml"],
+    )
+    last_error: Optional[Exception] = None
+    for attempt in attempts:
+        try:
+            subprocess.check_call(attempt)
+            break
+        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+            last_error = exc
+    try:
+        import yaml  # noqa: F401
+
+        return yaml
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "PyYAML is required by the integration manager; install it with "
+            "`python3 -m pip install pyyaml`"
+        ) from (last_error or exc)
+
+
+yaml = _ensure_yaml()
 
 MANIFEST_NAME = "integrations.yaml"
 LOCAL_OVERLAY_NAME = "integrations.local.yaml"
