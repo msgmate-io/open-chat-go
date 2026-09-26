@@ -1,0 +1,19 @@
+CI#925 repro transcript — msgmate_coder_ask "ASK-OK" failure on main
+(scratch copy kept with the PR so the durable record survives a sandbox reap)
+
+[verify] ✗ the coder_ask question did not carry the expected options
+
+- Run:        https://github.com/msgmate-io/open-chat-go-ci/actions/runs/41036049809
+- Source ref: main @ 6b8991671adc51e84ec1de0672b521c651091069
+- Ticket:     https://github.com/msgmate-io/open-chat-go-ci/issues/925
+- Backend image: ghcr.io/msgmate-io/open-chat-go:sandbox-private-6b8991671adc
+- Sandbox image: ghcr.io/msgmate-io/open-chat-go:sandbox-656915b0eb95
+
+Status: `msgmate_coder_ask` / `failed` / the coder_ask question did not carry
+the expected options (outside the known #477 baseline; ASK-OK reached, i.e.
+the question was asked, but the expected choices were absent).
+
+Fix drive: wire the coder_ask question options through the confirmable-action
+resolver path (autonomous) and/or the coder integration tool so the question
+payload always carries the expected options. Covered by the wire-contract test
+in backend/nativecoder/ask_test.go.
