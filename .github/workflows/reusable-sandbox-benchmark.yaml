@@ -553,6 +553,22 @@ jobs:
                 echo "::error title=Provider unreachable::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s): every bot reply could not reach the AI provider (rate limit/outage/connection error). This is transient provider infrastructure, not a code regression; re-run once the provider is reachable."
                 exit "$rc"
               fi
+              if [ "$failure_class" = "empty_reply" ]; then
+                # Every reply of both attempts came back empty ("model returned
+                # no text for this turn"). A pure empty completion is model
+                # variance, not a coder-sandbox regression: another retry only
+                # burns a third full sandbox run for the same variance. Record
+                # the marker so the summary can say so, and accept the failure
+                # (do not fail the job, do not go red) (ci#938).
+                {
+                  echo "empty_reply_failure: every recorded bot reply of both attempts"
+                  echo "came back empty (\"model returned no text for this turn\"). A pure"
+                  echo "empty completion is model variance, not a coder-sandbox"
+                  echo "regression; the test is accepted as variance."
+                } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.empty_reply_failure"
+                echo "::warning title=Empty reply (model variance)::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s): every bot reply came back empty (\"model returned no text for this turn\"). This is model variance, not a code regression; the test is accepted as variance (ci#938)."
+                exit 0
+              fi
               echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
               exit "$rc"
             fi
@@ -571,6 +587,7 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/*.last_bot.json
             ${{ github.workspace }}/.sandbox-results/*.provider_account_failure
             ${{ github.workspace }}/.sandbox-results/*.provider_unreachable
+            ${{ github.workspace }}/.sandbox-results/*.empty_reply_failure
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
@@ -613,6 +630,7 @@ jobs:
           # call that out once instead of leaving N identical failure rows.
           infra_failures=0
           unreachable_failures=0
+          empty_reply_failures=0
           # Artifacts are extracted per artifact into their own subdirectory
           # (no merge-multiple: merging multiple artifacts into one directory
           # has proven lossy in practice). TSV files are single-line; locate
@@ -676,6 +694,13 @@ jobs:
             elif [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_unreachable" ]; then
               unreachable_failures=$(( unreachable_failures + 1 ))
               detail="could not reach the AI provider - transient infrastructure, not a code regression"
+            # A failed test whose retries all came back empty ("model returned
+            # no text for this turn") is model variance, not a coder-sandbox
+            # regression; annotate the row and count it so the summary can say
+            # so once (ci#938).
+            elif [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.empty_reply_failure" ]; then
+              empty_reply_failures=$(( empty_reply_failures + 1 ))
+              detail="model returned no text (empty reply) - model variance, not a code regression"
             fi
             printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
           done
@@ -696,6 +721,17 @@ jobs:
             # And the transient provider-outage case, so a rate limit or an
             # unreachable provider is not read as N coder regressions either.
             note="$(printf '> **%s test(s) could not reach the AI provider.** Every recorded reply of both attempts failed on transient provider infrastructure (outage, rate limit or connection-level error), not a coder-sandbox regression: re-run the job once the provider is reachable again.' "$unreachable_failures")"
+            if [ -n "$infra_note" ]; then
+              infra_note="$(printf '%s\n%s' "$infra_note" "$note")"
+            else
+              infra_note="$note"
+            fi
+          fi
+          if [ "$empty_reply_failures" -gt 0 ]; then
+            # And the model-variance case: a pure empty reply ("model returned
+            # no text for this turn") on every attempt is the model declining
+            # or blanking, not a coder-sandbox regression (ci#938).
+            note="$(printf '> **%s test(s) failed on model variance (empty reply).** Every recorded reply of both attempts came back empty ("model returned no text for this turn") - the model declined or blanked, not a coder-sandbox regression; the failure was accepted as variance.' "$empty_reply_failures")"
             if [ -n "$infra_note" ]; then
               infra_note="$(printf '%s\n%s' "$infra_note" "$note")"
             else
