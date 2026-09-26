@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM golang:latest
 
-ARG INTEGRATION_PROFILE=default
+ARG INTEGRATION_PROFILE=core-only
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
 
 RUN mkdir -p /backend /dev_bin
@@ -18,10 +18,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     GOBIN="/dev_bin" go install -mod=mod github.com/githubnemo/CompileDaemon
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-yaml git \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY clients/ /clients/
+COPY development/integrations /development/integrations
 ADD ./backend /backend
-RUN bash ./scripts/dev_rebuild.sh
 
+# The backend is compiled on container start (see dev_watch.sh) once the
+# integration-sync service has materialized the selected checkouts and the Go
+# workspace. Building at image-build time would require every integration
+# source in the build context, defeating the manifest-driven setup.
 ENTRYPOINT /backend/scripts/dev_watch.sh

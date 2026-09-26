@@ -14,10 +14,8 @@ RUN ./generate_golang_routes.sh
 
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS frontend_empty
 WORKDIR /frontend
-RUN mkdir -p /frontend/dist/client /frontend/scripts \
-    && printf '{}\n' > /frontend/routes.json \
-    && printf '#!/usr/bin/env bash\nset -euo pipefail\necho "[export-integration-pages] skipped (empty frontend stage)"\n' > /frontend/scripts/export_integration_pages.sh \
-    && chmod +x /frontend/scripts/export_integration_pages.sh
+RUN mkdir -p /frontend/dist/client \
+    && printf '{}\n' > /frontend/routes.json
 
 FROM ${FRONTEND_STAGE} AS frontend_selected
 
@@ -27,28 +25,35 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /backend
 
-RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 git
+RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-yaml git
 COPY clients/ /clients/
 COPY backend/ ./
+# Integration manifest + generated tooling. The manifest lives at the image
+# root (repo root) so the manager resolves the same relative paths as on the
+# host: /clients/integrations/<name> and /backend/go.work.
+COPY integrations.yaml /integrations.yaml
+COPY integrations.lock.json /integrations.lock.json
+COPY development/integrations /development/integrations
 
 FROM basebuilder AS builder
 
-ARG INTEGRATION_PROFILE=default
+ARG INTEGRATION_PROFILE=core-only
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
 COPY --from=frontend_selected /frontend/routes.json server/routes.json
 COPY --from=frontend_selected /frontend/dist/client server/frontend/
 
-# Refresh the integration-owned frontend pages from the freshly built frontend
-# before compiling the backend. Each integration embeds its own prerendered
-# HTML, which references content-hashed JS/CSS chunk filenames. Those hashes
-# change on every frontend rebuild, so the committed copies go stale and the
-# pages then 404 on their entry chunks. Re-exporting here guarantees the
-# embedded HTML always matches the chunks served from this exact image.
-COPY --from=frontend_selected /frontend/scripts/export_integration_pages.sh /build/frontend/scripts/export_integration_pages.sh
-RUN mkdir -p /build/frontend/dist \
-    && ln -s /backend/server/frontend /build/frontend/dist/client \
-    && ln -s /clients /build/clients
-RUN bash /build/frontend/scripts/export_integration_pages.sh
+# Generate the Go workspace + side-effect imports for the selected profile, then
+# refresh the integration-owned frontend pages from the freshly built frontend.
+# Each integration embeds its own prerendered HTML, which references
+# content-hashed JS/CSS chunk filenames. Those hashes change on every frontend
+# rebuild, so the committed copies go stale and the pages then 404 on their
+# entry chunks. Re-exporting here guarantees the embedded HTML always matches
+# the chunks served from this exact image.
+RUN PYTHONPATH=/development/integrations \
+      python3 -m openchat_integrations resolve --profile "${INTEGRATION_PROFILE}" \
+    && PYTHONPATH=/development/integrations \
+      python3 -m openchat_integrations export --profile "${INTEGRATION_PROFILE}" \
+        --dist-dir /backend/server/frontend
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
