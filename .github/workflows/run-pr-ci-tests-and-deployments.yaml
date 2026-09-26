@@ -767,6 +767,7 @@ jobs:
       - name: Materialize core-only integrations
         run: |
           set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
             python3 -m openchat_integrations sync --frozen --profile core-only
 
