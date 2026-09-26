@@ -102,7 +102,8 @@ func ApplyValues(def integrationinterface.Definition, values map[string]*string)
 	}
 }
 
-// PersistValues writes the given values back to the active JSON config file.
+// PersistValues writes the given values back to the active config file (JSON
+// or YAML).
 func PersistValues(def integrationinterface.Definition, values map[string]*string) error {
 	return MergeValues(runtimecfg.GetConfigSource(), def, values)
 }
