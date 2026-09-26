@@ -1,0 +1,99 @@
+== HEAD/BRANCH ==
+main
+3847850 ci#747: umbrella drive record — coordination-continuity reliability (RC1–RC7, QW1–QW4) (#1254)
+3847850
+9c660b1 ON main
+== DIRTY ==
+?? ci893_notes/
+== benchmark pkg on origin/main ==
+backend/benchmark/aggregate.go
+backend/benchmark/aggregate_test.go
+backend/benchmark/registry.go
+backend/benchmark/types.go
+== cmd/benchmark on main ==
+== workflows on main ==
+== landing page on main? ==
+backend/database/product_landing_page_config.go
+backend/database/product_landing_page_config_test.go
+== benchmark-results on main ==
+== free-model sweep on main ==
+== CI-REPO results branch free slugs ==
+20260929193630-36619062136.md
+20260929201704-36623920853.md
+20260929204139-36625739422.md
+20260929205104-36628710314.md
+20260929210718-36630374872.md
+20261014010311-38493141871.md
+20261014011730-38493526577.md
+20261014012726-38494872674.md
+20261014014346-38496303229.md
+20261014020658-38497491966.md
+20261014195047-38625457866.md
+20261015154434-38761850985.md
+20261015215951-38812563736.md
+20261015231656-38820994127.md
+20261016014004-38835480747.md
+20261016081138-38870919628.md
+20261016133756-38906778822.md
+20261017080133-39014435703.md
+20261017125350-39034018777.md
+20261018080929-39109422654.md
+20261019090441-39224432412.md
+20261020084534-39392806145.md
+20261021084809-39569132167.md
+20261022085934-39747888399.md
+20261023090228-39924308681.md
+20261024082327-40076264429.md
+20261026090706-40294182777.md
+20261027021347-40433682374.md
+20261027025209-40437808959.md
+20261027060611-40456444213.md
+20261027064735-40460527711.md
+20261027091214-40476153957.md
+20261027130622-40505863276.md
+20261027172348-40543634028.md
+20261027232359-40601097686.md
+20261027234452-40601783590.md
+20261028095928-40664558221.md
+20261029101218-40851642309.md
+20261030101508-41036049809.md
+20261031095917-41188808407.md
+== CI-REPO runs private-sandbox recent 12 ==
+{"conclusion":"failure","id":41188808407,"status":"completed","title":"Private sandbox lw main 41188808407"}
+{"conclusion":"failure","id":41144343953,"status":"completed","title":"Private sandbox lw 17b9d829b9e68edcee713ce7176ba053a3f37362 41144343953"}
+{"conclusion":"success","id":41131803152,"status":"completed","title":"Private sandbox lw e94e3e248d092d417642ca902a615fe0ce294600 41131803152"}
+{"conclusion":"success","id":41131457925,"status":"completed","title":"Private sandbox lw b26fd8b79f62e48b4c22f62e4814579b6246ed87 41131457925"}
+{"conclusion":"failure","id":41123634772,"status":"completed","title":"Private sandbox lw 341db184c17ad608a8080de74f1ac5f5bce770a0 41123634772"}
+{"conclusion":"success","id":41123097344,"status":"completed","title":"Private sandbox lw e94e3e248d092d417642ca902a615fe0ce294600 41123097344"}
+{"conclusion":"failure","id":41119221861,"status":"completed","title":"Private sandbox lw e94e3e248d092d417642ca902a615fe0ce294600 41119221861"}
+{"conclusion":"cancelled","id":41109295601,"status":"completed","title":"Private sandbox lw df226aff004b77dfc6a1f1eb75679ebd4f034ec4 41109295601"}
+{"conclusion":"failure","id":41108075808,"status":"completed","title":"Private sandbox lw 69f690968dba9ff27e3f88f71282fb846f9f7c8a 41108075808"}
+{"conclusion":"cancelled","id":41105491226,"status":"completed","title":"Private sandbox lw 17c6270004398f1750a3cc4a4d6bda3431c16e3c 41105491226"}
+{"conclusion":"failure","id":41096331372,"status":"completed","title":"Private sandbox lw e811ee581dc06326392d1df18bc8d64fa4703f1a 41096331372"}
+{"conclusion":"failure","id":41049430885,"status":"completed","title":"Private sandbox lw a031972a2301e02697fdf6895a8b22aa20f2e7cc 41049430885"}
+== CI-REPO free-model runs ==
+{"conclusion":"cancelled","createdAt":"2026-10-27T12:42:07Z","id":40505841526,"status":"completed"}
+{"conclusion":"cancelled","createdAt":"2026-10-27T02:19:52Z","id":40437794239,"status":"completed"}
+{"conclusion":"cancelled","createdAt":"2026-10-27T01:37:28Z","id":40433669026,"status":"completed"}
+{"conclusion":"cancelled","createdAt":"2026-10-27T01:37:26Z","id":40433665806,"status":"completed"}
+== open-chat-go PRs for 893 ==
+Unknown JSON field: "headRefName"
+Available fields:
+  assignees
+  author
+  authorAssociation
+  body
+  closedAt
+  commentsCount
+  createdAt
+  id
+  isDraft
+  isLocked
+  isPullRequest
+  labels
+  number
+  repository
+  state
+  title
+  updatedAt
+  url
