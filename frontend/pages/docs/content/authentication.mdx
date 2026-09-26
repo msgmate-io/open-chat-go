@@ -95,6 +95,12 @@ The CLI clients can authenticate without storing a password by starting a
 browser-based authorization flow with `GET /api/user/cli-auth` and polling
 `GET /api/user/cli-auth/poll`.
 
+The flow is bound to the session that started it: the server generates the
+`state` value (a caller-supplied `state` is rejected) and returns a paired
+`secret` that the poller must present together with the `state`. The account
+token minted by the flow expires shortly after it is created, so a leaked
+token stays short-lived.
+
 ## Inspecting the current identity
 
 `GET /api/v1/user/self` returns the authenticated user, and
