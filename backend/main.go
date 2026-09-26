@@ -256,15 +256,38 @@ func resolveOpenChatConfigYamlRefs(doc map[string]interface{}) error {
 
 	resolve := func(value interface{}) (interface{}, bool, error) {
 		str, isStr := value.(string)
-		if !isStr || !strings.HasPrefix(str, openChatYamlRefPrefix) {
+		if !isStr || !strings.Contains(str, openChatYamlRefPrefix) {
 			return nil, false, nil
 		}
-		name := strings.TrimSpace(strings.TrimPrefix(str, openChatYamlRefPrefix))
-		resolved, ok := anchors[name]
-		if !ok {
-			return nil, false, fmt.Errorf("reference %q points to an unknown anchor (known: %v)", str, anchorNames(anchors))
+		// A value may contain one or more "$anchors.<name>" references, either
+		// as the entire value (returned as-is, allowing non-string anchors) or
+		// embedded inside a larger string (e.g. multi-line setup commands).
+		out := str
+		for {
+			idx := strings.Index(out, openChatYamlRefPrefix)
+			if idx < 0 {
+				break
+			}
+			rest := out[idx+len(openChatYamlRefPrefix):]
+			end := 0
+			for end < len(rest) && isAnchorNameRune(rest[end]) {
+				end++
+			}
+			name := rest[:end]
+			resolved, ok := anchors[name]
+			if !ok {
+				return nil, false, fmt.Errorf("reference %q points to an unknown anchor (known: %v)", openChatYamlRefPrefix+name, anchorNames(anchors))
+			}
+			if idx == 0 && strings.TrimSpace(rest[end:]) == "" {
+				return resolved, true, nil
+			}
+			resolvedStr, ok := resolved.(string)
+			if !ok {
+				return nil, false, fmt.Errorf("anchor %q must be a string to embed it in a larger value", name)
+			}
+			out = out[:idx] + resolvedStr + rest[end:]
 		}
-		return resolved, true, nil
+		return out, true, nil
 	}
 
 	// Anchors may reference other anchors; resolve with a bounded number of
@@ -329,7 +352,7 @@ func docHasRefMarker(value interface{}) (bool, error) {
 			}
 		}
 	case string:
-		if strings.HasPrefix(typed, openChatYamlRefPrefix) {
+		if strings.Contains(typed, openChatYamlRefPrefix) {
 			return true, nil
 		}
 	}
@@ -369,6 +392,18 @@ func anchorNames(anchors map[string]interface{}) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// isAnchorNameRune reports whether r may appear in an anchor name.
+func isAnchorNameRune(r byte) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r == '_' || r == '-' || r == '.':
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeOpenChatConfigJSON(raw []byte, source string) (openChatConfig, error) {
