@@ -1,0 +1,104 @@
+## SUBMODULE STATUS ##
+-ada7c352806048652efe2c2be43244e7e3a9d880 clients/go_integration_interface
+-b85ed94ceca1dcefde2ecad7e4f77d617330035f clients/go_tool_interface
+-ff7c0dbf1d5471f85c4391563856f890a00fcaa9 clients/js_client
+-bde880adf590c6da28faa9ff62dba2850eda23d6 clients/oc_python_client
+-ab2b1716b1918f54efaad2161b239452c2f12df7 development/build-tools
+## GITMODULES ##
+[submodule "clients/oc_python_client"]
+	path = clients/oc_python_client
+	url = https://github.com/msgmate-io/open-chat-go-python-client
+[submodule "clients/go_tool_interface"]
+	path = clients/go_tool_interface
+	url = https://github.com/msgmate-io/open-chat-go-tool-interface
+[submodule "clients/go_integration_interface"]
+	path = clients/go_integration_interface
+	url = https://github.com/msgmate-io/open-chat-go-integration-interface.git
+[submodule "clients/js_client"]
+	path = clients/js_client
+	url = https://github.com/msgmate-io/open-chat-go-js-client
+[submodule "development/build-tools"]
+	path = development/build-tools
+	url = https://github.com/msgmate-io/open-chat-go-build-tools.git
+## clients ls ##
+ls: clients/integrations/product_landing_pages: No such file or directory
+## gitlink? ##
+160000 ada7c352806048652efe2c2be43244e7e3a9d880 0	clients/go_integration_interface
+160000 b85ed94ceca1dcefde2ecad7e4f77d617330035f 0	clients/go_tool_interface
+100644 0f752cf4912cb88e170d4909bb8cea5ab924f8e2 0	clients/integrations/.gitkeep
+160000 ff7c0dbf1d5471f85c4391563856f890a00fcaa9 0	clients/js_client
+160000 bde880adf590c6da28faa9ff62dba2850eda23d6 0	clients/oc_python_client
+## benchmark-results files ##
+find: unrecognized: -printf
+BusyBox v1.37.0 (2025-11-21 22:40:56 UTC) multi-call binary.
+
+Usage: find [-HL] [PATH]... [OPTIONS] [ACTIONS]
+
+Search for files and perform actions on them.
+First failed action stops processing of current file.
+Defaults: PATH is current directory, action is '-print'
+
+	-L,-follow	Follow symlinks
+	-H		...on command line only
+	-xdev		Don't descend directories on other filesystems
+	-maxdepth N	Descend at most N levels. -maxdepth 0 applies
+			actions to command line arguments only
+	-mindepth N	Don't act on first N levels
+	-depth		Act on directory *after* traversing it
+
+Actions:
+	( ACTIONS )	Group actions for -o / -a
+	! ACT		Invert ACT's success/failure
+	ACT1 [-a] ACT2	If ACT1 fails, stop, else do ACT2
+	ACT1 -o ACT2	If ACT1 succeeds, stop, else do ACT2
+			Note: -a has higher priority than -o
+	-name PATTERN	Match file name (w/o directory name) to PATTERN
+	-iname PATTERN	Case insensitive -name
+	-path PATTERN	Match path to PATTERN
+	-ipath PATTERN	Case insensitive -path
+	-regex PATTERN	Match path to regex PATTERN
+	-type X		File type is X (one of: f,d,l,b,c,s,p)
+	-executable	File is executable
+	-perm MASK	At least one mask bit (+MASK), all bits (-MASK),
+			or exactly MASK bits are set in file's mode
+	-mtime DAYS	mtime is greater than (+N), less than (-N),
+			or exactly N days in the past
+	-atime DAYS	atime +N/-N/N days in the past
+	-ctime DAYS	ctime +N/-N/N days in the past
+	-mmin MINS	mtime is greater than (+N), less than (-N),
+			or exactly N minutes in the past
+	-newer FILE	mtime is more recent than FILE's
+	-inum N		File has inode number N
+	-user NAME/ID	File is owned by given user
+	-group NAME/ID	File is owned by given group
+	-size N[bck]	File size is N (c:bytes,k:kbytes,b:512 bytes(def.))
+			+/-N: file size is bigger/smaller than N
+	-links N	Number of links is greater than (+N), less than (-N),
+			or exactly N
+	-empty		Match empty file/directory
+	-prune		If current file is directory, don't descend into it
+If none of the following actions is specified, -print is assumed
+	-print		Print file name
+	-print0		Print file name, NUL terminated
+	-exec CMD ARG ;	Run CMD with all instances of {} replaced by
+			file name. Fails if CMD exits with nonzero
+	-exec CMD ARG + Run CMD with {} replaced by list of file names
+	-ok CMD ARG ;   Prompt and run CMD with {} replaced
+	-delete		Delete current file/directory. Turns on -depth option
+	-quit		Exit
+## TSV heads ##
+--- benchmark-results/free-models-2026-10-31/dots-studio_dots-3-note-preview:free.tsv ---
+msgmate_coder_ask	❌ provider_account
+msgmate_coder_bash	❌ provider_account
+msgmate_coder_bash_stream	❌ provider_account
+--- benchmark-results/free-models-2026-10-31/nvidia_nemotron-3.5-super-vl:free.tsv ---
+msgmate_coder_ask	✅ passed
+msgmate_coder_bash	✅ passed
+msgmate_coder_bash_stream	✅ passed
+--- benchmark-results/free-models-2026-10-31/rowlog.tsv ---
+--- benchmark-results/free-models-2026-10-31/xingchen-agi_xing4.0-29b-a4b:free.tsv ---
+msgmate_coder_ask	✅ passed
+msgmate_coder_bash	❌ provider_unreachable
+msgmate_coder_bash_stream	✅ passed
+## generate.sh present? ##
+-rw-r--r--    1 root     root         12273 Oct 31 13:49 benchmark-results/free-models-2026-10-31/generate.sh

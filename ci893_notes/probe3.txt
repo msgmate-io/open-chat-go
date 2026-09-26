@@ -1,0 +1,68 @@
+== 14d1b67 (harness) diffstat ==
+commit 14d1b6781e34ec25b8b75441b6c78c936e0bb2c4
+Author: cur1ousdude <cur1ousdude@users.noreply.github.com>
+Date:   Sun Oct 25 23:56:41 2026 +0000
+
+    ci#893: add free-model capability sweep harness
+    
+    Adds the sweep harness used to capture free OpenRouter model capability
+    across the private-sandbox-tests suite. It dispatches the ci repo workflow
+    serial-per-model (provider=openrouter, tags, ref overridable), collects the
+    ci/sandbox-results reports into per-model dirs, and aggregates a capability
+    matrix (JSON + markdown) suitable for the /evaluations_and_benchmarks page.
+    
+    Probe follow-up: backend/database/product_landing_page_config.go hook found;
+    the product_landing_pages frontend module is not checked out here, so results
+    from the sweep feed the landing page data in a separate pass.
+== 9c660b1 (aggregator) diffstat ==
+commit 9c660b1823f20810180a75abb46e9b35a040ba56
+Author: cur1ousdude <cur1ousdude@users.noreply.github.com>
+Date:   Mon Oct 26 00:33:49 2026 +0000
+
+    ci#893: add TSV aggregation reader + unit tests for the free-model sweep
+    
+    - development/free_model_capability_sweep.sh: add FREE_MODEL_SWEEP_FUNCTIONS_ONLY
+      guard so the file can be sourced by tests without dispatching a sweep
+    - backend/benchmark: new package with AggregateTSVToJSON, a pure function
+      that maps per-model result directories (provider_model_free slugs) back to
+      {model: status} rows from the harness TSV files, plus unit tests covering
+      the fixture layout, override semantics, empty trees and slug round trips
+
+ backend/benchmark/aggregate.go             | 103 ++++++++++++++++++++++
+ backend/benchmark/aggregate_test.go        |  85 +++++++++++++++++++
+== files added by both ==
+A	development/free_model_capability_sweep.sh
+--
+A	backend/benchmark/aggregate.go
+A	backend/benchmark/aggregate_test.go
+A	backend/benchmark/registry.go
+A	backend/benchmark/types.go
+M	development/free_model_capability_sweep.sh
+== landing page location: grep ProviderLogoWall in tree ==
+== grep evaluations_and_benchmarks ==
+origin/main:backend/database/product_landing_page_config.go
+origin/main:frontend/.gitignore
+== product_landing_pages anywhere ==
+backend/database/product_landing_page_config.go
+backend/database/product_landing_page_config_test.go
+== submodules ==
+-ada7c352806048652efe2c2be43244e7e3a9d880 clients/go_integration_interface
+-b85ed94ceca1dcefde2ecad7e4f77d617330035f clients/go_tool_interface
+-ff7c0dbf1d5471f85c4391563856f890a00fcaa9 clients/js_client
+-bde880adf590c6da28faa9ff62dba2850eda23d6 clients/oc_python_client
+-ab2b1716b1918f54efaad2161b239452c2f12df7 development/build-tools
+[submodule "clients/oc_python_client"]
+	path = clients/oc_python_client
+	url = https://github.com/msgmate-io/open-chat-go-python-client
+[submodule "clients/go_tool_interface"]
+	path = clients/go_tool_interface
+	url = https://github.com/msgmate-io/open-chat-go-tool-interface
+[submodule "clients/go_integration_interface"]
+	path = clients/go_integration_interface
+	url = https://github.com/msgmate-io/open-chat-go-integration-interface.git
+[submodule "clients/js_client"]
+	path = clients/js_client
+	url = https://github.com/msgmate-io/open-chat-go-js-client
+[submodule "development/build-tools"]
+	path = development/build-tools
+	url = https://github.com/msgmate-io/open-chat-go-build-tools.git

@@ -1,0 +1,25 @@
+== .gitmodules ==
+[submodule "clients/oc_python_client"]
+	path = clients/oc_python_client
+	url = https://github.com/msgmate-io/open-chat-go-python-client
+[submodule "clients/go_tool_interface"]
+	path = clients/go_tool_interface
+	url = https://github.com/msgmate-io/open-chat-go-tool-interface
+[submodule "clients/go_integration_interface"]
+	path = clients/go_integration_interface
+	url = https://github.com/msgmate-io/open-chat-go-integration-interface.git
+[submodule "clients/js_client"]
+	path = clients/js_client
+	url = https://github.com/msgmate-io/open-chat-go-js-client
+[submodule "development/build-tools"]
+	path = development/build-tools
+	url = https://github.com/msgmate-io/open-chat-go-build-tools.git
+== development/ top-level on main ==
+development
+== clients top-level on main ==
+clients
+== frontend top-level on main ==
+frontend
+== .github/workflows on main ==
+.github/workflows
+== client integration dirs ==
