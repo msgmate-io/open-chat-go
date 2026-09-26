@@ -12,7 +12,13 @@
 
 ### Infuse Open-Chat Tools & Integrations
 
-- Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and place integrations in `backend/integrationdeps.json`
+- Integrations are declared in [`integrations.yaml`](./integrations.yaml) (source
+  repo, ref, profile membership, build tags, frontend pages).
+- Source is fetched on demand by the integration manager
+  (`python3 -m openchat_integrations`), so integrations are no longer git
+  submodules. Selected per `INTEGRATION_PROFILE` (`core-only`, `default`,
+  `full`).
+- Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and register via `integrationinterface.MustRegister`.
 - Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
 
 ### Releases

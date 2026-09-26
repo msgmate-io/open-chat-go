@@ -10,6 +10,7 @@ exec /dev_bin/CompileDaemon \
   -directory=/clients/go_tool_interface \
   -directory=/clients/go_integration_interface \
   -directory=/clients/integrations \
+  -directory=/development/integrations \
   -include="*.go" \
   -include="*.c" \
   -include="*.html" \
@@ -18,7 +19,7 @@ exec /dev_bin/CompileDaemon \
   -include="*.json" \
   -include="go.mod" \
   -include="go.sum" \
-  -include="integrationdeps.json" \
+  -include="integrations.yaml" \
   -exclude-dir=/backend/docs \
   -exclude-dir=/backend/.devbin \
   -exclude="swagger.json" \

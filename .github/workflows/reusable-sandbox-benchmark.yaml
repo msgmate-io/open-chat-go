@@ -210,6 +210,14 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Materialize integrations
+        if: inputs.backend_image == ''
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
+            python3 -m openchat_integrations sync --frozen --profile full
+
       - name: Login to GHCR
         if: inputs.backend_image == ''
         run: |
@@ -258,6 +266,14 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+
+      - name: Materialize integrations
+        if: inputs.sandbox_image_url == ''
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
+            python3 -m openchat_integrations sync --frozen --profile full
 
       - name: Resolve sandbox image tag from content hash
         id: image
@@ -380,6 +396,13 @@ jobs:
           # Full history: the repo_changes_summary benchmark summarizes the
           # last 3 commits from the pre-staged sandbox clone.
           fetch-depth: 0
+
+      - name: Materialize integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
+            python3 -m openchat_integrations sync --frozen --profile full
 
       - name: Login to GHCR for backend image pull
         run: |

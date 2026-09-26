@@ -1,0 +1,292 @@
+# Open-Chat integration manifest.
+#
+# This file is the single source of truth for which integrations exist, where
+# their source lives, how they are selected per profile, and what they
+# contribute to the Go build and the frontend build.
+#
+# Integration source is fetched on demand by
+# `python3 -m openchat_integrations sync` into `path` (gitignored). No git
+# submodules are required for integrations anymore.
+#
+# Sources:
+#   git       - shallow clone/fetch `repo` at `ref` into `path`
+#   local     - use an existing checkout at `path` (developer override)
+#   submodule - legacy: `git submodule update --init <path>`
+#
+# Local overrides for development can be placed in `integrations.local.yaml`
+# (gitignored), e.g.:
+#   overrides:
+#     git:
+#       source: local
+#       path: ../my-git-integration-fork
+#
+# `depends_on` lists other integrations a module imports; `sync` fetches the
+# transitive closure so the Go workspace can resolve every import.
+#
+# `frontend.pages` maps prerendered Vike output to the integration's embedded
+# assets. Phase 2 moves ownership of this list into each integration repo via
+# `integration.frontend.json`; until then the parent manifest is authoritative.
+version: 1
+
+# Profile selected when INTEGRATION_PROFILE is unset.
+default_profile: core-only
+
+# Where remote checkouts are cached between syncs (relative to repo root).
+cache_dir: .integrations
+
+# Profiles are ordered sets of integration ids. "*" means every integration.
+profiles:
+  core-only:
+    - mcp
+    - rest_api_tool
+    - go_client
+  default:
+    - mcp
+    - rest_api_tool
+    - go_client
+    - matrix
+    - docker_sandbox
+    - git
+    - kubernetes
+  full:
+    - "*"
+
+integrations:
+  mcp:
+    module: github.com/msgmate-io/mcp-integration
+    import: github.com/msgmate-io/mcp-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-mcp-integration
+    ref: main
+    path: clients/integrations/mcp_integration
+    private: false
+    depends_on:
+      - rest_api_tool
+    frontend:
+      name: mcp
+      pages:
+        - { source: integrations/mcp/servers, asset: servers/index.html }
+        - { source: integrations/mcp/servers/add, asset: servers/add/index.html }
+        - { source: integrations/mcp/templates, asset: templates/index.html }
+
+  rest_api_tool:
+    module: github.com/msgmate-io/rest-api-tool-integration
+    import: github.com/msgmate-io/rest-api-tool-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
+    ref: main
+    path: clients/integrations/rest_api_tool_integration
+    private: false
+    frontend:
+      name: rest_api_tool
+      pages:
+        - { source: integrations/rest_api_tool/tools, asset: tools/index.html }
+        - { source: integrations/rest_api_tool/tools/tool-uuid-placeholder, asset: tools/tool_uuid/index.html }
+
+  go_client:
+    module: github.com/msgmate-io/go-client-integration
+    import: github.com/msgmate-io/go-client-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-golang-client
+    ref: main
+    path: clients/integrations/go_client_integration
+    private: false
+
+  matrix:
+    module: github.com/msgmate-io/matrix-integration
+    import: github.com/msgmate-io/matrix-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-matrix-integration
+    ref: main
+    path: clients/integrations/matrix_integration
+    private: false
+    tags:
+      - goolm
+    depends_on:
+      - go_client
+      - rest_api_tool
+
+  docker_sandbox:
+    module: github.com/msgmate-io/docker-sandbox-integration
+    import: github.com/msgmate-io/docker-sandbox-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration
+    ref: main
+    path: clients/integrations/docker_sandbox_integration
+    private: false
+    depends_on:
+      - go_client
+      - opencode
+      - rest_api_tool
+    frontend:
+      name: docker_sandbox
+      pages:
+        - { source: integrations/docker_sandbox/sandboxes, asset: sandboxes/index.html }
+        - { source: integrations/docker_sandbox/sandboxes/add, asset: sandboxes/add/index.html }
+        - { source: integrations/docker_sandbox/sandboxes/sandbox-uuid-placeholder, asset: sandboxes/sandbox_uuid/index.html }
+
+  git:
+    module: github.com/msgmate-io/git-integration
+    import: github.com/msgmate-io/git-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-git-integration
+    ref: main
+    path: clients/integrations/git_integration
+    private: false
+    tags:
+      - gitintegration
+    bootstrap: git
+    depends_on:
+      - go_client
+      - opencode
+      - rest_api_tool
+    frontend:
+      name: git
+      pages:
+        - { source: integrations/git/tokens, asset: tokens/index.html }
+        - { source: integrations/git/tokens/add, asset: tokens/add/index.html }
+        - { source: integrations/git/tokens/token-uuid-placeholder/edit, asset: tokens/token_uuid/edit/index.html }
+        - { source: integrations/git/repositories, asset: repositories/index.html }
+        - { source: integrations/git/repositories/add, asset: repositories/add/index.html }
+        - { source: integrations/git/repositories/repo-uuid-placeholder/details, asset: repositories/repo_uuid/details/index.html }
+        - { source: integrations/git/repositories/repo-uuid-placeholder/triggers, asset: repositories/repo_uuid/triggers/index.html }
+        - { source: integrations/git/workspaces, asset: workspaces/index.html }
+        - { source: integrations/git/workspaces/add, asset: workspaces/add/index.html }
+        - { source: integrations/git/workspaces/workspace-uuid-placeholder/details, asset: workspaces/workspace_uuid/details/index.html }
+        - { source: integrations/git/pr_sessions, asset: pr_sessions/index.html }
+        - { source: integrations/git/triggers, asset: triggers/index.html }
+        - { source: integrations/git/discover, asset: discover/index.html }
+
+  kubernetes:
+    module: github.com/msgmate-io/kubernetes-integration
+    import: github.com/msgmate-io/kubernetes-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-kubernetes-integration
+    ref: main
+    path: clients/integrations/kubernetes_integration
+    private: false
+    tags:
+      - kubernetesintegration
+    bootstrap: kubernetes
+    frontend:
+      name: kubernetes
+      pages:
+        - { source: integrations/kubernetes/clusters, asset: clusters/index.html }
+        - { source: integrations/kubernetes/clusters/add, asset: clusters/add/index.html }
+        - { source: integrations/kubernetes/clusters/cluster-uuid-placeholder/edit, asset: clusters/cluster_uuid/edit/index.html }
+
+  opencode:
+    module: github.com/msgmate-io/opencode-integration
+    import: github.com/msgmate-io/opencode-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-opencode-integration
+    ref: main
+    path: clients/integrations/opencode_integration
+    private: false
+    tags:
+      - opencodeintegration
+    bootstrap: opencode
+    depends_on:
+      - go_client
+      - rest_api_tool
+    frontend:
+      name: opencode
+      pages:
+        - { source: integrations/opencode/projects, asset: projects/index.html }
+        - { source: integrations/opencode/projects/add, asset: projects/add/index.html }
+        - { source: integrations/opencode/projects/project-uuid-placeholder/edit, asset: projects/project_uuid/edit/index.html }
+
+  ssh:
+    module: github.com/msgmate-io/ssh-integration
+    import: github.com/msgmate-io/ssh-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-ssh-integration.git
+    ref: main
+    path: clients/integrations/ssh_integration
+    private: true
+    tags:
+      - sshintegration
+    bootstrap: ssh
+    depends_on:
+      - go_client
+    frontend:
+      name: ssh
+      pages:
+        - { source: integrations/ssh/servers, asset: servers/index.html }
+        - { source: integrations/ssh/servers/add, asset: servers/add/index.html }
+        - { source: integrations/ssh/servers/server-uuid-placeholder/details, asset: servers/server_uuid/details/index.html }
+        - { source: integrations/ssh/servers/server-uuid-placeholder/edit, asset: servers/server_uuid/edit/index.html }
+        - { source: integrations/ssh/servers/server-uuid-placeholder/shell, asset: servers/server_uuid/shell/index.html }
+        - { source: integrations/ssh/keys, asset: keys/index.html }
+        - { source: integrations/ssh/keys/add, asset: keys/add/index.html }
+        - { source: integrations/ssh/keys/key-uuid-placeholder/details, asset: keys/key_uuid/details/index.html }
+        - { source: integrations/ssh/keys/key-uuid-placeholder/edit, asset: keys/key_uuid/edit/index.html }
+
+  voice:
+    module: github.com/msgmate-io/voice-integration
+    import: github.com/msgmate-io/voice-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-voice-integration
+    ref: main
+    path: clients/integrations/voice_integration
+    private: true
+    depends_on:
+      - go_client
+    frontend:
+      name: voice
+      pages:
+        - { source: integrations/voice/sessions, asset: sessions/index.html }
+        - { source: integrations/voice/models, asset: models/index.html }
+
+  emails:
+    module: github.com/msgmate-io/email-integration
+    import: github.com/msgmate-io/email-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-email-integration
+    ref: main
+    path: clients/integrations/email_integration
+    private: true
+    frontend:
+      name: emails
+      pages:
+        - { source: integrations/emails, asset: index.html }
+        - { source: integrations/emails/create, asset: create/index.html }
+        - { source: integrations/emails/send, asset: send/index.html }
+        - { source: integrations/emails/automations, asset: automations/index.html }
+        - { source: integrations/emails/dynamic-email-uuid-placeholder/edit, asset: dynamic_email_uuid/edit/index.html }
+        - { source: integrations/emails/dynamic-email-uuid-placeholder/send, asset: dynamic_email_uuid/send/index.html }
+
+  admin:
+    module: github.com/msgmate-io/admin-db-managemnt-integration
+    import: github.com/msgmate-io/admin-db-managemnt-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-admin-db-management-integration
+    ref: main
+    path: clients/integrations/admin_db_managemnt_integration
+    private: true
+    frontend:
+      name: admin
+      pages:
+        - { source: integrations/admin, asset: index.html }
+        - { source: integrations/admin/queues, asset: queues/index.html }
+        - { source: integrations/admin/models, asset: models/index.html }
+        - { source: integrations/admin/llm_requests, asset: llm_requests/index.html }
+        - { source: integrations/admin/settings, asset: settings/index.html }
+        - { source: integrations/admin/table-name-placeholder, asset: table_name/index.html }
+        - { source: integrations/admin/table-name-placeholder/id-placeholder, asset: table_name/id/index.html }
+
+  account_management:
+    module: github.com/msgmate-io/account-management-integration
+    import: github.com/msgmate-io/account-management-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-account-management-integration.git
+    ref: main
+    path: clients/integrations/account_management
+    private: true
+    depends_on:
+      - rest_api_tool
+    frontend:
+      name: account_management
+      pages:
+        - { source: integrations/account_management/registration-requests, asset: registration-requests/index.html }
+        - { source: integrations/account_management/accept-invite, asset: accept-invite/index.html }
