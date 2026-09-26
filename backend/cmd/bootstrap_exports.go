@@ -32,5 +32,12 @@ func ApplyOpencodeBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwn
 // ApplyGitBootstrapSources exposes the git bootstrap wiring to mobile/other
 // embedders that reuse the cmd package helpers.
 func ApplyGitBootstrapSources(DB *gorm.DB, fallbackOwner string, defaultOwners []string, tokenSpecs []string, repositorySpecs []string, workspaceSpecs []string, workspaceGrantSpecs []string) error {
-	return applyGitBootstrapSources(DB, fallbackOwner, defaultOwners, tokenSpecs, repositorySpecs, workspaceSpecs, workspaceGrantSpecs)
+	return applyGitBootstrapSources(DB, fallbackOwner, defaultOwners, tokenSpecs, repositorySpecs, workspaceSpecs, workspaceGrantSpecs, nil)
+}
+
+// ApplyGitBootstrapSourcesWithTriggers is ApplyGitBootstrapSources plus the
+// `bootstrap.git.triggers` section, so embedders can pre-configure
+// notification triggers from configuration.
+func ApplyGitBootstrapSourcesWithTriggers(DB *gorm.DB, fallbackOwner string, defaultOwners []string, tokenSpecs []string, repositorySpecs []string, workspaceSpecs []string, workspaceGrantSpecs []string, triggerSpecs []string) error {
+	return applyGitBootstrapSources(DB, fallbackOwner, defaultOwners, tokenSpecs, repositorySpecs, workspaceSpecs, workspaceGrantSpecs, triggerSpecs)
 }

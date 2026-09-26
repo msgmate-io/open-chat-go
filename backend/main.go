@@ -57,6 +57,7 @@ type openChatGitBootstrapConfig struct {
 	Repositories    json.RawMessage   `json:"repositories,omitempty"`
 	Workspaces      json.RawMessage   `json:"workspaces,omitempty"`
 	WorkspaceGrants json.RawMessage   `json:"workspace_grants,omitempty"`
+	Triggers        json.RawMessage   `json:"triggers,omitempty"`
 }
 
 // openChatOwnerList accepts either a single owner string (`owner: admin`) or a
@@ -649,6 +650,9 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 		}
 		if len(bytes.TrimSpace(cfg.Bootstrap.Git.WorkspaceGrants)) > 0 {
 			out.GitWorkspaceGrantSpecs = append(out.GitWorkspaceGrantSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.WorkspaceGrants)))
+		}
+		if len(bytes.TrimSpace(cfg.Bootstrap.Git.Triggers)) > 0 {
+			out.GitTriggerSpecs = append(out.GitTriggerSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.Triggers)))
 		}
 	}
 
