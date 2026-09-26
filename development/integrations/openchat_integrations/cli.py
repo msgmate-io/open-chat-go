@@ -68,9 +68,11 @@ def cmd_sync(args) -> int:
         )
         lock.integrations[integ_id] = entry
 
-    # Drop stale entries for integrations no longer in the closure.
+    # Drop entries for integrations that no longer exist in the manifest.
+    # The lockfile pins every integration, so syncing one profile must not
+    # prune the entries belonging to other profiles.
     for integ_id in list(lock.integrations):
-        if integ_id not in closure:
+        if integ_id not in manifest.integrations:
             del lock.integrations[integ_id]
 
     lock.save(lock_path)
