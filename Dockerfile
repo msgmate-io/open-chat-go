@@ -51,9 +51,13 @@ COPY --from=frontend_selected /frontend/dist/client server/frontend/
 # the chunks served from this exact image.
 RUN PYTHONPATH=/development/integrations \
       python3 -m openchat_integrations resolve --profile "${INTEGRATION_PROFILE}" \
-    && PYTHONPATH=/development/integrations \
-      python3 -m openchat_integrations export --profile "${INTEGRATION_PROFILE}" \
-        --dist-dir /backend/server/frontend
+    && if [ -d /backend/server/frontend/integrations ]; then \
+         PYTHONPATH=/development/integrations \
+           python3 -m openchat_integrations export --profile "${INTEGRATION_PROFILE}" \
+             --dist-dir /backend/server/frontend; \
+       else \
+         echo "[integrations] frontend stage is empty; skipping integration page export"; \
+       fi
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
