@@ -1,0 +1,178 @@
+== evals-related identifiers in backend ==
+origin/main:backend/api/integrations/ProductLandingPages.go:24:type productLandingPageRow struct {
+origin/main:backend/api/integrations/ProductLandingPages.go:36:type productLandingPageListResponse struct {
+origin/main:backend/api/integrations/ProductLandingPages.go:39:	Rows          []productLandingPageRow `json:"rows"`
+origin/main:backend/api/integrations/ProductLandingPages.go:42:type productLandingPageUpdateRequest struct {
+origin/main:backend/api/integrations/ProductLandingPages.go:50:func productLandingPageToRow(row database.ProductLandingPageConfig) productLandingPageRow {
+origin/main:backend/api/integrations/ProductLandingPages.go:55:	return productLandingPageRow{
+origin/main:backend/api/integrations/ProductLandingPages.go:75://	@Success      200 {object} productLandingPageListResponse
+origin/main:backend/api/integrations/ProductLandingPages.go:76://	@Router       /api/v1/integrations/product_landing_pages/pages [get]
+origin/main:backend/api/integrations/ProductLandingPages.go:97:	out := make([]productLandingPageRow, 0, len(rows))
+origin/main:backend/api/integrations/ProductLandingPages.go:99:		out = append(out, productLandingPageToRow(row))
+origin/main:backend/api/integrations/ProductLandingPages.go:103:	json.NewEncoder(w).Encode(productLandingPageListResponse{
+origin/main:backend/api/integrations/ProductLandingPages.go:116://	@Success      200 {object} productLandingPageRow
+origin/main:backend/api/integrations/ProductLandingPages.go:117://	@Router       /api/v1/integrations/product_landing_pages/pages/{page_slug} [get]
+origin/main:backend/api/integrations/ProductLandingPages.go:147:	json.NewEncoder(w).Encode(productLandingPageToRow(*row))
+origin/main:backend/api/integrations/ProductLandingPages.go:159://	@Success      200 {object} productLandingPageRow
+origin/main:backend/api/integrations/ProductLandingPages.go:160://	@Router       /api/v1/admin/integrations/product_landing_pages/pages/{page_slug} [put]
+origin/main:backend/api/integrations/ProductLandingPages.go:177:	payload := productLandingPageUpdateRequest{}
+origin/main:backend/api/integrations/ProductLandingPages.go:212:	json.NewEncoder(w).Encode(productLandingPageToRow(*row))
+origin/main:backend/api/msgmate/compaction_output.go:15:// benchmark `msgmate_coder_repo_changes_summary` caught exactly that emission
+origin/main:backend/api/msgmate/compaction_output.go:23:// — and a caller like the benchmark, which posts the reply verbatim, would post
+origin/main:backend/benchmark/aggregate.go:1:package benchmark
+origin/main:backend/benchmark/aggregate.go:22:// benchmark-results tree; it performs no network or sandbox access, matching
+origin/main:backend/benchmark/aggregate.go:29:		return nil, fmt.Errorf("benchmark: read results root %s: %w", resultsRoot, err)
+origin/main:backend/benchmark/aggregate.go:42:			return nil, fmt.Errorf("benchmark: glob %s: %w", slug, err)
+origin/main:backend/benchmark/aggregate.go:91:		return nil, fmt.Errorf("benchmark: read %s: %w", path, err)
+origin/main:backend/benchmark/aggregate_test.go:1:package benchmark
+origin/main:backend/benchmark/aggregate_test.go:22:	rows, err := AggregateTSVToJSON(filepath.Join(dir, "benchmark-results"))
+origin/main:backend/benchmark/aggregate_test.go:55:	dir := filepath.Join(root, "benchmark-results", slug)
+origin/main:backend/benchmark/registry.go:1:package benchmark
+origin/main:backend/benchmark/registry.go:49:			return nil, fmt.Errorf("benchmark: read registry %s: %w", rel, err)
+== product_landing_page_config.go head ==
+package database
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"gorm.io/gorm"
+)
+
+// ProductLandingPageConfig is the monorepo half of the private "product landing
+// pages" integration (ci#858): the integration repo owns the page markup and the
+// static defaults, while every mutable per-page value (enabled flag, nav labels,
+// pre-stored static data) lives here so ops can toggle or patch a page from the
+// integration settings UI without a deploy.
+//
+// One row exists per (integration_id, page_slug); the five product pages are
+// seeded with their defaults so a fresh install always has a complete set.
+type ProductLandingPageConfig struct {
+	Model
+	IntegrationId string `json:"integration_id" gorm:"type:varchar(128);index;uniqueIndex:idx_product_landing_page_integration_slug"`
+	PageSlug      string `json:"page_slug" gorm:"type:varchar(128);uniqueIndex:idx_product_landing_page_integration_slug"`
+	Enabled       bool   `json:"enabled" gorm:"default:true;index"`
+	Title         string `json:"title" gorm:"type:varchar(200)"`
+	NavLabel      string `json:"nav_label" gorm:"type:varchar(80)"`
+	NavOrder      int    `json:"nav_order" gorm:"default:0"`
+	// StaticData carries the pre-stored copy, FAQ entries and benchmark tables
+	// of a page. It is versionable in git through the integration defaults and
+	// patchable at runtime through this row.
+	StaticData json.RawMessage `json:"static_data" gorm:"type:jsonb"`
+	UpdatedBy  string          `json:"updated_by" gorm:"type:varchar(128)"`
+}
+
+// TableName keeps the table name explicit: the migration and the ops queries
+// refer to it by name.
+func (ProductLandingPageConfig) TableName() string {
+	return "product_landing_page_config"
+}
+
+const (
+	// ProductLandingPageIntegrationID is the integration id every product
+	// landing page row belongs to.
+	ProductLandingPageIntegrationID = "product_landing_pages"
+
+	// ProductLandingPageOverviewSlug is the entry hub page: disabled pages
+	// redirect to it, so it is always served.
+	ProductLandingPageOverviewSlug = "overview"
+
+	// MaxProductLandingPageStaticDataBytes caps one page's static_data blob.
+	// The value is generous for copy plus FAQ/benchmark tables while keeping a
+	// single row from bloating the (SQLite-backed) settings reads.
+	MaxProductLandingPageStaticDataBytes = 64 * 1024
+
+	// MaxProductLandingPageTitleLength caps a page title.
+	MaxProductLandingPageTitleLength = 200
+
+	// MaxProductLandingPageNavLabelLength caps a nav label.
+	MaxProductLandingPageNavLabelLength = 80
+
+	// MaxProductLandingPageNavOrder bounds nav_order so a bad client cannot
+	// push a page out of the nav by overflowing the sort key.
+	MaxProductLandingPageNavOrder = 9999
+)
+
+// ErrUnknownProductLandingPageSlug is returned for a page slug that is not part
+// of the registered product pages (the allow-list is the contract with the
+// integration repo).
+var ErrUnknownProductLandingPageSlug = errors.New("unknown product landing page slug")
+
+// ProductLandingPageDefaults is the ordered default set of product pages. The
+// order here is the default nav order and the order the seed writes.
+var ProductLandingPageDefaults = []ProductLandingPageConfig{
+	{
+		IntegrationId: ProductLandingPageIntegrationID,
+		PageSlug:      "overview",
+		Enabled:       true,
+		Title:         "Product overview",
+		NavLabel:      "Overview",
+		NavOrder:      10,
+== test head ==
+package database
+
+import (
+	"encoding/json"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"gorm.io/gorm"
+)
+
+func setupProductLandingPageConfigDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db := SetupTestDatabase(t, DBConfig{
+		Backend:  "sqlite",
+		FilePath: filepath.Join(t.TempDir(), "product_landing_pages_test.db"),
+		ResetDB:  true,
+	})
+	if db == nil {
+		t.Fatal("failed to set up test database")
+	}
+	return db
+}
+
+func TestSeedProductLandingPageConfigsCreatesAllDefaults(t *testing.T) {
+	db := setupProductLandingPageConfigDB(t)
+
+	if err := SeedProductLandingPageConfigs(db); err != nil {
+		t.Fatalf("seed product landing pages: %v", err)
+	}
+
+	rows, err := ListProductLandingPageConfigs(db, ProductLandingPageIntegrationID)
+	if err != nil {
+		t.Fatalf("list product landing pages: %v", err)
+	}
+	if len(rows) != len(ProductLandingPageDefaults) {
+		t.Fatalf("expected %d seeded pages, got %d", len(ProductLandingPageDefaults), len(rows))
+	}
+	for i, def := range ProductLandingPageDefaults {
+== frontend dirs top ==
+frontend
+== frontend/pages ==
+frontend/pages
+== open PRs(s) ==
+Unknown JSON field: "headRefName"
+Available fields:
+  assignees
+  author
+  authorAssociation
+  body
+  closedAt
+  commentsCount
+  createdAt
+  id
+  isDraft
+  isLocked
+  isPullRequest
+  labels
+  number
+  repository
+  state
+  title
+  updatedAt
+  url
