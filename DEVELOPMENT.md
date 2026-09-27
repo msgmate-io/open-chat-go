@@ -95,6 +95,46 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
 
+### Custom integration profiles
+
+Profiles let a checkout compile and serve exactly the integrations (and extra
+private repositories) a build needs, while the public repository stays free of
+private source.
+
+Where things live:
+
+- `integrations.yaml` (public): the public integrations and the public
+  `core-only` profile.
+- the private `ci` repository `openchat/integrations.private.yaml`: the private
+  integrations plus the `default`, `full`, `full-ci` and `full-android`
+  profiles. `setup` mirrors it into `.integrations/private/` (gitignored).
+- `profile_setup.yaml` (public): per profile, the extra repositories and
+  symlinks that `openchat-integrations setup` materializes. It only names
+  repository **locations**, never source.
+
+Adding a profile:
+
+1. Add an entry to `profiles:` and (for a new integration) to `integrations:`
+   in `integrations.yaml` (public) or in the private fragment (private).
+2. If the profile needs extra repositories or symlinks, add them under
+   `repos:` and the profile's `repos:`/`symlinks:` in `profile_setup.yaml`.
+3. Run `openchat-integrations setup --profile <name>` (or any other command,
+   which triggers setup automatically), then `sync`/`resolve`/`frontend`.
+
+Useful flags:
+
+- `setup --repo <id>` materializes a single extra repo (e.g.
+  `llm_coding_agents`) without a profile.
+- `--no-setup` skips the automatic setup; `setup --force-setup` re-runs it.
+- `OPENCHAT_NO_SETUP=1` skips setup entirely (used inside build images that
+  already received the prepared context).
+
+Lockfile rules: private integration pins live in the private
+`ci` repository lockfile (`openchat/integrations.private.lock.json`), never in
+the public `integrations.lock.json`. Refresh pins with
+`openchat-integrations sync --profile <profile>` after pushing integration
+changes.
+
 ### Integration Frontend Pages Development
 
 Frontend pages for integrations are implemented **inside each integration
