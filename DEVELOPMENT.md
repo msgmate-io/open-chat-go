@@ -71,7 +71,7 @@ python3 -m venv .venv
 | `default` | core + `matrix`, `docker_sandbox`, `git`, `kubernetes` | private manifest fragment |
 | `full` | every integration | private manifest fragment |
 | `full-ci` | every integration | full private CI tooling + Helm chart |
-| `full-android` | every integration | private manifest fragment + mobile client |
+| `full-android` | every integration | private CI tooling + mobile client |
 
 ```bash
 # Local development (compose runs the integration-sync service for you)

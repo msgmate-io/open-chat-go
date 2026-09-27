@@ -106,7 +106,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update PR progress comment with release details
         run: |
@@ -194,7 +194,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Delete previous workflow comments
         env:
@@ -526,7 +526,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
@@ -1038,7 +1038,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Python for AI process tests
         uses: actions/setup-python@v5
@@ -1160,7 +1160,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Node.js for E2E tests
         uses: actions/setup-node@v4
@@ -1433,7 +1433,7 @@ jobs:
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full
+          "$BUILD_TOOLS" sync --frozen --profile full-android
 
       - name: Login to GHCR for sandbox image pull
         run: |
@@ -1531,7 +1531,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render test-complete progress comment
         run: |
@@ -1984,7 +1984,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment when approval gate opens
         env:
@@ -2384,7 +2384,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Python for AI real tests
         uses: actions/setup-python@v5
@@ -2552,7 +2552,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment after approved dispatch
         run: |
@@ -2609,7 +2609,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render final progress comment with AI real result
         run: |
@@ -2811,7 +2811,7 @@ jobs:
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
-          profile: default
+          profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Comment deployment approval link on merged PR
         env:
