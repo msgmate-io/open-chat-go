@@ -15,10 +15,12 @@
 version: 1
 
 repos:
-  # Sparse checkout of the private manifest fragment (openchat/).
+  # Sparse checkout of just the private manifest fragment (openchat/) into the
+  # same path a full ci checkout would use, so Docker build contexts and the
+  # manager both find it without the CI tooling.
   ci_fragment:
     repo: https://github.com/msgmate-io/open-chat-go-ci
-    path: .integrations/ci-fragment
+    path: development/ci
     ref: main
     fragment: true
     sparse:
