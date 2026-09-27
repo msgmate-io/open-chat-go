@@ -500,19 +500,6 @@ func newRandomCLIAuthSecret() (string, error) {
 	return randomURLSafeToken(32)
 }
 
-// randomURLSafeToken returns n bytes of cryptographically random data encoded
-// in URL-safe base64 (unpadded), suitable for unguessable states and secrets.
-func randomURLSafeToken(n int) (string, error) {
-	if n <= 0 {
-		return "", fmt.Errorf("token length must be positive")
-	}
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
 func loginRedirectURL(target string) string {
 	escaped := url.QueryEscape(strings.TrimSpace(target))
 	return "/login?redirect=" + escaped + "&next=" + escaped
