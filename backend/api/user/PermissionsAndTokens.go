@@ -3,9 +3,7 @@ package user
 import (
 	"backend/database"
 	"backend/server/util"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
