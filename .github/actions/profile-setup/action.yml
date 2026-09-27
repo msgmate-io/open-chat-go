@@ -1,0 +1,27 @@
+name: Profile setup
+description: >-
+  Materialize the profile-scoped private repositories (and symlinks) declared in
+  profile_setup.yaml. Run after actions/checkout; the profile setup is normally
+  also triggered automatically by any openchat-integrations command, but jobs
+  that consume private paths (development/ci, clients/gomobile, development/helm)
+  directly must call this first.
+
+inputs:
+  profile:
+    description: Integration profile to set up
+    required: false
+    default: default
+  token:
+    description: GitHub token used for private clones
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Materialize profile setup
+      shell: bash
+      run: |
+        set -euo pipefail
+        git config --global url."https://x-access-token:${{ inputs.token }}@github.com/".insteadOf "https://github.com/"
+        BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+        "$BUILD_TOOLS" setup --profile "${{ inputs.profile }}"

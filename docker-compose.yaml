@@ -20,8 +20,6 @@ services:
       - ./integrations.yaml:/integrations.yaml:ro
       - ./integrations.lock.json:/integrations.lock.json:ro
       - ./development/build-tools:/development/build-tools:ro
-      - ./development/ci/open-chat-ci.json:/open-chat-ci-config.json:ro
-      - ./development/ci/open-chat-ci.local.json:/open-chat-ci-config.local.json:ro
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
       - ./clients/integrations:/clients/integrations
