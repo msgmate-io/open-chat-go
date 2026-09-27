@@ -10,7 +10,7 @@
     "admin": {
       "repo": "https://github.com/msgmate-io/open-chat-go-admin-db-management-integration",
       "ref": "main",
-      "commit": "9a2f9cd966be0f4fa97e8849496b04f77bf817c0",
+      "commit": "74ffe8f06e7ad9d4860c812ea27e05d26a11320d",
       "source": "git"
     },
     "docker_sandbox": {
@@ -46,7 +46,7 @@
     "matrix": {
       "repo": "https://github.com/msgmate-io/open-chat-go-matrix-integration",
       "ref": "main",
-      "commit": "3472284c4419905afbd4d53b71083c2cfa4016c8",
+      "commit": "1929911aaf57091ab301679f226e61e3e47ce087",
       "source": "git"
     },
     "mcp": {
