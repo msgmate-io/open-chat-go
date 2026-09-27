@@ -701,6 +701,13 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Materialize full integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
+
       - name: Resolve image metadata
         id: image
         run: |
@@ -750,53 +757,19 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_test_core_only != ''
     steps:
-      - name: Checkout source repository (without recursive submodules)
+      - name: Checkout source repository (interfaces + dev submodules only)
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN }}
-          submodules: false
+          submodules: true
 
-      - name: Resolve required core submodule refs
-        id: core_submodule_refs
+      - name: Materialize core-only integrations
         run: |
           set -euo pipefail
-          echo "go_tool_sha=$(git rev-parse HEAD:clients/go_tool_interface)" >> "$GITHUB_OUTPUT"
-          echo "go_integration_sha=$(git rev-parse HEAD:clients/go_integration_interface)" >> "$GITHUB_OUTPUT"
-          echo "mcp_sha=$(git rev-parse HEAD:clients/integrations/mcp_integration)" >> "$GITHUB_OUTPUT"
-          echo "rest_api_sha=$(git rev-parse HEAD:clients/integrations/rest_api_tool_integration)" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout core submodule go_tool_interface
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-tool-interface
-          ref: ${{ steps.core_submodule_refs.outputs.go_tool_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/go_tool_interface
-
-      - name: Checkout core submodule go_integration_interface
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-integration-interface
-          ref: ${{ steps.core_submodule_refs.outputs.go_integration_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/go_integration_interface
-
-      - name: Checkout core submodule mcp_integration
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-mcp-integration
-          ref: ${{ steps.core_submodule_refs.outputs.mcp_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/integrations/mcp_integration
-
-      - name: Checkout core submodule rest_api_tool_integration
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-rest-api-tool-integration
-          ref: ${{ steps.core_submodule_refs.outputs.rest_api_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/integrations/rest_api_tool_integration
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile core-only
 
       - name: Resolve core-only image metadata
         id: image
@@ -928,43 +901,27 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'backend/integrationdeps.json') }}-${{ github.sha }}
+          key: go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-${{ github.sha }}
           restore-keys: |
-            go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'backend/integrationdeps.json') }}-
+            go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
             go-build-${{ runner.os }}-
 
-      - name: Resolve full integration test module set
+      - name: Materialize full integration test module set
         if: steps.context.outputs.should_test != ''
-        working-directory: backend
         run: |
           set -euo pipefail
-          GEN_DIR="$PWD/.generated"
-          mkdir -p "$GEN_DIR"
-          EFFECTIVE_INTEGRATION_MANIFEST="$GEN_DIR/integrationdeps.effective.full-ci.json"
-          EFFECTIVE_MODFILE="$GEN_DIR/go.effective.full-ci.mod"
-
-          python3 ./scripts/resolve_integrations.py \
-            --manifest ./integrationdeps.json \
-            --profile full \
-            --repo-root "${GITHUB_WORKSPACE}" \
-            --base-go-mod ./go.mod \
-            --output-manifest "$EFFECTIVE_INTEGRATION_MANIFEST" \
-            --output-modfile "$EFFECTIVE_MODFILE"
-
-          if [ -n "${GOFLAGS:-}" ]; then
-            export GOFLAGS="${GOFLAGS} -mod=mod -modfile=${EFFECTIVE_MODFILE}"
-          else
-            export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
+          # Private integration repos require auth for git clone.
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
+          "$BUILD_TOOLS" resolve --profile full
+          echo "GOWORK=${GITHUB_WORKSPACE}/backend/go.work" >> "$GITHUB_ENV"
+          TAGS="$(cat backend/.generated/build_tags 2>/dev/null || true)"
+          if [ -n "$TAGS" ]; then
+            echo "GOFLAGS=-tags=${TAGS}" >> "$GITHUB_ENV"
           fi
-          # The matrix integration uses mautrix-go with the pure-Go goolm
-          # implementation (the CI runner has no libolm C headers).
-          export GOFLAGS="${GOFLAGS} -tags=goolm"
-          echo "GOFLAGS=${GOFLAGS}" >> "$GITHUB_ENV"
-
-          go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
-
-          # Populate the effective sum file used by -modfile before tests run.
-          go mod download
+          # Populate the module cache used by the workspace before tests run.
+          (cd backend && go mod download)
 
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
@@ -1340,6 +1297,13 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Materialize integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
+
       - name: Resolve android sandbox image tag from content hash
         id: image
         run: |
@@ -1439,6 +1403,13 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Materialize integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
+
       - name: Login to GHCR for sandbox image pull
         run: |
           set -euo pipefail
@@ -1458,6 +1429,7 @@ jobs:
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e SANDBOX_RESULTS_DIR=/workspace/.android-ci-results \
+            -e OPENCHAT_SKIP_INTEGRATION_PREPARE=1 \
             "$SANDBOX_IMAGE_URL" \
             bash -lc 'bash development/ci/android/run_android_build.sh'
 
