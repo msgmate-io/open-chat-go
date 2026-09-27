@@ -6,18 +6,27 @@ ARG NODE_VERSION=22
 ARG FRONTEND_STAGE=frontend
 
 FROM node:${NODE_VERSION}-alpine AS frontend
-WORKDIR /frontend
-COPY frontend/ ./
+ARG INTEGRATION_PROFILE=core-only
+RUN apk add --no-cache python3 py3-pip git
+WORKDIR /workspace
+COPY integrations.yaml integrations.lock.json /workspace/
+COPY development/build-tools /workspace/development/build-tools
+COPY clients/integrations /workspace/clients/integrations
+RUN pip install --no-cache-dir --break-system-packages /workspace/development/build-tools
+COPY frontend/ /workspace/frontend/
+WORKDIR /workspace/frontend
+# Link integration-owned pages (kept in the integration repositories) before
+# building so Vike prerenders them. Only integrations that are present get
+# linked, keeping per-integration React code private.
+RUN openchat-integrations frontend --profile "${INTEGRATION_PROFILE}"
 RUN npm install
 RUN npm run build
 RUN ./generate_golang_routes.sh
 
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS frontend_empty
-WORKDIR /frontend
-RUN mkdir -p /frontend/dist/client /frontend/scripts \
-    && printf '{}\n' > /frontend/routes.json \
-    && printf '#!/usr/bin/env bash\nset -euo pipefail\necho "[export-integration-pages] skipped (empty frontend stage)"\n' > /frontend/scripts/export_integration_pages.sh \
-    && chmod +x /frontend/scripts/export_integration_pages.sh
+WORKDIR /workspace/frontend
+RUN mkdir -p /workspace/frontend/dist/client \
+    && printf '{}\n' > /workspace/frontend/routes.json
 
 FROM ${FRONTEND_STAGE} AS frontend_selected
 
@@ -27,28 +36,38 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /backend
 
-RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 git
+RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-pip py3-yaml git
 COPY clients/ /clients/
 COPY backend/ ./
+# Integration manifest + build tooling. The manifest lives at the image root
+# (repo root) so the manager resolves the same relative paths as on the host:
+# /clients/integrations/<name> and /backend/go.work.
+COPY integrations.yaml /integrations.yaml
+COPY integrations.lock.json /integrations.lock.json
+COPY development/build-tools /development/build-tools
+RUN pip install --no-cache-dir --break-system-packages /development/build-tools
 
 FROM basebuilder AS builder
 
-ARG INTEGRATION_PROFILE=default
+ARG INTEGRATION_PROFILE=core-only
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
-COPY --from=frontend_selected /frontend/routes.json server/routes.json
-COPY --from=frontend_selected /frontend/dist/client server/frontend/
+COPY --from=frontend_selected /workspace/frontend/routes.json server/routes.json
+COPY --from=frontend_selected /workspace/frontend/dist/client server/frontend/
 
-# Refresh the integration-owned frontend pages from the freshly built frontend
-# before compiling the backend. Each integration embeds its own prerendered
-# HTML, which references content-hashed JS/CSS chunk filenames. Those hashes
-# change on every frontend rebuild, so the committed copies go stale and the
-# pages then 404 on their entry chunks. Re-exporting here guarantees the
-# embedded HTML always matches the chunks served from this exact image.
-COPY --from=frontend_selected /frontend/scripts/export_integration_pages.sh /build/frontend/scripts/export_integration_pages.sh
-RUN mkdir -p /build/frontend/dist \
-    && ln -s /backend/server/frontend /build/frontend/dist/client \
-    && ln -s /clients /build/clients
-RUN bash /build/frontend/scripts/export_integration_pages.sh
+# Generate the Go workspace + side-effect imports for the selected profile, then
+# refresh the integration-owned frontend pages from the freshly built frontend.
+# Each integration embeds its own prerendered HTML, which references
+# content-hashed JS/CSS chunk filenames. Those hashes change on every frontend
+# rebuild, so the committed copies go stale and the pages then 404 on their
+# entry chunks. Re-exporting here guarantees the embedded HTML always matches
+# the chunks served from this exact image.
+RUN openchat-integrations resolve --profile "${INTEGRATION_PROFILE}" \
+    && if [ -d /backend/server/frontend/integrations ]; then \
+         openchat-integrations export --profile "${INTEGRATION_PROFILE}" \
+           --dist-dir /backend/server/frontend; \
+       else \
+         echo "[integrations] frontend stage is empty; skipping integration page export"; \
+       fi
 
 ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt

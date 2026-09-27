@@ -6,32 +6,6 @@ require github.com/urfave/cli/v3 v3.11.0
 
 require golang.org/x/crypto v0.55.0
 
-require github.com/msgmate-io/go-tool-interface v0.0.0
-
-require github.com/msgmate-io/go-integration-interface v0.0.0
-
-require github.com/msgmate-io/account-management-integration v0.0.0
-
-require github.com/msgmate-io/admin-db-managemnt-integration v0.0.0
-
-require github.com/msgmate-io/email-integration v0.0.0
-
-require github.com/msgmate-io/mcp-integration v0.0.0
-
-require github.com/msgmate-io/opencode-integration v0.0.0
-
-require github.com/msgmate-io/rest-api-tool-integration v0.0.0
-
-require github.com/msgmate-io/ssh-integration v0.0.0
-
-require github.com/msgmate-io/voice-integration v0.0.0
-
-require github.com/msgmate-io/matrix-integration v0.0.0
-
-require github.com/msgmate-io/docker-sandbox-integration v0.0.0
-
-require github.com/msgmate-io/git-integration v0.0.0
-
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/coder/websocket v1.8.15
@@ -39,39 +13,12 @@ require (
 	github.com/hibiken/asynq v0.26.0
 	github.com/hibiken/asynqmon v0.7.2
 	github.com/kardianos/service v1.3.0
-	github.com/msgmate-io/kubernetes-integration v0.0.0
 	github.com/swaggo/swag/v2 v2.0.0-rc5
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sys v0.47.0
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/driver/sqlite v1.6.0
 )
-
-replace github.com/msgmate-io/go-tool-interface => ../clients/go_tool_interface
-
-replace github.com/msgmate-io/go-integration-interface => ../clients/go_integration_interface
-
-replace github.com/msgmate-io/account-management-integration => ../clients/integrations/account_management
-
-replace github.com/msgmate-io/admin-db-managemnt-integration => ../clients/integrations/admin_db_managemnt_integration
-
-replace github.com/msgmate-io/email-integration => ../clients/integrations/email_integration
-
-replace github.com/msgmate-io/mcp-integration => ../clients/integrations/mcp_integration
-
-replace github.com/msgmate-io/opencode-integration => ../clients/integrations/opencode_integration
-
-replace github.com/msgmate-io/rest-api-tool-integration => ../clients/integrations/rest_api_tool_integration
-
-replace github.com/msgmate-io/ssh-integration => ../clients/integrations/ssh_integration
-
-replace github.com/msgmate-io/voice-integration => ../clients/integrations/voice_integration
-
-replace github.com/msgmate-io/docker-sandbox-integration => ../clients/integrations/docker_sandbox_integration
-
-replace github.com/msgmate-io/git-integration => ../clients/integrations/git_integration
-
-replace github.com/msgmate-io/kubernetes-integration => ../clients/integrations/kubernetes_integration
 
 require (
 	dario.cat/mergo v1.0.1 // indirect
@@ -235,7 +182,6 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/msgmate-io/go-client-integration v0.0.0
 	golang.org/x/text v0.41.0 // indirect
 	gorm.io/gorm v1.31.2
 	modernc.org/sqlite v1.55.0 // indirect
@@ -245,7 +191,3 @@ require (
 // google.golang.org/genproto monolith, which would cause an ambiguous import
 // for google.golang.org/genproto/googleapis/{api,rpc}.
 require google.golang.org/genproto v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-
-replace github.com/msgmate-io/go-client-integration => ../clients/integrations/go_client_integration
-
-replace github.com/msgmate-io/matrix-integration => ../clients/integrations/matrix_integration

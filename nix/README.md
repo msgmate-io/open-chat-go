@@ -107,13 +107,14 @@ directory and outbound network access.
 The flake packages the official GitHub release asset rather than building Go
 from source. The reason is structural:
 
-- `backend/go.mod` uses ~15 local `replace` directives pointing at git
-  submodules (`frontend`, `clients/*`). A `nix run github:...` fetches a GitHub
-  tarball **without** submodules, so a source build would fail to resolve those
-  modules.
+- `backend/go.mod` no longer hardcodes integrations; they resolve through the
+  generated `backend/go.work` workspace. A `nix run github:...` fetches a GitHub
+  tarball **without** submodules or the fetched integration checkouts, so a
+  source build would fail to resolve those modules.
 - The canonical build (`backend/full_build.sh`) additionally runs the Vike/npm
-  frontend build, `swag init`, `resolve_integrations.py` and
-  `integrationdepsgen`, and some integration repositories are private.
+  frontend build, `swag init`, and the integration manager
+  (`openchat-integrations` from `open-chat-go-build-tools`), and some
+  integration repositories are private.
 
 The released binary is self-contained: the frontend, `routes.json`, the
 swagger spec and integration assets are embedded via `//go:embed`

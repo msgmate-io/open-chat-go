@@ -1,0 +1,3 @@
+# Integration checkouts are materialized here by the integration manager
+# (`openchat-integrations sync`). This directory is intentionally
+# empty in git; see ../integrations.yaml for the manifest.
