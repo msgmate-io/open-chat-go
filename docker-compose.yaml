@@ -19,7 +19,7 @@ services:
       - ./backend:/backend
       - ./integrations.yaml:/integrations.yaml:ro
       - ./integrations.lock.json:/integrations.lock.json:ro
-      - ./development/integrations:/development/integrations:ro
+      - ./development/build-tools:/development/build-tools:ro
       - ./development/ci/open-chat-ci.json:/open-chat-ci-config.json:ro
       - ./development/ci/open-chat-ci.local.json:/open-chat-ci-config.local.json:ro
       - ./clients/go_tool_interface:/clients/go_tool_interface
@@ -62,7 +62,7 @@ services:
       - app-network
   integration-sync:
     build:
-      dockerfile: development/integrations/sync.dockerfile
+      dockerfile: development/build-tools/sync.dockerfile
       context: .
     image: dev-integration-sync
     environment:

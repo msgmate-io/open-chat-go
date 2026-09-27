@@ -113,8 +113,8 @@ from source. The reason is structural:
   source build would fail to resolve those modules.
 - The canonical build (`backend/full_build.sh`) additionally runs the Vike/npm
   frontend build, `swag init`, and the integration manager
-  (`python3 -m openchat_integrations`), and some integration repositories are
-  private.
+  (`openchat-integrations` from `open-chat-go-build-tools`), and some
+  integration repositories are private.
 
 The released binary is self-contained: the frontend, `routes.json`, the
 swagger spec and integration assets are embedded via `//go:embed`

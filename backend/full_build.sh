@@ -114,8 +114,15 @@ if [ "${OPENCHAT_SKIP_INTEGRATION_PREPARE:-0}" = "1" ]; then
   echo "Skipping integration prepare (OPENCHAT_SKIP_INTEGRATION_PREPARE=1); using pre-generated workspace"
 else
   echo "Preparing integrations (profile=${INTEGRATION_PROFILE:-manifest default})..."
-  PYTHONPATH="$REPO_ROOT/development/integrations" \
-    python3 -m openchat_integrations prepare ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
+  if command -v openchat-integrations >/dev/null 2>&1; then
+    BUILD_TOOLS="openchat-integrations"
+  elif [ -f "$REPO_ROOT/development/scripts/build_tools.sh" ]; then
+    BUILD_TOOLS="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
+  else
+    echo "error: openchat-integrations not found (install development/build-tools)" >&2
+    exit 1
+  fi
+  "$BUILD_TOOLS" prepare ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
 fi
 
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.

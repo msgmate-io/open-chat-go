@@ -6,8 +6,19 @@ ARG NODE_VERSION=22
 ARG FRONTEND_STAGE=frontend
 
 FROM node:${NODE_VERSION}-alpine AS frontend
-WORKDIR /frontend
-COPY frontend/ ./
+ARG INTEGRATION_PROFILE=core-only
+RUN apk add --no-cache python3 py3-pip git
+WORKDIR /workspace
+COPY integrations.yaml integrations.lock.json /workspace/
+COPY development/build-tools /workspace/development/build-tools
+COPY clients/integrations /workspace/clients/integrations
+RUN pip install --no-cache-dir /workspace/development/build-tools
+COPY frontend/ /workspace/frontend/
+WORKDIR /workspace/frontend
+# Link integration-owned pages (kept in the integration repositories) before
+# building so Vike prerenders them. Only integrations that are present get
+# linked, keeping per-integration React code private.
+RUN openchat-integrations frontend --profile "${INTEGRATION_PROFILE}"
 RUN npm install
 RUN npm run build
 RUN ./generate_golang_routes.sh
@@ -25,15 +36,16 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /backend
 
-RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-yaml git
+RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-pip py3-yaml git
 COPY clients/ /clients/
 COPY backend/ ./
-# Integration manifest + generated tooling. The manifest lives at the image
-# root (repo root) so the manager resolves the same relative paths as on the
-# host: /clients/integrations/<name> and /backend/go.work.
+# Integration manifest + build tooling. The manifest lives at the image root
+# (repo root) so the manager resolves the same relative paths as on the host:
+# /clients/integrations/<name> and /backend/go.work.
 COPY integrations.yaml /integrations.yaml
 COPY integrations.lock.json /integrations.lock.json
-COPY development/integrations /development/integrations
+COPY development/build-tools /development/build-tools
+RUN pip install --no-cache-dir /development/build-tools
 
 FROM basebuilder AS builder
 
@@ -49,12 +61,10 @@ COPY --from=frontend_selected /frontend/dist/client server/frontend/
 # rebuild, so the committed copies go stale and the pages then 404 on their
 # entry chunks. Re-exporting here guarantees the embedded HTML always matches
 # the chunks served from this exact image.
-RUN PYTHONPATH=/development/integrations \
-      python3 -m openchat_integrations resolve --profile "${INTEGRATION_PROFILE}" \
+RUN openchat-integrations resolve --profile "${INTEGRATION_PROFILE}" \
     && if [ -d /backend/server/frontend/integrations ]; then \
-         PYTHONPATH=/development/integrations \
-           python3 -m openchat_integrations export --profile "${INTEGRATION_PROFILE}" \
-             --dist-dir /backend/server/frontend; \
+         openchat-integrations export --profile "${INTEGRATION_PROFILE}" \
+           --dist-dir /backend/server/frontend; \
        else \
          echo "[integrations] frontend stage is empty; skipping integration page export"; \
        fi

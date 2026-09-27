@@ -25,3 +25,6 @@
 [submodule "clients/js_client"]
 	path = clients/js_client
 	url = https://github.com/msgmate-io/open-chat-go-js-client
+[submodule "development/build-tools"]
+	path = development/build-tools
+	url = https://github.com/msgmate-io/open-chat-go-build-tools.git
