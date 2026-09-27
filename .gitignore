@@ -67,3 +67,10 @@ backend/integrations/externalintegrations/imports_gen.go
 # Integrations are fetched on demand by the integration manager.
 clients/integrations/*
 !clients/integrations/.gitkeep
+
+# Profile-scoped private checkouts, materialized by `openchat-integrations setup`.
+# They are no longer git submodules; the public `profile_setup.yaml` names them.
+development/ci/
+development/helm/
+clients/gomobile/
+clients/llm_coding_agents/

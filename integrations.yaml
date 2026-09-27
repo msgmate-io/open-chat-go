@@ -1,12 +1,18 @@
-# Open-Chat integration manifest.
+# Open-Chat integration manifest (public).
 #
-# This file is the single source of truth for which integrations exist, where
-# their source lives, how they are selected per profile, and what they
-# contribute to the Go build and the frontend build.
+# This file lists the **public** integrations and the public `core-only`
+# profile. Private integrations and the private profiles (`default`, `full`,
+# `full-android`) are declared in the private `ci` repository and merged in at
+# runtime by `openchat-integrations` once the profile setup has materialized
+# it:
 #
-# Integration source is fetched on demand by
-# `openchat-integrations sync` into `path` (gitignored). No git
-# submodules are required for integrations anymore.
+#   openchat-integrations setup --profile full
+#
+# See `profile_setup.yaml` for the repositories and links each profile
+# establishes, and `development/build-tools/README.md` for the manager CLI.
+#
+# Integration source is fetched on demand by `openchat-integrations sync` into
+# `path` (gitignored). No git submodules are required for integrations.
 #
 # Sources:
 #   git       - shallow clone/fetch `repo` at `ref` into `path`
@@ -22,10 +28,6 @@
 #
 # `depends_on` lists other integrations a module imports; `sync` fetches the
 # transitive closure so the Go workspace can resolve every import.
-#
-# `frontend.pages` maps prerendered Vike output to the integration's embedded
-# assets. Phase 2 moves ownership of this list into each integration repo via
-# `integration.frontend.json`; until then the parent manifest is authoritative.
 version: 1
 
 # Profile selected when INTEGRATION_PROFILE is unset.
@@ -34,22 +36,12 @@ default_profile: core-only
 # Where remote checkouts are cached between syncs (relative to repo root).
 cache_dir: .integrations
 
-# Profiles are ordered sets of integration ids. "*" means every integration.
+# Public profiles. `*` means every integration in the (merged) manifest.
 profiles:
   core-only:
     - mcp
     - rest_api_tool
     - go_client
-  default:
-    - mcp
-    - rest_api_tool
-    - go_client
-    - matrix
-    - docker_sandbox
-    - git
-    - kubernetes
-  full:
-    - "*"
 
 integrations:
   mcp:
@@ -84,145 +76,3 @@ integrations:
     ref: main
     path: clients/integrations/go_client_integration
     private: false
-
-  matrix:
-    module: github.com/msgmate-io/matrix-integration
-    import: github.com/msgmate-io/matrix-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-matrix-integration
-    ref: main
-    path: clients/integrations/matrix_integration
-    private: true
-    tags:
-      - goolm
-    depends_on:
-      - go_client
-      - rest_api_tool
-
-  docker_sandbox:
-    module: github.com/msgmate-io/docker-sandbox-integration
-    import: github.com/msgmate-io/docker-sandbox-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration
-    ref: main
-    path: clients/integrations/docker_sandbox_integration
-    private: true
-    depends_on:
-      - go_client
-      - opencode
-      - rest_api_tool
-    frontend:
-      name: docker_sandbox
-
-  git:
-    module: github.com/msgmate-io/git-integration
-    import: github.com/msgmate-io/git-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-git-integration
-    ref: main
-    path: clients/integrations/git_integration
-    private: true
-    tags:
-      - gitintegration
-    bootstrap: git
-    depends_on:
-      - go_client
-      - opencode
-      - rest_api_tool
-    frontend:
-      name: git
-
-  kubernetes:
-    module: github.com/msgmate-io/kubernetes-integration
-    import: github.com/msgmate-io/kubernetes-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-kubernetes-integration
-    ref: main
-    path: clients/integrations/kubernetes_integration
-    private: true
-    tags:
-      - kubernetesintegration
-    bootstrap: kubernetes
-    frontend:
-      name: kubernetes
-
-  opencode:
-    module: github.com/msgmate-io/opencode-integration
-    import: github.com/msgmate-io/opencode-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-opencode-integration
-    ref: main
-    path: clients/integrations/opencode_integration
-    private: true
-    tags:
-      - opencodeintegration
-    bootstrap: opencode
-    depends_on:
-      - go_client
-      - rest_api_tool
-    frontend:
-      name: opencode
-
-  ssh:
-    module: github.com/msgmate-io/ssh-integration
-    import: github.com/msgmate-io/ssh-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-ssh-integration.git
-    ref: main
-    path: clients/integrations/ssh_integration
-    private: true
-    tags:
-      - sshintegration
-    bootstrap: ssh
-    depends_on:
-      - go_client
-    frontend:
-      name: ssh
-
-  voice:
-    module: github.com/msgmate-io/voice-integration
-    import: github.com/msgmate-io/voice-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-voice-integration
-    ref: main
-    path: clients/integrations/voice_integration
-    private: true
-    depends_on:
-      - go_client
-    frontend:
-      name: voice
-
-  emails:
-    module: github.com/msgmate-io/email-integration
-    import: github.com/msgmate-io/email-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-email-integration
-    ref: main
-    path: clients/integrations/email_integration
-    private: true
-    frontend:
-      name: emails
-
-  admin:
-    module: github.com/msgmate-io/admin-db-managemnt-integration
-    import: github.com/msgmate-io/admin-db-managemnt-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-admin-db-management-integration
-    ref: main
-    path: clients/integrations/admin_db_managemnt_integration
-    private: true
-    frontend:
-      name: admin
-
-  account_management:
-    module: github.com/msgmate-io/account-management-integration
-    import: github.com/msgmate-io/account-management-integration
-    source: git
-    repo: https://github.com/msgmate-io/open-chat-go-account-management-integration.git
-    ref: main
-    path: clients/integrations/account_management
-    private: true
-    depends_on:
-      - rest_api_tool
-    frontend:
-      name: account_management
