@@ -10,7 +10,7 @@ exec /dev_bin/CompileDaemon \
   -directory=/clients/go_tool_interface \
   -directory=/clients/go_integration_interface \
   -directory=/clients/integrations \
-  -directory=/development/integrations \
+  -directory=/development/build-tools \
   -include="*.go" \
   -include="*.c" \
   -include="*.html" \

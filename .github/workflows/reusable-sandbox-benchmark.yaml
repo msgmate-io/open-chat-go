@@ -215,8 +215,8 @@ jobs:
         run: |
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
-          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
-            python3 -m openchat_integrations sync --frozen --profile full
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
 
       - name: Login to GHCR
         if: inputs.backend_image == ''
@@ -272,8 +272,8 @@ jobs:
         run: |
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
-          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
-            python3 -m openchat_integrations sync --frozen --profile full
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
 
       - name: Resolve sandbox image tag from content hash
         id: image
@@ -401,8 +401,8 @@ jobs:
         run: |
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
-          PYTHONPATH="${GITHUB_WORKSPACE}/development/integrations" \
-            python3 -m openchat_integrations sync --frozen --profile full
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
 
       - name: Login to GHCR for backend image pull
         run: |
