@@ -1,0 +1,126 @@
+### General Development Guide
+
+Development should always use the development compose via `docker compose build && docker compose up` (*likely the development compose is already running!*).
+Use the development server backend at `http://localhost:1984` and run commands inside the backend container if needed.
+
+The frontend and backend code automatically reloads in the backend container, so after a short rebuild and reload time you can directly test features yourself.
+You should always try to call and test endpoints you implement while you are implementing them and check that they are working.
+
+You should only implement actual integration tests if asked, or suggest to implement them if you really think appropriate.
+
+### Clone the repository
+
+Only the public submodules are checked out with the clone (frontend, the Go
+interfaces, the Python/JS clients and the build-tools). Private repositories
+(the private integrations manifest / CI, the Helm chart, the mobile client and
+the LLM coding context) are materialized on demand by the profile setup step.
+
+```bash
+git clone --recurse-submodules https://github.com/msgmate-io/open-chat-go.git
+# existing clone:
+git submodule update --init --recursive
+```
+
+### Integration manager
+
+Integrations are declared in [`integrations.yaml`](../integrations.yaml) at the
+repo root. The public manifest lists the public integrations and the
+`core-only` profile; private integrations and the private profiles come from a
+private fragment that is materialized by `setup`. The manager is the
+`openchat-integrations` CLI from
+[`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools),
+vendored at `development/build-tools` and installed into `.venv` on first use:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install ./development/build-tools   # or git+https://github.com/msgmate-io/open-chat-go-build-tools.git
+.venv/bin/openchat-integrations list --profile core-only
+.venv/bin/openchat-integrations setup --profile full          # repos + symlinks + private manifest
+.venv/bin/openchat-integrations sync --profile full           # fetch checkouts + lock
+.venv/bin/openchat-integrations resolve --profile full        # go.work + imports_gen + tags
+.venv/bin/openchat-integrations prepare --profile full        # sync + resolve + frontend
+.venv/bin/openchat-integrations export --dist-dir frontend/dist/client
+.venv/bin/openchat-integrations check --profile full
+```
+
+- Profiles: `core-only` (default), `default`, `full`, `full-ci` and
+  `full-android`. Override with `INTEGRATION_PROFILE`.
+- `setup` materializes the profile's extra repositories and symlinks as
+  declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
+  automatically before any other command when the profile's setup marker is
+  missing or stale, so a build never runs against a half-configured workspace.
+- The private integrations manifest + lockfile live in the private `ci`
+  repository; `setup` mirrors them into `.integrations/private/` (gitignored).
+  The public `integrations.lock.json` never contains private pins.
+- `sync --frozen` checks out the commits pinned in `integrations.lock.json`
+  (used by CI and release builds). Private pins come from the private lock.
+- Local integration development: `.venv/bin/openchat-integrations dev --integration git --path ../my-fork`,
+  or set `OPENCHAT_INTEGRATION_<ID>_PATH=/path/to/checkout`.
+- The generated Go workspace lives at `backend/go.work` (gitignored). All
+  msgmate modules resolve through it; `backend/go.mod` no longer hardcodes
+  integrations.
+- `docker compose up` runs an `integration-sync` init service that performs
+  `prepare` before the backend starts (and therefore also `setup`).
+- Full reference: [`development/build-tools/README.md`](../development/build-tools/README.md).
+
+### Building a specific integration profile
+
+| Profile | Includes | Extra repos |
+| --- | --- | --- |
+| `core-only` (default) | `mcp`, `rest_api_tool`, `go_client` | – |
+| `default` | core + `matrix`, `docker_sandbox`, `git`, `kubernetes` | private manifest fragment |
+| `full` | every integration | private manifest fragment |
+| `full-ci` | every integration | full private CI tooling + Helm chart |
+| `full-android` | every integration | private manifest fragment + mobile client |
+
+```bash
+# Local development (compose runs the integration-sync service for you)
+INTEGRATION_PROFILE=core-only docker compose up
+INTEGRATION_PROFILE=full      docker compose up   # needs access to private repos
+
+# Host build (full_build.sh runs `prepare` itself)
+cd backend
+INTEGRATION_PROFILE=core-only ./full_build.sh
+INTEGRATION_PROFILE=full      ./full_build.sh
+
+# Production image
+INTEGRATION_PROFILE=full docker compose -f docker-compose.pro.yaml build backend
+# or directly:
+docker build --target prod-alpine --build-arg INTEGRATION_PROFILE=full -t open-chat:full .
+
+# Android (uses the mobile client from the full-android profile)
+INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
+```
+
+`sync --frozen` (used by CI/release) checks out the commits pinned in
+`integrations.lock.json`; `check` verifies the checkouts still match the lock.
+
+### Integration Frontend Pages Development
+
+Frontend pages for integrations are implemented **inside each integration
+repository** under `frontend/pages/...` (built with React, Vike, and
+`@open-chat-go/ui` using `IntegrationPageShell`). The public `./frontend`
+repository owns only the shared component contract (`@open-chat-go/ui`) and the
+generic integrations overview page.
+
+#### Build & Export Workflow:
+1. **Source Pages**: Write pages in the integration repo at `frontend/pages/` (e.g. `sandboxes/+Page.tsx`, `sandboxes/add/+Page.tsx`).
+2. **Page Map**: Declare the prerendered pages in `integration.frontend.json` at the integration repo root (`pages: [{source, asset}]`). The public `integrations.yaml` only lists the publish name, so closed-source page routes do not leak.
+3. **Linking**: `openchat-integrations frontend` symlinks each page set into the aggregator at `frontend/pages/integrations/<name>` for the selected profile (necessarily re-run it in the integration checkout, it also anchors node_modules). It runs automatically at container start and image build.
+4. **Prerendering + Export**: `development/scripts/build_static_frontend.sh` (or the Dockerfile) runs `npm run build` then `openchat-integrations export` copies the prerendered HTML to the integration's `frontend_assets/`.
+5. **Integration Registration**: The integration Go code embeds `frontend_assets` via `//go:embed frontend_assets` and registers the pages in `integrationinterface.Definition.FrontendPages` so the OpenChat backend serves them automatically.
+
+### Chat extensions (cross-integration chat UI)
+
+Chat extension registrations (message inputs, details views, pre-start selectors) live in the integration repo too. Each page set declares an optional `"extension": "<entry-file>"` in `integration.frontend.json`; when linked, the manager regenerates `frontend/integrations/extensions.gen.ts`, which the public app imports at startup so registrations happen globally (the chat page does not import integration code directly). Cross-integration dependencies must go through the registry lookup (`resolveChatUIExtension("opencode")`), never through cross-repo relative imports.
+
+#### Local dev / hot-reload loop
+
+- Run `openchat-integrations frontend --profile <profile>` (or the higher-level `prepare`); it creates the page-set symlinks and the per-checkout `frontend/node_modules` anchor automatically. Re-run it whenever a page set is added or renamed, then restart the Vite dev server.
+- The `frontend` repo `npm run dev` / `npm run build` scripts already set `VIKE_CRAWL='{"git":false}'`, so gitignored page-set symlinks are discovered on every host; do not remove that env prefix.
+- Inside the dev compose this happens automatically at container start (`integration-sync` service).
+- Note: under Docker, container-side builds own `frontend/node_modules/.vite`; when building the frontend on the host afterwards, `chown` that directory first.
+
+### Documentation lookup index
+
+- [Build tools README](../development/build-tools/README.md)

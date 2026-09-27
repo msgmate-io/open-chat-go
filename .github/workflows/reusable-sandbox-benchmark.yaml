@@ -144,6 +144,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: default
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Enumerate sandbox test directories
         id: discover
         env:
