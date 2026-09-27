@@ -475,3 +475,55 @@ func TestStalePendingAggregateIsNotAPendingStatus(t *testing.T) {
 		t.Fatalf("required state = %q failing:%v, want pending (the ruleset names it but no check exists)", state, failing)
 	}
 }
+
+// TestJustMergedNoChecksCommitIsNotPending is the end-to-end case of ci#928 on
+// the integration trunk (tracked by the dev-tracker PR): after a squash merge
+// the base-branch commit is reported `pending` by /commits/{sha}/status with an
+// empty statuses list while /check-runs returns nothing. commitChecks records
+// the empty report as CombinedEmpty, the combined aggregate reads unknown
+// (never a stale pending block), and once the commit is scanned as
+// authoritatively merged the required context resolves green so the branch
+// stays mergeable.
+func TestJustMergedNoChecksCommitIsNotPending(t *testing.T) {
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"pending","statuses":[]}`))
+	runs, statuses, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want none", len(runs))
+	}
+	empty := 0
+	for _, status := range statuses {
+		if status.CombinedEmpty {
+			empty++
+			continue
+		}
+		t.Fatalf("unexpected real status %+#v on a no-checks commit", status)
+	}
+	if empty != 1 {
+		t.Fatalf("CombinedEmpty sentinel = %d, want exactly 1 (the empty /status report)", empty)
+	}
+	// The combined aggregate over a commit with no checks is unknown, never a
+	// stale pending block.
+	if got := combinedStateFromFacts(runs, statuses); got != "unknown" {
+		t.Fatalf("combined state = %q, want unknown", got)
+	}
+	// The commit is authoritatively merged (the incident's `/pulls` read), so
+	// the required context scanned as merged resolves green and the branch
+	// stays mergeable.
+	required := []RequiredCheck{{Context: "Run PR CI Tests and Deployments"}}
+	if state, found := requiredContextState(required[0], runs, []statusFact{
+		{Context: "Run PR CI Tests and Deployments", State: "success"},
+		{CombinedEmpty: true},
+	}); !found || state != "success" {
+		t.Fatalf("merged required context state = %q found:%v, want success/found", state, found)
+	}
+	state, failing := evaluateRequiredContexts(required, runs, []statusFact{
+		{Context: "Run PR CI Tests and Deployments", State: "success"},
+		{CombinedEmpty: true},
+	})
+	if state != "success" || len(failing) != 0 {
+		t.Fatalf("merged required state = %q failing:%v, want success with none failing", state, failing)
+	}
+}

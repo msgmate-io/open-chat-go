@@ -121,6 +121,25 @@ new_case
 printf '{"text":"It ended on an internal error (request failed: unexpected EOF). The work already done is kept."}\n' > "$case_dir/a.last_bot.json"
 assert_class unreachable "the mixed-case Go unexpected EOF text is transient"
 
+# --- empty_reply: the model returned no text - pure model variance -----------
+new_case
+printf '{"text":"model returned no text for this turn"}\n' > "$case_dir/a.last_bot.json"
+assert_class empty_reply "a pure empty reply is model variance, not a code regression (ci#938)"
+
+new_case
+printf '{"text":"model returned no text for this turn"}\n' > "$case_dir/a.last_bot.json"
+printf '{"text":"model returned no text for this turn"}\n' > "$case_dir/b.last_bot.json"
+assert_class empty_reply "every reply empty is model variance even across files"
+
+new_case
+printf '{"text":"model returned no text for this turn"}\n' > "$case_dir/a.last_bot.json"
+printf '{"text":"I edited the wrong file and the test asserts failed"}\n' > "$case_dir/b.last_bot.json"
+assert_class "" "an empty reply mixed with a coder failure stays a code failure"
+
+new_case
+printf '{"text":"Model returned no text for this turn"}\n' > "$case_dir/a.last_bot.json"
+assert_class empty_reply "the empty-reply match is case-insensitive"
+
 # --- unclassified: the test verdict stands ---------------------------------
 new_case
 printf '{"text":"I could not finish: HTTP 503 service unavailable"}\n' > "$case_dir/a.last_bot.json"
