@@ -12,7 +12,7 @@ WORKDIR /workspace
 COPY integrations.yaml integrations.lock.json /workspace/
 COPY development/build-tools /workspace/development/build-tools
 COPY clients/integrations /workspace/clients/integrations
-RUN pip install --no-cache-dir /workspace/development/build-tools
+RUN pip install --no-cache-dir --break-system-packages /workspace/development/build-tools
 COPY frontend/ /workspace/frontend/
 WORKDIR /workspace/frontend
 # Link integration-owned pages (kept in the integration repositories) before
@@ -45,7 +45,7 @@ COPY backend/ ./
 COPY integrations.yaml /integrations.yaml
 COPY integrations.lock.json /integrations.lock.json
 COPY development/build-tools /development/build-tools
-RUN pip install --no-cache-dir /development/build-tools
+RUN pip install --no-cache-dir --break-system-packages /development/build-tools
 
 FROM basebuilder AS builder
 
