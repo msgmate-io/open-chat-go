@@ -365,3 +365,84 @@ func TestCreateInteractionRejectsUnknownAndForeignAttachments(t *testing.T) {
 		t.Fatalf("expected 403 for foreign attachment, got %d: %s", foreignRR.Code, foreignRR.Body.String())
 	}
 }
+
+func TestCreateInteractionWithRequireConfirmationDefersBotReply(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.interaction.confirm@example.com", false)
+	bot := createBotForInteractionTest(t, DB, owner, "interaction-bot-confirm")
+
+	queueClient, queueInspector, cleanupQueue := setupAsynqTest(t)
+	defer cleanupQueue()
+
+	rr := postInteractionForTest(t, DB, owner, bot, CreateBotInteractionRequest{
+		Message:             "start coding",
+		RequireConfirmation: true,
+	}, queueClient, queueInspector)
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response BotInteractionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode interaction response: %v", err)
+	}
+	if !response.RequiresConfirmation {
+		t.Fatalf("expected requires_confirmation=true in response")
+	}
+
+	var chat database.Chat
+	if err := DB.Where("uuid = ?", response.ChatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected interaction chat to be created: %v", err)
+	}
+	if chat.LatestMessageId == nil {
+		t.Fatalf("expected latest_message_id to be set")
+	}
+
+	var confirmation database.Message
+	if err := DB.Where("id = ?", *chat.LatestMessageId).First(&confirmation).Error; err != nil {
+		t.Fatalf("expected confirmation message: %v", err)
+	}
+	var botUser database.User
+	if err := DB.Where("uuid = ?", bot.BotUserUUID).First(&botUser).Error; err != nil {
+		t.Fatalf("failed to load bot user: %v", err)
+	}
+	if confirmation.SenderId != botUser.ID {
+		t.Fatalf("expected confirmation message to be sent by the bot user")
+	}
+	if confirmation.DataType != "text" {
+		t.Fatalf("expected confirmation message data_type text, got %q", confirmation.DataType)
+	}
+
+	var meta map[string]interface{}
+	if err := json.Unmarshal(confirmation.MetaData, &meta); err != nil {
+		t.Fatalf("failed to decode confirmation metadata: %v", err)
+	}
+	if finished, _ := meta["finished"].(bool); !finished {
+		t.Fatalf("expected confirmation message to be finished")
+	}
+	entry, ok := meta["interaction_confirmation"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected interaction_confirmation meta, got %#v", meta)
+	}
+	if entry["status"] != "pending" {
+		t.Fatalf("expected pending interaction_confirmation, got %#v", entry["status"])
+	}
+	if entry["source_message_uuid"] == "" || entry["source_message_uuid"] == nil {
+		t.Fatalf("expected source_message_uuid in confirmation meta")
+	}
+
+	// The initial user message must be different from the confirmation message
+	// and must be recorded as the deferred source.
+	var source database.Message
+	if err := DB.Where("chat_id = ? AND data_type = ?", chat.ID, "text").
+		Where("sender_id = ?", owner.ID).First(&source).Error; err != nil {
+		t.Fatalf("expected source user message: %v", err)
+	}
+	if entry["source_message_uuid"] != source.UUID {
+		t.Fatalf("expected source_message_uuid %q, got %#v", source.UUID, entry["source_message_uuid"])
+	}
+
+	if _, err := queueInspector.GetTaskInfo(workqueue.QueueDefault, workqueue.BotReplyTaskID(chat.UUID)); err == nil {
+		t.Fatalf("expected no bot reply task to be queued while confirmation is pending")
+	}
+}
