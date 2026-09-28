@@ -214,9 +214,14 @@ type BashCoverageReport struct {
 	// WrittenVerifications counts the mutating typed GitHub writes that were
 	// re-read and reported as verified during the turn (ci#514 phase 1 exit
 	// criterion 4): writes are verified by read-back instead of claimed.
+	// An unset (zero) value means "no recorded verification evidence yet",
+	// which the criteria evaluator treats as unattested rather than assumed.
 	WrittenVerifications int `json:"written_verifications,omitempty"`
 	// WrittenCoverageFraction is the share of recorded writes verified by
-	// re-read on this turn (0 when nothing was recorded yet).
+	// re-read on this turn (0 when nothing was recorded yet). It is derived,
+	// never stored: verified writes / recorded writes (see the method below).
+	// TODO(ci#514): this will stay 0 until the github_writes verification
+	// pass is wired through the api layer and records verdicts.
 	WrittenCoverageFraction float64 `json:"written_coverage_fraction,omitempty"`
 }
 
@@ -281,6 +286,12 @@ func (r BashCoverageReport) Categories() []string {
 // WrittenCoverageFraction is the share of recorded typed GitHub writes that
 // were verified by their read-back (0 when nothing was recorded yet). It is
 // the phase-1 exit-criterion-4 metric: writes verified instead of claimed.
+// Verified writes are counted in WrittenVerifications (the numerator); the
+// denominator (recorded writes) is not exposed yet, so the method returns 1
+// once at least one write is verified and 0 otherwise. TODO(ci#514): derive
+// this as verified/recorded once the per-record read-back pass is wired
+// through the api layer (github_writes.go already emits the per-record
+// verdicts); until then 0 means "no verified writes recorded".
 func (r BashCoverageReport) WrittenCoverageFraction() float64 {
 	if r.WrittenVerifications == 0 {
 		return 0
