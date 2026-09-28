@@ -10,11 +10,14 @@
 - API Docs: [`msgmate.io/reference`](https://msgmate.io/reference)
 - Design System: [`msgmate-io.github.io/open-chat-go`](https://msgmate-io.github.io/open-chat-go/)
 
-### Infuse Open-Chat Tools & Integrations
+### Integrations & tools
 
-- Integrations live in their own repos and are fetched on demand from [`integrations.yaml`](./integrations.yaml) by the `openchat-integrations` manager ([open-chat-go-build-tools](https://github.com/msgmate-io/open-chat-go-build-tools), vendored at `development/build-tools`); selected per `INTEGRATION_PROFILE` ( for now only 'core-only' is OS ).
-- Use the [go-integration-interace](https://github.com/msgmate-io/open-chat-go-integration-interface) and register via `integrationinterface.MustRegister`.
-- Integrations can register tools directly via `Definition.ToolDefinitions` using [go-tool-interface](https://github.com/msgmate-io/open-chat-go-tool-interface)
+Open-Chat is extended through integrations and tools that live in their own
+repositories. See the documentation for how to build, register and grow an
+integration, and how to add a custom one:
+
+- [Integration development guide](https://msgmate.io/docs#integration-development)
+- [Integrations & Tools reference](https://msgmate.io/docs#integrations)
 
 ### Releases
 
