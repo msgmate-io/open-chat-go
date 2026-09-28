@@ -50,9 +50,10 @@ type runContactRow struct {
 }
 
 type runCreateInteractionRequest struct {
-	Message         string                  `json:"message"`
-	ToolInit        *map[string]interface{} `json:"tool_init,omitempty"`
-	ConfigOverrides map[string]interface{}  `json:"config_overrides,omitempty"`
+	Message             string                  `json:"message"`
+	ToolInit            *map[string]interface{} `json:"tool_init,omitempty"`
+	ConfigOverrides     map[string]interface{}  `json:"config_overrides,omitempty"`
+	RequireConfirmation bool                    `json:"require_confirmation,omitempty"`
 }
 
 type runCreateInteractionResponse struct {
@@ -371,7 +372,7 @@ func resolveBotForRun(ctx context.Context, c *runHTTPClient, identifier string) 
 	return runBotLookup{}, fmt.Errorf("bot not found: %s", identifier)
 }
 
-func createRunInteraction(ctx context.Context, c *runHTTPClient, lookup runBotLookup, message string, chatConfig runChatConfig) (string, error) {
+func createRunInteraction(ctx context.Context, c *runHTTPClient, lookup runBotLookup, message string, chatConfig runChatConfig, requireConfirmation bool) (string, error) {
 	if lookup.Legacy {
 		var legacy runLegacyCreateChatResponse
 		_, err := c.requestJSON(ctx, http.MethodPost, "/api/v1/chats/create", runLegacyCreateChatRequest{
@@ -396,9 +397,10 @@ func createRunInteraction(ctx context.Context, c *runHTTPClient, lookup runBotLo
 		toolInit = &chatConfig.ToolInit
 	}
 	_, err := c.requestJSON(ctx, http.MethodPost, path, runCreateInteractionRequest{
-		Message:         message,
-		ToolInit:        toolInit,
-		ConfigOverrides: chatConfig.ConfigOverrides,
+		Message:             message,
+		ToolInit:            toolInit,
+		ConfigOverrides:     chatConfig.ConfigOverrides,
+		RequireConfirmation: requireConfirmation,
 	}, &interaction)
 	if err != nil {
 		return "", err
@@ -535,6 +537,11 @@ func RunCli() *cli.Command {
 				Value:   500,
 				Sources: cli.EnvVars("OPEN_CHAT_RUN_POLL_MS"),
 			},
+			&cli.BoolFlag{
+				Name:    "require-confirmation",
+				Usage:   "require an explicit user confirmation before the bot reply starts",
+				Sources: cli.EnvVars("OPEN_CHAT_RUN_REQUIRE_CONFIRMATION"),
+			},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			host := strings.TrimSpace(c.String("host"))
@@ -602,7 +609,7 @@ func RunCli() *cli.Command {
 			if err != nil {
 				return err
 			}
-			chatUUID, err := createRunInteraction(ctx, api, lookup, message, chatConfig)
+			chatUUID, err := createRunInteraction(ctx, api, lookup, message, chatConfig, c.Bool("require-confirmation"))
 			if err != nil {
 				return err
 			}
