@@ -1,0 +1,53 @@
+---
+title: Integrations & Tools
+path: integrations
+description: The integration registry, tool interface and access model.
+order: 32
+section: Platform
+---
+
+Integrations expose additional capabilities to bots and users. Each integration
+can contribute tools (callable by models), routes and configuration.
+
+## Discovering integrations and tools
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/integrations/list` | List integrations available to the caller. |
+| `GET` | `/api/v1/integrations/{integration_name}/overview` | Integration overview and status. |
+| `GET` | `/api/v1/tools` | List registered tools. |
+| `GET` | `/api/v1/interactions/{chat_uuid}/tools` | List tools available in a chat. |
+
+## Access model
+
+Integration and tool definitions declare their visibility:
+
+- **User accessible** — available to regular users and included in the public
+  catalogue.
+- **`AdminOnly`** — restricted to administrators and excluded from the public
+  documentation surface.
+
+Administrators can grant or revoke per-user integration access through the
+admin integration access routes. Those management routes are intentionally not
+documented here.
+
+## Tool interface
+
+Tools implement a common Go interface (`clients/go_tool_interface`). A tool
+definition describes:
+
+- its function name and description,
+- call parameters / input JSON Schema,
+- optional init parameters (`requires_init`),
+- confirmation behaviour (`requires_confirmation`,
+  `stop_on_first_confirmable_tool_call`, `confirmation_block_message`).
+
+The same schema is returned by `GET /api/v1/tools/{tool_name}` and validated
+through the `/api/v1/tools/typing/...` endpoints.
+
+## Adding an integration
+
+Implement the integration interface, register it with the integrations registry
+in `backend/integrations`, and declare its routes and access requirements. Tools
+are then published automatically and appear in the catalogue once the server
+starts.

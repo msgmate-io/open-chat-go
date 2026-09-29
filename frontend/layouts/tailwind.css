@@ -1,0 +1,62 @@
+@import "../packages/ui/src/styles/globals.css";
+
+@plugin "@tailwindcss/typography";
+
+@keyframes breatheAnimation {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes cinematicGradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.gradient-text {
+  background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+  background-size: 400% 400%;
+  -webkit-background-clip: text;
+  -moz-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  -moz-text-fill-color: transparent;
+  animation: breatheAnimation 10s ease infinite;
+}
+
+.gradient-overlay {
+  background: linear-gradient(120deg, #ff8a00, #ffd166, #4cc9f0, #7b2cbf, #ff8a00);
+  background-size: 300% 300%;
+  animation: cinematicGradientShift 7s ease-in-out infinite;
+}
+
+@keyframes landingVideoGlow {
+  0%, 100% { opacity: 0.55; filter: blur(5px); }
+  50%      { opacity: 0.95; filter: blur(9px); }
+}
+
+.landing-video-glow {
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: linear-gradient(120deg, #ff8a00, #ffd166, #4cc9f0, #7b2cbf, #ff8a00);
+  background-size: 300% 300%;
+  animation: cinematicGradientShift 7s ease-in-out infinite, landingVideoGlow 3.2s ease-in-out infinite;
+}
+
+.CollapsibleContent[data-state="open"] {
+  animation: slideDown 400ms ease-out;
+}
+.CollapsibleContent[data-state="closed"] {
+  animation: slideUp 400ms ease-out;
+}
+
+@keyframes slideDown {
+  from { opacity: 10%; transform: translateY(-1rem); }
+}
+
+@keyframes slideUp {
+  to { opacity: 10%; transform: translateY(-1rem); }
+}

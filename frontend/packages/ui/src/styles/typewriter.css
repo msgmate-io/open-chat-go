@@ -1,0 +1,51 @@
+@layer components {
+  .typewriter-root {
+    @apply relative mx-auto flex w-full max-w-[800px] flex-col overflow-hidden;
+    transition: transform 1s ease-in-out;
+  }
+
+  .typewriter-root--full-height {
+    @apply flex min-h-full items-center justify-center;
+  }
+
+  .typewriter-slide {
+    @apply flex w-full flex-col;
+  }
+
+  .typewriter-slide--exit {
+    animation: typewriter-slide-up-fade 0.5s forwards;
+  }
+
+  .typewriter-content {
+    @apply inline-block whitespace-pre-wrap break-words;
+  }
+
+  .typewriter-cursor {
+    @apply text-brand;
+  }
+
+  .typewriter-cursor--blink {
+    animation: typewriter-blink 0.75s step-end infinite;
+  }
+}
+
+@keyframes typewriter-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes typewriter-slide-up-fade {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-50%);
+  }
+}

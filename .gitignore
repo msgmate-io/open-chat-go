@@ -19,8 +19,8 @@ downloads/
 eggs/
 apt-repo/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
