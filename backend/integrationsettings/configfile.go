@@ -146,13 +146,19 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		return err
 	}
 
-	info, err := os.Stat(trimmedPath)
+	return writeConfigFileAtomic(trimmedPath, encoded)
+}
+
+// writeConfigFileAtomic replaces path with data using a temp file + rename and
+// preserving the original file permissions. Callers must hold configFileMu.
+func writeConfigFileAtomic(path string, data []byte) error {
+	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNotPersistable, err)
 	}
 	perm := info.Mode().Perm()
 
-	dir := filepath.Dir(trimmedPath)
+	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".open-chat-config-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp config: %w", err)
@@ -162,7 +168,7 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 		_ = os.Remove(tmpName)
 	}()
 
-	if _, err := tmp.Write(encoded); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("failed to write temp config: %w", err)
 	}
@@ -173,7 +179,7 @@ func MergeValues(path string, def integrationinterface.Definition, values map[st
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("failed to close temp config: %w", err)
 	}
-	if err := os.Rename(tmpName, trimmedPath); err != nil {
+	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("failed to replace config: %w", err)
 	}
 	return nil

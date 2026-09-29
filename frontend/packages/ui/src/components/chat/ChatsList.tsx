@@ -225,6 +225,15 @@ export function ChatsList({
         }
     )
 
+    const { data: actionTasksCount } = useSWR<{ count: number }>(
+        showDefaultChats ? `/api/v1/chats/action-tasks?count_only=1` : null,
+        fetcher,
+        {
+            refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 5000),
+            revalidateOnFocus: true,
+        }
+    )
+
     useEffect(() => {
         if (typeof document === "undefined") {
             return
@@ -246,6 +255,8 @@ export function ChatsList({
         }
         return map
     }, [chatStates])
+
+    const actionCount = typeof actionTasksCount?.count === "number" ? actionTasksCount.count : 0
 
     const FilterMenu = () => (
         <DropdownMenu open={filterMenuOpen} onOpenChange={setFilterMenuOpen}>
@@ -371,6 +382,7 @@ export function ChatsList({
                         navigateTo={navigateWithFilter}
                         defaultBotContact={defaultBotContact}
                         botAvatarSrc={avatarSrc}
+                        actionCount={actionCount}
                     />
                 ) : null}
                 {showChats ? (
