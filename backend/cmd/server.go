@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -566,6 +567,37 @@ func ensureSingletonAdminUser(DB *gorm.DB, password string, isAutomated bool) (*
 	return &admin, nil
 }
 
+// credentialsOutputDir is the directory generated bootstrap credentials are
+// persisted to (mode 0600). It is initialised from the configured database
+// path directory in runServer.
+var credentialsOutputDir string
+
+// persistGeneratedCredential appends a generated credential to a 0600 file and
+// returns the file path, so the secret is not written to stdout.
+func persistGeneratedCredential(label, password string) (string, error) {
+	dir := credentialsOutputDir
+	if strings.TrimSpace(dir) == "" {
+		if wd, err := os.Getwd(); err == nil {
+			dir = wd
+		} else {
+			dir = "."
+		}
+	}
+	path := filepath.Join(dir, "generated-credentials.txt")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprintf(file, "%s: %s\n", label, password); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func resolveBootstrapPassword(rawPassword string, validateStrength bool, label string, suppressGeneratedPasswordLog bool) (string, error) {
 	if rawPassword == "random" {
 		generatedPassword, genErr := generateRandomPassword()
@@ -573,8 +605,13 @@ func resolveBootstrapPassword(rawPassword string, validateStrength bool, label s
 			return "", fmt.Errorf("failed to generate random password for %s: %w", label, genErr)
 		}
 		if !suppressGeneratedPasswordLog {
-			fmt.Printf("Generated random password for %s: %s\n", label, generatedPassword)
-			fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+			path, persistErr := persistGeneratedCredential(label, generatedPassword)
+			if persistErr != nil {
+				fmt.Printf("WARNING: failed to persist generated credentials for %s: %v\n", label, persistErr)
+			} else {
+				fmt.Printf("Generated credentials for %s written to %s (mode 0600)\n", label, path)
+				fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
+			}
 		}
 		return generatedPassword, nil
 	}
@@ -736,6 +773,8 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 	defer listener.Close()
+
+	credentialsOutputDir = filepath.Dir(c.String("db-path"))
 
 	integrations.EnsureLoaded()
 	msgmate.EnsureExternalToolsRegistered()

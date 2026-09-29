@@ -7,7 +7,7 @@ export default function ToolsPage() {
   const [mode, setMode] = useState<"private" | "public">("public")
 
   useEffect(() => {
-    setMode(Cookies.get("is_authorized") === "true" ? "private" : "public")
+    setMode(Cookies.get("oc_client_state") === "true" ? "private" : "public")
   }, [])
 
   return (
