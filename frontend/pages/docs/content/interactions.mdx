@@ -1,0 +1,65 @@
+---
+title: Chats & Interactions
+path: interactions
+description: Chat containers, interaction sessions, signals and shared links.
+order: 31
+section: Platform
+---
+
+## Chats
+
+A **chat** is the conversation container. It holds the participants (contacts)
+and an ordered list of messages. Chats are listed and read through the
+`/api/v1/chats/*` routes described in the [REST API](/docs#rest-api) reference.
+
+## Interaction sessions
+
+An **interaction** is a chat driven by a bot. When you send a message to an
+interaction the server enqueues generation work and streams the result back to
+the client. Interaction chats support:
+
+- Sending messages — `POST /api/v1/chats/{chat_uuid}/messages/send`
+- Reading status — `GET /api/v1/chats/{chat_uuid}/status`
+- Re-running a message — `POST /api/v1/chats/{chat_uuid}/messages/{message_uuid}/rerun`
+- Sending interaction signals — `POST /api/v1/chats/{chat_uuid}/signals/{signal}`
+
+## Tools and confirmations
+
+While generating, a bot may request a tool call. If the tool is marked
+`requires_confirmation`, the interaction pauses and exposes a confirmation
+prompt. The client approves or rejects it and, on approval, executes it with:
+
+```
+POST /api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute
+```
+
+## Shared interactions
+
+Any interaction can be published as a **shared interaction**:
+
+```
+POST /api/chat/{chat_uuid}/publish
+POST /api/chat/{chat_uuid}/unpublish
+```
+
+Publishing returns an unguessable `chat_share_uuid`. Anyone holding that UUID
+can read the interaction — no account required — through the public capability
+URLs:
+
+- `GET /api/interaction/{chat_share_uuid}`
+- `GET /api/interaction/{chat_share_uuid}/messages`
+- `GET /api/interaction/{chat_share_uuid}/status`
+- `GET /api/interaction/{chat_share_uuid}/badge.svg`
+
+The badge is also served at `GET /interaction/{chat_share_uuid}/badge.svg`
+(without the `/api` prefix) so embeds deriving the URL from the human-facing
+`/interaction/{chat_share_uuid}` page keep working. `/api/...` is the canonical
+path.
+
+The badge is **detailed** by default: it shows the server host and the current
+run runtime (`open-chat | <host> | <state> | MM:SS`). While the interaction is
+running the timer animates inside the SVG. Pass `?variant=simple` for the
+legacy two-segment `open-chat | <state>` badge.
+
+Shared interactions can also be followed live over
+[`/ws/interaction/{chat_share_uuid}`](/docs#websockets).

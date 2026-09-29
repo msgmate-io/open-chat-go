@@ -1,0 +1,168 @@
+@layer components {
+  .chat-sidebar {
+    @apply relative flex h-full flex-col border-r border-border bg-muted text-foreground;
+  }
+
+  .chat-main-pane {
+    @apply relative flex h-full w-full flex-col bg-background text-foreground;
+  }
+
+  .chat-list-header {
+    @apply z-10 flex shrink-0 items-center gap-2 border-b border-border bg-muted px-2 py-2;
+  }
+
+  .chat-list-scroll {
+    @apply relative flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-2 py-2;
+  }
+
+  .chat-list-footer {
+    @apply shrink-0 border-t border-border bg-muted p-2;
+  }
+
+  .chat-list-divider {
+    @apply my-2 flex items-center justify-between px-1;
+  }
+
+  .chat-list-row {
+    @apply relative cursor-pointer rounded-lg border border-border/80 bg-card p-0 shadow-sm ring-0 transition-[background-color,border-color,box-shadow] hover:border-border hover:bg-secondary hover:shadow-md;
+  }
+
+  .chat-list-row--selected {
+    @apply border-border bg-accent shadow-md ring-1 ring-border/50;
+  }
+
+  .chat-state-dot {
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  .chat-state-dot--glow {
+    animation: chat-state-dot-glow 1.6s ease-in-out infinite;
+  }
+
+  @keyframes chat-state-dot-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 2px 1px rgba(250, 204, 21, 0.55);
+    }
+    50% {
+      box-shadow: 0 0 7px 3px rgba(250, 204, 21, 0.85);
+    }
+  }
+
+  .chat-empty-state {
+    @apply flex h-full w-full max-w-lg flex-col items-center justify-center gap-3 p-8 text-center;
+  }
+
+  .chat-messages-column {
+    @apply relative flex h-full min-h-0 w-full max-w-[900px] flex-col;
+  }
+
+  .message-composer {
+    @apply flex w-full max-w-[900px] flex-col gap-2 rounded-3xl border border-border/80 bg-card p-2 text-card-foreground shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04] md:p-3;
+  }
+
+  @media (max-width: 640px) {
+    .message-composer-shell {
+      padding-bottom: 0px;
+    }
+
+    html[data-openchat-runtime="mobile"] .message-composer-shell {
+      padding-bottom: max(
+        var(--openchat-safe-bottom, env(safe-area-inset-bottom, 0px)),
+        var(--openchat-keyboard-bottom, 0px),
+        var(--openchat-keyboard-bottom-visual, 0px),
+        0px
+      );
+    }
+
+    .message-composer {
+      padding-bottom: 0.75rem;
+    }
+  }
+
+  .message-composer-textarea {
+    @apply block min-h-[1.5rem] w-full resize-none border-0 bg-transparent p-0 text-base leading-relaxed text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0 md:text-[1.05rem];
+  }
+
+  .message-composer-footer {
+    @apply flex items-end justify-end gap-1.5;
+  }
+
+  .message-composer-attach {
+    @apply size-10 shrink-0 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground;
+  }
+
+  .message-composer-files {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .message-bubble-user {
+    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-secondary text-secondary-foreground dark:ring-white/[0.04];
+  }
+
+  .message-bubble-bot {
+    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-card text-card-foreground dark:ring-white/[0.04];
+  }
+
+  .message-bubble-outgoing {
+    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-border/70 bg-surface-elevated text-foreground dark:ring-white/[0.04];
+  }
+
+  .message-bubble-pending {
+    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-muted/70 text-foreground dark:ring-white/[0.04];
+  }
+
+  .message-bubble-user .chat-markdown,
+  .message-bubble-bot .chat-markdown,
+  .message-bubble-outgoing .chat-markdown,
+  .message-bubble-pending .chat-markdown {
+    @apply text-inherit;
+  }
+
+  .message-toolbar {
+    @apply flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-muted/30 px-3 py-2;
+  }
+
+  .chat-markdown {
+    @apply max-w-none text-sm leading-7 text-foreground md:text-[0.95rem];
+  }
+
+  .chat-markdown :where(p) {
+    @apply my-2 first:mt-0 last:mb-0;
+  }
+
+  .chat-markdown :where(pre) {
+    @apply my-3 overflow-x-auto rounded-xl border border-border bg-muted/60 p-4 text-sm;
+  }
+
+  .chat-markdown :where(code:not(pre code)) {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em];
+  }
+
+  .chat-markdown :where(blockquote) {
+    @apply my-3 border-l-2 border-border pl-3 text-muted-foreground italic;
+  }
+
+  .scrollbar-hidden {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+  }
+
+  .shiny-text {
+    @apply relative inline-block bg-gradient-to-r from-muted-foreground via-foreground to-muted-foreground bg-[length:200%_100%] bg-clip-text text-transparent;
+    animation: shiny-text-pan 2.2s linear infinite;
+  }
+}
+
+@keyframes shiny-text-pan {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}

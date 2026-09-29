@@ -1,0 +1,1608 @@
+{
+  "tables": [
+    {
+      "name": "access_tokens",
+      "description": "AccessToken stores hashed API credentials for user API access.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/access_token.go#L6",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UserId",
+          "name_raw": "user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Name",
+          "name_raw": "name",
+          "type": "varchar(120)",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "TokenPrefix",
+          "name_raw": "token_prefix",
+          "type": "varchar(40)",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "TokenHash",
+          "name_raw": "token_hash",
+          "type": "char(64)",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "LastUsedAt",
+          "name_raw": "last_used_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ExpiresAt",
+          "name_raw": "expires_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "RevokedAt",
+          "name_raw": "revoked_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "chat_settings",
+      "description": "ChatSettings stores per-chat settings owned by the backend for server-side\nbehavior/state, separate from shared user-visible chat config. It is scoped\nto a chat and currently not exposed directly through chat APIs.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/chat.go#L51",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ChatId",
+          "name_raw": "chat_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Chat",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ConfigData",
+          "name_raw": "config_data",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "chats",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/chat.go#L35",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User1Id",
+          "name_raw": "user1_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User2Id",
+          "name_raw": "user2_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User1",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User2",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "LatestMessageId",
+          "name_raw": "latest_message_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "LatestMessage",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "SharedConfigId",
+          "name_raw": "shared_config_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "SharedConfig",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ChatType",
+          "name_raw": "chat_type",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "contacts",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/user.go#L29",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ContactToken",
+          "name_raw": "contact_token",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "OwningUserId",
+          "name_raw": "owning_user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ContactUserId",
+          "name_raw": "contact_user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "OwningUser",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ContactUser",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "file_accesses",
+      "description": "Join table for additional metadata (optional)",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/files.go#L22",
+      "fields": [
+        {
+          "name": "UserID",
+          "name_raw": "user_id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UploadedFileID",
+          "name_raw": "uploaded_file_id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Permission",
+          "name_raw": "permission",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "messages",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/chat.go#L8",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ReadAt",
+          "name_raw": "read_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "SenderId",
+          "name_raw": "sender_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Sender",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ReceiverId",
+          "name_raw": "receiver_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Receiver",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DataType",
+          "name_raw": "data_type",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ChatId",
+          "name_raw": "chat_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Chat",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Content",
+          "name_raw": "content",
+          "type": "bytes",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Text",
+          "name_raw": "text",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Reasoning",
+          "name_raw": "reasoning",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ToolCalls",
+          "name_raw": "tool_calls",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "MetaData",
+          "name_raw": "meta_data",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "model_configs",
+      "description": "ModelConfig stores a default LLM model definition that can be assigned to bot profiles.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/model_config.go#L19",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Title",
+          "name_raw": "title",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Description",
+          "name_raw": "description",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ModelID",
+          "name_raw": "model_id",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "Configuration",
+          "name_raw": "configuration",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "BotUsernames",
+          "name_raw": "bot_usernames",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "IsDefault",
+          "name_raw": "is_default",
+          "type": "bool",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "permissions",
+      "description": "Permission grants a capability to a specific user.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/permission.go#L19",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UserId",
+          "name_raw": "user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Permission",
+          "name_raw": "permission",
+          "type": "varchar(64)",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "public_profiles",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/user.go#L22",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UserId",
+          "name_raw": "user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ProfileData",
+          "name_raw": "profile_data",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "sessions",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/session.go#L8",
+      "fields": [
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UserId",
+          "name_raw": "user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Token",
+          "name_raw": "token",
+          "type": "varchar(43)",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Data",
+          "name_raw": "data",
+          "type": "bytes",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Expiry",
+          "name_raw": "expiry",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "shared_chat_configs",
+      "description": "SharedChatConfig stores the shared LLM/tool configuration for a chat.\nIt is created from the `shared_config` payload when a chat is created and is\nloaded for both chat participants when listing/opening chats and when tools run.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/chat.go#L28",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ChatId",
+          "name_raw": "chat_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Chat",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ConfigData",
+          "name_raw": "config_data",
+          "type": "jsonb",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "shared_chat_instances",
+      "description": "SharedChatInstance links a private chat to a public share UUID owned by a user.\nIt powers publish/unpublish chat sharing and public read-only shared interaction views.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/chat.go#L60",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ChatId",
+          "name_raw": "chat_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Chat",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "OwningUserId",
+          "name_raw": "owning_user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "OwningUser",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ChatShareUUID",
+          "name_raw": "chat_share_uuid",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "task_results",
+      "description": "@doc:open-chat-task-results-model\nTaskResult stores persisted async task execution outcomes for admin inspection.\nUnlike Redis queue state, these records are durable in the application DB and\ncan be queried through regular admin table APIs for auditing and debugging.",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/task_result.go#L7",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "TaskID",
+          "name_raw": "task_id",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "TaskType",
+          "name_raw": "task_type",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "Queue",
+          "name_raw": "queue",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": false,
+          "tag": ""
+        },
+        {
+          "name": "Success",
+          "name_raw": "success",
+          "type": "bool",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Payload",
+          "name_raw": "payload",
+          "type": "text",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Result",
+          "name_raw": "result",
+          "type": "text",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Error",
+          "name_raw": "error",
+          "type": "text",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Retried",
+          "name_raw": "retried",
+          "type": "int",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "MaxRetry",
+          "name_raw": "max_retry",
+          "type": "int",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CompletedAt",
+          "name_raw": "completed_at",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "two_factor_recovery_codes",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/twofactor.go#L7",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UserId",
+          "name_raw": "user_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "User",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CodeHash",
+          "name_raw": "code_hash",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UsedAt",
+          "name_raw": "used_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "uploaded_files",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/files.go#L8",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "FileID",
+          "name_raw": "file_id",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "FileName",
+          "name_raw": "file_name",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Size",
+          "name_raw": "size",
+          "type": "int",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "MIMEType",
+          "name_raw": "mime_type",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "StorageURL",
+          "name_raw": "storage_url",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "OwnerID",
+          "name_raw": "owner_id",
+          "type": "uint",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Owner",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "SharedWith",
+          "name_raw": "",
+          "type": "unknown",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "MetaData",
+          "name_raw": "meta_data",
+          "type": "json",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    },
+    {
+      "name": "users",
+      "source_url": "https://github.com/msgmate-io/open-chat-go/blob/main/backend/database/user.go#L10",
+      "fields": [
+        {
+          "name": "UUID",
+          "name_raw": "uuid",
+          "type": "uuid",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ID",
+          "name_raw": "id",
+          "type": "uint",
+          "is_primary": true,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "CreatedAt",
+          "name_raw": "created_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "UpdatedAt",
+          "name_raw": "updated_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "DeletedAt",
+          "name_raw": "deleted_at",
+          "type": "time",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Name",
+          "name_raw": "name",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "Email",
+          "name_raw": "email",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "PasswordHash",
+          "name_raw": "password_hash",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "ContactToken",
+          "name_raw": "contact_token",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "IsAdmin",
+          "name_raw": "is_admin",
+          "type": "bool",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "IsAutomated",
+          "name_raw": "is_automated",
+          "type": "bool",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "TwoFactorEnabled",
+          "name_raw": "two_factor_enabled",
+          "type": "bool",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        },
+        {
+          "name": "TwoFactorSecret",
+          "name_raw": "two_factor_secret",
+          "type": "string",
+          "is_primary": false,
+          "is_nullable": true,
+          "tag": ""
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "fromTable": "access_tokens",
+      "fromField": "user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "chat_settings",
+      "fromField": "chat_id",
+      "toTable": "chats",
+      "toField": "id"
+    },
+    {
+      "fromTable": "chats",
+      "fromField": "latest_message_id",
+      "toTable": "messages",
+      "toField": "id"
+    },
+    {
+      "fromTable": "chats",
+      "fromField": "user1_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "chats",
+      "fromField": "user2_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "contacts",
+      "fromField": "contact_user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "contacts",
+      "fromField": "owning_user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "file_accesses",
+      "fromField": "uploaded_file_id",
+      "toTable": "uploaded_files",
+      "toField": "id"
+    },
+    {
+      "fromTable": "file_accesses",
+      "fromField": "user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "messages",
+      "fromField": "chat_id",
+      "toTable": "chats",
+      "toField": "id"
+    },
+    {
+      "fromTable": "messages",
+      "fromField": "receiver_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "messages",
+      "fromField": "sender_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "permissions",
+      "fromField": "user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "public_profiles",
+      "fromField": "user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "sessions",
+      "fromField": "user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "shared_chat_configs",
+      "fromField": "chat_id",
+      "toTable": "chats",
+      "toField": "id"
+    },
+    {
+      "fromTable": "shared_chat_instances",
+      "fromField": "chat_id",
+      "toTable": "chats",
+      "toField": "id"
+    },
+    {
+      "fromTable": "shared_chat_instances",
+      "fromField": "owning_user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "two_factor_recovery_codes",
+      "fromField": "user_id",
+      "toTable": "users",
+      "toField": "id"
+    },
+    {
+      "fromTable": "uploaded_files",
+      "fromField": "owner_id",
+      "toTable": "users",
+      "toField": "id"
+    }
+  ],
+  "sql": "-- Generated schema overview\n\nCREATE TABLE \"users\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"name\" text,\n  \"email\" text,\n  \"password_hash\" text,\n  \"contact_token\" text,\n  \"is_admin\" numeric,\n  \"is_automated\" numeric DEFAULT false,\n  \"two_factor_enabled\" numeric DEFAULT false,\n  \"two_factor_secret\" text\n);\n\nCREATE TABLE \"two_factor_recovery_codes\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"user_id\" integer,\n  \"code_hash\" text,\n  \"used_at\" datetime\n);\n\nCREATE TABLE \"sessions\" (\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"user_id\" integer,\n  \"token\" varchar,\n  \"data\" blob,\n  \"expiry\" datetime\n);\n\nCREATE TABLE \"public_profiles\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"user_id\" integer,\n  \"profile_data\" jsonb\n);\n\nCREATE TABLE \"contacts\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"contact_token\" text,\n  \"owning_user_id\" integer,\n  \"contact_user_id\" integer\n);\n\nCREATE TABLE \"chats\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"user1_id\" integer,\n  \"user2_id\" integer,\n  \"latest_message_id\" integer,\n  \"shared_config_id\" integer,\n  \"chat_type\" text DEFAULT conversation\n);\n\nCREATE TABLE \"shared_chat_configs\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"chat_id\" integer,\n  \"config_data\" jsonb\n);\n\nCREATE TABLE \"chat_settings\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"chat_id\" integer,\n  \"config_data\" jsonb\n);\n\nCREATE TABLE \"shared_chat_instances\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"chat_id\" integer,\n  \"owning_user_id\" integer,\n  \"chat_share_uuid\" text NOT NULL\n);\n\nCREATE TABLE \"messages\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"read_at\" datetime,\n  \"sender_id\" integer,\n  \"receiver_id\" integer,\n  \"data_type\" text DEFAULT text,\n  \"chat_id\" integer,\n  \"content\" blob,\n  \"text\" text,\n  \"reasoning\" jsonb,\n  \"tool_calls\" jsonb,\n  \"meta_data\" jsonb\n);\n\nCREATE TABLE \"uploaded_files\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"file_id\" text,\n  \"file_name\" text,\n  \"size\" integer,\n  \"mime_type\" text,\n  \"storage_url\" text,\n  \"owner_id\" integer,\n  \"meta_data\" json\n);\n\nCREATE TABLE \"file_accesses\" (\n  \"user_id\" integer PRIMARY KEY,\n  \"uploaded_file_id\" integer PRIMARY KEY,\n  \"permission\" text,\n  \"created_at\" datetime\n);\n\nCREATE TABLE \"task_results\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"task_id\" text NOT NULL,\n  \"task_type\" text NOT NULL,\n  \"queue\" text NOT NULL,\n  \"success\" numeric,\n  \"payload\" text,\n  \"result\" text,\n  \"error\" text,\n  \"retried\" integer,\n  \"max_retry\" integer,\n  \"completed_at\" text\n);\n\nCREATE TABLE \"model_configs\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"title\" text,\n  \"description\" text,\n  \"model_id\" text NOT NULL,\n  \"configuration\" jsonb,\n  \"bot_usernames\" jsonb,\n  \"is_default\" numeric DEFAULT false\n);\n\nCREATE TABLE \"permissions\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"user_id\" integer,\n  \"permission\" varchar\n);\n\nCREATE TABLE \"access_tokens\" (\n  \"uuid\" uuid,\n  \"id\" integer PRIMARY KEY,\n  \"created_at\" datetime,\n  \"updated_at\" datetime,\n  \"deleted_at\" datetime,\n  \"user_id\" integer,\n  \"name\" varchar NOT NULL,\n  \"token_prefix\" varchar NOT NULL,\n  \"token_hash\" char NOT NULL,\n  \"last_used_at\" datetime,\n  \"expires_at\" datetime,\n  \"revoked_at\" datetime\n);\n\n\n\n-- Inferred relationships\n\nALTER TABLE \"access_tokens\" ADD CONSTRAINT \"fk_access_tokens_user_id\" FOREIGN KEY (\"user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"chat_settings\" ADD CONSTRAINT \"fk_chat_settings_chat_id\" FOREIGN KEY (\"chat_id\") REFERENCES \"chats\"(\"id\");\nALTER TABLE \"chats\" ADD CONSTRAINT \"fk_chats_latest_message_id\" FOREIGN KEY (\"latest_message_id\") REFERENCES \"messages\"(\"id\");\nALTER TABLE \"contacts\" ADD CONSTRAINT \"fk_contacts_contact_user_id\" FOREIGN KEY (\"contact_user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"contacts\" ADD CONSTRAINT \"fk_contacts_owning_user_id\" FOREIGN KEY (\"owning_user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"file_accesses\" ADD CONSTRAINT \"fk_file_accesses_uploaded_file_id\" FOREIGN KEY (\"uploaded_file_id\") REFERENCES \"uploaded_files\"(\"id\");\nALTER TABLE \"file_accesses\" ADD CONSTRAINT \"fk_file_accesses_user_id\" FOREIGN KEY (\"user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"messages\" ADD CONSTRAINT \"fk_messages_chat_id\" FOREIGN KEY (\"chat_id\") REFERENCES \"chats\"(\"id\");\nALTER TABLE \"permissions\" ADD CONSTRAINT \"fk_permissions_user_id\" FOREIGN KEY (\"user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"public_profiles\" ADD CONSTRAINT \"fk_public_profiles_user_id\" FOREIGN KEY (\"user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"sessions\" ADD CONSTRAINT \"fk_sessions_user_id\" FOREIGN KEY (\"user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"shared_chat_configs\" ADD CONSTRAINT \"fk_shared_chat_configs_chat_id\" FOREIGN KEY (\"chat_id\") REFERENCES \"chats\"(\"id\");\nALTER TABLE \"shared_chat_instances\" ADD CONSTRAINT \"fk_shared_chat_instances_chat_id\" FOREIGN KEY (\"chat_id\") REFERENCES \"chats\"(\"id\");\nALTER TABLE \"shared_chat_instances\" ADD CONSTRAINT \"fk_shared_chat_instances_owning_user_id\" FOREIGN KEY (\"owning_user_id\") REFERENCES \"users\"(\"id\");\nALTER TABLE \"two_factor_recovery_codes\" ADD CONSTRAINT \"fk_two_factor_recovery_codes_user_id\" FOREIGN KEY (\"user_id\") REFERENCES \"users\"(\"id\");",
+  "generated_at": "2026-06-14T22:33:01Z"
+}

@@ -1,0 +1,161 @@
+---
+title: Installation
+path: install
+description: Install the Open Chat Go server on Debian/Ubuntu, macOS, NixOS or Windows, run the portable Linux AppImage, or use Docker.
+order: 2
+section: Getting Started
+---
+
+Open Chat Go ships as a single self-contained server binary: the frontend,
+Swagger and integrations are embedded, and no external database is required.
+Every channel below starts the server on `127.0.0.1:1984` with state under a
+platform-specific data directory. Once installed, continue with
+[Getting Started](/docs#getting-started) and the
+[Server CLI](/docs#server-cli) reference.
+
+## Debian / Ubuntu (apt)
+
+Debian and Ubuntu packages are published to a signed APT repository hosted on
+GitHub Pages. Ubuntu 22.04/24.04 and Debian 12 are supported.
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://msgmate-io.github.io/open-chat-go/apt/open-chat.asc \
+  | sudo tee /etc/apt/keyrings/open-chat.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/open-chat.asc] https://msgmate-io.github.io/open-chat-go/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/open-chat.list
+sudo apt-get update
+sudo apt-get install open-chat
+```
+
+The package creates an `open-chat` system user, installs a systemd unit and
+starts the server on `127.0.0.1:1984`. State lives in `/var/lib/open-chat`
+(`data.db`) and configuration in `/etc/open-chat/open-chat.json`.
+
+On first start a random admin password is generated and written to the journal:
+
+```bash
+sudo journalctl -u open-chat | grep "Generated random password"
+```
+
+Manage the service with systemd:
+
+```bash
+sudo systemctl status open-chat
+sudo systemctl restart open-chat
+open-chat status
+```
+
+Upgrades arrive through `apt upgrade`. `apt remove open-chat` keeps the
+database; `apt purge open-chat` removes `/var/lib/open-chat`.
+
+Maintainer documentation for building and signing packages lives in
+[`development/packaging/README.md`](https://github.com/msgmate-io/open-chat-go/blob/main/development/packaging/README.md).
+
+## Linux (portable AppImage)
+
+Every release also ships a portable `.AppImage` (x86_64, plus aarch64) that runs
+without installation on Ubuntu 22.04/24.04, Fedora and similar distributions.
+Download the matching asset from the [latest release](https://github.com/msgmate-io/open-chat-go/releases),
+then run it directly:
+
+```bash
+chmod +x open-chat-<version>-x86_64.AppImage
+./open-chat-<version>-x86_64.AppImage
+```
+
+It starts `open-chat server` on `http://127.0.0.1:1984` with an embedded Redis
+and keeps its sqlite database under `$XDG_DATA_HOME/open-chat/`. On first run a
+policy-compliant `admin` password is generated and persisted to
+`$XDG_CONFIG_HOME/open-chat/root-credentials` (mode `0600`) and reused on later
+runs. Set `OPEN_CHAT_OPEN_BROWSER=1` to open the UI automatically; running the
+AppImage again while the server is up just reopens the UI instead of starting a
+second instance. Pass `--appimage-extract-and-run` on hosts without FUSE.
+
+Maintainer build and usage details for the AppImage live in
+[`development/packaging/appimage`](https://github.com/msgmate-io/open-chat-go/blob/main/development/packaging/appimage).
+
+## macOS (Homebrew)
+
+macOS (Apple Silicon and Intel), via [Homebrew](https://brew.sh):
+
+```sh
+brew install msgmate-io/tap/open-chat
+brew services start open-chat
+open-chat status
+```
+
+Data and logs live under `$(brew --prefix)/var/open-chat` and
+`$(brew --prefix)/var/log`. See the Homebrew
+[maintainer guide](https://github.com/msgmate-io/open-chat-go/blob/main/development/homebrew/README.md)
+for details.
+
+## Nix / NixOS
+
+A flake provides `packages.<system>.open-chat`, an overlay and a hardened
+`nixosModules.open-chat` / `services.open-chat` module:
+
+```bash
+nix run github:msgmate-io/open-chat-go
+nix build .#open-chat
+```
+
+The flake packages the official release binary. See the
+[Nix guide](https://github.com/msgmate-io/open-chat-go/blob/main/nix/README.md)
+for the NixOS module options.
+
+## Windows
+
+winget is the recommended Windows channel (Scoop is a secondary, admin-free
+option). Until the package is listed, download the `windows-amd64` or
+`windows-arm64` asset from the [latest release](https://github.com/msgmate-io/open-chat-go/releases)
+and register the native Windows service from an **elevated** PowerShell:
+
+```powershell
+# winget (once published)
+winget install Msgmate.OpenChat
+
+# or Scoop (once the bucket is published)
+scoop bucket add msgmate https://github.com/msgmate-io/scoop-bucket
+scoop install msgmate/open-chat
+
+# register and start the service (admin shell)
+open-chat install
+open-chat status   # service: running, server: running on 127.0.0.1:1984
+```
+
+`open-chat install` copies the binary to `%ProgramFiles%\OpenChat`, stores its
+data and config under `%ProgramData%\OpenChat` and registers the service with the
+Windows SCM. Because the service runs that copied binary, re-run
+`open-chat install --force` from an elevated shell after every
+`winget upgrade`/`scoop update` so the service picks up the new version.
+
+See the [Windows guide](https://github.com/msgmate-io/open-chat-go/blob/main/development/windows/README.md)
+for the full channel comparison and upgrade runbook.
+
+## Docker
+
+Container images are published to GitHub Container Registry:
+
+```bash
+docker run -d --name open-chat \
+  -p 1984:1984 \
+  -e ROOT_CREDENTIALS=admin:change-me \
+  -e DB_PATH=/data/data.db \
+  -v open-chat-data:/data \
+  ghcr.io/msgmate-io/open-chat-go:latest
+```
+
+From a checkout, `docker compose up` runs the server together with the
+development frontend and Redis on `http://localhost:1984`.
+
+## Prebuilt binaries
+
+Every release attaches self-contained `linux`, `darwin` and `windows` binaries
+(for `amd64` and `arm64`) to the
+[GitHub Releases](https://github.com/msgmate-io/open-chat-go/releases) page.
+Download the asset for your platform, make it executable and run it directly:
+
+```bash
+./open-chat server --db-backend sqlite --db-path data.db --root-credentials admin:change-me
+```

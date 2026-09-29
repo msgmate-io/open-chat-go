@@ -1,0 +1,101 @@
+---
+title: Authentication
+path: authentication
+description: Sessions, API tokens, browser tokens and two-factor authentication.
+order: 22
+section: API
+---
+
+Open Chat Go supports three ways to authenticate to the API.
+
+## Session cookies
+
+Browser clients sign in through the frontend, which calls:
+
+```
+POST /api/v1/user/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "•••" }
+```
+
+On success the server sets an HTTP-only session cookie. `POST /api/v1/user/logout`
+clears it. Session-authenticated browser requests also need a same-site `Origin`
+header for state-changing calls.
+
+## API tokens (`ocat_`)
+
+Long-lived API tokens are ideal for server-to-server integrations and the
+bundled clients. Create and manage them under **Profile → API Tokens** or via:
+
+- `POST /api/v1/user/access-tokens`
+- `GET /api/v1/user/access-tokens/list`
+- `POST /api/v1/user/access-tokens/{token_uuid}/revoke`
+
+Send the token as a bearer header:
+
+```
+Authorization: Bearer ocat_xxxxxxxx
+```
+
+Tokens inherit the permissions of the user that created them and can be revoked
+independently. Never embed them in client-side code or commit them to a
+repository.
+
+## Browser tokens
+
+Short-lived, scope-restricted tokens let third-party frontends call the API
+directly without relaying every request through their own backend. See
+[Browser tokens](/docs#browser-tokens) for the exchange flow, scopes and the
+allowlisted routes.
+
+## Two-factor authentication
+
+Users can enable TOTP-based 2FA:
+
+- `POST /api/v1/user/2fa/setup`
+- `POST /api/v1/user/2fa/confirm`
+- `POST /api/v1/user/2fa/disable`
+- `POST /api/v1/user/2fa/recovery-codes`
+
+### Pre-configuring 2FA for bootstrap users
+
+TOTP can be provisioned declaratively for users declared under
+`bootstrap.users` in `open-chat.json` / `open-chat.yaml`. When the server
+starts it normalizes and stores the secret, enables 2FA and, if provided,
+seeds the recovery codes (bcrypt-hashed) exactly like the interactive
+`confirm` endpoint. The bootstrap definition is authoritative: changing
+`two_factor_secret` rotates the secret and invalidates previously issued
+recovery codes.
+
+```json
+{
+  "bootstrap": {
+    "users": [
+      {
+        "username": "mfa-user",
+        "password": "$anchors.mfa_user_password",
+        "email": "mfa-user@example.com",
+        "two_factor_secret": "JBSWY3DPEHPK3PXP",
+        "two_factor_recovery_codes": ["11111111", "22222222"]
+      }
+    ]
+  }
+}
+```
+
+A `two_factor_secret` is a credential: prefer referencing a secret from your
+config anchor/vault block (`$anchors.<name>`) rather than committing it inline.
+Because the bootstrap config is authoritative, a user who disables 2FA in the
+UI will have it re-enabled on the next restart.
+
+## CLI browser authorization
+
+The CLI clients can authenticate without storing a password by starting a
+browser-based authorization flow with `GET /api/user/cli-auth` and polling
+`GET /api/user/cli-auth/poll`.
+
+## Inspecting the current identity
+
+`GET /api/v1/user/self` returns the authenticated user, and
+`GET /api/v1/user/permissions` returns the effective permission set.
