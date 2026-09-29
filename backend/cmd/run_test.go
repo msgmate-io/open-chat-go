@@ -130,6 +130,7 @@ func TestCreateRunInteractionForwardsModernChatConfig(t *testing.T) {
 		runBotLookup{Identifier: "bot-123"},
 		"inspect the project",
 		config,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("createRunInteraction: %v", err)
@@ -163,7 +164,7 @@ func TestCreateRunInteractionOmitsEmptyModernChatConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRunHTTPClient: %v", err)
 	}
-	if _, err := createRunInteraction(context.Background(), client, runBotLookup{Identifier: "bot-123"}, "hello", runChatConfig{}); err != nil {
+	if _, err := createRunInteraction(context.Background(), client, runBotLookup{Identifier: "bot-123"}, "hello", runChatConfig{}, false); err != nil {
 		t.Fatalf("createRunInteraction: %v", err)
 	}
 	if _, exists := received["tool_init"]; exists {
@@ -192,7 +193,7 @@ func TestCreateRunInteractionForwardsExplicitEmptyToolInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveRunChatConfig: %v", err)
 	}
-	if _, err := createRunInteraction(context.Background(), client, runBotLookup{Identifier: "bot-123"}, "hello", config); err != nil {
+	if _, err := createRunInteraction(context.Background(), client, runBotLookup{Identifier: "bot-123"}, "hello", config, false); err != nil {
 		t.Fatalf("createRunInteraction: %v", err)
 	}
 	toolInit, exists := received["tool_init"].(map[string]interface{})
@@ -229,6 +230,7 @@ func TestCreateRunInteractionForwardsLegacySharedConfig(t *testing.T) {
 		runBotLookup{ContactToken: "contact-123", Legacy: true},
 		"legacy prompt",
 		config,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("createRunInteraction: %v", err)
