@@ -106,7 +106,7 @@ func getOrCreateBotSessionToken(DB *gorm.DB, botUserID uint) (string, error) {
 	}
 
 	expiry := now.Add(30 * time.Minute)
-	token := api.GenerateToken(fmt.Sprintf("bot-%d-%d", botUserID, now.UnixNano()))
+	token := api.GenerateToken()
 	row := database.Session{
 		UserId: botUserID,
 		Token:  token,

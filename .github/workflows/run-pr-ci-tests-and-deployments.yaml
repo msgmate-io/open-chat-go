@@ -2418,6 +2418,7 @@ jobs:
           BACKEND_IMAGE: ${{ needs.build-backend-image-once.outputs.image_url }}
           LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${BACKEND_IMAGE:-}" ]; then
@@ -2450,6 +2451,7 @@ jobs:
           BACKEND_IMAGE=${BACKEND_IMAGE}
           LITELLM_API_HOST=${LITELLM_API_HOST}
           LITELLM_API_KEY=${LITELLM_API_KEY}
+          OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
           EOF
 
           docker compose --env-file .ci-test.env -f docker-compose.ci.yaml up -d redis
@@ -2498,6 +2500,9 @@ jobs:
           AI_TEST_API_KEY: ${{ env.AI_TEST_API_KEY }}
           LITELLM_API_HOST: ${{ env.AI_TEST_API_HOST }}
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+          AI_TEST_BASELINE_BACKEND: openrouter
+          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4-flash
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"
           AI_PROCESS_TESTS_VERBOSE: "1"
           PYTHONUNBUFFERED: "1"
