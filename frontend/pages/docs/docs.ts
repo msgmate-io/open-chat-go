@@ -54,7 +54,7 @@ const getFallbackTitle = (filePath: string) =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 
-const docsSourceBase = "https://github.com/msgmate-io/open-chat-go-frontend/blob/main/pages/docs/content";
+const docsSourceBase = "https://github.com/msgmate-io/open-chat-go/blob/main/frontend/pages/docs/content";
 
 const getSourceUrl = (filePath: string) => {
   const fileName = filePath.replace(/^\.\/content\//, "");

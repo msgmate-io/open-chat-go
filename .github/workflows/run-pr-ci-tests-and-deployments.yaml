@@ -772,7 +772,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_test_core_only != ''
     steps:
-      - name: Checkout source repository (interfaces + dev submodules only)
+      - name: Checkout source repository (public submodules only)
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
@@ -815,6 +815,8 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=core-only
+            # core-only smoke build: no integration frontend pages are linked,
+            # so an empty frontend stage is enough.
             FRONTEND_STAGE=frontend_empty
 
       - name: Start backend from core-only image for smoke test

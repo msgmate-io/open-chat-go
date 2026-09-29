@@ -434,8 +434,8 @@ jobs:
 
       - name: Create source archive
         run: |
-          git archive --format=zip --output=code.zip HEAD -- . ':!frontend'
-          echo "Created code.zip without frontend source"
+          git archive --format=zip --output=code.zip HEAD -- .
+          echo "Created code.zip including the in-tree frontend source"
           ls -la code.zip
 
       - name: Create GitHub Release
