@@ -236,7 +236,7 @@ func runInstall(c *cli.Command) error {
 	fmt.Printf("Installed %s\n", target)
 	fmt.Printf("Service config: %s\n", serviceConfigPath)
 	if generatedPassword != "" {
-		fmt.Printf("Generated root credentials: admin:%s\n", generatedPassword)
+		fmt.Printf("Generated root credentials were written to %s (mode 0600)\n", serviceConfigPath)
 		fmt.Println("IMPORTANT: Save this password securely; it will not be shown again.")
 	}
 	return nil

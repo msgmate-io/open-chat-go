@@ -2,6 +2,7 @@ backend/backend
 backend/server/frontend/
 backend/data.db
 backend/test/data.db
+generated-credentials.txt
 bin
 backend/docs
 .env
@@ -19,8 +20,8 @@ downloads/
 eggs/
 apt-repo/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/

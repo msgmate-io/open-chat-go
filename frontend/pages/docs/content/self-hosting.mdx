@@ -1,0 +1,98 @@
+---
+title: Self-hosting
+path: self-hosting
+description: Run the Open Chat Go server, worker and database yourself.
+order: 60
+section: Self-hosting
+---
+
+The `open-chat server` command starts the API, optionally embeds the Asynq
+worker, and serves the compiled frontend. Configuration is driven by CLI flags
+and their matching environment variables.
+
+> For the complete command, flag and `open-chat.json` reference see
+> [Server CLI](/docs#server-cli).
+
+## Quick start
+
+```bash
+open-chat server \
+  --db-backend sqlite \
+  --db-path data.db \
+  --host 0.0.0.0 \
+  --port 1984 \
+  --root-credentials admin:change-me
+```
+
+For a full local stack use the bundled compose file:
+
+```bash
+docker compose up
+```
+
+## Server flags and environment variables
+
+Every flag has an environment variable equivalent via `cli.EnvVars`.
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--db-backend` | `DB_BACKEND` | `sqlite` | Database driver. |
+| `--db-path` | `DB_PATH` | `data.db` | SQLite database file path. |
+| `--debug` | `DEBUG` | `true` | Enable debug mode. |
+| `--host` | `HOST` | `127.0.0.1` | Bind address. |
+| `--port` | `PORT` | `1984` | Listen port. |
+| `--root-credentials` | `ROOT_CREDENTIALS` | `admin:random` | Bootstrap admin `username:password`. |
+| `--default-bot` | `DEFAULT_BOT_CREDENTIALS` | build default | Bootstrap bot credentials. |
+| `--create-extra-user` | `CREATE_EXTRA_USER` | — | Extra `username:password` users (repeatable). |
+| `--create-extra-bot` | `CREATE_EXTRA_BOT` | — | Extra automated bot users (repeatable). |
+| `--add-bot-from-config` | `ADD_BOT_FROM_CONFIG` | — | Path or inline JSON defining extra bots. |
+| `--extra-models-json` | `EXTRA_MODELS_JSON` | — | Extra default models (path or inline JSON array). |
+| `--setup-test-users` | `SETUP_TEST_USERS` | `false` | Create test users. |
+| `--reset-db` | `RESET_DB` | `false` | Reset the database on startup. |
+| `--frontend-proxy` | `FRONTEND_PROXY` | — | Proxy the frontend to a dev server (e.g. `http://localhost:5173/`). |
+| `--start-worker` | `START_WORKER` | `true` | Run the embedded Asynq worker. |
+| `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Worker goroutine count. |
+| `--signup-requires-admin-approval` | `SIGNUP_REQUIRES_ADMIN_APPROVAL` | `false` | Require admin approval for signups. |
+| `--cors-allowed-origins` | `CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origin allowlist. |
+| `--public-base-url` | `PUBLIC_BASE_URL` | — | Canonical public origin advertised to clients. |
+| `--browser-token-ttl-seconds` | `BROWSER_TOKEN_TTL_SECONDS` | `900` | Default browser token lifetime. |
+| `--browser-token-max-ttl-seconds` | `BROWSER_TOKEN_MAX_TTL_SECONDS` | `3600` | Maximum browser token lifetime. |
+| `--browser-token-max-active-per-user` | `BROWSER_TOKEN_MAX_ACTIVE_PER_USER` | `10` | Active browser tokens per user. |
+
+## Queue / Redis
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--redis-mode` | `REDIS_MODE` | `auto` | `auto`, `external` or `embedded`. |
+| `--redis-url` | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection URL. |
+| `--redis-addr` | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address when no URL is set. |
+| `--redis-password` | `REDIS_PASSWORD` | — | Redis password. |
+| `--redis-db` | `REDIS_DB` | `0` | Redis DB index. |
+
+## Provider credentials
+
+Model providers read their API keys from the environment, for example:
+
+```
+OPENAI_API_KEY
+ANTHROPIC_API_KEY
+DEEPINFRA_API_KEY
+OPENROUTER_API_KEY
+GROQ_API_KEY
+LITELLM_API_KEY
+MSGMATE_CLUSTER_API_KEY
+```
+
+Sensitive values are treated as secrets by the bootstrap tooling; provide them
+through your orchestrator's secret store rather than committing them.
+
+## Bootstrap configuration
+
+In addition to flags, the server can be configured through `open-chat.json`
+(bootstrap users/bots) and the SSH bootstrap options listed above. Precedence is
+environment variable / flag first, then the configuration file.
+
+Bootstrap users accept an optional `two_factor_secret` (base32 TOTP secret) and
+`two_factor_recovery_codes`, letting deployments enforce 2FA from the start.
+Treat the secret as a credential and inject it from your secret store. See
+[Authentication → Pre-configuring 2FA for bootstrap users](/docs#authentication).

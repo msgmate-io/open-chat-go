@@ -1,0 +1,260 @@
+---
+title: Server CLI
+path: server-cli
+description: Reference for the built-in `open-chat` command line interface.
+order: 61
+section: Self-hosting
+---
+
+The server ships as a single `open-chat` binary that exposes the API runtime,
+a background worker, a one-shot interaction runner and an API client. This page
+documents every subcommand, its flags and how flags, environment variables and
+the `open-chat.json` configuration file interact.
+
+## Command overview
+
+```bash
+open-chat --help
+open-chat server   [flags]   # API + optional embedded worker + frontend
+open-chat worker   [flags]   # background worker only
+open-chat run      [flags]   # one-shot interaction, prints the bot reply
+open-chat client   <cmd>     # authenticated API calls for scripts
+```
+
+Run `open-chat <command> --help` to print the authoritative flag list for the
+binary you deployed.
+
+## Configuration precedence
+
+`open-chat` resolves configuration from three sources. Later sources win:
+
+1. `open-chat.json` (or the path/inline JSON passed to `--config`).
+2. Environment variables.
+3. Explicit CLI flags.
+
+The config file is read **before** flags are parsed, so its `env` and
+`integrations` sections are written into the process environment. Existing
+environment variables are preserved unless `--config-override-env` is set.
+
+| Global flag | Environment variable | Purpose |
+| --- | --- | --- |
+| `--config` | `OPEN_CHAT_CONFIG` | Inline JSON config object or path to a config file. |
+| `--config-override-env` | `OPEN_CHAT_CONFIG_OVERRIDE_ENV` | Allow config values to overwrite already-set env vars. |
+
+Without `--config` the binary looks for `.open-chat.json` followed by
+`open-chat.json` in the working directory.
+
+## `open-chat server`
+
+Starts the HTTP API, serves the compiled frontend, and (unless disabled) runs
+the embedded Asynq worker. This is the command used in production and by the
+bundled compose file.
+
+```bash
+open-chat server \
+  --db-backend sqlite \
+  --db-path /var/lib/open-chat/data.db \
+  --host 0.0.0.0 \
+  --port 1984 \
+  --root-credentials admin:change-me
+```
+
+### Core flags
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--db-backend`, `--db` | `DB_BACKEND` | `sqlite` | Database driver. |
+| `--db-path`, `--dp` | `DB_PATH` | `data.db` | SQLite database file path. |
+| `--debug`, `-d` | `DEBUG` | `true` | Enable debug mode (disable for production). |
+| `--reset-db`, `--rdb` | `RESET_DB` | `false` | Reset the database on startup. |
+| `--setup-test-users`, `--stu` | `SETUP_TEST_USERS` | `false` | Seed test users. |
+| `--host`, `-b` | `HOST` | `127.0.0.1` | Bind address. Use `0.0.0.0` in containers. |
+| `--port`, `-p` | `PORT` | `1984` | Listen port. |
+| `--frontend-proxy`, `--fpx` | `FRONTEND_PROXY` | — | Proxy the frontend to a dev server, e.g. `http://localhost:5173/`. |
+| `--public-base-url` | `PUBLIC_BASE_URL` | — | Canonical public origin advertised to clients. |
+| `--cors-allowed-origins` | `CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origin allowlist (no wildcards). |
+| `--signup-requires-admin-approval` | `SIGNUP_REQUIRES_ADMIN_APPROVAL` | `false` | Require admin approval for signups. |
+
+### Bootstrap and credentials
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--root-credentials`, `--rc` | `ROOT_CREDENTIALS` | `admin:random` | Singleton admin `username:password`. Use `username:hashed_<bcrypt>` or `username:random`. |
+| `--default-bot`, `--botc` | `DEFAULT_BOT_CREDENTIALS` | build default | Credentials for the managed default bot. |
+| `--create-extra-user` | `CREATE_EXTRA_USER` | — | Additional `username:password` users (repeatable). |
+| `--create-extra-bot` | `CREATE_EXTRA_BOT` | — | Additional automated `username:password` bots (repeatable). |
+| `--add-bot-from-config` | `ADD_BOT_FROM_CONFIG` | — | JSON object/array, or path, defining additional bots (repeatable). |
+| `--extra-models-json` | `EXTRA_MODELS_JSON` | — | Extra default models as a JSON array or file path. |
+
+When `ROOT_CREDENTIALS` is not set, the server bootstraps the admin account
+from the `bootstrap.users` entry named `admin` in `open-chat.json` and fails if
+neither source is available.
+
+Each `bootstrap.users` entry also accepts `two_factor_secret` (base32 TOTP
+secret) and an optional `two_factor_recovery_codes` array. When present the
+server enables TOTP 2FA for that user at startup and seeds the recovery codes,
+so existing installations can enforce 2FA without manual enrollment. See
+[Authentication → Pre-configuring 2FA for bootstrap users](/docs#authentication)
+for details and secret-handling guidance.
+
+### SSH bootstrap
+
+The SSH integration can be provisioned declaratively. Each flag accepts a JSON
+object/array or a file path and can be repeated.
+
+| Flag | Env var |
+| --- | --- |
+| `--add-ssh-keys-from-config` | `ADD_SSH_KEYS_FROM_CONFIG` |
+| `--add-ssh-servers-from-config` | `ADD_SSH_SERVERS_FROM_CONFIG` |
+| `--add-ssh-key-grants-from-config` | `ADD_SSH_KEY_GRANTS_FROM_CONFIG` |
+| `--add-ssh-server-grants-from-config` | `ADD_SSH_SERVER_GRANTS_FROM_CONFIG` |
+| `--add-ssh-default-owner` | `ADD_SSH_DEFAULT_OWNER` |
+
+### Worker flags
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--start-worker`, `--sw` | `START_WORKER` | `true` | Run the embedded worker in the server process. |
+| `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Worker goroutine count. |
+
+Set `START_WORKER=false` when you run `open-chat worker` as a separate process.
+
+### Browser token flags
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--browser-token-ttl-seconds` | `BROWSER_TOKEN_TTL_SECONDS` | `900` | Default exchanged browser token lifetime. |
+| `--browser-token-max-ttl-seconds` | `BROWSER_TOKEN_MAX_TTL_SECONDS` | `3600` | Maximum browser token lifetime. |
+| `--browser-token-max-active-per-user` | `BROWSER_TOKEN_MAX_ACTIVE_PER_USER` | `10` | Active browser tokens per user (oldest evicted). |
+
+### Redis / queue flags
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--redis-mode` | `REDIS_MODE` | `auto` | `auto`, `external` or `embedded`. |
+| `--redis-url` | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection URL. |
+| `--redis-addr` | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address when no URL is set. |
+| `--redis-password` | `REDIS_PASSWORD` | — | Redis password. |
+| `--redis-db` | `REDIS_DB` | `0` | Redis database index. |
+
+With `auto`, the server uses an external Redis when reachable and otherwise
+starts an embedded Redis instance (useful for local development).
+
+## `open-chat worker`
+
+Runs only the background worker, which processes reply generation and other
+asynchronous tasks. Use this when the API and worker are deployed separately.
+
+```bash
+open-chat worker \
+  --db-backend sqlite \
+  --db-path /var/lib/open-chat/data.db \
+  --backend-host http://open-chat-server:1984 \
+  --asynq-concurrency 20
+```
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--db-backend`, `--db` | `DB_BACKEND` | `sqlite` | Database driver. |
+| `--db-path`, `--dp` | `DB_PATH` | `data.db` | SQLite database file path. |
+| `--debug`, `-d` | `DEBUG` | `true` | Enable debug mode. |
+| `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Concurrent worker goroutines. |
+| `--backend-host` | `OPEN_CHAT_HOST` | `http://127.0.0.1:1984` | Backend base URL used by async bot tasks. |
+
+The worker also accepts all Redis flags listed above.
+
+## `open-chat run`
+
+Creates a single interaction, waits for the bot response and prints it to
+stdout. If no server is reachable it starts a temporary one. Handy for smoke
+tests and shell pipelines.
+
+```bash
+open-chat run \
+  --bot assistant \
+  --username admin --password "$ADMIN_PASSWORD" \
+  --message "Summarise the latest changes"
+```
+
+| Flag | Env var | Default | Purpose |
+| --- | --- | --- | --- |
+| `--host` | `HOST` | `127.0.0.1` | Backend host. |
+| `--port` | `PORT` | `1984` | Backend port. |
+| `--bot` | `OPEN_CHAT_RUN_BOT` | `bot` | Bot identifier (uuid or name). |
+| `--message` | `OPEN_CHAT_RUN_MESSAGE` | — | First interaction prompt (required). |
+| `--chat-config` | `OPEN_CHAT_RUN_CHAT_CONFIG` | — | Per-chat JSON object, file path, or `-` for stdin. |
+| `--username` | `OPEN_CHAT_RUN_USERNAME` | — | Login username. |
+| `--password` | `OPEN_CHAT_RUN_PASSWORD` | — | Login password. |
+| `--api-token` | `OPEN_CHAT_RUN_API_TOKEN` | — | Token used as `Authorization: Bearer`. |
+| `--timeout-seconds` | `OPEN_CHAT_RUN_TIMEOUT_SECONDS` | `120` | Max seconds to wait for completion. |
+| `--poll-ms` | `OPEN_CHAT_RUN_POLL_MS` | `500` | Polling interval in milliseconds. |
+
+Provide either `--api-token` or a `--username`/`--password` pair.
+
+## `open-chat client`
+
+A scriptable client for authenticated API calls. It stores a host/token pair
+after login and supports JSON output for further processing.
+
+```bash
+open-chat client login --username admin --password "$ADMIN_PASSWORD"
+open-chat client chats --limit 5 --json
+open-chat client get --chat <chat_uuid> --messages
+open-chat client hash-password --password "$NEW_PASSWORD"
+```
+
+Shared flags: `--host` (`OPEN_CHAT_HOST`, default `http://localhost:1984`),
+`--api-token` (`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
+their own `open-chat client ...` subcommands.
+
+## `open-chat.json` example
+
+The config file can set environment overrides, integration secrets and
+bootstrap entities. Unknown keys are rejected, so only declared options are
+allowed.
+
+```json
+{
+  "env": {
+    "DEBUG": false,
+    "PORT": 1984,
+    "PUBLIC_BASE_URL": "https://chat.example.com"
+  },
+  "integrations": {
+    "<integration_name>": {
+      "<option>": "<value>"
+    }
+  },
+  "bootstrap": {
+    "users": [
+      { "username": "admin", "password": "change-me", "is_admin": true },
+      {
+        "username": "mfa-user",
+        "password": "change-me-too",
+        "email": "mfa-user@example.com",
+        "two_factor_secret": "JBSWY3DPEHPK3PXP",
+        "two_factor_recovery_codes": ["11111111", "22222222"]
+      }
+    ],
+    "bots": [
+      {
+        "primary_owner": "admin",
+        "bot": {
+          "username": "assistant",
+          "password": "change-me-too",
+          "name": "assistant"
+        },
+        "overwrite_if_exists": true,
+        "default_shared_config": {
+          "system_prompt": "You are a helpful assistant."
+        }
+      }
+    ]
+  }
+}
+```
+
+Integration `env`/`integrations` keys map to the runtime environment variables
+declared by each integration; use the integration README for the exact names.
+See [Self-hosting](/docs#self-hosting) for deployment guidance and the
+environment variables read by model providers.

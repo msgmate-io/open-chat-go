@@ -10,7 +10,8 @@ You should only implement actual integration tests if asked, or suggest to imple
 
 ### Clone the repository
 
-Only the public submodules are checked out with the clone (frontend, the Go
+The core frontend is tracked in-tree under `frontend/` (no longer a git
+submodule). Only the public submodules are checked out with the clone (the Go
 interfaces, the Python/JS clients and the build-tools). Private repositories
 (the private integrations manifest / CI, the Helm chart, the mobile client and
 the LLM coding context) are materialized on demand by the profile setup step.
@@ -146,8 +147,8 @@ changes.
 
 Frontend pages for integrations are implemented **inside each integration
 repository** under `frontend/pages/...` (built with React, Vike, and
-`@open-chat-go/ui` using `IntegrationPageShell`). The public `./frontend`
-repository owns only the shared component contract (`@open-chat-go/ui`) and the
+`@open-chat-go/ui` using `IntegrationPageShell`). The in-repo `frontend/`
+directory owns only the shared component contract (`@open-chat-go/ui`) and the
 generic integrations overview page.
 
 #### Build & Export Workflow:
@@ -164,7 +165,7 @@ Chat extension registrations (message inputs, details views, pre-start selectors
 #### Local dev / hot-reload loop
 
 - Run `openchat-integrations frontend --profile <profile>` (or the higher-level `prepare`); it creates the page-set symlinks and the per-checkout `frontend/node_modules` anchor automatically. Re-run it whenever a page set is added or renamed, then restart the Vite dev server.
-- The `frontend` repo `npm run dev` / `npm run build` scripts already set `VIKE_CRAWL='{"git":false}'`, so gitignored page-set symlinks are discovered on every host; do not remove that env prefix.
+- The in-repo `frontend/` `npm run dev` / `npm run build` scripts already set `VIKE_CRAWL='{"git":false}'`, so gitignored page-set symlinks are discovered on every host; do not remove that env prefix.
 - Inside the dev compose this happens automatically at container start (`integration-sync` service).
 - Note: under Docker, container-side builds own `frontend/node_modules/.vite`; when building the frontend on the host afterwards, `chown` that directory first.
 

@@ -290,7 +290,7 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
-	if redirectURI != "" && !isLoopbackRedirectURI(redirectURI) {
+	if redirectURI != "" && !isValidRedirectURL(redirectURI) {
 		http.Error(w, "redirect_uri must target localhost loopback", http.StatusBadRequest)
 		return
 	}
@@ -393,7 +393,7 @@ func requestAbsoluteURL(r *http.Request) string {
 	return scheme + "://" + host + r.URL.RequestURI()
 }
 
-func isLoopbackRedirectURI(raw string) bool {
+func isValidRedirectURL(raw string) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return false
@@ -493,6 +493,10 @@ func cleanupExpiredCLIAuthResultsLocked(now time.Time) {
 }
 
 func redirectToCLIAuthCallback(w http.ResponseWriter, r *http.Request, redirectURI, state, authErr, token string) {
+	if !isValidRedirectURL(redirectURI) {
+		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		return
+	}
 	parsed, err := url.Parse(redirectURI)
 	if err != nil {
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)

@@ -1,0 +1,47 @@
+---
+title: Architecture
+path: architecture
+description: Core modules of Open Chat Go and how they collaborate.
+order: 10
+section: Core Concepts
+---
+
+Open Chat Go is organized as a set of small Go modules behind a single HTTP
+server, plus a React frontend that talks to it over REST and WebSockets.
+
+## Backend modules
+
+| Module | Path | Responsibility |
+| --- | --- | --- |
+| HTTP server | `backend/server` | Routing, middleware, auth, CORS, WebSocket upgrades, static frontend serving. |
+| API handlers | `backend/api` | Versioned handlers for chats, bots, contacts, models, tools, files, integrations, users and the public interaction routes. |
+| Chat state | `backend/chatstate` | Conversation/participant state, message persistence helpers and state transitions. |
+| Queue | `backend/queue` / `backend/workqueue` | Async task processing (message generation, tool calls, bot replies) built on asynq. |
+| Database | `backend/database` | GORM models, migrations and connections. |
+| Integrations | `backend/integrations` | Tool/integration registry, access rules and public route discovery. |
+| Runtime config | `backend/runtimecfg` | Environment-driven configuration (CORS, public base URL, browser tokens, …). |
+
+## Request lifecycle
+
+1. A request reaches `backend/server` and passes through the common middleware
+   stack: CORS, no-cache, database, WebSocket and queue middleware.
+2. Authenticated `/api/v1/*` routes are served by `backend/api` handlers behind
+   the auth middleware. A small set of public/optional-auth routes are mounted
+   without it.
+3. Handlers enqueue work on the asynq queue and return immediately; the queue
+   workers produce model output and tool calls asynchronously.
+4. Clients observe progress through polling endpoints (`/status`) or the
+   WebSocket streams (`/ws/...`).
+
+## Frontend
+
+The frontend is a Vike + React application. It renders the chat UI, the model
+and tool catalogs, the interaction viewer and this documentation. It authenticates
+with the same session cookies or `ocat_` API tokens as any other client and talks
+to the backend over the public REST/WS surface described here.
+
+## Public vs. admin surface
+
+Only user-accessible modules are documented here. Administrative routes
+(`/api/v1/admin/*`), internal test overviews and database-schema tooling are
+gated behind the admin role and are out of scope for this documentation.

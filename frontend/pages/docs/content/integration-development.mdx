@@ -1,0 +1,209 @@
+---
+title: Integration Development
+path: integration-development
+description: Build an Open-Chat integration or tool, and add a custom integration to a profile.
+order: 33
+section: Platform
+---
+
+Open-Chat is extended through **integrations** and **tools**. Both live in their
+own repositories and are wired into the server through stable Go interfaces, so
+the core stays small and integrations can be developed, versioned and (when
+needed) kept private independently.
+
+This page covers the integration/tool interfaces, the manifest and profile
+system, the frontend page linking contract, a step-by-step walkthrough for
+**adding a custom integration**, and the local development loop.
+
+## The interfaces
+
+| Interface | Repository | Purpose |
+| --- | --- | --- |
+| Integration | [`go_integration_interface`](https://github.com/msgmate-io/open-chat-go-integration-interface) | Register routes, frontend pages, migrations, bootstrap data and tools. |
+| Tool | [`go_tool_interface`](https://github.com/msgmate-io/open-chat-go-tool-interface) | Define callable tools (models invoke these). |
+
+An integration registers itself once, from an `init()` function:
+
+```go
+package my_integration
+
+import (
+    "github.com/msgmate-io/go-integration-interface/integrationinterface"
+)
+
+func init() {
+    integrationinterface.MustRegister(integrationinterface.Definition{
+        Name:           "my_integration",
+        AdminOnly:      false,
+        UserAccessible: true,
+        APIRoutes:      []string{"/api/v1/integrations/my_integration/..."},
+        ToolDefinitions: []toolinterface.Definition{
+            // tools callable by models
+        },
+        // FrontendRoutes / FrontendPages / FrontendAssets, Migrations,
+        // RuntimeEnvVars, Bootstrap, ... are optional.
+    })
+}
+```
+
+The server discovers integrations through generated side-effect imports
+(`backend/integrations/externalintegrations/imports_gen.go`) that the manager
+writes for the selected profile — the core never hardcodes an integration.
+
+### Tools
+
+Tools are declared on the integration definition and implement the tool
+interface from `go_tool_interface`. A tool definition describes its function
+name, description and input JSON schema; the server exposes it to models for the
+integrations a user can access.
+
+## Manifest and profiles
+
+Integrations are declared in `integrations.yaml` at the repository root and
+fetched on demand by the `openchat-integrations` manager
+([`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools),
+vendored at `development/build-tools`). No integration is a git submodule.
+
+- **Profiles** select which integrations are compiled and served: `core-only`
+  (public default), `default`, `full`, `full-ci` and `full-android`.
+- **Private content** (private integrations, the private profiles, the CI
+  tooling, the Helm chart and the mobile client) lives outside the public
+  repository. `openchat-integrations setup` materializes it per
+  `profile_setup.yaml` and mirrors the private integrations manifest into
+  `.integrations/private/`.
+- **Lockfile**: `integrations.lock.json` pins public integration commits; the
+  private pins live in the private `ci` repository. `sync --frozen` checks out
+  the pinned commits.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install ./development/build-tools
+
+.venv/bin/openchat-integrations setup   --profile full   # repos + symlinks + private manifest
+.venv/bin/openchat-integrations prepare --profile full   # sync + resolve + frontend link
+```
+
+## Frontend pages owned by an integration
+
+Integration React/Vike pages live in the integration repository under
+`frontend/pages/`. An `integration.frontend.json` at the integration root
+describes them:
+
+```json
+{
+  "name": "my_integration",
+  "mounts": [
+    { "source": "pages", "dest": "integrations/my_integration" }
+  ],
+  "pages": [
+    { "source": "integrations/my_integration/projects", "asset": "projects/index.html" }
+  ]
+}
+```
+
+- `mounts` maps directories under the integration's `frontend/` to destinations
+  under the aggregator's `frontend/pages/`. The destination determines the Vike
+  route, so a mount can place pages at the default `/integrations/<name>`
+  prefix **or at an arbitrary (root) route** — for example
+  `{ "source": "pages/sign-up", "dest": "sign-up" }` serves `/sign-up`.
+- `pages` lists what the manager exports after the frontend build: `source` is
+  the prerendered directory under `dist/client/`, `asset` is the path inside the
+  integration's embedded `frontend_assets`.
+- `extension` (optional) registers cross-integration chat UI from this page set.
+
+The manager symlinks each mount into the aggregator
+(`openchat-integrations frontend`), Vike prerenders the routes, and
+`openchat-integrations export` copies the HTML into the integration's
+`frontend_assets`. The integration Go code embeds those assets and registers
+them:
+
+```go
+//go:embed frontend_assets
+var assets embed.FS
+
+FrontendPages: []integrationinterface.FrontendPage{
+    {
+        Route:     "/integrations/my_integration/projects",
+        Public:    false,
+        AssetPath: "projects/index.html",
+    },
+    {
+        Route:     "/sign-up", // root route
+        Root:      true,       // opt out of the /integrations/<name> prefix
+        Public:    true,
+        AssetPath: "sign-up/index.html",
+    },
+}
+```
+
+Routes default to the `/integrations/<name>` prefix for safety. Set `Root: true`
+on `FrontendPage`/`FrontendRoute` to mount a first-party route elsewhere; the
+server serves the embedded page there and reserves it (core page routes that
+collide are de-registered in favour of the integration page).
+
+## Adding a custom integration
+
+1. **Create the integration repository.** Start a Go module whose package
+   imports `go_integration_interface` and registers a `Definition` in `init()`:
+
+   ```bash
+   mkdir open-chat-go-my-integration && cd open-chat-go-my-integration
+   go mod init github.com/msgmate-io/my-integration
+   ```
+
+2. **Implement the definition.** Fill in the routes, tools, migrations,
+   bootstrap config, runtime env vars and (optionally) the frontend
+   contribution. Keep the integration self-contained: all integration state and
+   models live in the integration package.
+
+3. **Declare it in the manifest.** Add an entry under `integrations:` (and to a
+   profile under `profiles:`) in `integrations.yaml`, or, for a private
+   integration, in the private manifest fragment
+   (`openchat/private-integrations.yaml` in the `ci` repository). Minimal
+   public entry:
+
+   ```yaml
+   integrations:
+     my_integration:
+       module: github.com/msgmate-io/my-integration
+       import: github.com/msgmate-io/my-integration
+       source: git
+       repo: https://github.com/msgmate-io/open-chat-go-my-integration
+       ref: main
+       path: clients/integrations/my_integration
+       private: false
+       depends_on:
+         - rest_api_tool
+   ```
+
+4. **(Optional) add profile-scoped repositories or symlinks.** If the
+   integration is only needed for a profile and requires extra checkouts, add
+   them to `profile_setup.yaml` under `repos:` and the profile's
+   `repos:`/`symlinks:`.
+
+5. **Materialize and build.**
+
+   ```bash
+   .venv/bin/openchat-integrations sync    --profile full   # fetch the new repo
+   .venv/bin/openchat-integrations resolve --profile full   # go.work + imports
+   cd backend && ./full_build.sh            # or `go build ./...`
+   ```
+
+6. **Develop locally against a fork** without editing the manifest:
+
+   ```bash
+   .venv/bin/openchat-integrations dev --integration my_integration --path ../my-integration-fork
+   # or: OPENCHAT_INTEGRATION_MY_INTEGRATION_PATH=/path/to/checkout
+   ```
+
+7. **Open a PR** targeting `main` with the applicable CI labels (see the
+   repository playbook). Never add `slow-android-build-test` unless explicitly
+   requested.
+
+## Licensing
+
+The core server and the public `frontend` are licensed `AGPL-3.0-or-later`;
+brand assets under `frontend/assets/` are explicitly excluded (all rights
+reserved). Integrations live in their own repositories and carry their own
+license — private integrations are proprietary and are never part of the public
+source. See the repository `NOTICE`/`COPYRIGHT` files and `frontend/NOTICE`.
