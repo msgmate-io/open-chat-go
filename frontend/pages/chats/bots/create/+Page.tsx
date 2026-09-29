@@ -76,7 +76,7 @@ export default function Page() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [backend, setBackend] = useState("litellm");
-  const [endpoint, setEndpoint] = useState("https://litellm.t1m.me/v1");
+  const [endpoint, setEndpoint] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant.");
   const [temperature, setTemperature] = useState("0.7");
   const [maxTokens, setMaxTokens] = useState("4096");
