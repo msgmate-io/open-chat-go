@@ -7,7 +7,10 @@ import (
 	"backend/servicecontrol"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -270,4 +273,238 @@ func RestartServer(w http.ResponseWriter, r *http.Request) {
 		Status:     "restarting",
 		Deployment: deployment,
 	})
+}
+
+type rawConfigResponse struct {
+	Deployment integrationsettings.DeploymentInfo `json:"deployment"`
+	Format     string                             `json:"format"`
+	YAML       string                             `json:"yaml"`
+	Redacted   bool                               `json:"redacted"`
+	InMemory   bool                               `json:"in_memory"`
+}
+
+type rawConfigValidateRequest struct {
+	YAML string `json:"yaml"`
+}
+
+type rawConfigValidateResponse struct {
+	Valid  bool     `json:"valid"`
+	Errors []string `json:"errors"`
+}
+
+type rawConfigSaveRequest struct {
+	YAML string `json:"yaml"`
+}
+
+type rawConfigSaveResponse struct {
+	Deployment      integrationsettings.DeploymentInfo `json:"deployment"`
+	Persisted       bool                               `json:"persisted"`
+	PersistError    string                             `json:"persist_error,omitempty"`
+	RestartRequired bool                               `json:"restart_required"`
+}
+
+type rawConfigDownloadRequest struct {
+	Password string `json:"password"`
+}
+
+// GetRawIntegrationSettings returns the active config document as YAML with
+// sensitive values masked.
+//
+//	@Summary      Get raw integration settings
+//	@Description  Returns the active config document rendered as YAML with sensitive values masked.
+//	@Tags         admin
+//	@Produce      json
+//	@Success      200 {object} rawConfigResponse
+//	@Router       /api/v1/admin/integration-settings/raw [get]
+func GetRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdmin(w, r) {
+		return
+	}
+
+	deployment := integrationsettings.BuildDeploymentInfo()
+	defs := settingsDefinitions()
+	values := runtimecfg.GetAll()
+
+	root, format, err := integrationsettings.LoadConfigDocument(runtimecfg.GetConfigSource())
+	inMemory := false
+	if err != nil {
+		if !errors.Is(err, integrationsettings.ErrNotPersistable) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		root = integrationsettings.BuildRuntimeConfigDocument(defs, values)
+		format = deployment.ConfigFormat
+		inMemory = true
+	}
+
+	redacted := integrationsettings.RedactConfig(root, values, defs)
+	rendered, err := integrationsettings.RenderConfigYAML(redacted)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, rawConfigResponse{
+		Deployment: deployment,
+		Format:     format,
+		YAML:       string(rendered),
+		Redacted:   true,
+		InMemory:   inMemory,
+	})
+}
+
+// ValidateRawIntegrationSettings validates a raw config document without
+// persisting it.
+//
+//	@Summary      Validate raw integration settings
+//	@Description  Validates a raw config document and returns the list of problems without persisting.
+//	@Tags         admin
+//	@Accept       json
+//	@Produce      json
+//	@Success      200 {object} rawConfigValidateResponse
+//	@Router       /api/v1/admin/integration-settings/raw/validate [post]
+func ValidateRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdmin(w, r) {
+		return
+	}
+
+	payload := rawConfigValidateRequest{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	root, err := integrationsettings.ParseConfigDocument(payload.YAML)
+	if err != nil {
+		writeJSON(w, http.StatusOK, rawConfigValidateResponse{Valid: false, Errors: []string{err.Error()}})
+		return
+	}
+	errs := integrationsettings.ValidateConfigDocument(root, settingsDefinitions())
+	writeJSON(w, http.StatusOK, rawConfigValidateResponse{Valid: len(errs) == 0, Errors: errs})
+}
+
+// SaveRawIntegrationSettings validates and persists a raw config document,
+// preserving values that were sent back as the redaction sentinel.
+//
+//	@Summary      Save raw integration settings
+//	@Description  Validates and persists a raw config document, restoring redacted values from disk.
+//	@Tags         admin
+//	@Accept       json
+//	@Produce      json
+//	@Success      200 {object} rawConfigSaveResponse
+//	@Router       /api/v1/admin/integration-settings/raw [put]
+func SaveRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdmin(w, r) {
+		return
+	}
+
+	payload := rawConfigSaveRequest{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	root, err := integrationsettings.ParseConfigDocument(payload.YAML)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	defs := settingsDefinitions()
+	if errs := integrationsettings.ValidateConfigDocument(root, defs); len(errs) > 0 {
+		writeJSON(w, http.StatusBadRequest, rawConfigValidateResponse{Valid: false, Errors: errs})
+		return
+	}
+
+	source := runtimecfg.GetConfigSource()
+	persisted := false
+	persistError := ""
+
+	if original, _, err := integrationsettings.LoadConfigDocument(source); err != nil {
+		persistError = err.Error()
+	} else {
+		restored := integrationsettings.RestoreRedactedConfig(original, root, runtimecfg.GetAll(), defs)
+		if _, err := integrationsettings.SaveConfigDocument(source, restored); err != nil {
+			persistError = err.Error()
+		} else {
+			persisted = true
+		}
+	}
+
+	writeJSON(w, http.StatusOK, rawConfigSaveResponse{
+		Deployment:      integrationsettings.BuildDeploymentInfo(),
+		Persisted:       persisted,
+		PersistError:    persistError,
+		RestartRequired: true,
+	})
+}
+
+// DownloadRawIntegrationSettings streams the raw config file after the admin
+// re-authenticates with their password.
+//
+//	@Summary      Download raw integration settings
+//	@Description  Streams the raw config file after password confirmation.
+//	@Tags         admin
+//	@Accept       json
+//	@Produce      application/octet-stream
+//	@Success      200 {file} file
+//	@Router       /api/v1/admin/integration-settings/raw/download [post]
+func DownloadRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_, user, err := util.GetDBAndUser(r)
+	if err != nil || user == nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+	if !user.IsAdmin {
+		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return
+	}
+
+	payload := rawConfigDownloadRequest{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	payload.Password = strings.TrimSpace(payload.Password)
+	if payload.Password == "" {
+		http.Error(w, "password is required", http.StatusBadRequest)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.Password)); err != nil {
+		http.Error(w, "invalid password", http.StatusUnauthorized)
+		return
+	}
+
+	source := strings.TrimSpace(runtimecfg.GetConfigSource())
+	if source == "" || strings.HasPrefix(source, "inline") {
+		http.Error(w, "no persistable config file", http.StatusConflict)
+		return
+	}
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		http.Error(w, "no persistable config file", http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(source)))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
