@@ -217,12 +217,6 @@ type BashCoverageReport struct {
 	// An unset (zero) value means "no recorded verification evidence yet",
 	// which the criteria evaluator treats as unattested rather than assumed.
 	WrittenVerifications int `json:"written_verifications,omitempty"`
-	// WrittenCoverageFraction is the share of recorded writes verified by
-	// re-read on this turn (0 when nothing was recorded yet). It is derived,
-	// never stored: verified writes / recorded writes (see the method below).
-	// TODO(ci#514): this will stay 0 until the github_writes verification
-	// pass is wired through the api layer and records verdicts.
-	WrittenCoverageFraction float64 `json:"written_coverage_fraction,omitempty"`
 }
 
 // BashCoverageMaxExamples is how many residual (untyped) commands a report keeps.
