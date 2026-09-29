@@ -1,0 +1,70 @@
+---
+title: Introduction
+path: intro
+description: Entry point for the Open Chat Go platform documentation.
+order: 1
+section: Introduction
+---
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@open-chat-go/ui";
+
+Open Chat Go is a federated chat platform that combines a Go backend, a React
+frontend, an async worker queue, and a growing set of LLM models, tools and
+integrations.
+
+This documentation covers the **public** surface of the platform: the REST and
+WebSocket APIs, the chat and interaction model, bots and agents, models and
+tools, the supported clients, and how to self-host the server. Internal
+administration material is intentionally excluded.
+
+<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+  <a href="/docs#architecture">
+    <Card className="h-full transition-colors hover:bg-muted/30">
+      <CardHeader>
+        <CardTitle className="text-base">Architecture</CardTitle>
+        <CardDescription>How the server, queue and frontend fit together.</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">Read the core concepts overview.</CardContent>
+    </Card>
+  </a>
+
+  <a href="/docs#rest-api">
+    <Card className="h-full transition-colors hover:bg-muted/30">
+      <CardHeader>
+        <CardTitle className="text-base">REST API</CardTitle>
+        <CardDescription>Endpoint groups, auth and shared capability URLs.</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">Browse the public API surface.</CardContent>
+    </Card>
+  </a>
+
+  <a href="/reference" target="_blank" rel="noreferrer">
+    <Card className="h-full transition-colors hover:bg-muted/30">
+      <CardHeader>
+        <CardTitle className="text-base">API Reference</CardTitle>
+        <CardDescription>Interactive OpenAPI reference exposed by the backend.</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">Open `/reference` in a new tab.</CardContent>
+    </Card>
+  </a>
+
+  <a href="/docs#self-hosting">
+    <Card className="h-full transition-colors hover:bg-muted/30">
+      <CardHeader>
+        <CardTitle className="text-base">Self-hosting</CardTitle>
+        <CardDescription>Server flags, environment variables and deployment.</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">Run Open Chat Go yourself.</CardContent>
+    </Card>
+  </a>
+
+  <a href="/docs#server-cli">
+    <Card className="h-full transition-colors hover:bg-muted/30">
+      <CardHeader>
+        <CardTitle className="text-base">Server CLI</CardTitle>
+        <CardDescription>Every `open-chat` subcommand, flag and config option.</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">Operate the server from the terminal.</CardContent>
+    </Card>
+  </a>
+</div>
