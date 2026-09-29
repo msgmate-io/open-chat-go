@@ -355,6 +355,12 @@ jobs:
             SHOULD_SANDBOX_TAGS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" \
               | sed -n 's/^sandbox-test://p' \
               | tr '\n' ',' | sed 's/,\+/,/g; s/^,//; s/,$//' || true)"
+            # A plain `sandbox-test` label means "run the whole suite"; it must
+            # win over any `sandbox-test:<tag>` selectors so adding the tag
+            # labels alongside it never narrows the public run to zero tests.
+            if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'sandbox-test'; then
+              SHOULD_SANDBOX_TAGS=""
+            fi
             SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
             SHOULD_RELEASE_ANDROID="$(jq -r '
               ([.pull_request.labels[]?.name // ""]
@@ -1435,7 +1441,10 @@ jobs:
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full-android
+          # The sandbox build runs with OPENCHAT_SKIP_INTEGRATION_PREPARE=1, so
+          # resolve here: this writes backend/go.work, imports_gen.go and
+          # build_tags that full_build.sh/GOWORK then consume.
+          "$BUILD_TOOLS" prepare --frozen --profile full-android
 
       - name: Login to GHCR for sandbox image pull
         run: |
@@ -1513,6 +1522,82 @@ jobs:
       gh_pr_repo: ${{ github.repository }}
       gh_pr_number: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
     secrets: inherit
+
+  dispatch-private-sandbox-tests:
+    name: Dispatch Private Sandbox Tests
+    runs-on: ubuntu-latest
+    # Second sandbox layer: the private CI repository runs the extended suite
+    # (LITTLE WORLD + rest_api_tool, etc.) in parallel with the public sandbox
+    # benchmark above. Results are kept privately in the CI repo; the private
+    # workflow links the report from a PR comment and a commit status.
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, approve-and-dispatch-deploy]
+    if: |
+      always() &&
+      needs.run-pr-ci-tests-and-deployments.result == 'success' &&
+      (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
+      needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != '' &&
+      (needs.approve-and-dispatch-deploy.result == 'success' ||
+       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production'))
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      CI_REF: ${{ vars.CI_REF || 'main' }}
+    steps:
+      - name: Dispatch private sandbox workflow in CI repository
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          TARGET_REF: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          IMAGE_URL: ${{ needs.build-backend-image-once.outputs.image_url }}
+          SOURCE_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
+          PRIVATE_SANDBOX_TAGS: ${{ vars.PRIVATE_SANDBOX_TAGS || 'lw' }}
+          LW_REF: ${{ vars.LITTLE_WORLD_REF || 'main' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CI_REPO:-}" ]; then
+            echo "::warning::ci_repository output is empty; skipping private sandbox dispatch."
+            exit 0
+          fi
+          if [ -z "${IMAGE_URL:-}" ]; then
+            echo "::warning::No backend image available; skipping private sandbox dispatch."
+            exit 0
+          fi
+          payload="$(
+            jq -n \
+              --arg ref "$CI_REF" \
+              --arg targetRef "$TARGET_REF" \
+              --arg imageUrl "$IMAGE_URL" \
+              --arg tags "$PRIVATE_SANDBOX_TAGS" \
+              --arg sourceRepo "$SOURCE_REPO" \
+              --arg prNumber "$PR_NUMBER" \
+              --arg sourceSha "$SOURCE_SHA" \
+              --arg botUser "$BOT_USER" \
+              --arg lwRef "$LW_REF" \
+              '{
+                ref: $ref,
+                inputs: {
+                  target_ref: $targetRef,
+                  backend_image: $imageUrl,
+                  tags: $tags,
+                  source_repo: $sourceRepo,
+                  pr_number: $prNumber,
+                  source_sha: $sourceSha,
+                  bot_user: $botUser,
+                  lw_ref: $lwRef
+                }
+              }'
+          )"
+          if ! curl -fsSL -X POST \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CI_REPO}/actions/workflows/private-sandbox-tests.yaml/dispatches" \
+            -d "$payload"; then
+            echo "::warning::Could not dispatch private sandbox tests (is private-sandbox-tests.yaml on ${CI_REF}?)."
+            exit 0
+          fi
+          echo "Dispatched private sandbox tests in ${CI_REPO} (tags=${PRIVATE_SANDBOX_TAGS:-<all>})."
 
   update-progress-comment-after-tests:
     name: Update Progress Comment After Tests
