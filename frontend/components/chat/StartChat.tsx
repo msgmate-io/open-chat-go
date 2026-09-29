@@ -259,6 +259,30 @@ export function StartChat({
         navigateTo,
     }
 
+    const preStartScrollInset =
+        "max(var(--openchat-keyboard-bottom, 0px), var(--openchat-keyboard-bottom-visual, 0px), var(--openchat-safe-bottom, 0px))";
+
+    const handlePreStartFocusCapture = (event: React.FocusEvent<HTMLDivElement>) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+        const isMobileRuntime =
+            typeof document !== "undefined" &&
+            document.documentElement.getAttribute("data-openchat-runtime") === "mobile";
+        if (!isMobileRuntime) {
+            return;
+        }
+        const tag = target.tagName.toLowerCase();
+        const isInputLike = tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+        if (!isInputLike) {
+            return;
+        }
+        window.setTimeout(() => {
+            target.scrollIntoView({ block: "center", inline: "nearest" });
+        }, 120);
+    };
+
     if (isLoading) {
         return <div className="flex h-full items-center justify-center">
             <LoadingSpinner size={48} />
@@ -285,8 +309,17 @@ export function StartChat({
                 </div>
             </div>
 
-            <div className="mx-auto flex h-full w-full max-w-4xl flex-1 min-h-0 flex-col px-4 pb-2">
-                <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-4 overflow-auto py-4">
+            <div
+                className={`mx-auto flex h-full w-full max-w-4xl flex-1 min-h-0 flex-col px-4 pb-2 ${hasPreStart ? "overflow-y-auto" : ""}`}
+                style={hasPreStart ? {
+                    paddingBottom: `calc(${preStartScrollInset} + 0.5rem)`,
+                    scrollPaddingBottom: `calc(${preStartScrollInset} + 0.5rem)`,
+                } : undefined}
+                onFocusCapture={hasPreStart ? handlePreStartFocusCapture : undefined}
+            >
+                <div className={hasPreStart
+                    ? "flex shrink-0 flex-col items-center gap-4 pt-16 pb-4"
+                    : "flex flex-1 min-h-0 flex-col items-center justify-center gap-4 overflow-auto py-4"}>
                     <Text type={TextTypes.Heading4} tag="h1" bold className="px-2 text-center text-xl leading-tight md:text-3xl">
                         {isBotContact ? `Start an interaction with ${contact?.name}` : `Start a chat with ${contact?.name}`}
                     </Text>
@@ -301,7 +334,7 @@ export function StartChat({
                     ) : null}
                 </div>
 
-                <div className="mt-auto space-y-2">
+                <div className={hasPreStart ? "mt-2 shrink-0 space-y-2" : "mt-auto space-y-2"}>
                     {uiExtension?.MessageInput?.PreStart ? (
                         <uiExtension.MessageInput.PreStart
                             ctx={chatUIContext}
