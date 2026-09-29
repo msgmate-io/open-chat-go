@@ -1,0 +1,78 @@
+# Open-Chat integration manifest (public).
+#
+# This file lists the **public** integrations and the public `core-only`
+# profile. Private integrations and the private profiles (`default`, `full`,
+# `full-android`) are declared in the private `ci` repository and merged in at
+# runtime by `openchat-integrations` once the profile setup has materialized
+# it:
+#
+#   openchat-integrations setup --profile full
+#
+# See `profile_setup.yaml` for the repositories and links each profile
+# establishes, and `development/build-tools/README.md` for the manager CLI.
+#
+# Integration source is fetched on demand by `openchat-integrations sync` into
+# `path` (gitignored). No git submodules are required for integrations.
+#
+# Sources:
+#   git       - shallow clone/fetch `repo` at `ref` into `path`
+#   local     - use an existing checkout at `path` (developer override)
+#   submodule - legacy: `git submodule update --init <path>`
+#
+# Local overrides for development can be placed in `integrations.local.yaml`
+# (gitignored), e.g.:
+#   overrides:
+#     git:
+#       source: local
+#       path: ../my-git-integration-fork
+#
+# `depends_on` lists other integrations a module imports; `sync` fetches the
+# transitive closure so the Go workspace can resolve every import.
+version: 1
+
+# Profile selected when INTEGRATION_PROFILE is unset.
+default_profile: core-only
+
+# Where remote checkouts are cached between syncs (relative to repo root).
+cache_dir: .integrations
+
+# Public profiles. `*` means every integration in the (merged) manifest.
+profiles:
+  core-only:
+    - mcp
+    - rest_api_tool
+    - go_client
+
+integrations:
+  mcp:
+    module: github.com/msgmate-io/mcp-integration
+    import: github.com/msgmate-io/mcp-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-mcp-integration
+    ref: main
+    path: clients/integrations/mcp_integration
+    private: false
+    depends_on:
+      - rest_api_tool
+    frontend:
+      name: mcp
+
+  rest_api_tool:
+    module: github.com/msgmate-io/rest-api-tool-integration
+    import: github.com/msgmate-io/rest-api-tool-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
+    ref: main
+    path: clients/integrations/rest_api_tool_integration
+    private: false
+    frontend:
+      name: rest_api_tool
+
+  go_client:
+    module: github.com/msgmate-io/go-client-integration
+    import: github.com/msgmate-io/go-client-integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-golang-client
+    ref: main
+    path: clients/integrations/go_client_integration
+    private: false

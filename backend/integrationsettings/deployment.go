@@ -74,7 +74,7 @@ func BuildDeploymentInfo() DeploymentInfo {
 		ConfigFormat: format,
 	}
 
-	if format == "json" && strings.TrimSpace(source) != "" && !strings.HasPrefix(strings.TrimSpace(source), "inline") {
+	if (format == "json" || format == "yaml") && strings.TrimSpace(source) != "" && !strings.HasPrefix(strings.TrimSpace(source), "inline") {
 		if writableConfigSource(source) {
 			info.CanPersist = true
 		} else {
@@ -82,8 +82,6 @@ func BuildDeploymentInfo() DeploymentInfo {
 		}
 	} else {
 		switch format {
-		case "yaml":
-			info.Reasons = append(info.Reasons, "YAML config files are read-only from the settings UI")
 		case "inline":
 			info.Reasons = append(info.Reasons, "inline config cannot be persisted")
 		case "none":

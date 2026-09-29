@@ -1,12 +1,6 @@
 [submodule "frontend"]
 	path = frontend
 	url = https://github.com/msgmate-io/open-chat-go-frontend
-[submodule "development/helm"]
-	path = development/helm
-	url = https://github.com/msgmate-io/open-chat-go-helm-chart
-[submodule "development/ci"]
-	path = development/ci
-	url = https://github.com/msgmate-io/open-chat-go-ci
 [submodule "clients/oc_python_client"]
 	path = clients/oc_python_client
 	url = https://github.com/msgmate-io/open-chat-go-python-client
@@ -16,51 +10,9 @@
 [submodule "clients/go_integration_interface"]
 	path = clients/go_integration_interface
 	url = https://github.com/msgmate-io/open-chat-go-integration-interface.git
-[submodule "clients/integrations/mcp_integration"]
-	path = clients/integrations/mcp_integration
-	url = https://github.com/msgmate-io/open-chat-go-mcp-integration
-[submodule "clients/integrations/rest_api_tool_integration"]
-	path = clients/integrations/rest_api_tool_integration
-	url = https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration
-[submodule "clients/integrations/admin_db_managemnt_integration"]
-	path = clients/integrations/admin_db_managemnt_integration
-	url = https://github.com/msgmate-io/open-chat-go-admin-db-management-integration
-[submodule "clients/integrations/ssh_integration"]
-	path = clients/integrations/ssh_integration
-	url = https://github.com/msgmate-io/open-chat-go-ssh-integration.git
-[submodule "clients/integrations/account_management"]
-	path = clients/integrations/account_management
-	url = https://github.com/msgmate-io/open-chat-go-account-management-integration.git
-[submodule "clients/integrations/email_integration"]
-	path = clients/integrations/email_integration
-	url = https://github.com/msgmate-io/open-chat-go-email-integration
-[submodule "clients/integrations/voice_integration"]
-	path = clients/integrations/voice_integration
-	url = https://github.com/msgmate-io/open-chat-go-voice-integration
-[submodule "clients/integrations/go_client_integration"]
-	path = clients/integrations/go_client_integration
-	url = https://github.com/msgmate-io/open-chat-go-golang-client
-[submodule "clients/gomobile"]
-	path = clients/gomobile
-	url = https://github.com/msgmate-io/open-chat-go-mobile
-[submodule "clients/integrations/opencode_integration"]
-	path = clients/integrations/opencode_integration
-	url = https://github.com/msgmate-io/open-chat-go-opencode-integration
-[submodule "clients/llm_coding_agents"]
-	path = clients/llm_coding_agents
-	url = https://github.com/msgmate-io/open-chat-go-llm-coding-context
 [submodule "clients/js_client"]
 	path = clients/js_client
 	url = https://github.com/msgmate-io/open-chat-go-js-client
-[submodule "clients/integrations/matrix_integration"]
-	path = clients/integrations/matrix_integration
-	url = https://github.com/msgmate-io/open-chat-go-matrix-integration
-[submodule "clients/integrations/docker_sandbox_integration"]
-	path = clients/integrations/docker_sandbox_integration
-	url = https://github.com/msgmate-io/open-chat-go-docker-sandbox-integration
-[submodule "clients/integrations/git_integration"]
-	path = clients/integrations/git_integration
-	url = https://github.com/msgmate-io/open-chat-go-git-integration
-[submodule "clients/integrations/kubernetes_integration"]
-	path = clients/integrations/kubernetes_integration
-	url = https://github.com/msgmate-io/open-chat-go-kubernetes-integration
+[submodule "development/build-tools"]
+	path = development/build-tools
+	url = https://github.com/msgmate-io/open-chat-go-build-tools.git

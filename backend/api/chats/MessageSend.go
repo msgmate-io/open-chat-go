@@ -2,6 +2,7 @@ package chats
 
 import (
 	wsapi "backend/api/websocket"
+	"backend/chatstate"
 	"backend/database"
 	"backend/server/util"
 	"backend/workqueue"
@@ -513,6 +514,7 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 
 	if result.Error != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
 	}
 
 	var receiver database.User
@@ -524,12 +526,24 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 
 	if signal == "interrupt" {
 		if receiver.IsAutomated {
+			// External chat backends (eg opencode) run their generations in
+			// detached goroutines outside the asynq bot:reply task, so the queue
+			// cancellation below never reaches them. Give the chat backend a
+			// chance to abort the live generation first.
+			handled := false
+			if backend, ok := chatBackendName(DB, chat); ok {
+				if handler, ok := chatstate.LookupBackendInterruptHandler(backend); ok {
+					handled = handler(chatUuid)
+				}
+			}
+
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)
-			if inspectorErr != nil {
+			if inspectorErr == nil {
+				workqueue.CancelBotReplyTask(queueInspector, chatUuid)
+			} else if !handled {
 				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 				return
 			}
-			workqueue.CancelBotReplyTask(queueInspector, chatUuid)
 		} else {
 			ch.MessageHandler.SendMessage(
 				ch,

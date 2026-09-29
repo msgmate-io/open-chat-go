@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"backend/runtimecfg"
+
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
+	goyaml "go.yaml.in/yaml/v3"
 )
 
 func configTestDefinition() integrationinterface.Definition {
@@ -140,8 +143,50 @@ func TestMergeValuesPreservesPermissions(t *testing.T) {
 	}
 }
 
-func TestMergeValuesRejectsNonJSON(t *testing.T) {
-	path := writeTempConfig(t, "env:\n  OCI_DEMO_HOST: example.com\n")
+func TestMergeValuesSupportsYAML(t *testing.T) {
+	path := writeTempConfig(t, "custom:\n  keep: true\nenv:\n  OCI_DEMO_HOST: old.example.com\nintegrations:\n  demo:\n    token: old-token\n")
+	def := configTestDefinition()
+
+	err := MergeValues(path, def, map[string]*string{
+		"OCI_DEMO_TOKEN": strPtr("new-token"),
+		"OCI_DEMO_HOST":  strPtr("new.example.com"),
+	})
+	if err != nil {
+		t.Fatalf("MergeValues: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var root map[string]interface{}
+	if err := goyaml.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("expected YAML output, got unmarshal error: %v\n%s", err, raw)
+	}
+	if _, ok := root["custom"]; !ok {
+		t.Fatal("expected unknown top-level key preserved in YAML output")
+	}
+	env, ok := root["env"].(map[string]interface{})
+	if !ok || env["OCI_DEMO_HOST"] != "new.example.com" {
+		t.Fatalf("expected env host updated in YAML, got %#v", root["env"])
+	}
+	integrations, ok := root["integrations"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected integrations map, got %#v", root["integrations"])
+	}
+	demo, ok := integrations["demo"].(map[string]interface{})
+	if !ok || demo["token"] != "new-token" {
+		t.Fatalf("expected alias token updated in YAML, got %#v", integrations["demo"])
+	}
+	if _, exists := env["OCI_DEMO_TOKEN"]; exists {
+		t.Fatal("expected env token removed in favor of alias in YAML")
+	}
+}
+
+func TestMergeValuesRejectsInvalidDocument(t *testing.T) {
+	// A YAML document whose root is a sequence cannot be merged as a config
+	// object (and is not valid JSON either).
+	path := writeTempConfig(t, "- not\n- a\n- mapping\n")
 	err := MergeValues(path, configTestDefinition(), map[string]*string{"OCI_DEMO_HOST": strPtr("x")})
 	if !errors.Is(err, ErrNotPersistable) {
 		t.Fatalf("expected ErrNotPersistable, got %v", err)
@@ -152,5 +197,40 @@ func TestMergeValuesRejectsMissingFile(t *testing.T) {
 	err := MergeValues(filepath.Join(t.TempDir(), "missing.json"), configTestDefinition(), map[string]*string{"OCI_DEMO_HOST": strPtr("x")})
 	if !errors.Is(err, ErrNotPersistable) {
 		t.Fatalf("expected ErrNotPersistable, got %v", err)
+	}
+}
+
+// TestSaveFlowPersistsYAML exercises the admin save path end to end
+// (validate -> apply -> persist) against a YAML config file.
+func TestSaveFlowPersistsYAML(t *testing.T) {
+	prev := runtimecfg.GetConfigSource()
+	t.Cleanup(func() { runtimecfg.SetConfigSource(prev) })
+
+	path := writeTempConfig(t, "env:\n  OCI_DEMO_HOST: old.example.com\n")
+	runtimecfg.SetConfigSource(path)
+
+	def := configTestDefinition()
+	values, err := ValidateValues(def, map[string]*string{
+		"OCI_DEMO_HOST": strPtr("new.example.com"),
+	})
+	if err != nil {
+		t.Fatalf("ValidateValues: %v", err)
+	}
+	ApplyValues(def, values)
+	if err := PersistValues(def, values); err != nil {
+		t.Fatalf("PersistValues: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var root map[string]interface{}
+	if err := goyaml.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("expected YAML output: %v", err)
+	}
+	env, _ := root["env"].(map[string]interface{})
+	if env["OCI_DEMO_HOST"] != "new.example.com" {
+		t.Fatalf("expected persisted YAML host, got %#v", root["env"])
 	}
 }

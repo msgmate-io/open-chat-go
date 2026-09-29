@@ -103,6 +103,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update PR progress comment with release details
         run: |
           set -euo pipefail
@@ -177,7 +182,7 @@ jobs:
   no_labels_guidance:
     name: Label Guidance
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test') && !contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test')
+    if: github.event_name == 'pull_request' && github.event.action != 'closed' && !contains(github.event.pull_request.labels.*.name, 'deploy') && !contains(github.event.pull_request.labels.*.name, 'test') && !contains(github.event.pull_request.labels.*.name, 'build') && !contains(github.event.pull_request.labels.*.name, 'ai-test-mock') && !contains(github.event.pull_request.labels.*.name, 'ai-test-real') && !contains(github.event.pull_request.labels.*.name, 'test-core-only') && !contains(github.event.pull_request.labels.*.name, 'release-android') && !contains(github.event.pull_request.labels.*.name, 'test-e2e') && !contains(github.event.pull_request.labels.*.name, 'e2e') && !contains(github.event.pull_request.labels.*.name, 'sandbox-test') && !contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') && !contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -186,6 +191,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Delete previous workflow comments
         env:
           COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -255,7 +265,7 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test')))
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -513,6 +523,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Delete previous workflow comments
         if: github.event_name == 'pull_request'
         env:
@@ -701,6 +716,13 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Materialize full integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
+
       - name: Resolve image metadata
         id: image
         run: |
@@ -750,53 +772,19 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_test_core_only != ''
     steps:
-      - name: Checkout source repository (without recursive submodules)
+      - name: Checkout source repository (interfaces + dev submodules only)
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN }}
-          submodules: false
+          submodules: true
 
-      - name: Resolve required core submodule refs
-        id: core_submodule_refs
+      - name: Materialize core-only integrations
         run: |
           set -euo pipefail
-          echo "go_tool_sha=$(git rev-parse HEAD:clients/go_tool_interface)" >> "$GITHUB_OUTPUT"
-          echo "go_integration_sha=$(git rev-parse HEAD:clients/go_integration_interface)" >> "$GITHUB_OUTPUT"
-          echo "mcp_sha=$(git rev-parse HEAD:clients/integrations/mcp_integration)" >> "$GITHUB_OUTPUT"
-          echo "rest_api_sha=$(git rev-parse HEAD:clients/integrations/rest_api_tool_integration)" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout core submodule go_tool_interface
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-tool-interface
-          ref: ${{ steps.core_submodule_refs.outputs.go_tool_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/go_tool_interface
-
-      - name: Checkout core submodule go_integration_interface
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-integration-interface
-          ref: ${{ steps.core_submodule_refs.outputs.go_integration_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/go_integration_interface
-
-      - name: Checkout core submodule mcp_integration
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-mcp-integration
-          ref: ${{ steps.core_submodule_refs.outputs.mcp_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/integrations/mcp_integration
-
-      - name: Checkout core submodule rest_api_tool_integration
-        uses: actions/checkout@v4
-        with:
-          repository: msgmate-io/open-chat-go-rest-api-tool-integration
-          ref: ${{ steps.core_submodule_refs.outputs.rest_api_sha }}
-          token: ${{ secrets.BOT_TOKEN }}
-          path: clients/integrations/rest_api_tool_integration
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile core-only
 
       - name: Resolve core-only image metadata
         id: image
@@ -928,43 +916,27 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/go-build
-          key: go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'backend/integrationdeps.json') }}-${{ github.sha }}
+          key: go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-${{ github.sha }}
           restore-keys: |
-            go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'backend/integrationdeps.json') }}-
+            go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
             go-build-${{ runner.os }}-
 
-      - name: Resolve full integration test module set
+      - name: Materialize full integration test module set
         if: steps.context.outputs.should_test != ''
-        working-directory: backend
         run: |
           set -euo pipefail
-          GEN_DIR="$PWD/.generated"
-          mkdir -p "$GEN_DIR"
-          EFFECTIVE_INTEGRATION_MANIFEST="$GEN_DIR/integrationdeps.effective.full-ci.json"
-          EFFECTIVE_MODFILE="$GEN_DIR/go.effective.full-ci.mod"
-
-          python3 ./scripts/resolve_integrations.py \
-            --manifest ./integrationdeps.json \
-            --profile full \
-            --repo-root "${GITHUB_WORKSPACE}" \
-            --base-go-mod ./go.mod \
-            --output-manifest "$EFFECTIVE_INTEGRATION_MANIFEST" \
-            --output-modfile "$EFFECTIVE_MODFILE"
-
-          if [ -n "${GOFLAGS:-}" ]; then
-            export GOFLAGS="${GOFLAGS} -mod=mod -modfile=${EFFECTIVE_MODFILE}"
-          else
-            export GOFLAGS="-mod=mod -modfile=${EFFECTIVE_MODFILE}"
+          # Private integration repos require auth for git clone.
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
+          "$BUILD_TOOLS" resolve --profile full
+          echo "GOWORK=${GITHUB_WORKSPACE}/backend/go.work" >> "$GITHUB_ENV"
+          TAGS="$(cat backend/.generated/build_tags 2>/dev/null || true)"
+          if [ -n "$TAGS" ]; then
+            echo "GOFLAGS=-tags=${TAGS}" >> "$GITHUB_ENV"
           fi
-          # The matrix integration uses mautrix-go with the pure-Go goolm
-          # implementation (the CI runner has no libolm C headers).
-          export GOFLAGS="${GOFLAGS} -tags=goolm"
-          echo "GOFLAGS=${GOFLAGS}" >> "$GITHUB_ENV"
-
-          go run ./scripts/integrationdepsgen -manifest "$EFFECTIVE_INTEGRATION_MANIFEST" -output ./integrations/externalintegrations/imports_gen.go -sync
-
-          # Populate the effective sum file used by -modfile before tests run.
-          go mod download
+          # Populate the module cache used by the workspace before tests run.
+          (cd backend && go mod download)
 
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
@@ -1063,6 +1035,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Python for AI process tests
         uses: actions/setup-python@v5
         with:
@@ -1180,6 +1157,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Node.js for E2E tests
         uses: actions/setup-node@v4
         with:
@@ -1316,10 +1298,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (github.event.pull_request.base.ref == 'production' ||
-         contains(github.event.pull_request.labels.*.name, 'test') ||
-         contains(github.event.pull_request.labels.*.name, 'build') ||
-         contains(github.event.pull_request.labels.*.name, 'release-android'))))
+        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
@@ -1342,6 +1321,13 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+
+      - name: Materialize integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full
 
       - name: Resolve android sandbox image tag from content hash
         id: image
@@ -1421,10 +1407,7 @@ jobs:
       (needs.sandbox-android-image-ensure.result == 'success' || needs.sandbox-android-image-ensure.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (github.event.pull_request.base.ref == 'production' ||
-         contains(github.event.pull_request.labels.*.name, 'test') ||
-         contains(github.event.pull_request.labels.*.name, 'build') ||
-         contains(github.event.pull_request.labels.*.name, 'release-android'))))
+        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
     steps:
       - name: Free runner disk space
         uses: jlumbroso/free-disk-space@main
@@ -1445,6 +1428,13 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Materialize integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full-android
+
       - name: Login to GHCR for sandbox image pull
         run: |
           set -euo pipefail
@@ -1464,6 +1454,7 @@ jobs:
           docker run --rm --privileged \
             -v "$PWD:/workspace" -w /workspace \
             -e SANDBOX_RESULTS_DIR=/workspace/.android-ci-results \
+            -e OPENCHAT_SKIP_INTEGRATION_PREPARE=1 \
             "$SANDBOX_IMAGE_URL" \
             bash -lc 'bash development/ci/android/run_android_build.sh'
 
@@ -1537,6 +1528,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render test-complete progress comment
         run: |
           set -euo pipefail
@@ -1985,6 +1981,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment when approval gate opens
         env:
           BOT_USER: ${{ env.BOT_USER }}
@@ -2144,15 +2145,15 @@ jobs:
               return 1
             fi
             content="$(jq -r '.content' < /tmp/build_workflow_content.json | tr -d '\n' | base64 -d)"
-            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
-            printf '%s' "$content" | grep -q 'target_ref:' || return 1
-            printf '%s' "$content" | grep -q 'release_kind:' || return 1
-            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
-            printf '%s' "$content" | grep -q 'source_branch:' || return 1
-            printf '%s' "$content" | grep -q 'source_run_url:' || return 1
-            printf '%s' "$content" | grep -q 'deploy_url:' || return 1
-            printf '%s' "$content" | grep -q 'bot_user:' || return 1
-            printf '%s' "$content" | grep -q 'prerelease:' || return 1
+            grep -q 'workflow_dispatch:' <<< "$content" || return 1
+            grep -q 'target_ref:' <<< "$content" || return 1
+            grep -q 'release_kind:' <<< "$content" || return 1
+            grep -q 'source_pr_number:' <<< "$content" || return 1
+            grep -q 'source_branch:' <<< "$content" || return 1
+            grep -q 'source_run_url:' <<< "$content" || return 1
+            grep -q 'deploy_url:' <<< "$content" || return 1
+            grep -q 'bot_user:' <<< "$content" || return 1
+            grep -q 'prerelease:' <<< "$content" || return 1
             return 0
           }
 
@@ -2216,13 +2217,13 @@ jobs:
               return 1
             fi
             content="$(jq -r '.content' < /tmp/python_tag_workflow_content.json | tr -d '\n' | base64 -d)"
-            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
-            printf '%s' "$content" | grep -q 'release_kind:' || return 1
-            printf '%s' "$content" | grep -q 'source_repository:' || return 1
-            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
-            printf '%s' "$content" | grep -q 'source_target_ref:' || return 1
-            printf '%s' "$content" | grep -q 'source_branch:' || return 1
-            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            grep -q 'workflow_dispatch:' <<< "$content" || return 1
+            grep -q 'release_kind:' <<< "$content" || return 1
+            grep -q 'source_repository:' <<< "$content" || return 1
+            grep -q 'source_pr_number:' <<< "$content" || return 1
+            grep -q 'source_target_ref:' <<< "$content" || return 1
+            grep -q 'source_branch:' <<< "$content" || return 1
+            grep -q 'bot_user:' <<< "$content" || return 1
             return 0
           }
 
@@ -2380,6 +2381,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Set up Python for AI real tests
         uses: actions/setup-python@v5
         with:
@@ -2543,6 +2549,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment after approved dispatch
         run: |
           set -euo pipefail
@@ -2595,6 +2606,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render final progress comment with AI real result
         run: |
           set -euo pipefail
@@ -2723,7 +2739,7 @@ jobs:
           | Promoted commit | \`${PROMOTED_SHA}\` |
           | Source merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) — ${MERGED_PR_TITLE} |
 
-          Automated labels: \`ai-test-mock\`, \`ai-test-real\`, \`build\`, \`test\`, \`e2e\`, \`test-e2e\`, \`test-core-only\`, \`sandbox-test\` (or \`sandbox-test:<tag>\` to run a tagged subset), \`release-android\` — the full test suite (incl. post-deploy suites, which run in parallel since the staging deploy was already confirmed on the merge to \`main\`) must all pass before this PR can be merged. Merging gates on **PR Test Merge Requirement** and **Full Suite Gate**.
+          Automated labels: \`ai-test-mock\`, \`ai-test-real\`, \`build\`, \`test\`, \`e2e\`, \`test-e2e\`, \`test-core-only\`, \`sandbox-test\` (or \`sandbox-test:<tag>\` to run a tagged subset), \`release-android\`, \`slow-android-build-test\` (very slow Android build test) — the full test suite (incl. post-deploy suites, which run in parallel since the staging deploy was already confirmed on the merge to \`main\`) must all pass before this PR can be merged. Merging gates on **PR Test Merge Requirement** and **Full Suite Gate**.
           EOF
           )"
 
@@ -2773,7 +2789,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPOSITORY}/issues/${pr_number}/labels" \
-            -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android"]}'
+            -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android","slow-android-build-test"]}'
 
           echo "Production promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
 
@@ -2792,6 +2808,11 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Comment deployment approval link on merged PR
         env:
           BOT_USER: ${{ env.BOT_USER }}
@@ -2999,15 +3020,15 @@ jobs:
               return 1
             fi
             content="$(jq -r '.content' < /tmp/merged_build_workflow_content.json | tr -d '\n' | base64 -d)"
-            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
-            printf '%s' "$content" | grep -q 'target_ref:' || return 1
-            printf '%s' "$content" | grep -q 'release_kind:' || return 1
-            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
-            printf '%s' "$content" | grep -q 'source_branch:' || return 1
-            printf '%s' "$content" | grep -q 'source_run_url:' || return 1
-            printf '%s' "$content" | grep -q 'deploy_url:' || return 1
-            printf '%s' "$content" | grep -q 'bot_user:' || return 1
-            printf '%s' "$content" | grep -q 'prerelease:' || return 1
+            grep -q 'workflow_dispatch:' <<< "$content" || return 1
+            grep -q 'target_ref:' <<< "$content" || return 1
+            grep -q 'release_kind:' <<< "$content" || return 1
+            grep -q 'source_pr_number:' <<< "$content" || return 1
+            grep -q 'source_branch:' <<< "$content" || return 1
+            grep -q 'source_run_url:' <<< "$content" || return 1
+            grep -q 'deploy_url:' <<< "$content" || return 1
+            grep -q 'bot_user:' <<< "$content" || return 1
+            grep -q 'prerelease:' <<< "$content" || return 1
             return 0
           }
 
@@ -3109,13 +3130,13 @@ jobs:
               return 1
             fi
             content="$(jq -r '.content' < /tmp/merged_py_tag_workflow_content.json | tr -d '\n' | base64 -d)"
-            printf '%s' "$content" | grep -q 'workflow_dispatch:' || return 1
-            printf '%s' "$content" | grep -q 'release_kind:' || return 1
-            printf '%s' "$content" | grep -q 'source_repository:' || return 1
-            printf '%s' "$content" | grep -q 'source_pr_number:' || return 1
-            printf '%s' "$content" | grep -q 'source_target_ref:' || return 1
-            printf '%s' "$content" | grep -q 'source_branch:' || return 1
-            printf '%s' "$content" | grep -q 'bot_user:' || return 1
+            grep -q 'workflow_dispatch:' <<< "$content" || return 1
+            grep -q 'release_kind:' <<< "$content" || return 1
+            grep -q 'source_repository:' <<< "$content" || return 1
+            grep -q 'source_pr_number:' <<< "$content" || return 1
+            grep -q 'source_target_ref:' <<< "$content" || return 1
+            grep -q 'source_branch:' <<< "$content" || return 1
+            grep -q 'bot_user:' <<< "$content" || return 1
             return 0
           }
 

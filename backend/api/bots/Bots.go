@@ -82,6 +82,9 @@ type CreateBotInteractionRequest struct {
 	ConfigOverrides map[string]interface{}     `json:"config_overrides,omitempty"`
 	AutoShare       bool                       `json:"auto_share,omitempty"`
 	Attachments     []BotInteractionAttachment `json:"attachments,omitempty"`
+	// RequireConfirmation gates the interaction behind an explicit user
+	// confirmation widget before the bot reply is enqueued.
+	RequireConfirmation bool `json:"require_confirmation,omitempty"`
 }
 
 type BotInteractionChatShare struct {
@@ -94,6 +97,7 @@ type BotInteractionResponse struct {
 	ChatShareUUID        string                   `json:"chat_share_uuid,omitempty"`
 	ChatShare            *BotInteractionChatShare `json:"chat_share,omitempty"`
 	SharedInteractionURL string                   `json:"shared_interaction_url,omitempty"`
+	RequiresConfirmation bool                     `json:"requires_confirmation,omitempty"`
 }
 
 func requestBaseURL(r *http.Request) string {
@@ -1377,7 +1381,24 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		if err := tx.Create(&message).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&chat).Update("latest_message_id", message.ID).Error; err != nil {
+		latestMessageID := message.ID
+		if req.RequireConfirmation {
+			confirmation, confirmErr := chats.BuildInteractionConfirmationMessage(
+				tx,
+				chat,
+				runtime.BotUserId,
+				user.ID,
+				runtime.UUID,
+				message,
+				"Start coding interaction?",
+				"The bot interaction was created and is waiting for your confirmation. Approve to start it, or reject to cancel.",
+			)
+			if confirmErr != nil {
+				return confirmErr
+			}
+			latestMessageID = confirmation.ID
+		}
+		if err := tx.Model(&chat).Update("latest_message_id", latestMessageID).Error; err != nil {
 			return err
 		}
 
@@ -1402,16 +1423,18 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
-		ChatUUID:    chat.UUID,
-		MessageUUID: message.UUID,
-		BotUserID:   runtime.BotUserId,
-	}); enqueueErr != nil {
-		http.Error(w, "Failed to enqueue bot reply", http.StatusInternalServerError)
-		return
+	if !req.RequireConfirmation {
+		if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+			ChatUUID:    chat.UUID,
+			MessageUUID: message.UUID,
+			BotUserID:   runtime.BotUserId,
+		}); enqueueErr != nil {
+			http.Error(w, "Failed to enqueue bot reply", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	response := BotInteractionResponse{ChatUUID: chat.UUID}
+	response := BotInteractionResponse{ChatUUID: chat.UUID, RequiresConfirmation: req.RequireConfirmation}
 	if req.AutoShare {
 		response.ChatShareUUID = share.ChatShareUUID
 		response.ChatShare = &BotInteractionChatShare{

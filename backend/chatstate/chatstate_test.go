@@ -2,6 +2,34 @@ package chatstate
 
 import "testing"
 
+func TestBackendInterruptRegistry(t *testing.T) {
+	if _, ok := LookupBackendInterruptHandler("missing-backend"); ok {
+		t.Fatalf("expected no handler for an unregistered backend")
+	}
+
+	called := ""
+	RegisterBackendInterruptHandler(" OpenCode ", func(chatUUID string) bool {
+		called = chatUUID
+		return true
+	})
+	handler, ok := LookupBackendInterruptHandler("opencode")
+	if !ok {
+		t.Fatalf("expected handler lookup to be case/space normalized")
+	}
+	if !handler("chat-1") || called != "chat-1" {
+		t.Fatalf("expected handler to be invoked with the chat uuid, got %q", called)
+	}
+
+	RegisterBackendInterruptHandler("", func(string) bool { return true })
+	RegisterBackendInterruptHandler("nil-fn", nil)
+	if _, ok := LookupBackendInterruptHandler(""); ok {
+		t.Fatalf("empty backend name must not register a handler")
+	}
+	if _, ok := LookupBackendInterruptHandler("nil-fn"); ok {
+		t.Fatalf("nil handler must not register")
+	}
+}
+
 func TestChatBackendNameFromConfig(t *testing.T) {
 	tests := []struct {
 		name   string

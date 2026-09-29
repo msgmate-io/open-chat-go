@@ -15,11 +15,13 @@ import (
 // username:password bootstrap model used by CREATE_EXTRA_USER /
 // CREATE_EXTRA_BOT, but is declared declaratively in open-chat.json.
 type userBootstrapConfig struct {
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	Email       string `json:"email,omitempty"`
-	IsAdmin     bool   `json:"is_admin,omitempty"`
-	IsAutomated bool   `json:"is_automated,omitempty"`
+	Username               string   `json:"username"`
+	Password               string   `json:"password"`
+	Email                  string   `json:"email,omitempty"`
+	IsAdmin                bool     `json:"is_admin,omitempty"`
+	IsAutomated            bool     `json:"is_automated,omitempty"`
+	TwoFactorSecret        string   `json:"two_factor_secret,omitempty"`
+	TwoFactorRecoveryCodes []string `json:"two_factor_recovery_codes,omitempty"`
 }
 
 // loadUserBootstrapConfigsFromSpec parses a user bootstrap spec. The spec may
@@ -90,12 +92,14 @@ func applyUserBootstrapConfigFiles(DB *gorm.DB, specs []string, validateStrength
 
 			label := fmt.Sprintf("bootstrap.users[%d][%d] (%s)", i, j, username)
 			if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
-				Label:            label,
-				Credentials:      username + ":" + cfg.Password,
-				Email:            cfg.Email,
-				IsAdmin:          cfg.IsAdmin,
-				IsAutomated:      cfg.IsAutomated,
-				ValidateStrength: validateStrength,
+				Label:                  label,
+				Credentials:            username + ":" + cfg.Password,
+				Email:                  cfg.Email,
+				IsAdmin:                cfg.IsAdmin,
+				IsAutomated:            cfg.IsAutomated,
+				ValidateStrength:       validateStrength,
+				TwoFactorSecret:        cfg.TwoFactorSecret,
+				TwoFactorRecoveryCodes: cfg.TwoFactorRecoveryCodes,
 			}); err != nil {
 				return err
 			}
