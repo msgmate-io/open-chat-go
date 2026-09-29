@@ -162,7 +162,7 @@ function IndexTab({
 
     useEffect(() => {
         setIsLoggedIn(
-            Cookies.get("is_authorized") === "true" && !isLoading && !error && !!user,
+            Cookies.get("oc_client_state") === "true" && !isLoading && !error && !!user,
         )
     }, [isLoading, error, user])
 
@@ -215,7 +215,7 @@ function IndexTab({
                                     navigateTo("/sign-up")
                                 }}>Sign-up</Button>}
                                 <Button variant="ghost" className={pillClass} onClick={() => {
-                                    const isAuthorized = Cookies.get("is_authorized")
+                                    const isAuthorized = Cookies.get("oc_client_state")
                                     if (isAuthorized === "true") {
                                         navigateTo("/chat")
                                     } else {
@@ -241,7 +241,7 @@ function IndexTab({
                                     navigateTo("/sign-up")
                                 }}>Sign-up</Button>}
                                 <Button variant="ghost" className={pillClass} onClick={() => {
-                                    const isAuthorized = Cookies.get("is_authorized")
+                                    const isAuthorized = Cookies.get("oc_client_state")
                                     if (isAuthorized === "true") {
                                         navigateTo("/chat")
                                     } else {
