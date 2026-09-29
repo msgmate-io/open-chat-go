@@ -87,6 +87,11 @@ func looksLikeJSONKey(key string) bool {
 // When a matching RuntimeConfigAlias exists the alias JSON key under
 // integrations.<name> is used, otherwise the value is written to env.<KEY>.
 func resolveConfigTarget(def integrationinterface.Definition, key string) string {
+	if def.Name == CoreSettingsName {
+		if section, ok := coreBootstrapSectionForKey(key); ok {
+			return "bootstrap." + section
+		}
+	}
 	normalizedKey := normalizeKey(key)
 	for _, alias := range def.RuntimeConfigAliases {
 		if normalizeKey(alias.EnvKey) != normalizedKey {
@@ -99,6 +104,18 @@ func resolveConfigTarget(def integrationinterface.Definition, key string) string
 		return "integrations." + def.Name + "." + jsonKey
 	}
 	return "env." + normalizedKey
+}
+
+// descriptorGroup assigns UI grouping for synthetic definitions. Core splits
+// its fields into an Environment and a Bootstrap section.
+func descriptorGroup(def integrationinterface.Definition, key string) string {
+	if def.Name != CoreSettingsName {
+		return ""
+	}
+	if isCoreBootstrapKey(key) {
+		return "Bootstrap"
+	}
+	return "Environment"
 }
 
 // BuildDescriptors converts a definition's declared RuntimeEnvVars into
@@ -138,6 +155,7 @@ func BuildDescriptors(def integrationinterface.Definition, values map[string]run
 			Description:  strings.TrimSpace(decl.Description),
 			Sensitive:    sensitive,
 			Advanced:     advanced,
+			Group:        descriptorGroup(def, key),
 			Value:        displayValue,
 			Configured:   configured,
 			ConfigTarget: resolveConfigTarget(def, key),

@@ -97,6 +97,13 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
+      - name: Materialize core-only integrations
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile core-only
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -341,6 +348,11 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target_ref || github.sha }}
           submodules: recursive
 
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:

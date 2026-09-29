@@ -1,6 +1,7 @@
 package integrationsettings
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -60,6 +61,13 @@ func ValidateValues(def integrationinterface.Definition, input map[string]*strin
 		}
 
 		value := *rawValue
+		if def.Name == CoreSettingsName && isCoreBootstrapKey(key) {
+			if !json.Valid([]byte(strings.TrimSpace(value))) {
+				return nil, &ValidationError{Key: key, Message: "expected valid JSON"}
+			}
+			out[key] = &value
+			continue
+		}
 		fieldType := InferFieldType(decl, "")
 		switch fieldType {
 		case FieldTypeBool:
@@ -89,6 +97,11 @@ func ApplyValues(def integrationinterface.Definition, values map[string]*string)
 		if key == "" {
 			continue
 		}
+		// Bootstrap changes are restart-only: they are persisted to the config
+		// file but cannot be applied to the running process.
+		if def.Name == CoreSettingsName && isCoreBootstrapKey(key) {
+			continue
+		}
 		if rawValue == nil {
 			runtimecfg.DeleteValue(key)
 			_ = os.Unsetenv(key)
@@ -102,7 +115,8 @@ func ApplyValues(def integrationinterface.Definition, values map[string]*string)
 	}
 }
 
-// PersistValues writes the given values back to the active JSON config file.
+// PersistValues writes the given values back to the active config file (JSON
+// or YAML).
 func PersistValues(def integrationinterface.Definition, values map[string]*string) error {
 	return MergeValues(runtimecfg.GetConfigSource(), def, values)
 }

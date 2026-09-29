@@ -4,9 +4,11 @@ services:
       dockerfile: dev.dockerfile
       context: .
       args:
-        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
+        INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
     image: dev-backend
     depends_on:
+      integration-sync:
+        condition: service_completed_successfully
       frontend:
         condition: service_started
       redis:
@@ -15,8 +17,12 @@ services:
       - "1984:1984"
     volumes:
       - ./backend:/backend
-      - ./development/ci/open-chat-ci.json:/open-chat-ci-config.json:ro
-      - ./development/ci/open-chat-ci.local.json:/open-chat-ci-config.local.json:ro
+      - ./integrations.yaml:/integrations.yaml:ro
+      - ./integrations.lock.json:/integrations.lock.json:ro
+      - ./development/build-tools:/development/build-tools:ro
+      # Mirrored private manifest/lock (and setup markers) written by
+      # integration-sync; resolve needs it to know private profiles like full.
+      - ./.integrations:/.integrations:ro
       - ./clients/go_tool_interface:/clients/go_tool_interface
       - ./clients/go_integration_interface:/clients/go_integration_interface
       - ./clients/integrations:/clients/integrations
@@ -34,7 +40,10 @@ services:
       LITELLM_API_HOST: ${LITELLM_API_HOST}
       MSGMATE_CLUSTER_API_KEY: ${MSGMATE_CLUSTER_API_KEY}
       MSGMATE_CLUSTER_HOST: ${MSGMATE_CLUSTER_HOST}
-      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-default}
+      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
+      # integration-sync already materialized the profile; skip the setup pass
+      # here (it would otherwise try to re-clone into the read-only mounts).
+      OPENCHAT_NO_SETUP: "1"
       FRONTEND_PROXY: ${FRONTEND_PROXY:-http://frontend:3000}
       ROOT_CREDENTIALS: ${ROOT_CREDENTIALS:-admin:password}
       DB_PATH: ${DB_PATH:-/tmp/data.db}
@@ -55,11 +64,41 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - app-network
+  integration-sync:
+    build:
+      dockerfile: development/build-tools/sync.dockerfile
+      context: .
+    image: dev-integration-sync
+    environment:
+      INTEGRATION_PROFILE: ${INTEGRATION_PROFILE:-core-only}
+      # Let the manager discover the developer's already-authenticated git
+      # credentials for private profile repos (see openchat_integrations.credentials):
+      # the host home is mounted read-only below and a forwarded SSH agent is
+      # exposed here. GITHUB_TOKEN/GH_TOKEN (e.g. from .env via `gh auth token`)
+      # take precedence when set.
+      OPENCHAT_HOST_HOME: /host-home
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      SSH_AUTH_SOCK: /run/ssh-agent.sock
+    volumes:
+      - ./:/workspace
+      # The host home is mounted read-only so the manager can read the host's
+      # git/gh credentials (~/.gitconfig, ~/.git-credentials, ~/.config/gh,
+      # ~/.ssh). Mounting the whole home avoids Docker creating empty
+      # directories for credential files that a developer may not have.
+      - ${HOME}:/host-home:ro
+      # Forward the host SSH agent (a no-op /dev/null when SSH_AUTH_SOCK is unset).
+      - ${SSH_AUTH_SOCK:-/dev/null}:/run/ssh-agent.sock
+    networks:
+      - app-network
   frontend:
     build:
       dockerfile: dev.dockerfile
       context: ./frontend/
     image: dev-frontend
+    depends_on:
+      integration-sync:
+        condition: service_completed_successfully
     command: sh -c "if [ ! -x node_modules/.bin/vike ]; then npm ci | cat; fi && npm run dev | cat"
     environment:
       VITE_ENABLE_ADMIN_MODEL_DEFAULT_SYNC: ${VITE_ENABLE_ADMIN_MODEL_DEFAULT_SYNC:-1}
@@ -67,6 +106,11 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend:/frontend
+      # The integration page/package symlinks under frontend/ are created
+      # relative to the repo root, so Vite needs the checkouts at the matching
+      # absolute path (/clients/integrations) to resolve them. Writable because
+      # Vike emits per-page build artifacts next to the integration configs.
+      - ./clients/integrations:/clients/integrations
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
