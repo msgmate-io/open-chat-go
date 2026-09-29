@@ -9,8 +9,9 @@ section: Platform
 
 Open Chat Go is assembled from a small core plus a set of pluggable
 **integration modules**. Each module can contribute tools, routes and
-configuration. This page lists the modules that are part of the public
-distribution (`"private": false` in [`integrations.yaml`](https://github.com/msgmate-io/open-chat-go/blob/main/integrations.yaml))
+configuration. This page lists the modules that ship in the public
+`core-only` profile (`"private": false` in
+[`integrations.yaml`](https://github.com/msgmate-io/open-chat-go/blob/main/integrations.yaml))
 and are therefore documented here.
 
 Modules marked private in the manifest are internal tooling and are
@@ -18,11 +19,11 @@ intentionally excluded from the public documentation surface.
 
 ## Public modules
 
-| Module | Source directory | Purpose |
-| --- | --- | --- |
-| MCP | `clients/integrations/mcp_integration` | Connect Model Context Protocol servers and expose their tools to bots. |
-| Go client | `clients/integrations/go_client_integration` | Typed Go client and higher-level helpers for the Open Chat API. |
-| REST API tools | `clients/integrations/rest_api_tool_integration` | Define tools from arbitrary REST APIs with JSON schemas. |
+| Module | Repository | Source directory | Purpose |
+| --- | --- | --- | --- |
+| MCP | [`open-chat-go-mcp-integration`](https://github.com/msgmate-io/open-chat-go-mcp-integration) | `clients/integrations/mcp_integration` | Connect Model Context Protocol servers and expose their tools to bots. |
+| Go client | [`open-chat-go-golang-client`](https://github.com/msgmate-io/open-chat-go-golang-client) | `clients/integrations/go_client_integration` | Typed Go client and higher-level helpers for the Open Chat API. |
+| REST API tools | [`open-chat-go-rest-api-tool-integration`](https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration) | `clients/integrations/rest_api_tool_integration` | Define tools from arbitrary REST APIs with JSON schemas. |
 
 ## Inspecting modules at runtime
 
