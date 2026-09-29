@@ -85,6 +85,9 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 	if configMap, ok := listedChat.Config.(map[string]interface{}); ok {
 		listedChat.Config = applyModelConfigBindingForUser(DB, user.ID, configMap)
 	}
+	if view := loadChatSettingsViews(DB, []uint{chat.ID})[chat.ID]; view != nil {
+		listedChat.Settings = view
+	}
 
 	var share database.SharedChatInstance
 	shareErr := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, user.ID).First(&share).Error
