@@ -106,8 +106,18 @@ func TestResolveChatProviderEndpointOpenRouterAvoidsLocalAIDefault(t *testing.T)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "https://openrouter.ai/api/v1/" {
-		t.Fatalf("expected openrouter public endpoint, got %q", got)
+	if got != "https://openrouter.ai/api/v1" {
+		t.Fatalf("expected openrouter public endpoint without trailing slash, got %q", got)
+	}
+}
+
+func TestResolveChatProviderEndpointTrimsTrailingSlash(t *testing.T) {
+	got, err := resolveChatProviderEndpoint("ionos", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://openai.inference.de-txl.ionos.com/v1" {
+		t.Fatalf("expected ionos public endpoint without trailing slash, got %q", got)
 	}
 }
 
