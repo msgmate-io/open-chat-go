@@ -1,0 +1,52 @@
+---
+title: Bots & Agents
+path: bots-agents
+description: Configure bots, their models, tools and interaction behaviour.
+order: 30
+section: Platform
+---
+
+A **bot** is a reusable agent configuration: a model, a system prompt, tool
+selections and interaction defaults. Chats and interactions reference a bot to
+decide how replies are generated.
+
+## Bot configuration
+
+The shared config (`PUT /api/v1/bots/{identifier}/config`) accepts model and
+generation settings, for example:
+
+```json
+{
+  "temperature": 0.7,
+  "max_tokens": 4096,
+  "model": "deepseek-ai/DeepSeek-V4-Flash",
+  "endpoint": "https://api.deepinfra.com/v1/openai",
+  "backend": "deepinfra",
+  "context": 10,
+  "system_prompt": "You are a helpful assistant."
+}
+```
+
+## Managing bots
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/v1/bots` | Create a bot. |
+| `GET` | `/api/v1/bots/list` | List accessible bots. |
+| `GET` | `/api/v1/bots/{identifier}` | Retrieve a bot by name or UUID. |
+| `PATCH` | `/api/v1/bots/{identifier}` | Update metadata (name, description, visibility, active state). |
+| `PUT` | `/api/v1/bots/{identifier}/config` | Replace the shared generation config. |
+| `DELETE` | `/api/v1/bots/{identifier}` | Delete a bot. |
+| `POST` | `/api/v1/bots/{identifier}/interactions` | Start an interaction with the bot. |
+
+Bots can be **public** (discoverable and usable by other users) or **private**
+to their owner. Public bots are listed for all authenticated users.
+
+## Tools and agents
+
+Bots select from the registered tools exposed by
+`GET /api/v1/interactions/{chat_uuid}/tools` and the
+[tools catalogue](/docs#tools-catalog). A bot that is allowed to call tools
+behaves as an agent: the queue worker runs tool calls, optionally asking for
+confirmation before executing them. See [Interactions](/docs#interactions) for
+the confirmation flow.

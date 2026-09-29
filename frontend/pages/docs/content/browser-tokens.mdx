@@ -1,0 +1,110 @@
+---
+title: Browser Token Authorization
+path: browser-tokens
+description: Short-lived scoped browser tokens for embedding Open Chat clients in third-party frontends.
+order: 23
+adminOnly: false
+section: API
+---
+
+Third-party frontends (for example an external admin panel) can call Open Chat
+APIs directly with short-lived, scope-restricted **browser tokens** instead of
+relaying calls through their own backend.
+
+## Flow
+
+1. The user authenticates in the host application (e.g. a Django session).
+2. The host backend validates its own session/permissions, then calls Open Chat
+   server-to-server using the user's stored Open Chat credential (an `ocat_`
+   API token bearer header, or a login session).
+3. Open Chat returns an ephemeral browser token that the host backend hands to
+   the browser. The browser then calls Open Chat directly with
+   `Authorization: Bearer <token>`.
+
+```
+POST /api/v1/user/browser-token
+Content-Type: application/json
+
+{
+  "scopes": ["bots:read", "bots:write", "interactions:list", "interactions:read"],
+  "ttl_seconds": 900,
+  "label": "admin-console"
+}
+```
+
+Response (`Cache-Control: no-store`):
+
+```json
+{
+  "access_token": "ocat_...",
+  "token_type": "Bearer",
+  "expires_at": "2026-08-26T12:15:00Z",
+  "expires_in": 900,
+  "scopes": ["bots:read", "bots:write", "interactions:list", "interactions:read"],
+  "api_base_url": "https://open-chat.example"
+}
+```
+
+## Security model
+
+- **Default-deny**: browser tokens only work on the explicitly allowlisted
+  routes below. Every other `/api/v1` route rejects them, and they cannot mint
+  further tokens.
+- **Scopes**: requested scopes must be a subset of the parent credential's
+  authority.
+- **Lifetime**: child expiry never exceeds the parent credential's expiry.
+  Default TTL is 15 minutes (`BROWSER_TOKEN_TTL_SECONDS`), maximum 60 minutes
+  (`BROWSER_TOKEN_MAX_TTL_SECONDS`).
+- **Revocation**: revoking or expiring the parent credential immediately
+  invalidates all tokens exchanged from it.
+- **CSRF protection**: when the exchange is authenticated with a session
+  cookie, the request must carry a same-site `Origin` header. Bearer-authenticated
+  (server-to-server) exchanges are exempt.
+- Browser tokens are Bearer tokens only; cross-site cookies are never used.
+  Host applications must keep tokens in memory and must not persist them to
+  `localStorage`/`sessionStorage`.
+
+## Scopes and allowlisted routes
+
+| Scope | Routes |
+| --- | --- |
+| `bots:read` | `GET /api/v1/bots/list`, `GET /api/v1/bots/{identifier}` |
+| `bots:write` | `PATCH /api/v1/bots/{identifier}`, `PUT /api/v1/bots/{identifier}/config` |
+| `interactions:list` | `GET /api/v1/chats/list` (interaction chats only) |
+| `interactions:read` | `GET /api/v1/chats/{chat_uuid}`, `GET /api/v1/chats/{chat_uuid}/messages/list`, `GET /api/v1/chats/{chat_uuid}/status` |
+| _(any browser token)_ | `GET /api/v1/user/self` |
+
+Browser tokens can only access **interaction** chats: `chats/list` is forced to
+interaction chat types, and chat detail/message/status routes reject
+non-interaction chats. Shared-interaction endpoints
+(`GET /api/interaction/{chat_share_uuid}[/messages|/status]`) remain public
+capability URLs and need no token.
+
+## Server configuration
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `CORS_ALLOWED_ORIGINS` | _(empty)_ | Comma-separated allowlist of browser origins (`scheme://host[:port]`). Wildcards are rejected. Empty disables cross-origin API access. |
+| `PUBLIC_BASE_URL` | _(empty)_ | Canonical public origin advertised as `api_base_url` in exchange responses. Falls back to the request host. |
+| `BROWSER_TOKEN_TTL_SECONDS` | `900` | Default browser token lifetime. |
+| `BROWSER_TOKEN_MAX_TTL_SECONDS` | `3600` | Maximum browser token lifetime. |
+
+CORS responses never allow credentials; browsers authenticate with Bearer
+tokens. WebSockets keep same-origin behavior by default; configured CORS
+origins are additionally allowed for WebSocket connections (they never replace
+the server's own origin).
+
+## Renewal and error handling
+
+- Tokens are short-lived; host applications should request a fresh token from
+  their backend before expiry (or after a `401`).
+- A client may renew once after a `401`; repeated failure should hand control
+  back to the host application (e.g. re-validate its own session).
+- Error responses are plain-text `4xx` bodies: `400` (invalid scopes/TTL),
+  `403` (missing scope, disallowed route, CSRF failure, restricted parent,
+  disallowed origin on preflight), `401`-equivalent `403 Forbidden`
+  (expired/revoked/invalid token).
+- No request rate limits are enforced yet; polling endpoints such as
+  `GET /api/v1/chats/{chat_uuid}/status` and
+  `GET /api/interaction/{chat_share_uuid}/status` are designed to tolerate
+  second-interval polling.
