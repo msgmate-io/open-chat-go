@@ -245,6 +245,11 @@ export function EntitiesOverview({
 
   const { data: permissions } = useSWR<PermissionsResponse>("/api/v1/user/permissions", fetcher);
   const { data: selfUser } = useSWR<SelfUser>("/api/v1/user/self", fetcher);
+  const { data: actionTasksCount } = useSWR<{ count: number }>(
+    "/api/v1/chats/action-tasks?count_only=1",
+    fetcher,
+  );
+  const actionCount = typeof actionTasksCount?.count === "number" ? actionTasksCount.count : 0;
   const {
     data: integrations,
     isLoading: integrationsLoading,
@@ -432,11 +437,26 @@ export function EntitiesOverview({
                 Start a chat with owned bots, public bots, or people from your contacts.
               </CardDescription>
             </div>
-            {canCreateBots ? (
-              <Button type="button" className="w-full sm:w-auto" onClick={() => navigateTo("/chats/bots/create")}>
-                Create bot
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => navigateTo("/chats/actions")}
+              >
+                Actions required
+                {actionCount > 0 ? (
+                  <Badge variant="default" className="ml-2 bg-amber-500 text-white shadow-none dark:text-amber-950">
+                    {actionCount}
+                  </Badge>
+                ) : null}
               </Button>
-            ) : null}
+              {canCreateBots ? (
+                <Button type="button" className="w-full sm:w-auto" onClick={() => navigateTo("/chats/bots/create")}>
+                  Create bot
+                </Button>
+              ) : null}
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant="secondary">Owned</Badge>
