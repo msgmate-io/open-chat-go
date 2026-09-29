@@ -47,6 +47,13 @@ func RenderConfigYAML(root map[string]interface{}) ([]byte, error) {
 	return encodeConfigDocument(root, "yaml")
 }
 
+// EncodeConfigDocument serializes a config document in the requested format
+// ("json" or "yaml"). It is used to mirror a saved config to a remote backing
+// store (e.g. a kubernetes Secret).
+func EncodeConfigDocument(root map[string]interface{}, format string) ([]byte, error) {
+	return encodeConfigDocument(root, format)
+}
+
 // SaveConfigDocument writes root back to source, preserving the original
 // document format (JSON vs YAML) and file permissions. The write is atomic.
 func SaveConfigDocument(source string, root map[string]interface{}) (string, error) {
