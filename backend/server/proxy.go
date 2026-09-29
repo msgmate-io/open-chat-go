@@ -2,7 +2,7 @@ package server
 
 import (
 	"backend/runtimecfg"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -163,7 +163,7 @@ func mobileSessionCookieName(target *url.URL, sessionNamespace string) string {
 	if sessionNamespace != "" {
 		key = sessionNamespace + "|" + targetKey
 	}
-	h := sha1.Sum([]byte(strings.ToLower(key)))
+	h := sha256.Sum256([]byte(strings.ToLower(key)))
 	return "session_id_mobile_" + hex.EncodeToString(h[:])[:12]
 }
 
