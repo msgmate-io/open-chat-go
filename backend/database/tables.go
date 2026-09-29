@@ -260,6 +260,7 @@ var Tabels []interface{} = []interface{}{
 	&Permission{},
 	&AccessToken{},
 	&IntegrationAccess{},
+	&ActionTaskDismissal{},
 }
 
 var Migrations []Migration = []Migration{
@@ -285,6 +286,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&Permission{}},
 	TableMigration{&AccessToken{}},
 	TableMigration{&IntegrationAccess{}},
+	TableMigration{&ActionTaskDismissal{}},
 	GrantDefaultPermissionsMigration{},
 }
 

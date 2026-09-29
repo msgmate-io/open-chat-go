@@ -32,8 +32,11 @@ We release all versions always ( after admin confirmation ):
 Licensed under the [GNU Affero General Public License v3.0 or later](./LICENSE)
 (`AGPL-3.0-or-later`).
 
+See [`SECURITY.md`](./SECURITY.md) for the security policy and how to report
+vulnerabilities.
+
 See [`NOTICE`](./NOTICE) and [`COPYRIGHT`](./COPYRIGHT) for the intellectual
 property owner, the current licensing draft status, special-licensing
 requests, and the copyright-owner exemption covering the proprietary
-(private) submodules. Alternative or commercial licensing can be
+(private) components. Alternative or commercial licensing can be
 investigated on request.

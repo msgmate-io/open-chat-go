@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
@@ -341,5 +342,235 @@ func TestRestartServerUnsupported(t *testing.T) {
 
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("expected 409 when restart unsupported, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func rawSettingsState(t *testing.T, content string) (string, func()) {
+	t.Helper()
+	prevSource := runtimecfg.GetConfigSource()
+	prevValues := runtimecfg.GetAll()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "open-chat.json")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	runtimecfg.SetConfigSource(path)
+	runtimecfg.SetAll(map[string]runtimecfg.Value{
+		"OCI_TEST_CORE_SETTINGS_HOST":  {Value: "orig-host"},
+		"OCI_TEST_CORE_SETTINGS_TOKEN": {Value: "orig-secret", Sensitive: true},
+	})
+	return path, func() {
+		runtimecfg.SetConfigSource(prevSource)
+		runtimecfg.SetAll(prevValues)
+	}
+}
+
+func TestGetRawIntegrationSettingsRequiresAdmin(t *testing.T) {
+	req := settingsRequest(http.MethodGet, "/api/v1/admin/integration-settings/raw", nil, &database.User{IsAdmin: false})
+	rr := httptest.NewRecorder()
+
+	GetRawIntegrationSettings(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d", rr.Code)
+	}
+}
+
+func TestGetRawIntegrationSettingsRedactsSecrets(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	path, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host","OCI_TEST_CORE_SETTINGS_TOKEN":"orig-secret"}}`)
+	defer cleanup()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("stat config: %v", err)
+	}
+
+	req := settingsRequest(http.MethodGet, "/api/v1/admin/integration-settings/raw", nil, settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	GetRawIntegrationSettings(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var payload rawConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	body := payload.YAML
+	if strings.Contains(body, "orig-secret") {
+		t.Fatalf("expected secret redacted, got %s", body)
+	}
+	if !strings.Contains(body, "<redacted>") {
+		t.Fatalf("expected redaction sentinel, got %s", body)
+	}
+	if !strings.Contains(body, "orig-host") {
+		t.Fatalf("expected non-sensitive value visible, got %s", body)
+	}
+}
+
+func TestGetRawIntegrationSettingsInMemoryFallback(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	prevSource := runtimecfg.GetConfigSource()
+	prevValues := runtimecfg.GetAll()
+	t.Cleanup(func() {
+		runtimecfg.SetConfigSource(prevSource)
+		runtimecfg.SetAll(prevValues)
+	})
+	runtimecfg.SetConfigSource("")
+	runtimecfg.SetAll(map[string]runtimecfg.Value{"PORT": {Value: "1984"}})
+
+	req := settingsRequest(http.MethodGet, "/api/v1/admin/integration-settings/raw", nil, settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	GetRawIntegrationSettings(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var payload rawConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.InMemory {
+		t.Fatal("expected in_memory fallback when no config file is configured")
+	}
+	if !strings.Contains(payload.YAML, "PORT") {
+		t.Fatalf("expected runtime values in fallback document, got %s", payload.YAML)
+	}
+}
+
+func TestValidateRawIntegrationSettings(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+
+	validate := func(t *testing.T, body string) rawConfigValidateResponse {
+		t.Helper()
+		req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/validate",
+			[]byte(body), settingsAdminUser(t))
+		rr := httptest.NewRecorder()
+		ValidateRawIntegrationSettings(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var payload rawConfigValidateResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return payload
+	}
+
+	if got := validate(t, `{"yaml":"env:\n  OCI_TEST_CORE_SETTINGS_HOST: h\n"}`); !got.Valid {
+		t.Fatalf("expected valid document, got errors %v", got.Errors)
+	}
+	if got := validate(t, `{"yaml":"foo: [1, 2"}`); got.Valid {
+		t.Fatal("expected invalid YAML to be rejected")
+	}
+	if got := validate(t, `{"yaml":"integrations:\n  nope:\n    x: y\n"}`); got.Valid || !hasErrorContaining(got.Errors, "unknown integration") {
+		t.Fatalf("expected unknown integration error, got %v", got.Errors)
+	}
+	if got := validate(t, `{"yaml":"integrations:\n  `+testSettingsIntegration+`:\n    NOPE: y\n"}`); got.Valid || !hasErrorContaining(got.Errors, "does not map to a declared runtime env var") {
+		t.Fatalf("expected unknown key error, got %v", got.Errors)
+	}
+}
+
+func hasErrorContaining(errs []string, needle string) bool {
+	for _, err := range errs {
+		if strings.Contains(err, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSaveRawIntegrationSettingsPreservesRedacted(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	path, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host","OCI_TEST_CORE_SETTINGS_TOKEN":"orig-secret"}}`)
+	defer cleanup()
+
+	body := []byte(`{"yaml":"{\"env\":{\"OCI_TEST_CORE_SETTINGS_HOST\":\"new-host\",\"OCI_TEST_CORE_SETTINGS_TOKEN\":\"<redacted>\"}}"}`)
+	req := settingsRequest(http.MethodPut, "/api/v1/admin/integration-settings/raw", body, settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	SaveRawIntegrationSettings(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var payload rawConfigSaveResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Persisted {
+		t.Fatalf("expected persisted, got persist_error %q", payload.PersistError)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	env := root["env"].(map[string]interface{})
+	if env["OCI_TEST_CORE_SETTINGS_HOST"] != "new-host" {
+		t.Fatalf("expected updated host, got %#v", env)
+	}
+	if env["OCI_TEST_CORE_SETTINGS_TOKEN"] != "orig-secret" {
+		t.Fatalf("expected redacted secret restored from disk, got %#v", env)
+	}
+}
+
+func TestSaveRawIntegrationSettingsRejectsInvalid(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	req := settingsRequest(http.MethodPut, "/api/v1/admin/integration-settings/raw",
+		[]byte(`{"yaml":"integrations:\n  nope:\n    x: y\n"}`), settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	SaveRawIntegrationSettings(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid document, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestDownloadRawIntegrationSettings(t *testing.T) {
+	path, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host"}}`)
+	defer cleanup()
+	user := settingsAdminUser(t)
+
+	wrong := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/download",
+		[]byte(`{"password":"wrong"}`), user)
+	wrongRR := httptest.NewRecorder()
+	DownloadRawIntegrationSettings(wrongRR, wrong)
+	if wrongRR.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for wrong password, got %d", wrongRR.Code)
+	}
+
+	right := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/download",
+		[]byte(`{"password":"secret-password"}`), user)
+	rightRR := httptest.NewRecorder()
+	DownloadRawIntegrationSettings(rightRR, right)
+	if rightRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for correct password, got %d: %s", rightRR.Code, rightRR.Body.String())
+	}
+	if disposition := rightRR.Header().Get("Content-Disposition"); !strings.Contains(disposition, filepath.Base(path)) {
+		t.Fatalf("expected attachment filename in Content-Disposition, got %q", disposition)
+	}
+	expected, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !bytes.Equal(rightRR.Body.Bytes(), expected) {
+		t.Fatalf("expected downloaded bytes to match config file")
+	}
+}
+
+func TestDownloadRawIntegrationSettingsNoFile(t *testing.T) {
+	prevSource := runtimecfg.GetConfigSource()
+	t.Cleanup(func() { runtimecfg.SetConfigSource(prevSource) })
+	runtimecfg.SetConfigSource("")
+
+	req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/download",
+		[]byte(`{"password":"secret-password"}`), settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	DownloadRawIntegrationSettings(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when no config file, got %d: %s", rr.Code, rr.Body.String())
 	}
 }

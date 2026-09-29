@@ -1,0 +1,131 @@
+---
+title: REST API
+path: rest-api
+description: The public HTTP API surface of Open Chat Go.
+order: 20
+section: API
+---
+
+All routes below are relative to the server origin. The interactive OpenAPI
+reference is served at [`/reference`](/reference) and the raw spec at
+`/api/openapi.json`.
+
+## Public and optional-auth routes
+
+These routes do not require a session and may also be called with an API token
+to include caller-owned resources.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/models` | List public models plus caller-owned models. |
+| `GET` | `/api/v1/models/{model_uuid}` | Retrieve a single model. |
+| `GET` | `/api/v1/tools` | List registered tools. |
+| `GET` | `/api/v1/tools/{tool_name}` | Retrieve a tool definition. |
+| `GET` | `/api/v1/tools/typing` | List tool typing definitions. |
+| `GET` | `/api/v1/tools/{tool_name}/typing` | Retrieve a single tool typing definition. |
+| `POST` | `/api/v1/tools/typing/{tool_name}/call/validate` | Validate a tool call payload. |
+| `POST` | `/api/v1/tools/typing/{tool_name}/init/validate` | Validate tool init data. |
+| `GET` | `/api/version` | Server version information. |
+| `GET` | `/metrics` | Prometheus-style metrics. |
+
+### Shared interaction capability URLs
+
+Shared interactions are readable by anyone holding the unguessable
+`chat_share_uuid`; no account or token is required.
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/interaction/{chat_share_uuid}` |
+| `GET` | `/api/interaction/{chat_share_uuid}/messages` |
+| `GET` | `/api/interaction/{chat_share_uuid}/status` |
+| `GET` | `/api/interaction/{chat_share_uuid}/badge.svg` |
+
+The badge is also reachable at `GET /interaction/{chat_share_uuid}/badge.svg`
+(without the `/api` prefix) for embeds built from the human-facing interaction
+page. `/api/...` remains the canonical URL.
+
+The badge is detailed by default (`open-chat | <host> | <state> | MM:SS`, with a
+live runtime timer while the interaction is running). Pass `?variant=simple` for
+the legacy two-segment badge.
+
+## Authenticated routes
+
+All `/api/v1/*` routes not listed above require an authenticated session or an
+`ocat_` API token (`Authorization: Bearer ocat_...`).
+
+### Chats
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/chats/list` | List chats. |
+| `GET` | `/api/v1/chats/{chat_uuid}` | Retrieve a chat. |
+| `GET` | `/api/v1/chats/{chat_uuid}/messages/list` | List messages. |
+| `GET` | `/api/v1/chats/{chat_uuid}/messages/streaming` | Fetch the streaming message. |
+| `GET` | `/api/v1/chats/{chat_uuid}/status` | Interaction status. |
+| `GET` | `/api/v1/chats/states` | Bulk bot chat states. |
+| `GET` | `/api/v1/chats/{chat_uuid}/contact` | Contact for a chat. |
+| `POST` | `/api/v1/chats/create` | Create a chat. |
+| `POST` | `/api/v1/chats/{chat_uuid}/messages/send` | Send a message. |
+| `POST` | `/api/v1/chats/{chat_uuid}/messages/{message_uuid}/rerun` | Re-run a message. |
+| `POST` | `/api/v1/chats/{chat_uuid}/signals/{signal}` | Send an interaction signal. |
+| `POST` | `/api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute` | Execute a confirmable tool action. |
+| `POST` | `/api/chat/{chat_uuid}/publish` | Publish a chat as a shared interaction. |
+| `POST` | `/api/chat/{chat_uuid}/unpublish` | Unpublish a shared interaction. |
+
+### Bots and agents
+
+| Method | Path |
+| --- | --- |
+| `POST` | `/api/v1/bots` |
+| `GET` | `/api/v1/bots/list` |
+| `GET` | `/api/v1/bots/{identifier}` |
+| `PATCH` | `/api/v1/bots/{identifier}` |
+| `PUT` | `/api/v1/bots/{identifier}/config` |
+| `DELETE` | `/api/v1/bots/{identifier}` |
+| `POST` | `/api/v1/bots/{identifier}/interactions` |
+
+### Interactions and tools
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/api/v1/interactions/{chat_uuid}/tools` |
+| `POST` | `/api/v1/interactions/{chat_uuid}/tools/{tool_name}` |
+| `POST` | `/api/v1/interactions/{chat_uuid}/tools/{tool_name}/enqueue` |
+| `POST` | `/api/v1/interactions/{chat_uuid}/tools/init` |
+
+### Contacts, users and files
+
+| Method | Path |
+| --- | --- |
+| `POST` | `/api/v1/contacts/add` |
+| `GET` | `/api/v1/contacts/list` |
+| `GET` | `/api/v1/contacts/{contact_token}` |
+| `GET` | `/api/v1/user/self` |
+| `GET` | `/api/v1/user/permissions` |
+| `POST` | `/api/v1/user/browser-token` |
+| `POST` | `/api/v1/user/access-tokens` |
+| `GET` | `/api/v1/user/access-tokens/list` |
+| `POST` | `/api/v1/user/access-tokens/{token_uuid}/revoke` |
+| `POST` | `/api/v1/user/2fa/setup` |
+| `POST` | `/api/v1/user/2fa/confirm` |
+| `POST` | `/api/v1/user/2fa/disable` |
+| `POST` | `/api/v1/user/2fa/recovery-codes` |
+| `GET` | `/api/v1/integrations/list` |
+| `GET` | `/api/v1/integrations/{integration_name}/overview` |
+| `POST` | `/api/v1/files/upload` |
+| `GET` | `/api/v1/files/{file_id}` |
+| `GET` | `/api/v1/files/{file_id}/info` |
+| `GET` | `/api/v1/files/{file_id}/data` |
+| `DELETE` | `/api/v1/files/{file_id}` |
+
+## Authentication endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/v1/user/login` | Start a session. |
+| `POST` | `/api/v1/user/logout` | End a session. |
+| `GET` | `/api/user/cli-auth` | Begin CLI browser authorization. |
+| `GET` | `/api/user/cli-auth/poll` | Poll CLI authorization state. |
+
+See [Authentication](/docs#authentication) and
+[Browser tokens](/docs#browser-tokens) for the full auth model.

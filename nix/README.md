@@ -121,8 +121,9 @@ swagger spec and integration assets are embedded via `//go:embed`
 (`backend/server/routing.go`). On Linux it is dynamically linked against glibc,
 which `autoPatchelfHook` rewrites for NixOS.
 
-If you want a from-source build with Nix, do it from a full checkout (with
-submodules initialised) and adapt `backend/full_build.sh` into a
+If you want a from-source build with Nix, do it from a full checkout (with the
+public submodules initialised and the integrations fetched via
+`openchat-integrations prepare`) and adapt `backend/full_build.sh` into a
 `buildGoModule` derivation.
 
 ## Updating the pinned release

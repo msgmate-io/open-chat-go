@@ -1,0 +1,41 @@
+---
+title: WebSockets
+path: websockets
+description: Real-time streaming for chats and shared interactions.
+order: 21
+section: API
+---
+
+WebSocket connections provide push-based updates so clients do not have to poll
+`/status` while a model is generating.
+
+## Authenticated chat stream
+
+Connect to `/ws/connect` with the same session cookie or `ocat_` API token used
+for the REST API. The connection is authenticated by the standard auth
+middleware.
+
+Messages exchanged over the socket describe chat and message lifecycle events
+(for example message created, streaming content and completion) for the chats
+the authenticated user can access.
+
+## Shared interaction stream
+
+Public viewers of a shared interaction can subscribe without an account:
+
+```
+GET /ws/interaction/{chat_share_uuid}
+```
+
+The `chat_share_uuid` is the same unguessable capability token used by the
+public `/api/interaction/{chat_share_uuid}` REST routes.
+
+## When to use HTTP polling instead
+
+For simple integrations, the REST status endpoints are designed to tolerate
+second-interval polling:
+
+- `GET /api/v1/chats/{chat_uuid}/status`
+- `GET /api/interaction/{chat_share_uuid}/status`
+
+Use the WebSocket stream when you need low-latency streaming tokens in a UI.

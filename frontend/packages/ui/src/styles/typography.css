@@ -1,0 +1,111 @@
+:root {
+  --font-heading: "Signika Negative", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer components {
+  .type-heading1 {
+    font-family: var(--font-heading);
+    font-size: 4rem;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+
+  .type-heading2 {
+    font-family: var(--font-heading);
+    font-size: 3.5rem;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+
+  .type-heading3 {
+    font-family: var(--font-heading);
+    font-size: 2.5rem;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+
+  .type-heading4 {
+    font-family: var(--font-heading);
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .type-heading5 {
+    font-family: var(--font-heading);
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+
+  .type-heading6 {
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .type-heading7 {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .type-body1 {
+    font-family: var(--font-body);
+    font-size: 2rem;
+    line-height: 1.2;
+  }
+
+  .type-body2 {
+    font-family: var(--font-body);
+    font-size: 1.75rem;
+    line-height: 1.25;
+  }
+
+  .type-body3 {
+    font-family: var(--font-body);
+    font-size: 1.5rem;
+  }
+
+  .type-body4 {
+    font-family: var(--font-body);
+    font-size: 1.25rem;
+  }
+
+  .type-body5 {
+    font-family: var(--font-body);
+    font-size: 1rem;
+  }
+
+  .type-body6 {
+    font-family: var(--font-body);
+    font-size: 0.8725rem;
+  }
+
+  .type-body7 {
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+  }
+
+  @media (min-width: 768px) {
+    .type-heading1 {
+      font-size: 5rem;
+    }
+
+    .type-heading2 {
+      font-size: 4rem;
+    }
+
+    .type-heading3 {
+      font-size: 3rem;
+    }
+
+    .type-body1 {
+      font-size: 2.5rem;
+    }
+
+    .type-body2 {
+      font-size: 2rem;
+    }
+  }
+}
