@@ -38,7 +38,7 @@ export function ProfileCard({
     fetch("/api/v1/user/logout", { method: "POST" }).then((res) => {
       if (res.ok) {
         navigateTo("/")
-        Cookies.remove("is_authorized")
+        Cookies.remove("oc_client_state")
       }
     })
   }
