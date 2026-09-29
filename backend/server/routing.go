@@ -422,6 +422,8 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}", chatsHandler.GetChat)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/status", chatsHandler.GetInteractionStatus)
 	v1PrivateApis.HandleFunc("GET /chats/states", chatsHandler.GetChatStates)
+	v1PrivateApis.HandleFunc("GET /chats/action-tasks", chatsHandler.GetActionTasks)
+	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/action-tasks/dismiss", chatsHandler.DismissActionTask)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/contact", contactsHandler.GetContactByChatUUID)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/send", chatsHandler.MessageSend)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/rerun", chatsHandler.RerunMessage)

@@ -1,4 +1,6 @@
+import { ListTodo } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { Badge } from "../badge";
 import { Card } from "../card";
 import { Text, TextTypes } from "../text";
 
@@ -19,11 +21,14 @@ export function DefaultChats({
   navigateTo,
   defaultBotContact,
   botAvatarSrc,
+  actionCount = 0,
 }: {
   navigateTo: (to: string) => void;
   defaultBotContact: { contact_token?: string } | null | undefined;
   botAvatarSrc?: string;
+  actionCount?: number;
 }) {
+  const hasActions = actionCount > 0;
   return (
     <div className="mb-1 flex flex-col gap-1">
       <Card
@@ -55,6 +60,37 @@ export function DefaultChats({
           <Text type={TextTypes.Body6} tag="span" bold className="truncate">
             Bots & Users Overview
           </Text>
+        </div>
+      </Card>
+      <Card
+        className={cn(
+          "chat-list-row",
+          hasActions && "border-amber-300/70 ring-1 ring-amber-400/50 dark:border-amber-500/40",
+        )}
+        onClick={() => navigateTo("/chats/actions")}
+      >
+        <div className="flex items-center gap-3 px-2 py-2">
+          <div
+            className={cn(
+              "flex size-8 items-center justify-center rounded-md",
+              hasActions
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"
+                : "bg-muted text-muted-foreground",
+            )}
+          >
+            <ListTodo className="size-4" />
+          </div>
+          <Text type={TextTypes.Body6} tag="span" bold className="truncate">
+            Actions required
+          </Text>
+          {hasActions ? (
+            <Badge
+              variant="default"
+              className="ml-auto bg-amber-500 text-white shadow-none dark:bg-amber-500 dark:text-amber-950"
+            >
+              {actionCount}
+            </Badge>
+          ) : null}
         </div>
       </Card>
     </div>

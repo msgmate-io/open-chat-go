@@ -259,23 +259,43 @@ func hasPendingConfirmationInRecentMessages(DB *gorm.DB, chatID uint) bool {
 }
 
 func messageHasPendingConfirmation(message database.Message) bool {
+	return len(pendingActionsForMessage(message)) > 0
+}
+
+// pendingActionsForMessage extracts every user-facing pending action carried by
+// a message. It is the single source of truth for both the per-chat
+// needs_confirmation state and the action-task stack.
+func pendingActionsForMessage(message database.Message) []ActionTaskAction {
+	actions := []ActionTaskAction{}
 	if len(message.MetaData) > 0 {
 		meta := map[string]interface{}{}
 		if json.Unmarshal(message.MetaData, &meta) == nil {
-			if actions, ok := meta["confirmable_actions"].([]interface{}); ok {
-				for _, rawAction := range actions {
+			if rawActions, ok := meta["confirmable_actions"].([]interface{}); ok {
+				for _, rawAction := range rawActions {
 					action, ok := rawAction.(map[string]interface{})
 					if !ok {
 						continue
 					}
 					if status, _ := action["status"].(string); status == "pending" {
-						return true
+						actions = append(actions, ActionTaskAction{
+							Kind:           ActionTaskKindConfirmableAction,
+							ActionId:       actionTaskStringField(action, "action_id"),
+							Title:          actionTaskStringField(action, "title"),
+							Description:    actionTaskStringField(action, "description"),
+							TargetToolName: actionTaskStringField(action, "target_tool_name"),
+							DangerLevel:    actionTaskStringField(action, "danger_level"),
+						})
 					}
 				}
 			}
 			if permission, ok := meta["opencode_permission"].(map[string]interface{}); ok {
 				if status, _ := permission["status"].(string); status == "pending" {
-					return true
+					actions = append(actions, ActionTaskAction{
+						Kind:        ActionTaskKindOpencodePermission,
+						Title:       actionTaskFirstNonEmpty(actionTaskStringField(permission, "title"), "OpenCode permission request"),
+						Description: actionTaskStringField(permission, "description"),
+						Reason:      actionTaskFirstNonEmpty(actionTaskStringField(permission, "reason"), actionTaskStringField(permission, "permission_type")),
+					})
 				}
 			}
 			// A terminal OpenCode error (build/plan failure) leaves a pending
@@ -283,14 +303,23 @@ func messageHasPendingConfirmation(message database.Message) bool {
 			// interaction renders as the blue "needs confirmation" state.
 			if needsAction, ok := meta["opencode_needs_action"].(map[string]interface{}); ok {
 				if status, _ := needsAction["status"].(string); status == "pending" {
-					return true
+					actions = append(actions, ActionTaskAction{
+						Kind:        ActionTaskKindOpencodeNeedsAction,
+						Title:       actionTaskFirstNonEmpty(actionTaskStringField(needsAction, "title"), "OpenCode needs action"),
+						Description: actionTaskFirstNonEmpty(actionTaskStringField(needsAction, "message"), actionTaskStringField(needsAction, "reason")),
+						Reason:      actionTaskStringField(needsAction, "reason"),
+					})
 				}
 			}
 			// Interaction confirmation gate: the bot created the chat but waits
 			// for the user to approve the deferred interaction.
 			if confirmation, ok := meta[interactionConfirmationMetaKey].(map[string]interface{}); ok {
 				if status, _ := confirmation["status"].(string); status == InteractionConfirmationPending {
-					return true
+					actions = append(actions, ActionTaskAction{
+						Kind:        ActionTaskKindInteractionConfirmation,
+						Title:       actionTaskFirstNonEmpty(actionTaskStringField(confirmation, "title"), "Interaction confirmation"),
+						Description: actionTaskStringField(confirmation, "description"),
+					})
 				}
 			}
 		}
@@ -302,11 +331,17 @@ func messageHasPendingConfirmation(message database.Message) bool {
 				continue
 			}
 			if status, _ := toolCall["status"].(string); status == "pending_confirmation" {
-				return true
+				actions = append(actions, ActionTaskAction{
+					Kind:           ActionTaskKindToolConfirmation,
+					ActionId:       actionTaskFirstNonEmpty(actionTaskStringField(toolCall, "id"), actionTaskStringField(toolCall, "call_id")),
+					Title:          actionTaskFirstNonEmpty(actionTaskStringField(toolCall, "title"), "Tool call confirmation"),
+					Description:    actionTaskStringField(toolCall, "description"),
+					TargetToolName: actionTaskFirstNonEmpty(actionTaskStringField(toolCall, "name"), actionTaskStringField(toolCall, "tool_name")),
+				})
 			}
 		}
 	}
-	return false
+	return actions
 }
 
 func isQueueStateActive(state string) bool {
