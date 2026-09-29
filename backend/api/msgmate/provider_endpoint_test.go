@@ -99,3 +99,34 @@ func TestResolveProviderEndpointOpenRouterCustomWins(t *testing.T) {
 		t.Fatalf("expected custom endpoint to win, got %q", got)
 	}
 }
+
+func TestResolveChatProviderEndpointOpenRouterAvoidsLocalAIDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_API_HOST", "")
+	got, err := resolveChatProviderEndpoint("openrouter", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://openrouter.ai/api/v1/" {
+		t.Fatalf("expected openrouter public endpoint, got %q", got)
+	}
+}
+
+func TestResolveChatProviderEndpointLocalAIFallback(t *testing.T) {
+	got, err := resolveChatProviderEndpoint("deepinfra", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "http://localai:8080" {
+		t.Fatalf("expected localai fallback for endpoint-less provider, got %q", got)
+	}
+}
+
+func TestResolveChatProviderEndpointCustomWins(t *testing.T) {
+	got, err := resolveChatProviderEndpoint("deepinfra", "https://api.deepinfra.com/v1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://api.deepinfra.com/v1" {
+		t.Fatalf("expected custom endpoint, got %q", got)
+	}
+}
