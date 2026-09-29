@@ -2,10 +2,10 @@ package server
 
 import (
 	"backend/runtimecfg"
-	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -157,14 +157,19 @@ func resolveMobileSessionNamespace() string {
 	return strings.TrimSpace(values["MOBILE_SESSION_NAMESPACE"].Value)
 }
 
+// mobileSessionCookieName derives a stable, namespaced cookie name for a mobile
+// proxy target. The name only needs to be deterministic and collision-resistant
+// for the configured targets; it is not a credential or a password, so a fast
+// non-cryptographic hash is the appropriate tool here.
 func mobileSessionCookieName(target *url.URL, sessionNamespace string) string {
 	targetKey := strings.TrimSpace(target.String())
 	key := targetKey
 	if sessionNamespace != "" {
 		key = sessionNamespace + "|" + targetKey
 	}
-	h := sha1.Sum([]byte(strings.ToLower(key)))
-	return "session_id_mobile_" + hex.EncodeToString(h[:])[:12]
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strings.ToLower(key)))
+	return "session_id_mobile_" + hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 func rewriteSessionCookieName(cookiePair string, namespacedSessionCookie string) string {

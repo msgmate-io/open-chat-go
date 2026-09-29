@@ -2,6 +2,7 @@ backend/backend
 backend/server/frontend/
 backend/data.db
 backend/test/data.db
+generated-credentials.txt
 bin
 backend/docs
 .env
