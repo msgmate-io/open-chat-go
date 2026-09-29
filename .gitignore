@@ -69,6 +69,10 @@ backend/integrations/externalintegrations/imports_gen.go
 clients/integrations/*
 !clients/integrations/.gitkeep
 
+# Generated per profile by `openchat-integrations frontend`; recreated by
+# frontend/scripts/ensure-extensions-gen.mjs before dev/build.
+frontend/integrations/extensions.gen.ts
+
 # Profile-scoped private checkouts, materialized by `openchat-integrations setup`.
 # They are no longer git submodules; the public `profile_setup.yaml` names them.
 development/ci/
