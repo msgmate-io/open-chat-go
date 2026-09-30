@@ -32,7 +32,7 @@ var badgeStates = map[chatstate.State]badgeState{
 	chatstate.StateActive:            {Label: "running", Color: "#0969da"},
 	chatstate.StateFinished:          {Label: "finished", Color: "#2ecc40"},
 	chatstate.StateFailed:            {Label: "failed", Color: "#c0392b"},
-	chatstate.StateNeedsConfirmation: {Label: "waiting", Color: "#e2b93d"},
+	chatstate.StateNeedsConfirmation: {Label: "confirmation required", Color: "#e2b93d"},
 	chatstate.StateIdle:              {Label: "idle", Color: "#8b8b8b"},
 }
 
@@ -87,11 +87,14 @@ type badgeSegment struct {
 
 // GetSharedInteractionBadge renders a public, shields.io-style SVG badge for a
 // shared interaction. The badge only exposes the current processing state of
-// the interaction (running / finished / failed / waiting / idle) plus, in the
-// default detailed variant, the server host name and the interaction runtime.
-// No message contents or other sensitive information are exposed. Same share
-// UUID policy as the other /api/interaction endpoints: holding the chat share
-// UUID is the authentication.
+// the interaction (running / finished / failed / confirmation required / idle)
+// plus, in the default detailed variant, the server host name and the
+// interaction runtime. When an interaction is blocked on user input the state
+// label spells out the required action instead of a generic "waiting" pill, so
+// the indicator posted on the triggering issue makes the pending confirmation
+// obvious. No message contents or other sensitive information are exposed. Same
+// share UUID policy as the other /api/interaction endpoints: holding the chat
+// share UUID is the authentication.
 //
 //	@Summary      Interaction state badge
 //	@Description  Render an SVG badge showing the current processing state, server host and runtime of a shared interaction. Pass ?variant=simple for the legacy two-segment badge.

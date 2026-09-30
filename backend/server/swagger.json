@@ -452,6 +452,29 @@
                 }
             }
         },
+        "/api/v1/admin/integration-settings/raw/view": {
+            "post": {
+                "description": "Returns the active config document as YAML with sensitive values masked, after password confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "View raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.rawConfigResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/integration-settings/restart": {
             "post": {
                 "description": "Asks the OS service manager to restart the server when service-managed; otherwise returns 409.",
@@ -895,7 +918,7 @@
                         "SessionAuth": []
                     }
                 ],
-                "description": "List owned chats/interactions that currently require a user action.",
+                "description": "List owned chats/interactions that currently require a user action. Admins may pass scope=all to inspect pending actions across all users.",
                 "consumes": [
                     "application/json"
                 ],
@@ -912,6 +935,13 @@
                         "default": 0,
                         "description": "Only return the count (1/0)",
                         "name": "count_only",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "Admin only: 'all' to list every user's pending actions",
+                        "name": "scope",
                         "in": "query"
                     }
                 ],
@@ -3836,6 +3866,13 @@
                     "items": {
                         "$ref": "#/definitions/chats.ActionTaskAction"
                     }
+                },
+                "admin_view": {
+                    "description": "AdminView marks rows returned through the admin-wide scope (the acting\nadmin is not a participant). ChatOwner identifies the user whose\ninteraction needs the action, so an admin can tell them apart.",
+                    "type": "boolean"
+                },
+                "chat_owner": {
+                    "$ref": "#/definitions/chats.ActionTaskPartner"
                 },
                 "chat_type": {
                     "type": "string"
