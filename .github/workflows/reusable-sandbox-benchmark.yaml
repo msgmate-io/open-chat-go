@@ -382,10 +382,13 @@ jobs:
       SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
       SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
       SANDBOX_INTERACTION_TIMEOUT: ${{ inputs.sandbox_interaction_timeout }}
-      # Model/provider pin for the opencode runtime. Only the openrouter API
-      # key is configured by default; other providers need their own secret.
-      SANDBOX_OPENCODE_PROVIDER: ${{ inputs.opencode_provider }}
-      SANDBOX_OPENCODE_MODEL: ${{ inputs.opencode_model }}
+      # Model/provider pin for the opencode runtime. When the dedicated
+      # DeepInfra key is configured, prefer the same provider/model the private
+      # sandbox suite uses (it is the reliable path for the longer
+      # interactions); otherwise fall back to the caller-provided provider
+      # (OpenRouter by default, the only key guaranteed in this repository).
+      SANDBOX_OPENCODE_PROVIDER: ${{ secrets.DEEPINFRA_API_KEY != '' && 'deepinfra' || inputs.opencode_provider }}
+      SANDBOX_OPENCODE_MODEL: ${{ secrets.DEEPINFRA_API_KEY != '' && 'deepseek-ai/DeepSeek-V4.1-Flash' || inputs.opencode_model }}
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
