@@ -1510,8 +1510,17 @@ jobs:
       # Plain `sandbox-test` runs all tests; `sandbox-test:<tag>` labels narrow
       # the suite to matching tests (union of all such labels).
       tags: ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_tags }}
-      opencode_provider: openrouter
-      opencode_model: deepseek/deepseek-v4-flash
+      # Model/provider pin for the opencode runtime, overridable via repo
+      # variables. The old deepseek/deepseek-v4-flash pin stalls on the longer
+      # interactions (gh_code_review, playwright_blog_research,
+      # repo_changes_summary, parallel_sessions), leaving the chat stuck in the
+      # active state until the per-test timeout; the private sandbox suite moved
+      # to DeepSeek V4.1. The public suite keeps OpenRouter because it is the
+      # only provider with a configured key in this repository. Set
+      # vars.SANDBOX_OPENCODE_PROVIDER/MODEL (and add the matching secret) to
+      # switch providers.
+      opencode_provider: ${{ vars.SANDBOX_OPENCODE_PROVIDER || 'openrouter' }}
+      opencode_model: ${{ vars.SANDBOX_OPENCODE_MODEL || 'deepseek/deepseek-v4.1-flash' }}
       sandbox_interaction_timeout: "720"
       upload_artifacts: true
       post_results: true
