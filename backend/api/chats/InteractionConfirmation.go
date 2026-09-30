@@ -131,7 +131,7 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 		return
 	}
 
-	botUser, counterpartyOK := getChatCounterparty(chat, *user)
+	botUser, counterpartyOK := resolveChatBotCounterparty(chat, *user)
 	if !counterpartyOK || !botUser.IsAutomated {
 		http.Error(w, "Confirmation is only available in chats with bots", http.StatusConflict)
 		return
