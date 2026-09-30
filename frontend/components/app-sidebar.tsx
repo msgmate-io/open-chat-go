@@ -108,6 +108,9 @@ export function AppSidebar({
   const isAdminIntegrationActive = Boolean(
     integrations?.rows?.some((integration) => integration.name === "admin"),
   );
+  const hasAccountManagement = Boolean(
+    integrations?.rows?.some((integration) => integration.name === "account_management"),
+  );
   const themeSelector = <ConnectedThemeSelector />;
 
   useEffect(() => {
@@ -138,6 +141,12 @@ export function AppSidebar({
         url: "/integrations/admin/settings",
       });
     }
+    if (user?.is_admin && hasAccountManagement) {
+      profileItems.push({
+        title: "Impersonation",
+        url: "/integrations/account_management/impersonation",
+      });
+    }
     const items = [
       {
         ...profileNavItem,
@@ -154,7 +163,7 @@ export function AppSidebar({
       },
     ];
     return items;
-  }, [isAdminIntegrationActive, user?.is_admin]);
+  }, [isAdminIntegrationActive, hasAccountManagement, user?.is_admin]);
 
   return (
     <Sidebar collapsible="icon" {...props}>
