@@ -452,6 +452,29 @@
                 }
             }
         },
+        "/api/v1/admin/integration-settings/raw/view": {
+            "post": {
+                "description": "Returns the active config document as YAML with sensitive values masked, after password confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "View raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.rawConfigResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/integration-settings/restart": {
             "post": {
                 "description": "Asks the OS service manager to restart the server when service-managed; otherwise returns 409.",
@@ -4360,6 +4383,10 @@
             "type": "object",
             "properties": {
                 "contact_token": {
+                    "type": "string"
+                },
+                "git_usernames": {
+                    "description": "GitUsernames is a JSON array of provider logins (e.g. GitHub usernames)\nmapped to this account. The git integration uses it to resolve which\nOpen-Chat user triggered a repository event so the dispatched coding\ninteraction is owned by (and runs as) that user.",
                     "type": "string"
                 },
                 "is_admin": {

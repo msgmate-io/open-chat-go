@@ -416,6 +416,7 @@ type bootstrapUserSpec struct {
 	Email                        string
 	IsAdmin                      bool
 	IsAutomated                  bool
+	GitUsernames                 []string
 	SingletonAdmin               bool
 	ValidateStrength             bool
 	SuppressGeneratedPasswordLog bool
@@ -716,6 +717,9 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		if err := applyBootstrapTwoFactor(DB, admin, spec); err != nil {
 			return nil, err
 		}
+		if err := applyBootstrapGitUsernames(DB, admin, spec); err != nil {
+			return nil, err
+		}
 		return admin, nil
 	}
 
@@ -746,9 +750,26 @@ func ensureBootstrapUser(DB *gorm.DB, spec bootstrapUserSpec) (*database.User, e
 		if err := applyBootstrapTwoFactor(DB, user, spec); err != nil {
 			return nil, err
 		}
+		if err := applyBootstrapGitUsernames(DB, user, spec); err != nil {
+			return nil, err
+		}
 	}
 
 	return user, nil
+}
+
+// applyBootstrapGitUsernames persists the provider logins declared for a
+// bootstrap user so the git integration can map triggering usernames to the
+// account. It is a no-op when the spec declares none, so existing configs do
+// not clobber a mapping managed elsewhere.
+func applyBootstrapGitUsernames(DB *gorm.DB, user *database.User, spec bootstrapUserSpec) error {
+	if user == nil || len(spec.GitUsernames) == 0 {
+		return nil
+	}
+	if err := database.SetUserGitUsernames(DB, user.ID, spec.GitUsernames); err != nil {
+		return fmt.Errorf("failed to set git usernames for %s: %w", spec.Label, err)
+	}
+	return nil
 }
 
 func ServerCli() *cli.Command {

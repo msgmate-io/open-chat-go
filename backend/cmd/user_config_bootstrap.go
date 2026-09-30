@@ -20,6 +20,7 @@ type userBootstrapConfig struct {
 	Email                  string   `json:"email,omitempty"`
 	IsAdmin                bool     `json:"is_admin,omitempty"`
 	IsAutomated            bool     `json:"is_automated,omitempty"`
+	GitUsernames           []string `json:"git_usernames,omitempty"`
 	TwoFactorSecret        string   `json:"two_factor_secret,omitempty"`
 	TwoFactorRecoveryCodes []string `json:"two_factor_recovery_codes,omitempty"`
 }
@@ -97,6 +98,7 @@ func applyUserBootstrapConfigFiles(DB *gorm.DB, specs []string, validateStrength
 				Email:                  cfg.Email,
 				IsAdmin:                cfg.IsAdmin,
 				IsAutomated:            cfg.IsAutomated,
+				GitUsernames:           cfg.GitUsernames,
 				ValidateStrength:       validateStrength,
 				TwoFactorSecret:        cfg.TwoFactorSecret,
 				TwoFactorRecoveryCodes: cfg.TwoFactorRecoveryCodes,

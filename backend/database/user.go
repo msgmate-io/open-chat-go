@@ -7,6 +7,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"net/mail"
+	"sort"
 	"strings"
 )
 
@@ -21,6 +22,81 @@ type User struct {
 	IsAutomated      bool   `json:"is_automated" gorm:"default:false"`
 	TwoFactorEnabled bool   `json:"two_factor_enabled" gorm:"default:false"`
 	TwoFactorSecret  string `json:"-"`
+	// GitUsernames is a JSON array of provider logins (e.g. GitHub usernames)
+	// mapped to this account. The git integration uses it to resolve which
+	// Open-Chat user triggered a repository event so the dispatched coding
+	// interaction is owned by (and runs as) that user.
+	GitUsernames string `json:"git_usernames,omitempty" gorm:"type:text"`
+}
+
+// NormalizeGitUsernames lowercases, trims, de-duplicates and sorts provider
+// logins so equality checks and lookups are stable.
+func NormalizeGitUsernames(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "@")))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// GitUsernameList decodes the stored JSON array of provider logins.
+func (u *User) GitUsernameList() []string {
+	if u == nil || strings.TrimSpace(u.GitUsernames) == "" {
+		return []string{}
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(u.GitUsernames), &names); err != nil {
+		return []string{}
+	}
+	return NormalizeGitUsernames(names)
+}
+
+// SetUserGitUsernames persists the normalized provider logins for a user.
+func SetUserGitUsernames(DB *gorm.DB, userID uint, usernames []string) error {
+	if DB == nil || userID == 0 {
+		return fmt.Errorf("user is required")
+	}
+	normalized := NormalizeGitUsernames(usernames)
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return err
+	}
+	return DB.Model(&User{}).Where("id = ?", userID).Update("git_usernames", string(encoded)).Error
+}
+
+// FindUserByGitUsername returns the user that has the given provider login
+// mapped to it, or (nil, nil) when no user maps it. The login is matched
+// case-insensitively and an optional "@" prefix is ignored.
+func FindUserByGitUsername(DB *gorm.DB, username string) (*User, error) {
+	if DB == nil {
+		return nil, fmt.Errorf("db is required")
+	}
+	target := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(username), "@")))
+	if target == "" {
+		return nil, nil
+	}
+	candidates := []User{}
+	if err := DB.Where("git_usernames IS NOT NULL AND git_usernames <> ''").Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+	for i := range candidates {
+		for _, name := range candidates[i].GitUsernameList() {
+			if name == target {
+				return &candidates[i], nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 func RandomUsername() string {
