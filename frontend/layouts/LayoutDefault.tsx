@@ -220,7 +220,7 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
 
   const rootClassName = isMobileRuntime
     ? "h-dvh overflow-hidden bg-background text-foreground flex flex-col"
-    : "min-h-screen h-dvh bg-background text-foreground flex flex-col";
+    : "h-dvh min-h-0 bg-background text-foreground flex flex-col";
 
   const contentClassName = isMobileRuntime
     ? "min-h-0 flex-1 overflow-hidden"
