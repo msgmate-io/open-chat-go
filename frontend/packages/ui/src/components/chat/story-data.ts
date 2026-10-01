@@ -29,3 +29,9 @@ export const mockChatsListResponse = {
 export const mockContactsResponse = {
   rows: [{ name: "bot", contact_token: "hal-bot-token" }],
 };
+
+export const mockDefaultBotResponse = {
+  name: "bot",
+  contact_token: "hal-bot-token",
+  is_automated: true,
+};

@@ -19,6 +19,17 @@ type ListedChat struct {
 	Settings      *ChatSettingsView `json:"settings,omitempty"`
 	ChatShareUUID string            `json:"chat_share_uuid,omitempty"`
 	SharedChatURL string            `json:"shared_interaction_url,omitempty"`
+	// AdminView is set when an admin is listing/viewing a chat they do not
+	// participate in, so the UI can clearly mark that another user's chat is
+	// being rendered.
+	AdminView *AdminChatView `json:"admin_view,omitempty"`
+}
+
+// AdminChatView identifies the true participants of a chat an admin is
+// inspecting without being one of them.
+type AdminChatView struct {
+	User1 database.User `json:"user1"`
+	User2 database.User `json:"user2"`
 }
 
 type ListedChatsPage struct {
@@ -44,13 +55,17 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 		}
 	}
 
-	return ListedChat{
+	listed := ListedChat{
 		UUID:          chat.UUID,
 		Partner:       partner,
 		ChatType:      chat.ChatType,
 		LatestMessage: chat.LatestMessage,
 		Config:        config,
 	}
+	if adminIsExternalViewer(user, chat) {
+		listed.AdminView = &AdminChatView{User1: chat.User1, User2: chat.User2}
+	}
+	return listed
 }
 
 // List returns a list of chats for a specified user.
@@ -90,8 +105,12 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build the base query
+	// Build the base query. Admins may request scope=all to inspect every chat
+	// ("see all" mode); everyone else only sees their own chats.
 	query := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	if user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
+		query = DB
+	}
 
 	// Restricted browser tokens may only see interaction chats, regardless of the
 	// requested chat_types filter.
