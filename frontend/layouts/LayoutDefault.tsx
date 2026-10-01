@@ -15,6 +15,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { applyTheme, isThemeName } from "@/lib/theme";
 import { applyDocumentTitle } from "@open-chat-go/ui";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
+import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { MobileNativeSafeAreaSpacer } from "@/components/MobileNativeSafeAreaSpacer";
 import { isMobileAppRuntime } from "@open-chat-go/ui";
 import { navigate } from "vike/client/router";
@@ -220,7 +221,7 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
 
   const rootClassName = isMobileRuntime
     ? "h-dvh overflow-hidden bg-background text-foreground flex flex-col"
-    : "min-h-screen h-dvh bg-background text-foreground flex flex-col";
+    : "h-dvh min-h-0 bg-background text-foreground flex flex-col";
 
   const contentClassName = isMobileRuntime
     ? "min-h-0 flex-1 overflow-hidden"
@@ -228,6 +229,7 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
 
   return (
     <div className={rootClassName}>
+      <ImpersonationBanner />
       <OfflineIndicator />
       <MobileNativeSafeAreaSpacer />
       <div className={contentClassName}>{children}</div>

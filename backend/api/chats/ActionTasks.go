@@ -17,11 +17,11 @@ const actionTasksMaxChats = 300
 
 // Action task kinds surfaced by pendingActionsForMessage.
 const (
-	ActionTaskKindConfirmableAction    = "confirmable_action"
-	ActionTaskKindOpencodePermission   = "opencode_permission"
-	ActionTaskKindOpencodeNeedsAction  = "opencode_needs_action"
+	ActionTaskKindConfirmableAction       = "confirmable_action"
+	ActionTaskKindOpencodePermission      = "opencode_permission"
+	ActionTaskKindOpencodeNeedsAction     = "opencode_needs_action"
 	ActionTaskKindInteractionConfirmation = "interaction_confirmation"
-	ActionTaskKindToolConfirmation     = "tool_confirmation"
+	ActionTaskKindToolConfirmation        = "tool_confirmation"
 )
 
 // ActionTaskAction is a single pending action found on a message that requires
@@ -58,6 +58,11 @@ type ActionTaskRow struct {
 	ToolCalls     []interface{}          `json:"tool_calls"`
 	Actions       []ActionTaskAction     `json:"actions"`
 	Reason        string                 `json:"reason"`
+	// AdminView marks rows returned through the admin-wide scope (the acting
+	// admin is not a participant). ChatOwner identifies the user whose
+	// interaction needs the action, so an admin can tell them apart.
+	AdminView bool               `json:"admin_view,omitempty"`
+	ChatOwner *ActionTaskPartner `json:"chat_owner,omitempty"`
 }
 
 // ActionTasksResponse is the payload of the action-tasks endpoint.
@@ -69,12 +74,13 @@ type ActionTasksResponse struct {
 // GetActionTasks returns every owned chat that currently waits on a user action.
 //
 //	@Summary      Get pending action tasks
-//	@Description  List owned chats/interactions that currently require a user action.
+//	@Description  List owned chats/interactions that currently require a user action. Admins may pass scope=all to inspect pending actions across all users.
 //	@Tags         chats
 //	@Accept       json
 //	@Produce      json
 //	@Security     SessionAuth
 //	@Param        count_only query int false "Only return the count (1/0)" default(0)
+//	@Param        scope query string false "Admin only: 'all' to list every user's pending actions" default()
 //	@Success      200 {object} chats.ActionTasksResponse "Pending action tasks"
 //	@Failure      400 {string} string "Unable to get database or user"
 //	@Failure      500 {string} string "Unable to resolve action tasks"
@@ -87,8 +93,16 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	countOnly := strings.TrimSpace(r.URL.Query().Get("count_only")) == "1"
+	// The admin-wide scope is opt-in and hard-gated on the admin flag; regular
+	// users always stay scoped to their own chats.
+	adminScope := user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
 
-	query := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	var query *gorm.DB
+	if adminScope {
+		query = DB.Model(&database.Chat{})
+	} else {
+		query = DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	}
 	if database.IsBrowserToken(r.Context()) {
 		query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
 	}
@@ -102,10 +116,15 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dismissed, err := loadDismissedActionTaskKeys(DB, user.ID)
-	if err != nil {
-		http.Error(w, "Unable to load dismissals", http.StatusInternalServerError)
-		return
+	// Dismissals are per-user; the admin-wide scope shows the real pending state
+	// and is not affected by the admin's own dismissals.
+	dismissed := map[string]struct{}{}
+	if !adminScope {
+		dismissed, err = loadDismissedActionTaskKeys(DB, user.ID)
+		if err != nil {
+			http.Error(w, "Unable to load dismissals", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	response := ActionTasksResponse{Count: 0, Rows: []ActionTaskRow{}}
@@ -120,7 +139,7 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Count++
 		if !countOnly {
-			response.Rows = append(response.Rows, buildActionTaskRow(user, chat, message, actions))
+			response.Rows = append(response.Rows, buildActionTaskRow(user, chat, message, actions, adminScope))
 		}
 	}
 
@@ -169,7 +188,7 @@ func (h *ChatsHandler) DismissActionTask(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chat, err := findOwnedChat(DB, user.ID, chatUUID)
+	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
 		http.Error(w, "Chat not found", http.StatusNotFound)
 		return
@@ -230,7 +249,7 @@ func latestPendingActionMessage(DB *gorm.DB, chatID uint) (database.Message, []A
 	return database.Message{}, nil, false
 }
 
-func buildActionTaskRow(user *database.User, chat database.Chat, message database.Message, actions []ActionTaskAction) ActionTaskRow {
+func buildActionTaskRow(user *database.User, chat database.Chat, message database.Message, actions []ActionTaskAction, adminScope bool) ActionTaskRow {
 	partner := chat.User1
 	if chat.User1Id == user.ID {
 		partner = chat.User2
@@ -264,10 +283,10 @@ func buildActionTaskRow(user *database.User, chat database.Chat, message databas
 		reason = actions[0].Kind
 	}
 
-	return ActionTaskRow{
-		TaskKey:     actionTaskKey(chat.UUID, message.UUID),
-		ChatUUID:    chat.UUID,
-		ChatType:    chat.ChatType,
+	row := ActionTaskRow{
+		TaskKey:  actionTaskKey(chat.UUID, message.UUID),
+		ChatUUID: chat.UUID,
+		ChatType: chat.ChatType,
 		Partner: ActionTaskPartner{
 			UUID:         partner.UUID,
 			Name:         partner.Name,
@@ -283,6 +302,40 @@ func buildActionTaskRow(user *database.User, chat database.Chat, message databas
 		Actions:       actions,
 		Reason:        reason,
 	}
+
+	if adminScope {
+		if owner, ok := actionTaskHumanOwner(user, chat); ok {
+			row.AdminView = true
+			row.ChatOwner = &ActionTaskPartner{
+				UUID:         owner.UUID,
+				Name:         owner.Name,
+				Username:     owner.Username,
+				ContactToken: owner.ContactToken,
+				IsAutomated:  owner.IsAutomated,
+			}
+		}
+	}
+
+	return row
+}
+
+// actionTaskHumanOwner picks the non-automated participant of a chat that the
+// admin does not participate in, so the admin view can attribute a pending
+// action to the user who owns the interaction.
+func actionTaskHumanOwner(admin *database.User, chat database.Chat) (database.User, bool) {
+	participants := []database.User{chat.User1, chat.User2}
+	for _, participant := range participants {
+		if participant.ID == admin.ID || participant.IsAutomated {
+			continue
+		}
+		return participant, true
+	}
+	for _, participant := range participants {
+		if participant.ID != admin.ID {
+			return participant, true
+		}
+	}
+	return database.User{}, false
 }
 
 func actionTaskStringField(source map[string]interface{}, key string) string {
