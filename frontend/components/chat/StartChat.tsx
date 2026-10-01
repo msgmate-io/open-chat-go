@@ -291,8 +291,8 @@ export function StartChat({
 
     return (
         <div className="relative flex h-full w-full flex-col">
-            <div className="absolute left-0 top-0 z-40 w-full px-3 pt-3">
-                <div className="flex w-full max-w-[44rem] items-start gap-2 rounded-xl border border-border/60 bg-card/90 px-2 py-1 shadow-sm backdrop-blur-sm">
+            <div className="absolute left-0 top-0 z-40 w-full px-2 pt-2 md:px-3 md:pt-3">
+                <div className="flex w-full max-w-[44rem] items-center gap-2 rounded-xl border border-border/60 bg-card/90 px-2 py-1 shadow-sm backdrop-blur-sm">
                     {leftPannelCollapsed ? (
                         <CollapseIndicator leftPannelCollapsed={leftPannelCollapsed} onToggleCollapse={onSidebarButtonClick} />
                     ) : null}

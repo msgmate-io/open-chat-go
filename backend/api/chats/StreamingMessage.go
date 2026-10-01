@@ -51,7 +51,7 @@ func (h *ChatsHandler) GetStreamingMessage(w http.ResponseWriter, r *http.Reques
 	}
 
 	var chat database.Chat
-	if err := DB.Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
+	if err := scopedChatQuery(DB, user).Where("uuid = ?", chatUuid).
 		First(&chat).Error; err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return

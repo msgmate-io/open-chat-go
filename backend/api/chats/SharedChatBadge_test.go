@@ -138,6 +138,29 @@ func TestBadgeShowsFailedState(t *testing.T) {
 	}
 }
 
+func TestBadgeShowsConfirmationRequiredState(t *testing.T) {
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	botUser := createBotUserForChatsTest(t, DB, "bot@example.com")
+	chat, share := createInteractionChatForBadge(t, DB, owner, botUser)
+
+	finishBadgeInteraction(t, DB, chat, botUser, map[string]interface{}{
+		"finished": true,
+		"confirmable_actions": []map[string]interface{}{
+			{"action_id": "a1", "status": "pending", "target_tool_name": "shell"},
+		},
+	})
+
+	recorder := runBadgeRequest(t, DB, share.ChatShareUUID)
+	body := recorder.Body.String()
+	if recorder.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, body)
+	}
+	if !strings.Contains(body, ">confirmation required</text>") {
+		t.Fatalf("expected descriptive confirmation state text in badge, got: %s", body)
+	}
+}
+
 func TestBadgeShowsIdleStateWithoutMessages(t *testing.T) {
 	DB := setupBadgeTestDB(t)
 	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
