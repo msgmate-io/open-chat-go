@@ -542,6 +542,28 @@ var capabilityScenarios = []CapabilityScenario{
 		Tracks: []int{390, 925},
 	},
 	{
+		ID:              "msgmate_coder_fibonacci_json",
+		Title:           "Create a fibonacci project with a python module and a JSON report of its output",
+		Role:            "repl",
+		Capability:      "sandbox_provisioning",
+		Tags:            []string{"live", "sandbox"},
+		RequiresSandbox: true,
+		Tools:           []string{"coder_bash", "coder_write", "coder_read"},
+		Prompt: "Real-world capability scenario FIBONACCI JSON (ci#939). In the bound workspace, create the directory " +
+			"fibonacci (for example with `mkdir -p fibonacci`), write a Python module fibonacci/fib.py that computes " +
+			"the first ten Fibonacci numbers, run it, and write a machine-readable fibonacci/fibonacci.json with the " +
+			"computed sequence. Report the verbatim files and the run output, and leave both files in place. " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"the fibonacci directory exists in the workspace",
+			"fibonacci/fib.py exists and computes the Fibonacci numbers",
+			"fibonacci/fibonacci.json exists and is valid JSON",
+			"the reported files and run output are verbatim",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 939},
+	},
+	{
 		ID:         "emergency_recovery_watchdog",
 		Title:      "A restricted second-deployment bot monitors and recovers a crashed server",
 		Role:       "admin",
