@@ -201,8 +201,10 @@ export function ChatsList({
         refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 7000),
         revalidateOnFocus: true,
     })
-    const { data: contacts, isLoading: contactsLoading } = useSWR(showChats ? `/api/v1/contacts/list` : null, fetcher)
-    const defaultBotContact = contacts?.rows.find((contact: { name?: string }) => contact.name === "bot")
+    const { data: defaultBotContact, isLoading: defaultBotLoading } = useSWR<{ contact_token?: string; name?: string } | null>(
+        showChats ? `/api/v1/contacts/default-bot` : null,
+        fetcher,
+    )
 
     const botChatUuids = useMemo(() => {
         if (!chats?.rows) {
@@ -386,6 +388,7 @@ export function ChatsList({
                     <DefaultChats
                         navigateTo={navigateWithFilter}
                         defaultBotContact={defaultBotContact}
+                        isBotLoading={defaultBotLoading}
                         botAvatarSrc={avatarSrc}
                         actionCount={actionCount}
                     />
@@ -418,7 +421,7 @@ export function ChatsList({
                                 </Text>
                             </div>
                         ) : null}
-                        {!contactsLoading && !isLoading ? renderChatItems() : (
+                        {!isLoading ? renderChatItems() : (
                             <div className="flex h-40 items-center justify-center">
                                 <LoadingSpinner />
                             </div>
