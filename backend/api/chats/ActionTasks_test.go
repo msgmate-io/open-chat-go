@@ -221,6 +221,86 @@ func TestGetActionTasksNoPendingTasks(t *testing.T) {
 	}
 }
 
+func dismissAllActionTasksRequest(DB *gorm.DB, user *database.User) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/v1/chats/action-tasks/dismiss-all", nil)
+	req = withActionTasksUser(req, DB, user)
+	rr := httptest.NewRecorder()
+	h := &ChatsHandler{}
+	h.DismissAllActionTasks(rr, req)
+	return rr
+}
+
+func TestDismissAllActionTasksRequiresAdmin(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "actions-bulk-nonadmin@example.com", false)
+	bot := createUserForChatsTest(t, DB, "actions-bulk-nonadmin-bot@example.com", false)
+	chat := createChatOfType(t, DB, owner, bot, "conversation")
+	createActionTaskMessage(t, DB, chat, bot, owner, `{"opencode_permission":{"status":"pending"}}`)
+
+	rr := dismissAllActionTasksRequest(DB, owner)
+	if rr.Code != 403 {
+		t.Fatalf("expected 403 for a non-admin, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var dismissals int64
+	if err := DB.Model(&database.ActionTaskDismissal{}).Count(&dismissals).Error; err != nil {
+		t.Fatalf("failed to count dismissals: %v", err)
+	}
+	if dismissals != 0 {
+		t.Fatalf("expected no dismissals written for a non-admin, got %d", dismissals)
+	}
+}
+
+func TestDismissAllActionTasksClearsAdminScope(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	admin := createUserForChatsTest(t, DB, "actions-bulk-admin@example.com", true)
+	ownerA := createUserForChatsTest(t, DB, "actions-bulk-owner-a@example.com", false)
+	ownerB := createUserForChatsTest(t, DB, "actions-bulk-owner-b@example.com", false)
+	bot := createUserForChatsTest(t, DB, "actions-bulk-bot@example.com", false)
+
+	chatA := createChatOfType(t, DB, ownerA, bot, "conversation")
+	chatB := createChatOfType(t, DB, ownerB, bot, "conversation")
+	createActionTaskMessage(t, DB, chatA, bot, ownerA, `{"opencode_permission":{"status":"pending"}}`)
+	createActionTaskMessage(t, DB, chatB, bot, ownerB, `{"opencode_permission":{"status":"pending"}}`)
+
+	adminScopeAll := func() ActionTasksResponse {
+		req := withActionTasksUser(httptest.NewRequest("GET", "/api/v1/chats/action-tasks?scope=all", nil), DB, admin)
+		rr := httptest.NewRecorder()
+		h := &ChatsHandler{}
+		h.GetActionTasks(rr, req)
+		return decodeActionTasks(t, rr)
+	}
+
+	if response := adminScopeAll(); response.Count != 2 {
+		t.Fatalf("expected admin scope to see 2 pending tasks, got %d", response.Count)
+	}
+
+	rr := dismissAllActionTasksRequest(DB, admin)
+	if rr.Code != 200 {
+		t.Fatalf("expected 200 from dismiss-all, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to decode dismiss-all response: %v", err)
+	}
+	if dismissed, ok := result["dismissed"].(float64); !ok || int(dismissed) != 2 {
+		t.Fatalf("expected dismissed=2, got %v", result["dismissed"])
+	}
+
+	if response := adminScopeAll(); response.Count != 0 {
+		t.Fatalf("expected admin scope to be cleared after dismiss-all, got %d", response.Count)
+	}
+
+	// Each owner keeps their own pending task: the admin dismissal is keyed to
+	// the admin and must not leak into the owners' stacks.
+	if response := decodeActionTasks(t, actionTasksRequest(DB, ownerA, false)); response.Count != 1 {
+		t.Fatalf("expected owner A to keep 1 pending task, got %d", response.Count)
+	}
+	if response := decodeActionTasks(t, actionTasksRequest(DB, ownerB, false)); response.Count != 1 {
+		t.Fatalf("expected owner B to keep 1 pending task, got %d", response.Count)
+	}
+}
+
 func TestDismissActionTaskRejectsForeignChat(t *testing.T) {
 	DB := setupChatsTestDB(t)
 	owner := createUserForChatsTest(t, DB, "actions-dismiss-owner@example.com", false)
