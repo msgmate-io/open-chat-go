@@ -139,6 +139,12 @@ func BuildDeploymentInfo() DeploymentInfo {
 		info.ConfigBackend = "file"
 	}
 
+	// Fall back to the local file backend when a status resolver reports no
+	// remote target but the config file is still writable.
+	if info.ConfigBackend == "" && info.CanPersist {
+		info.ConfigBackend = "file"
+	}
+
 	if restartReason != "" {
 		info.Reasons = append(info.Reasons, restartReason)
 	}
