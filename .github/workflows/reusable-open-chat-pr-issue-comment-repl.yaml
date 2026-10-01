@@ -21,8 +21,10 @@
 # Trigger rule: an allowed_author's comment only dispatches an interaction when
 # it explicitly @mentions the bot GitHub user (or the review bot); set
 # require_mention=false / vars.OPEN_CHAT_REQUIRE_MENTION=false to restore the
-# legacy "any allowed-author comment triggers" behaviour. Dispatches by the bot
-# itself (fix-plan / implement markers) are unaffected.
+# legacy "any allowed-author comment triggers" behaviour. The automatic
+# fix-plan marker self-dispatch is unaffected; the plan->implement flow is NOT
+# dispatched through here (it goes through the server-side
+# plan_auto_implement action with an explicit confirmation gate).
 name: Reusable Open-Chat Comment REPL
 
 on:
@@ -69,7 +71,7 @@ on:
         type: string
         default: ""
       require_mention:
-        description: 'Require the trigger comment to explicitly @mention the bot GitHub user (or review bot) — falls back to vars.OPEN_CHAT_REQUIRE_MENTION, then true. Bots self-dispatch (fix-plan/implement markers) are unaffected.'
+        description: 'Require the trigger comment to explicitly @mention the bot GitHub user (or review bot) — falls back to vars.OPEN_CHAT_REQUIRE_MENTION, then true. The automatic fix-plan marker self-dispatch is unaffected.'
         required: false
         type: string
         default: "true"
@@ -124,10 +126,7 @@ jobs:
         ||
         (
           github.event.comment.user.login == (inputs.bot_user != '' && inputs.bot_user || vars.OPEN_CHAT_BOT_GITHUB_USER || 'cur1ousdude') &&
-          (
-            contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->') ||
-            contains(github.event.comment.body, '<!-- open-chat-issue-implement -->')
-          )
+          contains(github.event.comment.body, '<!-- open-chat-ci-fix-plan-post -->')
         )
       )
     steps:
