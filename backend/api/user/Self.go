@@ -6,6 +6,13 @@ import (
 	"net/http"
 )
 
+// SelfResponse is the current user plus, when the session is an impersonation,
+// the admin behind it so the UI can clearly mark the session.
+type SelfResponse struct {
+	database.User
+	Impersonator *database.User `json:"impersonator,omitempty"`
+}
+
 // Self returns the current user's details.
 //
 //	@Summary      Get current user
@@ -25,6 +32,11 @@ func (h *UserHandler) Self(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	response := SelfResponse{User: *user}
+	if impersonator, ok := r.Context().Value("impersonator").(*database.User); ok && impersonator != nil {
+		response.Impersonator = impersonator
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user) // password_hash is not included (database.User)
+	json.NewEncoder(w).Encode(response) // password_hash is not included (database.User)
 }
