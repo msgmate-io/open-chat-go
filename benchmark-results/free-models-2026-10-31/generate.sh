@@ -105,6 +105,7 @@ for l in "${TESTLINES[@]}"; do g="${l%%$'\t'*}"; t="${l#*$'\t'}"; TESTGROUP[$t]=
 declare -A JSON_ROW=()   # model -> prebuilt JSON status object
 declare -A PASSCNT=() RUNCNT=() NOTRUNCNT=() PROVCNT=() FAILCNT=()
 declare -A CELL=()       # model\0test -> status
+declare -A MODELGRP=()   # model^group^status -> count (per-model group cells)
 
 for entry in "${MODELS[@]}"; do
   mid="${entry%%|*}"; rest="${entry#*|}"; tsv="${rest%%|*}"; ctx="${rest##*|}"
@@ -179,6 +180,11 @@ for entry in "${MODELS[@]}"; do
   done
   PASSCNT[$mid]=$p; PROVCNT[$mid]=$pr; FAILCNT[$mid]=$fa; NOTRUNCNT[$mid]=$n; RUNCNT[$mid]=$r
   for g in coder opencode github playwright rest_api kubernetes smoke; do
+    MODELGRP["$mid^$g^pass"]=$(( ${MODELGRP["$mid^$g^pass"]:-0} + ${gsc["$g^pass"]:-0} ))
+    MODELGRP["$mid^$g^fail"]=$(( ${MODELGRP["$mid^$g^fail"]:-0} + ${gsc["$g^fail"]:-0} ))
+    for st in provider_account provider_unreachable timeout; do
+      MODELGRP["$mid^$g^$st"]=$(( ${MODELGRP["$mid^$g^$st"]:-0} + ${gsc["$g^$st"]:-0} ))
+    done
     for st in pass fail provider_account provider_unreachable not_run n/a timeout; do
       GRPSTATCOUNT["$g^$st"]=$(( ${GRPSTATCOUNT["$g^$st"]:-0} + ${gsc["$g^$st"]:-0} ))
     done
