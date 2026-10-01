@@ -110,9 +110,10 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	// First find the chat by its id and user.ID
 	var chat database.Chat
-	result := DB.Preload("User1").
+	result := scopedChatQuery(DB, user).
+		Preload("User1").
 		Preload("User2").
-		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUuid, user.ID, user.ID).
+		Where("uuid = ?", chatUuid).
 		First(&chat)
 
 	if result.Error != nil {
@@ -131,7 +132,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Now list the messages paginated
 	result = DB.Scopes(database.Paginate(&messages, &pagination, DB)).
-		Where("chat_id = ? AND (receiver_id = ? OR sender_id = ?)", chat.ID, user.ID, user.ID).
+		Where("chat_id = ?", chat.ID).
 		Where("deleted_at IS NULL").
 		Preload("Sender").
 		Find(&messages)
