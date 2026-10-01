@@ -477,6 +477,24 @@ jobs:
           echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
           echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} e2e=${SHOULD_E2E_TEST:-false} sandbox=${SHOULD_SANDBOX_TEST:-false} sandbox-tags=${SHOULD_SANDBOX_TAGS:-<all>} build=${SHOULD_BUILD:-false} release-android=${SHOULD_RELEASE_ANDROID:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
 
+      # The `release-android` label builds the APK from `open-chat-go-mobile@main`
+      # (see the `ref`/`commit_ref` inputs below) against this PR's target ref as
+      # `backend_ref`. It therefore only reflects fixes already merged to the
+      # mobile `main` branch; cross-repo dispatch is skipped for fork PRs.
+      #
+      # Issue #52: the obsolete "verify required integration submodules" failure
+      # was fixed by open-chat-go-mobile#3 (merge 5e3e33d). The remaining `full`
+      # profile failure was runner disk exhaustion during the gomobile bind
+      # ("no space left on device"), fixed by the disk reclamation in
+      # open-chat-go-mobile#5/#6. Those fixes are on mobile `main`.
+      #
+      # The `full` profile now also declares `stats_and_usage` (merged in
+      # open-chat-go-ci#54), so the matching local `replace` in
+      # `clients/gomobile/go.mod` is required again: open-chat-go-mobile#4 added
+      # it, #7 reverted it while the integration was still manifest-only, and the
+      # re-land PR (open-chat-go-mobile#8, merged to main) restores it. Verified
+      # with the Android sandbox image (`android_build passed
+      # aar,apk,unit-tests`); the release now completes and publishes both APKs.
       - name: Dispatch Android release workflow in open-chat-go-mobile
         id: android_release_dispatch
         if: steps.context.outputs.should_release_android != '' && steps.context.outputs.is_same_repo_pr == 'true'

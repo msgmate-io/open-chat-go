@@ -62,7 +62,7 @@ func (h *ChatsHandler) GetChatStates(w http.ResponseWriter, r *http.Request) {
 	browserToken := database.IsBrowserToken(r.Context())
 	response := ChatStatesResponse{States: []ChatStateRow{}}
 	for _, chatUUID := range chatUUIDs {
-		chat, err := findOwnedChat(DB, user.ID, chatUUID)
+		chat, err := findAccessibleChat(DB, user, chatUUID)
 		if err != nil {
 			continue
 		}

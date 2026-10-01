@@ -318,7 +318,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	)
 
 	// Process the streaming response
-	return aih.processStreamingResponse(ctx, message, chunks, usage, toolCalls, errs, startTime, thinkingTime, thinkingStart, reasoning)
+	return aih.processStreamingResponse(ctx, message, chunks, usage, toolCalls, errs, startTime, thinkingTime, thinkingStart, reasoning, model, backend)
 }
 
 // ProcessCommand processes bot commands (like /pong, /loop)
@@ -638,7 +638,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 }
 
 // processStreamingResponse processes the streaming response from the AI
-func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
+func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool, model, backend string) error {
 	var allToolCalls []interface{}
 	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
 	var reasoningEntries []string
@@ -856,6 +856,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			"total_time": totalTime.Round(time.Millisecond).String(),
 			"cancelled":  isCancelled,
 			"finished":   true,
+		}
+		if model != "" {
+			metadata["model"] = model
+		}
+		if backend != "" {
+			metadata["backend"] = backend
 		}
 		if streamErr != nil {
 			failureReason := streamFailureReason(streamErr)
