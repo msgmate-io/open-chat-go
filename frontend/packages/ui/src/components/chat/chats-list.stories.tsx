@@ -74,6 +74,13 @@ export const IntegrationMode: Story = {  render: () => (
 };
 
 export const SmallSquareViewport: Story = {
+  args: {
+    chatUUID: null,
+    leftPannelCollapsed: false,
+    onToggleCollapse: () => {},
+    navigateTo: () => {},
+    themeSelector: <ThemeSlot />,
+  },
   render: () => (
     <div className="h-[600px] w-[358px] border border-border bg-background">
       <ChatsList
@@ -99,6 +106,13 @@ export const DefaultBotUnavailable: Story = {
         ),
       ],
     },
+  },
+  args: {
+    chatUUID: null,
+    leftPannelCollapsed: false,
+    onToggleCollapse: () => {},
+    navigateTo: () => {},
+    themeSelector: <ThemeSlot />,
   },
   render: () => (
     <div className="h-[640px] w-[320px] border border-border bg-background">
