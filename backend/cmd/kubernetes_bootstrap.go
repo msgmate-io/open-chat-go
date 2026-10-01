@@ -33,5 +33,17 @@ func applyKubernetesBootstrapSources(DB *gorm.DB, fallbackOwner string) error {
 		}
 		return target, err
 	})
+
+	// Expose the actually resolved deployment-host target so the deployment
+	// info can advertise a real remote target (and reload capability) instead
+	// of merely "a persister is registered".
+	integrationsettings.RegisterRemoteConfigStatus(func() integrationsettings.RemoteConfigStatus {
+		status := kubernetesintegration.ResolveDeploymentConfigStatusByOwnerReference(DB, fallbackOwner)
+		return integrationsettings.RemoteConfigStatus{
+			Configured: status.Configured,
+			Target:     status.TargetDescription,
+			Reload:     status.Reload,
+		}
+	})
 	return nil
 }
