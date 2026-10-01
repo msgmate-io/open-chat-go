@@ -117,7 +117,7 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "todo_list",
 		Title:  "Plan and update a visible task list",
 		Phase:  ParityPhaseNow,
-		Status: ParityStatusPartial,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
 			"coder_todo_write",
 			"coder_todo_read",
