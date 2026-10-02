@@ -166,6 +166,50 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+// runtimeSelectorPayloadType is the discriminator a tool result carries to be
+// surfaced as a runtime-selector widget. The git integration's
+// git_propose_interaction_runtime tool emits exactly this shape; if another
+// integration starts emitting it, the frontend already understands it.
+const runtimeSelectorPayloadType = "runtime-selector"
+
+// parseRuntimeSelectorPayload detects a runtime-selector proposal returned as a
+// tool result. It returns false for any other payload so unrelated tool results
+// are left untouched.
+func parseRuntimeSelectorPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != runtimeSelectorPayloadType {
+		return nil, false
+	}
+	if choices, ok := payload["choices"].([]interface{}); !ok || len(choices) == 0 {
+		return nil, false
+	}
+	return payload, true
+}
+
+// collectRuntimeSelectors gathers the runtime-selector payloads attached to the
+// finished tool calls so they can be persisted alongside the message meta. The
+// frontend renders them as the runtime choice widget.
+func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
+	selectors := make([]interface{}, 0)
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if selector, ok := toolCall["runtime_selector"].(map[string]interface{}); ok {
+			selectors = append(selectors, selector)
+		}
+	}
+	return selectors
+}
+
 func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) map[string]interface{} {
 	runtime := map[string]interface{}{
 		"chat_uuid":     strings.TrimSpace(chatUUID),
@@ -885,6 +929,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if len(confirmableActions) > 0 {
 			metadata["confirmable_actions"] = confirmableActions
 		}
+		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
+			metadata["runtime_selectors"] = runtimeSelectors
+		}
 		if tokenUsage != nil {
 			metadata["token_usage"] = tokenUsage
 		}
@@ -1123,6 +1170,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					}
 				}
 
+				// Runtime-selector proposals are emitted by integration tools
+				// (eg the git integration's git_propose_interaction_runtime).
+				// They are surfaced to the frontend as a choice widget; unlike a
+				// confirmable action they do not gate the current tool call.
+				if selectorMeta, ok := parseRuntimeSelectorPayload(toolCall.Result); ok {
+					toolCallRepr["runtime_selector"] = selectorMeta
+				}
+
 				updated := false
 				for i, registeredToolCall := range allToolCalls {
 					existing, ok := registeredToolCall.(map[string]interface{})
@@ -1155,6 +1210,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				confirmableActions := collectConfirmableActions(allToolCalls)
 				if len(confirmableActions) > 0 {
 					partialMeta["confirmable_actions"] = confirmableActions
+				}
+				if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
+					partialMeta["runtime_selectors"] = runtimeSelectors
 				}
 				seq := nextPartialSeq()
 				aih.botContext.WSHandler.MessageHandler.SendMessage(
