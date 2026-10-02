@@ -462,6 +462,16 @@ jobs:
               seen { print }
             ')"
           fi
+          # Models also prepend a stray status sentence without a fence (eg
+          # "All checks pass. Here is the file content:"). Drop leading prose
+          # before the first markdown bullet/heading so only the summary is
+          # posted (the sandbox verify strips the same preamble).
+          if printf '%s\n' "$summary" | grep -qE '^[[:space:]]*[-#]'; then
+            summary="$(printf '%s\n' "$summary" | awk '
+              /^[[:space:]]*[-#]/ { seen=1 }
+              seen { print }
+            ')"
+          fi
           if [ "${#summary}" -gt 55000 ]; then
             summary="${summary:0:55000}
           ... (truncated)"

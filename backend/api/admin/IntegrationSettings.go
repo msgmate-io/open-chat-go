@@ -39,6 +39,9 @@ type saveIntegrationSettingsResponse struct {
 	RestartRequired bool                                    `json:"restart_required"`
 	Persisted       bool                                    `json:"persisted"`
 	PersistError    string                                  `json:"persist_error,omitempty"`
+	RemotePersisted bool                                    `json:"remote_persisted"`
+	RemoteTarget    string                                  `json:"remote_target,omitempty"`
+	RemoteError     string                                  `json:"remote_error,omitempty"`
 }
 
 type restartServerResponse struct {
@@ -194,20 +197,17 @@ func SaveIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 
 	integrationsettings.ApplyValues(def, normalized)
 
-	persisted := false
-	persistError := ""
-	if err := integrationsettings.PersistValues(def, normalized); err != nil {
-		persistError = err.Error()
-	} else {
-		persisted = true
-	}
+	outcome := integrationsettings.PersistValuesWithRemote(def, normalized)
 
 	writeJSON(w, http.StatusOK, saveIntegrationSettingsResponse{
-		Deployment:      integrationsettings.BuildDeploymentInfo(),
+		Deployment:      outcome.Deployment,
 		Integration:     integrationsettings.BuildIntegrationSnapshot(def, runtimecfg.GetAll(), false),
 		RestartRequired: true,
-		Persisted:       persisted,
-		PersistError:    persistError,
+		Persisted:       outcome.Persisted,
+		PersistError:    outcome.PersistError,
+		RemotePersisted: outcome.RemotePersisted,
+		RemoteTarget:    outcome.RemoteTarget,
+		RemoteError:     outcome.RemoteError,
 	})
 }
 

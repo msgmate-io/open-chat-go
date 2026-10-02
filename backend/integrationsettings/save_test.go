@@ -2,7 +2,10 @@ package integrationsettings
 
 import (
 	"errors"
+	"strings"
 	"testing"
+
+	"backend/runtimecfg"
 
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
 )
@@ -108,5 +111,39 @@ func TestValidateValuesAllowsUnset(t *testing.T) {
 	}
 	if out["OCI_DEMO_HOST"] != nil {
 		t.Fatal("expected nil to mean unset")
+	}
+}
+
+// TestPersistValuesWithRemoteInlineSource covers the per-integration settings
+// path: when the local config source is inline (not persistable) the merged
+// document must still be mirrored to the remote backing store.
+func TestPersistValuesWithRemoteInlineSource(t *testing.T) {
+	prevSource := runtimecfg.GetConfigSource()
+	prevValues := runtimecfg.GetAll()
+	t.Cleanup(func() {
+		runtimecfg.SetConfigSource(prevSource)
+		runtimecfg.SetAll(prevValues)
+		RegisterRemoteConfigPersister(nil)
+	})
+	runtimecfg.SetConfigSource("inline --config YAML")
+	runtimecfg.SetAll(map[string]runtimecfg.Value{
+		"OCI_DEMO_HOST": {Value: "old-host"},
+	})
+
+	var mirrored []byte
+	RegisterRemoteConfigPersister(func(data []byte) (string, error) {
+		mirrored = append([]byte(nil), data...)
+		return "k8s-secret/demo", nil
+	})
+
+	outcome := PersistValuesWithRemote(testDefinition(), map[string]*string{"OCI_DEMO_HOST": strPtr("new-host")})
+	if !outcome.RemotePersisted || outcome.RemoteTarget != "k8s-secret/demo" {
+		t.Fatalf("expected remote persist, got %#v", outcome)
+	}
+	if !outcome.Persisted {
+		t.Fatal("expected persisted when the remote mirror succeeds")
+	}
+	if !strings.Contains(string(mirrored), "new-host") {
+		t.Fatalf("expected merged document mirrored, got %s", mirrored)
 	}
 }

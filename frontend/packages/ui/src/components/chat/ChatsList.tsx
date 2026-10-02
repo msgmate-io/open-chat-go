@@ -388,7 +388,7 @@ export function ChatsList({
 
         let lastDivider: string | null = null
 
-        return chats.rows.flatMap((chat: { uuid: string; latest_message?: { text?: string } }) => {
+        return chats.rows.flatMap((chat: { uuid: string; settings?: { title?: string }; latest_message?: { text?: string } }) => {
             const chatDate = new Date();
             let divider = null;
 
