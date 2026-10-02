@@ -413,13 +413,15 @@ func badgeSegmentWidth(segment badgeSegment) int {
 func renderSegmentLabel(text string, x, width int) string {
 	escaped := html.EscapeString(text)
 	center := x + width/2
-	return fmt.Sprintf(
-		`<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="%d" font-weight="bold">`+"\n"+
-			`<text x="%d" y="14" fill="#010101" fill-opacity=".3">%s</text>`+"\n"+
-			`<text x="%d" y="13.5">%s</text>`+"\n"+
-			`</g>`+"\n",
-		badgeFontSize, center, escaped, center, escaped,
-	)
+	var b strings.Builder
+	fmt.Fprintf(&b, `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="%d" font-weight="bold">`+"\n", badgeFontSize)
+	fmt.Fprintf(&b, `<text x="%d" y="14" fill="#010101" fill-opacity=".3">`, center)
+	b.WriteString(escaped)
+	b.WriteString("</text>\n")
+	fmt.Fprintf(&b, `<text x="%d" y="13.5">`, center)
+	b.WriteString(escaped)
+	b.WriteString("</text>\n</g>\n")
+	return b.String()
 }
 
 // tickerColumn describes one digit of the MM:SS odometer. A column repeats
