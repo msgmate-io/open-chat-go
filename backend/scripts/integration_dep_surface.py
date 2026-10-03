@@ -370,6 +370,7 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 
+
 def check_baseline_fixture(path: Path) -> int:
     """Run the committed-baseline validation against a *stub* of the baseline.
 
