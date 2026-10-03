@@ -69,6 +69,27 @@ func resolveProviderEndpoint(backend, endpoint string) (string, error) {
 	return endpoint, nil
 }
 
+// resolveChatProviderEndpoint resolves the effective provider endpoint for a
+// legacy (non-opencode) chat config. It first applies the provider-specific
+// rules (env hosts and the public defaults for openrouter/ionos/anthropic) and
+// only then falls back to the in-cluster localai endpoint, so a public provider
+// such as openrouter is never silently routed to localai just because the chat
+// config omitted an explicit endpoint. The result is normalized without a
+// trailing slash because callers append "/chat/completions"; the public
+// openrouter/ionos defaults are defined with a trailing slash and would
+// otherwise produce a double slash (OpenRouter answers those with HTTP 404).
+func resolveChatProviderEndpoint(backend, endpoint string) (string, error) {
+	resolved, err := resolveProviderEndpoint(backend, endpoint)
+	if err != nil {
+		return "", err
+	}
+	resolved = strings.TrimRight(strings.TrimSpace(resolved), "/")
+	if resolved == "" {
+		resolved = "http://localai:8080"
+	}
+	return resolved, nil
+}
+
 func buildConfirmableActionFromToolCall(toolCall map[string]interface{}) map[string]interface{} {
 	confirmation, ok := toolCall["confirmation"].(map[string]interface{})
 	if !ok {
@@ -145,6 +166,50 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+// runtimeSelectorPayloadType is the discriminator a tool result carries to be
+// surfaced as a runtime-selector widget. The git integration's
+// git_propose_interaction_runtime tool emits exactly this shape; if another
+// integration starts emitting it, the frontend already understands it.
+const runtimeSelectorPayloadType = "runtime-selector"
+
+// parseRuntimeSelectorPayload detects a runtime-selector proposal returned as a
+// tool result. It returns false for any other payload so unrelated tool results
+// are left untouched.
+func parseRuntimeSelectorPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != runtimeSelectorPayloadType {
+		return nil, false
+	}
+	if choices, ok := payload["choices"].([]interface{}); !ok || len(choices) == 0 {
+		return nil, false
+	}
+	return payload, true
+}
+
+// collectRuntimeSelectors gathers the runtime-selector payloads attached to the
+// finished tool calls so they can be persisted alongside the message meta. The
+// frontend renders them as the runtime choice widget.
+func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
+	selectors := make([]interface{}, 0)
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if selector, ok := toolCall["runtime_selector"].(map[string]interface{}); ok {
+			selectors = append(selectors, selector)
+		}
+	}
+	return selectors
+}
+
 func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) map[string]interface{} {
 	runtime := map[string]interface{}{
 		"chat_uuid":     strings.TrimSpace(chatUUID),
@@ -216,7 +281,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		}
 	}
 
-	endpoint := mapGetOrDefault[string](configMap, "endpoint", "http://localai:8080")
+	endpoint := mapGetOrDefault[string](configMap, "endpoint", "")
 	backend := mapGetOrDefault[string](configMap, "backend", "deepinfra")
 	model := mapGetOrDefault[string](configMap, "model", "meta-llama-3.1-8b-instruct")
 	reasoning := mapGetOrDefault[bool](configMap, "reasoning", false)
@@ -243,7 +308,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		toolCallMaxFailed = int64(DefaultToolCallMaxFailed)
 	}
 
-	endpoint, err = resolveProviderEndpoint(backend, endpoint)
+	endpoint, err = resolveChatProviderEndpoint(backend, endpoint)
 	if err != nil {
 		return err
 	}
@@ -255,13 +320,13 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	}
 
 	// Load the past messages
-	err, paginatedMessages := aih.botContext.Client.GetMessages(message.Content.ChatUUID, 1, context)
+	paginatedMessages, err := aih.loadContextMessages(message.Content.ChatUUID, context)
 	if err != nil {
 		return err
 	}
 
 	// Build OpenAI messages
-	openAiMessages := aih.buildOpenAIMessages(&paginatedMessages, message, systemPrompt, backend)
+	openAiMessages := aih.buildOpenAIMessages(paginatedMessages, message, systemPrompt, backend)
 
 	// Setup tools
 	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
@@ -297,7 +362,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	)
 
 	// Process the streaming response
-	return aih.processStreamingResponse(ctx, message, chunks, usage, toolCalls, errs, startTime, thinkingTime, thinkingStart, reasoning)
+	return aih.processStreamingResponse(ctx, message, chunks, usage, toolCalls, errs, startTime, thinkingTime, thinkingStart, reasoning, model, backend)
 }
 
 // ProcessCommand processes bot commands (like /pong, /loop)
@@ -322,6 +387,95 @@ func (aih *AIHandlerImpl) ProcessCommand(ctx context.Context, command string, me
 		return nil
 	}
 	return fmt.Errorf("unknown command '%s'", command)
+}
+
+// isNonConversationalMessage reports whether a chat row is bookkeeping that
+// buildOpenAIMessages drops before sending history to the model (eg the event
+// rows a confirmable-action approval creates). Such rows must not count against
+// the context window.
+func isNonConversationalMessage(msg client.ListedMessage) bool {
+	if msg.DataType == "event" {
+		return true
+	}
+	if msg.MetaData != nil {
+		if eventType, ok := (*msg.MetaData)["event_type"].(string); ok && eventType == "confirmable_action_execute" {
+			return true
+		}
+	}
+	return false
+}
+
+// countConversationalMessages returns how many rows are real conversation turns.
+func countConversationalMessages(rows []client.ListedMessage) int {
+	count := 0
+	for _, row := range rows {
+		if !isNonConversationalMessage(row) {
+			count++
+		}
+	}
+	return count
+}
+
+// trimMessagesToContextWindow keeps the newest rows up to and including the
+// `limit`-th conversational (non-event) message so event rows never consume the
+// context budget. `rows` must be newest-first, matching the paginated message
+// API ordering.
+func trimMessagesToContextWindow(rows []client.ListedMessage, limit int) []client.ListedMessage {
+	if limit < 1 {
+		limit = 1
+	}
+	seen := 0
+	for i, row := range rows {
+		if isNonConversationalMessage(row) {
+			continue
+		}
+		seen++
+		if seen >= limit {
+			return rows[:i+1]
+		}
+	}
+	return rows
+}
+
+// loadContextMessages fetches the recent history fed to the model. The message
+// API paginates raw rows, so a chat with many event messages (eg a multi-step
+// confirmable-action flow) can exhaust a plain `limit` window with
+// non-conversational rows and push the user's original task out of context,
+// leaving the model to answer without it. We page backwards until we have
+// `context` conversational messages (or the chat is exhausted), then trim to the
+// same budget.
+func (aih *AIHandlerImpl) loadContextMessages(chatUUID string, context int64) (*client.PaginatedMessages, error) {
+	if context < 1 {
+		context = 1
+	}
+	const maxContextPages = 8
+
+	var (
+		rows    []client.ListedMessage
+		last    client.PaginatedMessages
+		fetched bool
+	)
+	for page := int64(1); page <= maxContextPages; page++ {
+		err, pageData := aih.botContext.Client.GetMessages(chatUUID, page, context)
+		if err != nil {
+			if !fetched {
+				return nil, err
+			}
+			break
+		}
+		fetched = true
+		last = pageData
+		rows = append(rows, pageData.Rows...)
+
+		if len(pageData.Rows) == 0 ||
+			int(page) >= pageData.TotalPages ||
+			countConversationalMessages(rows) >= int(context) {
+			break
+		}
+	}
+
+	last.Rows = trimMessagesToContextWindow(rows, int(context))
+	return &last, nil
 }
 
 // buildOpenAIMessages builds the OpenAI messages array from chat history
@@ -617,7 +771,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 }
 
 // processStreamingResponse processes the streaming response from the AI
-func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool) error {
+func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool, model, backend string) error {
 	var allToolCalls []interface{}
 	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
 	var reasoningEntries []string
@@ -836,6 +990,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			"cancelled":  isCancelled,
 			"finished":   true,
 		}
+		if model != "" {
+			metadata["model"] = model
+		}
+		if backend != "" {
+			metadata["backend"] = backend
+		}
 		if streamErr != nil {
 			failureReason := streamFailureReason(streamErr)
 			metadata["error"] = true
@@ -857,6 +1017,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
 			metadata["confirmable_actions"] = confirmableActions
+		}
+		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
+			metadata["runtime_selectors"] = runtimeSelectors
 		}
 		if tokenUsage != nil {
 			metadata["token_usage"] = tokenUsage
@@ -1096,6 +1259,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					}
 				}
 
+				// Runtime-selector proposals are emitted by integration tools
+				// (eg the git integration's git_propose_interaction_runtime).
+				// They are surfaced to the frontend as a choice widget; unlike a
+				// confirmable action they do not gate the current tool call.
+				if selectorMeta, ok := parseRuntimeSelectorPayload(toolCall.Result); ok {
+					toolCallRepr["runtime_selector"] = selectorMeta
+				}
+
 				updated := false
 				for i, registeredToolCall := range allToolCalls {
 					existing, ok := registeredToolCall.(map[string]interface{})
@@ -1128,6 +1299,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				confirmableActions := collectConfirmableActions(allToolCalls)
 				if len(confirmableActions) > 0 {
 					partialMeta["confirmable_actions"] = confirmableActions
+				}
+				if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
+					partialMeta["runtime_selectors"] = runtimeSelectors
 				}
 				seq := nextPartialSeq()
 				aih.botContext.WSHandler.MessageHandler.SendMessage(

@@ -376,6 +376,64 @@ func TestGetRawIntegrationSettingsRequiresAdmin(t *testing.T) {
 	}
 }
 
+func TestViewRawIntegrationSettingsRequiresPassword(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	_, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host","OCI_TEST_CORE_SETTINGS_TOKEN":"orig-secret"}}`)
+	defer cleanup()
+	user := settingsAdminUser(t)
+
+	wrong := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/view",
+		[]byte(`{"password":"wrong"}`), user)
+	wrongRR := httptest.NewRecorder()
+	ViewRawIntegrationSettings(wrongRR, wrong)
+	if wrongRR.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for wrong password, got %d: %s", wrongRR.Code, wrongRR.Body.String())
+	}
+
+	missing := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/view",
+		[]byte(`{}`), user)
+	missingRR := httptest.NewRecorder()
+	ViewRawIntegrationSettings(missingRR, missing)
+	if missingRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing password, got %d", missingRR.Code)
+	}
+
+	nonAdmin := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/view",
+		[]byte(`{"password":"secret-password"}`), &database.User{IsAdmin: false})
+	nonAdminRR := httptest.NewRecorder()
+	ViewRawIntegrationSettings(nonAdminRR, nonAdmin)
+	if nonAdminRR.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d", nonAdminRR.Code)
+	}
+
+	right := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/raw/view",
+		[]byte(`{"password":"secret-password"}`), user)
+	rightRR := httptest.NewRecorder()
+	ViewRawIntegrationSettings(rightRR, right)
+	if rightRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for correct password, got %d: %s", rightRR.Code, rightRR.Body.String())
+	}
+	var payload rawConfigResponse
+	if err := json.Unmarshal(rightRR.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.Contains(payload.YAML, "orig-secret") || !strings.Contains(payload.YAML, "<redacted>") {
+		t.Fatalf("expected redacted document, got %s", payload.YAML)
+	}
+	if !strings.Contains(payload.YAML, "orig-host") {
+		t.Fatalf("expected non-sensitive value visible, got %s", payload.YAML)
+	}
+}
+
+func TestViewRawIntegrationSettingsRejectsWrongMethod(t *testing.T) {
+	req := settingsRequest(http.MethodGet, "/api/v1/admin/integration-settings/raw/view", nil, settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	ViewRawIntegrationSettings(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
 func TestGetRawIntegrationSettingsRedactsSecrets(t *testing.T) {
 	ensureTestSettingsIntegration(t)
 	path, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host","OCI_TEST_CORE_SETTINGS_TOKEN":"orig-secret"}}`)

@@ -171,6 +171,13 @@ jobs:
             else
               tags="untagged"
             fi
+            # Tests tagged `private` need the private Little World harness and
+            # are run by the private CI repository (private-sandbox-tests.yaml);
+            # the public suite must never pick them up, even in the no-filter
+            # "all tests" case.
+            case " $tags " in
+              *" private "*) continue;;
+            esac
             if [ -z "$requested" ]; then
               selected+=("$d")
               continue
@@ -452,6 +459,16 @@ jobs:
           if printf '%s\n' "$summary" | grep -q '^```'; then
             summary="$(printf '%s\n' "$summary" | awk '
               /^```/ { if (seen) exit; seen=1; next }
+              seen { print }
+            ')"
+          fi
+          # Models also prepend a stray status sentence without a fence (eg
+          # "All checks pass. Here is the file content:"). Drop leading prose
+          # before the first markdown bullet/heading so only the summary is
+          # posted (the sandbox verify strips the same preamble).
+          if printf '%s\n' "$summary" | grep -qE '^[[:space:]]*[-#]'; then
+            summary="$(printf '%s\n' "$summary" | awk '
+              /^[[:space:]]*[-#]/ { seen=1 }
               seen { print }
             ')"
           fi

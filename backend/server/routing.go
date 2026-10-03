@@ -424,6 +424,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/status", chatsHandler.GetInteractionStatus)
 	v1PrivateApis.HandleFunc("GET /chats/states", chatsHandler.GetChatStates)
 	v1PrivateApis.HandleFunc("GET /chats/action-tasks", chatsHandler.GetActionTasks)
+	v1PrivateApis.HandleFunc("POST /chats/action-tasks/dismiss-all", chatsHandler.DismissAllActionTasks)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/action-tasks/dismiss", chatsHandler.DismissActionTask)
 	v1PrivateApis.HandleFunc("GET /chats/{chat_uuid}/contact", contactsHandler.GetContactByChatUUID)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/send", chatsHandler.MessageSend)
@@ -452,6 +453,7 @@ func BackendRouting(
 
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
+	v1PrivateApis.HandleFunc("GET /contacts/default-bot", contactsHandler.GetDefaultBot)
 	v1PrivateApis.HandleFunc("GET /contacts/{contact_token}", contactsHandler.GetContactByToken)
 
 	v1PrivateApis.HandleFunc("GET /user/self", userHandler.Self)
@@ -487,6 +489,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/{integration_name}/reveal", admin.RevealIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/restart", admin.RestartServer)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings/raw", admin.GetRawIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/view", admin.ViewRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/validate", admin.ValidateRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/raw", admin.SaveRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/download", admin.DownloadRawIntegrationSettings)

@@ -18,8 +18,8 @@ export function AccountCardButton({
 
   return (
     <DropdownMenuTrigger asChild>
-      <Card className="flex min-w-0 w-full cursor-pointer rounded-lg border border-border bg-card p-0 hover:bg-accent">
-        <div className="flex h-12 w-12 shrink-0 overflow-hidden rounded-l-lg border-r border-border">
+      <Card className="account-card-button flex min-w-0 w-full cursor-pointer rounded-lg border border-border bg-card p-0 hover:bg-accent">
+        <div className="account-card-avatar flex shrink-0 overflow-hidden rounded-l-lg border-r border-border">
           {avatarSrc ? (
             <img src={avatarSrc} className="block h-full w-full object-contain" alt="" />
           ) : (

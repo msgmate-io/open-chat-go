@@ -567,6 +567,14 @@ export function MessagesView({
 
     return (
         <div className="flex h-full min-h-0 w-full flex-col items-center px-2 md:px-4">
+            {chat?.admin_view ? (
+                <div className="mb-1 w-full rounded-md bg-amber-500/90 px-4 py-2 text-center text-sm font-medium text-black">
+                    Admin view: rendering the chat between{" "}
+                    <strong>{chat.admin_view.user1?.name || chat.admin_view.user1?.username || "user"}</strong> and{" "}
+                    <strong>{chat.admin_view.user2?.name || chat.admin_view.user2?.username || "user"}</strong>. You are
+                    not a participant in this chat.
+                </div>
+            ) : null}
             {!(chat?.chat_type === "interaction") ? (
                 <div className="absolute left-0 top-0 z-40 ml-2 mt-2 flex items-center gap-1.5 rounded-xl border border-border/60 bg-card/90 px-1.5 py-1 shadow-sm backdrop-blur-sm md:ml-3 md:mt-3 md:gap-2 md:px-2">
                     {leftPannelCollapsed ? (

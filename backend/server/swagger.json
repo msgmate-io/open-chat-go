@@ -452,6 +452,29 @@
                 }
             }
         },
+        "/api/v1/admin/integration-settings/raw/view": {
+            "post": {
+                "description": "Returns the active config document as YAML with sensitive values masked, after password confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "View raw integration settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/admin.rawConfigResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/integration-settings/restart": {
             "post": {
                 "description": "Asks the OS service manager to restart the server when service-managed; otherwise returns 409.",
@@ -895,7 +918,7 @@
                         "SessionAuth": []
                     }
                 ],
-                "description": "List owned chats/interactions that currently require a user action.",
+                "description": "List owned chats/interactions that currently require a user action. Admins may pass scope=all to inspect pending actions across all users.",
                 "consumes": [
                     "application/json"
                 ],
@@ -912,6 +935,13 @@
                         "default": 0,
                         "description": "Only return the count (1/0)",
                         "name": "count_only",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "",
+                        "description": "Admin only: 'all' to list every user's pending actions",
+                        "name": "scope",
                         "in": "query"
                     }
                 ],
@@ -930,6 +960,53 @@
                     },
                     "500": {
                         "description": "Unable to resolve action tasks",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chats/action-tasks/dismiss-all": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Admin-only: ignore every pending action task surfaced across all users so the admin-wide view stops showing them. Records per-admin dismissals only; interaction state and the owning users' own action stacks are left untouched.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Dismiss all pending action tasks",
+                "responses": {
+                    "200": {
+                        "description": "Dismissed count",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Unable to get database or user",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Admin privileges required",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to dismiss tasks",
                         "schema": {
                             "type": "string"
                         }
@@ -1735,6 +1812,52 @@
                     },
                     "400": {
                         "description": "Invalid contact token",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/contacts/default-bot": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Resolve the default platform bot (user named \"bot\") and return the current user's contact for it, creating the contact if it does not exist yet.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "contacts"
+                ],
+                "summary": "Get the default platform bot contact",
+                "responses": {
+                    "200": {
+                        "description": "Default bot contact",
+                        "schema": {
+                            "$ref": "#/definitions/contacts.ListedContact"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Default bot not found",
                         "schema": {
                             "type": "string"
                         }
@@ -3540,6 +3663,15 @@
                 "persisted": {
                     "type": "boolean"
                 },
+                "remote_error": {
+                    "type": "string"
+                },
+                "remote_persisted": {
+                    "type": "boolean"
+                },
+                "remote_target": {
+                    "type": "string"
+                },
                 "restart_required": {
                     "type": "boolean"
                 }
@@ -3587,6 +3719,15 @@
                 },
                 "persisted": {
                     "type": "boolean"
+                },
+                "remote_error": {
+                    "type": "string"
+                },
+                "remote_persisted": {
+                    "type": "boolean"
+                },
+                "remote_target": {
+                    "type": "string"
                 },
                 "restart_required": {
                     "type": "boolean"
@@ -3828,6 +3969,13 @@
                         "$ref": "#/definitions/chats.ActionTaskAction"
                     }
                 },
+                "admin_view": {
+                    "description": "AdminView marks rows returned through the admin-wide scope (the acting\nadmin is not a participant). ChatOwner identifies the user whose\ninteraction needs the action, so an admin can tell them apart.",
+                    "type": "boolean"
+                },
+                "chat_owner": {
+                    "$ref": "#/definitions/chats.ActionTaskPartner"
+                },
                 "chat_type": {
                     "type": "string"
                 },
@@ -3873,6 +4021,17 @@
                     "items": {
                         "$ref": "#/definitions/chats.ActionTaskRow"
                     }
+                }
+            }
+        },
+        "chats.AdminChatView": {
+            "type": "object",
+            "properties": {
+                "user1": {
+                    "$ref": "#/definitions/database.User"
+                },
+                "user2": {
+                    "$ref": "#/definitions/database.User"
                 }
             }
         },
@@ -4002,6 +4161,14 @@
         "chats.ListedChat": {
             "type": "object",
             "properties": {
+                "admin_view": {
+                    "description": "AdminView is set when an admin is listing/viewing a chat they do not\nparticipate in, so the UI can clearly mark that another user's chat is\nbeing rendered.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/chats.AdminChatView"
+                        }
+                    ]
+                },
                 "chat_share_uuid": {
                     "type": "string"
                 },
@@ -4643,8 +4810,16 @@
                 "can_persist": {
                     "type": "boolean"
                 },
+                "can_reload": {
+                    "description": "CanReload is true when persisting the config triggers a workload reload\n(e.g. a kubernetes deployment rollout) even though the server cannot\nrestart itself via an OS service manager.",
+                    "type": "boolean"
+                },
                 "can_restart": {
                     "type": "boolean"
+                },
+                "config_backend": {
+                    "description": "ConfigBackend names the effective persistence backend: \"file\",\n\"kubernetes-secret\" or empty when the config is not persistable.",
+                    "type": "string"
                 },
                 "config_format": {
                     "type": "string"
@@ -4657,6 +4832,14 @@
                     "items": {
                         "type": "string"
                     }
+                },
+                "remote_configured": {
+                    "description": "RemoteConfigured is true when a remote (kubernetes Secret) config target\nis available in addition to the local file.",
+                    "type": "boolean"
+                },
+                "remote_target": {
+                    "description": "RemoteTarget is the resolved remote backing store description when one is\nconfigured.",
+                    "type": "string"
                 },
                 "type": {
                     "type": "string"
@@ -4690,6 +4873,12 @@
                 "label": {
                     "type": "string"
                 },
+                "max": {
+                    "type": "number"
+                },
+                "min": {
+                    "type": "number"
+                },
                 "options": {
                     "type": "array",
                     "items": {
@@ -4708,8 +4897,14 @@
                 "sensitive": {
                     "type": "boolean"
                 },
+                "step": {
+                    "type": "number"
+                },
                 "type": {
                     "type": "string"
+                },
+                "user_visible": {
+                    "type": "boolean"
                 },
                 "value": {
                     "type": "string"
