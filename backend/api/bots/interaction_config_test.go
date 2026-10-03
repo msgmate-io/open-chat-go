@@ -41,6 +41,37 @@ func TestApplyInteractionConfigOverridesReplacesToolInitWhenProvided(t *testing.
 	}
 }
 
+func TestApplyInteractionConfigOverridesMergesToolInitWhenProvided(t *testing.T) {
+	config := applyInteractionConfigOverrides(
+		map[string]interface{}{
+			"tool_init": map[string]interface{}{
+				"git_propose_interaction_runtime": map[string]interface{}{"choices": []interface{}{"a"}},
+				"opencode_select_project":         map[string]interface{}{"project_uuid": "default-project"},
+			},
+		},
+		nil,
+		map[string]interface{}{
+			"git_pr_start": map[string]interface{}{"workspace_uuid": "ws-1"},
+		},
+	)
+
+	actual, ok := config["tool_init"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected tool_init map, got %#v", config["tool_init"])
+	}
+	// Per-interaction keys augment the bot default instead of dropping it, so
+	// a required tool_init the bot declares can never be lost.
+	if actual["git_propose_interaction_runtime"] == nil {
+		t.Fatalf("expected bot default tool_init to be preserved, got %#v", actual)
+	}
+	if actual["opencode_select_project"] == nil {
+		t.Fatalf("expected other bot default tool_init keys to be preserved, got %#v", actual)
+	}
+	if prStart, ok := actual["git_pr_start"].(map[string]interface{}); !ok || prStart["workspace_uuid"] != "ws-1" {
+		t.Fatalf("expected per-interaction tool_init to apply, got %#v", actual["git_pr_start"])
+	}
+}
+
 func TestApplyInteractionConfigOverridesIgnoresNestedToolInitOverride(t *testing.T) {
 	defaultToolInit := map[string]interface{}{"default_tool": map[string]interface{}{}}
 	config := applyInteractionConfigOverrides(
