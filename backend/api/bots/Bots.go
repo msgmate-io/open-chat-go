@@ -197,7 +197,25 @@ func applyInteractionConfigOverrides(
 		effectiveConfig[key] = value
 	}
 	if toolInit != nil {
-		effectiveConfig["tool_init"] = toolInit
+		// An explicit empty object clears the bot's default tool_init (the
+		// documented way to start an interaction without any tool_init). A
+		// non-empty object augments the bot default per tool key: a caller
+		// (eg a git trigger forwarding its workspace binding) must not
+		// accidentally drop a required tool_init the bot itself depends on.
+		if len(toolInit) == 0 {
+			effectiveConfig["tool_init"] = toolInit
+			return effectiveConfig
+		}
+		merged := map[string]interface{}{}
+		if existing, ok := effectiveConfig["tool_init"].(map[string]interface{}); ok {
+			for key, value := range existing {
+				merged[key] = value
+			}
+		}
+		for key, value := range toolInit {
+			merged[key] = value
+		}
+		effectiveConfig["tool_init"] = merged
 	}
 	return effectiveConfig
 }
