@@ -369,3 +369,12 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+def check_baseline_fixture(path: Path) -> int:
+    """Run the committed-baseline validation against a *stub* of the baseline.
+
+    Same shape and exit codes as the gate CI runs (--check-baseline), for the
+    no-Go fixture self-test in development/scripts/tests. It loads the baseline
+    exactly like the real gate and returns its verdict without measuring.
+    """
+    return check_baseline(path)
