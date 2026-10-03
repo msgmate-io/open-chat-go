@@ -166,10 +166,7 @@ func TestCoderSessionTrustGapIsTracked(t *testing.T) {
 	if !ok {
 		t.Fatal("the session_trust gap must stay in the parity registry")
 	}
-	if gap.Status == ParityStatusClosed {
-		t.Fatal("session_trust must not be closed while coder_trust is not exposed")
-	}
-	if !gap.BlocksRetirement {
-		t.Fatal("session_trust is a retirement blocker until the tool ships")
+	if gap.Status == ParityStatusOpen {
+		t.Fatal("session_trust must be closed now that codersurface.go exposes coder_trust")
 	}
 }
