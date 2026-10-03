@@ -81,6 +81,9 @@ func CoderSurfaceTools() []string {
 		"coder_edit",
 		"coder_bash",
 		"coder_git",
+		"coder_todo_write",
+		"coder_todo_read",
+		"coder_trust",
 	}
 }
 
@@ -117,7 +120,7 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "todo_list",
 		Title:  "Plan and update a visible task list",
 		Phase:  ParityPhaseNow,
-		Status: ParityStatusPartial,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
 			"coder_todo_write",
 			"coder_todo_read",
@@ -125,33 +128,33 @@ var openCodeParityRegistry = []ParityGap{
 		OpenCodeTools:    []string{"todowrite", "todoread"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "todoplan.go ships the per-chat plan state (validation, revision, render) but the coder surface still lacks the coder_todo_write/coder_todo_read tools, so the agent cannot reach it yet.",
+		Note:             "todoplan.go ships the per-chat plan state (validation, revision, render) and the coder surface now exposes coder_todo_write / coder_todo_read, so the agent can plan, update and re-read a visible task list.",
 	},
 	{
 		ID:     "session_trust",
 		Title:  "Trust a session so repeated confirmations are not asked again",
 		Phase:  ParityPhaseNow,
-		Status: ParityStatusPartial,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
 			"coder_trust",
 		},
 		OpenCodeTools:    []string{"permission allow-for-session"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "sessiontrust.go ships the per-chat trust state (action classes, grant/revoke, revision, AllowsTool) but the coder_trust tool is not exposed yet; every mutating action is still confirmed one at a time.",
+		Note:             "sessiontrust.go ships the per-chat trust state (action classes, grant/revoke, revision, AllowsTool) and the coder surface now exposes coder_trust, so the confirmation layer can skip repeated prompts for a trusted action class.",
 	},
 	{
 		ID:     "shell_modes",
 		Title:  "Long-running, streaming and interactive shell commands",
 		Phase:  ParityPhaseNow,
-		Status: ParityStatusPartial,
+		Status: ParityStatusClosed,
 		CoderTools: []string{
 			"coder_bash",
 		},
 		OpenCodeTools:    []string{"bash (background/streaming)"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "shellmodes.go ships the per-chat session state (start/append/tail-by-offset/kill, background, streaming and interactive modes, bounded output tail) but coder_bash still runs to completion under a timeout: the tool surface does not expose the modes yet, so dev servers, watchers and tail -f cannot be used from a run.",
+		Note:             "shellmodes.go ships the per-chat session state (start/append/tail-by-offset/kill, background, streaming and interactive modes, bounded output tail) and coder_bash now exposes these modes, so dev servers, watchers and tail -f run as live, streaming sessions.",
 	},
 	{
 		ID:     "multi_edit_patch",

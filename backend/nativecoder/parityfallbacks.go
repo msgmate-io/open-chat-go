@@ -33,14 +33,6 @@ const ParityFallbackVersion = 1
 // use with the current coder surface. Keep the gap ids in sync with
 // openCodeParityRegistry; ValidateParityFallbackGuidance fails on drift.
 var parityFallbackGuidance = map[string]string{
-	"todo_list": "Narrate the plan in the first message and restate it whenever it changes; a scratch " +
-		"checklist written with coder_write (or a coder_bash heredoc) is the durable stand-in for todowrite.",
-	"session_trust": "Batch every related step into one coder_bash call so a single confirmation covers the " +
-		"whole batch, and pre-approve the family through the chat's shared-config tools list instead of " +
-		"confirming each action again.",
-	"shell_modes": "Start dev servers, watchers and tail -f detached through coder_bash with the output " +
-		"redirected to a log file in the workspace, then follow it with targeted coder_read calls instead of " +
-		"holding the shell open.",
 	"multi_edit_patch": "Apply a refactor as a sequence of coder_edit calls, or write the changed files and " +
 		"let coder_bash apply one generated patch (git apply) when there are many hunks.",
 	"image_and_structured_reads": "Ask for a textual description instead of the image, and inspect " +
