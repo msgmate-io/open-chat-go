@@ -77,6 +77,30 @@ export interface ChatUIMessageExtrasProps {
 
 export type ChatUIMessageRenderer = ComponentType<ChatUIMessageExtrasProps>;
 
+/**
+ * Props passed to a chat search action. Integrations register actions here to
+ * surface a contextual button next to the chat sidebar search (e.g. "Ask chat
+ * finder bot"). The action component decides its own visibility (for example by
+ * checking whether its automation is enabled).
+ */
+export interface ChatSearchActionProps {
+  /** Current, non-empty search query. */
+  query: string;
+  /** Navigate to an app route, e.g. a freshly created chat. */
+  navigateTo: (to: string) => void;
+}
+
+/**
+ * A chat sidebar search action contributed by an integration.
+ */
+export interface ChatSearchAction {
+  /** Stable id used for React keys and de-duplication. */
+  id: string;
+  /** Ordering hint; lower values render first. */
+  order?: number;
+  Component: ComponentType<ChatSearchActionProps>;
+}
+
 export interface ChatUIExtension {
   /**
    * Discriminator value: the "chat_backend" key of the chat's shared config
