@@ -19,6 +19,7 @@ import {
   type PendingMobileSharedItem,
 } from "@open-chat-go/ui";
 import { File as FileIcon, Image as ImageIcon, Link as LinkIcon, X } from "lucide-react";
+import { MobileServerSelector } from "@/components/mobile/MobileServerSelector";
 import { setPendingMobileShare, type MobileShareAttachment } from "@/lib/mobile-share-store";
 
 type BotContact = {
@@ -267,15 +268,22 @@ export default function Page() {
   const linkItems = items.filter((item) => item.kind !== "file");
 
   return (
-    <div className="min-h-full bg-background text-foreground">
+    <div className="h-full overflow-y-auto overscroll-contain bg-background text-foreground">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:py-10">
         <div className="rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-6">
           <Text type={TextTypes.Heading5} tag="h1" bold>
             Share to Open Chat
           </Text>
           <Text type={TextTypes.Body6} color="muted" className="mt-1">
-            Review the shared content, then pick a bot to start a chat with it attached.
+            Review the shared content, then pick a server and a bot to start a chat with it attached.
           </Text>
+
+          <div className="mt-4 space-y-1">
+            <Text type={TextTypes.Body7} color="muted">
+              Server
+            </Text>
+            <MobileServerSelector onStatus={setStatus} className="w-full" />
+          </div>
 
           <div className="mt-4 space-y-2">
             {fileItems.map((item) => {

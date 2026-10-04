@@ -469,6 +469,101 @@ export function MessagesScroll({
 }
 
 
+type AdminViewParticipant = {
+    uuid?: string;
+    name?: string;
+    username?: string;
+    is_automated?: boolean;
+};
+
+// pickImpersonationTarget returns the participant an admin should impersonate to
+// act on another user's chat: the non-automated participant that is not the
+// acting admin, falling back to any non-admin participant.
+function pickImpersonationTarget(
+    adminView: { user1?: AdminViewParticipant; user2?: AdminViewParticipant } | undefined,
+    selfUUID?: string,
+): AdminViewParticipant | undefined {
+    if (!adminView) {
+        return undefined;
+    }
+    const participants = [adminView.user1, adminView.user2].filter(
+        (participant): participant is AdminViewParticipant => Boolean(participant?.uuid),
+    );
+    const notSelf = participants.filter((participant) => participant.uuid !== selfUUID);
+    const humans = notSelf.filter((participant) => !participant.is_automated);
+    return humans[0] ?? notSelf[0];
+}
+
+// AdminImpersonateButton lets an admin assume the identity of a chat
+// participant directly from the admin-view bar, so they can resolve that
+// user's pending confirmation as the user. It is only rendered when the
+// account-management integration (which owns the impersonation endpoints) is
+// available.
+function AdminImpersonateButton({
+    target,
+    chatUUID,
+}: {
+    target?: AdminViewParticipant;
+    chatUUID: string | null;
+}) {
+    const { data: integrations } = useSWR<{ rows?: Array<{ name?: string }> }>(
+        "/api/v1/integrations/list",
+        fetcher,
+        { revalidateOnFocus: false },
+    );
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const accountManagementAvailable = Boolean(
+        integrations?.rows?.some((integration) => integration.name === "account_management"),
+    );
+    if (!target?.uuid || !accountManagementAvailable) {
+        return null;
+    }
+
+    const targetName = target.name || target.username || "user";
+    const start = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            const response = await fetch(
+                "/api/v1/integrations/account_management/impersonation/start",
+                {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_uuid: target.uuid }),
+                },
+            );
+            if (!response.ok) {
+                setError((await response.text()).trim() || "Failed to start impersonation.");
+                return;
+            }
+            window.location.href = chatUUID ? `/chat/${chatUUID}` : "/chat";
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to start impersonation.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <span className="inline-flex flex-wrap items-center justify-center gap-2">
+            <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 border-black/40 bg-transparent px-2.5 text-xs text-black hover:bg-black/10"
+                disabled={busy}
+                onClick={() => void start()}
+            >
+                {busy ? "Impersonating…" : `Impersonate ${targetName}`}
+            </Button>
+            {error ? <span className="text-xs font-medium text-red-800">{error}</span> : null}
+        </span>
+    );
+}
+
 const MAX_LOAD_RETRIES = 4;
 
 export function MessagesView({ 
@@ -602,11 +697,17 @@ export function MessagesView({
     return (
         <div className="flex h-full min-h-0 w-full flex-col items-center px-2 md:px-4">
             {chat?.admin_view ? (
-                <div className="mb-1 w-full rounded-md bg-amber-500/90 px-4 py-2 text-center text-sm font-medium text-black">
-                    Admin view: rendering the chat between{" "}
-                    <strong>{chat.admin_view.user1?.name || chat.admin_view.user1?.username || "user"}</strong> and{" "}
-                    <strong>{chat.admin_view.user2?.name || chat.admin_view.user2?.username || "user"}</strong>. You are
-                    not a participant in this chat.
+                <div className="mb-1 flex w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md bg-amber-500/90 px-4 py-2 text-center text-sm font-medium text-black">
+                    <span>
+                        Admin view: rendering the chat between{" "}
+                        <strong>{chat.admin_view.user1?.name || chat.admin_view.user1?.username || "user"}</strong> and{" "}
+                        <strong>{chat.admin_view.user2?.name || chat.admin_view.user2?.username || "user"}</strong>. You
+                        are not a participant in this chat.
+                    </span>
+                    <AdminImpersonateButton
+                        target={pickImpersonationTarget(chat.admin_view, (user as any)?.uuid)}
+                        chatUUID={chatUUID}
+                    />
                 </div>
             ) : null}
             {!(chat?.chat_type === "interaction") ? (
