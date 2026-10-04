@@ -1,4 +1,4 @@
-import { cn } from "@open-chat-go/ui";
+import { cn } from "../../lib/utils";
 import { getCookie, setCookie, removeCookie } from 'typescript-cookie';
 import { PersistStorage, StorageValue } from 'zustand/middleware';
 import { isDeviceOnlineRuntime } from "./mobile-app";
