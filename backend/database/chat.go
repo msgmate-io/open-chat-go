@@ -2,8 +2,29 @@ package database
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
+
+// NormalizeChatTags trims, lowercases and de-duplicates a set of chat tags,
+// preserving order. It is used whenever tags are written so filtering stays
+// predictable across the backend and integrations.
+func NormalizeChatTags(tags []string) StringSliceJSON {
+	seen := map[string]struct{}{}
+	out := StringSliceJSON{}
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
+}
 
 type Message struct {
 	Model
@@ -43,6 +64,11 @@ type Chat struct {
 	SharedConfigId  *uint             `json:"-" gorm:"index"`
 	SharedConfig    *SharedChatConfig `json:"config" gorm:"foreignKey:SharedConfigId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:NO ACTION;"`
 	ChatType        string            `json:"chat_type" gorm:"default:'conversation'"`
+	// Tags are free-form labels attached to a chat so users can group and
+	// filter chats/interactions by category (e.g. "git", "opencode",
+	// "automation"). Integrations set them at creation time; users can edit
+	// them through the chat settings endpoint.
+	Tags StringSliceJSON `json:"tags" gorm:"type:jsonb"`
 }
 
 // ChatSettings stores per-chat settings owned by the backend for server-side
