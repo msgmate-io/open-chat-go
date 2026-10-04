@@ -26,6 +26,14 @@ type BotProfileConfig struct {
 	Tags         []string               `json:"tags,omitempty"`
 	MCPTools     map[string]interface{} `json:"mcp_tools,omitempty"`
 	DynamicTools map[string]interface{} `json:"dynamic_tools,omitempty"`
+	// OpencodeProject is the bot's default opencode project (owner-scoped name
+	// or UUID). Surfaced on profile models so the chat-start UI can pre-select
+	// it in the opencode project selector instead of making the user choose.
+	OpencodeProject string `json:"opencode_project,omitempty"`
+	// ToolInit carries the bot runtime's default tool init payload. Surfaced on
+	// profile models so chat-start widgets (eg the opencode project selector)
+	// render with their configured defaults pre-filled.
+	ToolInit map[string]interface{} `json:"tool_init,omitempty"`
 }
 
 // BotModel represents a bot model configuration
@@ -181,6 +189,12 @@ func mergeRuntimeConfigIntoProfileModels(defaultSharedConfig []byte, models []Bo
 		}
 		if len(runtimeProfile.DynamicTools) > 0 {
 			models[i].Configuration.DynamicTools = deepCopyJSONMap(runtimeProfile.DynamicTools)
+		}
+		if project := strings.TrimSpace(runtimeProfile.OpencodeProject); project != "" {
+			models[i].Configuration.OpencodeProject = project
+		}
+		if len(runtimeProfile.ToolInit) > 0 {
+			models[i].Configuration.ToolInit = deepCopyJSONMap(runtimeProfile.ToolInit)
 		}
 	}
 }

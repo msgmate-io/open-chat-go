@@ -276,7 +276,7 @@ export function ChatsList({
         }
     )
 
-    const { data: actionTasksCount } = useSWR<{ count: number }>(
+    const { data: actionTasksCount, mutate: mutateActionTasksCount } = useSWR<{ count: number }>(
         showDefaultChats ? `/api/v1/chats/action-tasks?count_only=1` : null,
         fetcher,
         {
@@ -293,11 +293,12 @@ export function ChatsList({
             if (!document.hidden) {
                 mutateChatStates()
                 mutateChats()
+                mutateActionTasksCount()
             }
         }
         document.addEventListener("visibilitychange", onVisibilityChange)
         return () => document.removeEventListener("visibilitychange", onVisibilityChange)
-    }, [mutateChatStates, mutateChats])
+    }, [mutateChatStates, mutateChats, mutateActionTasksCount])
 
     const chatStateByUuid = useMemo(() => {
         const map: Record<string, string> = {}
