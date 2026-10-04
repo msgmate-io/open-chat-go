@@ -44,6 +44,16 @@ func TestPendingActionsForMessageRecognizesKinds(t *testing.T) {
 			want: ActionTaskKindInteractionConfirmation,
 		},
 		{
+			name: "runtime_selection",
+			meta: `{"runtime_selectors":[{"id":"tc-1","status":"pending","title":"Choose runtime","recommended":"opencode"}]}`,
+			want: ActionTaskKindRuntimeSelection,
+		},
+		{
+			name: "runtime_selection_single_object_without_status",
+			meta: `{"runtime_selectors":{"id":"tc-2","title":"Choose runtime"}}`,
+			want: ActionTaskKindRuntimeSelection,
+		},
+		{
 			name:      "tool_confirmation",
 			meta:      `{"finished":true}`,
 			toolCalls: &toolCalls,
@@ -68,7 +78,8 @@ func TestPendingActionsForMessageRecognizesKinds(t *testing.T) {
 		"confirmable_actions":[{"action_id":"a1","status":"executed"}],
 		"opencode_permission":{"status":"resolved"},
 		"opencode_needs_action":{"status":"resolved"},
-		"interaction_confirmation":{"status":"approved"}
+		"interaction_confirmation":{"status":"approved"},
+		"runtime_selectors":[{"id":"tc-1","status":"confirmed"},{"id":"tc-2","status":"cancelled"}]
 	}`)}
 	if actions := pendingActionsForMessage(resolved); len(actions) != 0 {
 		t.Fatalf("expected no pending actions on a resolved message, got %+v", actions)
