@@ -91,3 +91,70 @@ func almostEqual(a, b float64) bool {
 	}
 	return delta < 1e-9
 }
+
+// TestGitHubWriteVerificationsFromMessages pulls the per-record write verdicts
+// straight out of the same assistant transcript the coverage report measures: a
+// mutating typed GitHub call is a recorded write, a read-back that mentions the
+// write's body_or_call closes it as verified, anything else stays unverified.
+func TestGitHubWriteVerificationsFromMessages(t *testing.T) {
+	messages := []map[string]interface{}{
+		{"role": "user", "content": "file the issue and the review"},
+		{
+			"role": "assistant",
+			"tool_calls": []interface{}{
+				map[string]interface{}{
+					"id": "call-1",
+					"function": map[string]interface{}{
+						"name":      "github_issue_comment",
+						"arguments": `{"repo":"msgmate-io/open-chat-go","number":873,"body_or_call":"the body that was posted"}`,
+					},
+				},
+				map[string]interface{}{
+					"id": "call-2",
+					"function": map[string]interface{}{
+						"name":      "coder_bash",
+						"arguments": `{"command":"gh pr list"}`,
+					},
+				},
+			},
+		},
+		{"role": "tool", "tool_call_id": "call-1", "content": "the body that was posted"},
+		{"role": "tool", "tool_call_id": "call-2", "content": "#1 pr"},
+	}
+	verdicts := GitHubWriteVerificationsFromMessages(messages)
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %#v, want exactly 1 recorded write", verdicts)
+	}
+	if verdicts[0].Tool != "github_issue_comment" || !verdicts[0].Verified {
+		t.Fatalf("verdict = %#v, want github_issue_comment verified by read-back", verdicts[0])
+	}
+}
+
+// TestGitHubWriteVerificationsFromMessagesUnverified keeps a write without a
+// read-back out of the verified bucket: it is recorded but left for a later
+// read-back, never silently marked done.
+func TestGitHubWriteVerificationsFromMessagesUnverified(t *testing.T) {
+	messages := []map[string]interface{}{
+		{"role": "user", "content": "merge it"},
+		{
+			"role": "assistant",
+			"tool_calls": []interface{}{
+				map[string]interface{}{
+					"id": "call-1",
+					"function": map[string]interface{}{
+						"name":      "github_pr_merge",
+						"arguments": `{"repo":"msgmate-io/open-chat-go","number":5}`,
+					},
+				},
+			},
+		},
+		{"role": "tool", "tool_call_id": "call-1", "content": "merged"},
+	}
+	verdicts := GitHubWriteVerificationsFromMessages(messages)
+	if len(verdicts) != 1 || verdicts[0].Verified {
+		t.Fatalf("verdicts = %#v, want 1 recorded write still unverified", verdicts)
+	}
+	if verdicts[0].Tool != "github_pr_merge" {
+		t.Fatalf("verdict tool = %q, want github_pr_merge", verdicts[0].Tool)
+	}
+}

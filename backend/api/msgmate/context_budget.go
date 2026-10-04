@@ -536,6 +536,10 @@ func BuildContextUsageReport(messages []map[string]interface{}, budgetChars int,
 	// ci#514 S1: classify the shell commands the request carries, so the coverage
 	// of the typed tool surface is measured on real traffic (no behaviour change).
 	report.BashCoverage = BuildBashCoverageReport(BashCommandsFromMessages(messages))
+	// ci#514 S4: fold the read-back write verdicts of the same transcript into the
+	// coverage report, so "verified instead of claimed" is measured on the actual
+	// mutating typed GitHub writes of the chat (no behaviour change).
+	report.BashCoverage = report.BashCoverage.ApplyGitHubWriteVerifications(GitHubWriteVerificationsFromMessages(messages))
 	return report
 }
 
