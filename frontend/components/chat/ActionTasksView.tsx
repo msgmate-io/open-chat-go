@@ -78,6 +78,7 @@ const ACTION_LABELS: Record<string, string> = {
   opencode_permission: "OpenCode permission",
   opencode_needs_action: "OpenCode needs action",
   interaction_confirmation: "Interaction confirmation",
+  runtime_selection: "Runtime selection",
   tool_confirmation: "Tool confirmation",
 };
 
@@ -278,6 +279,7 @@ function TaskCard({
           toolCalls={task.tool_calls ?? []}
           meta={task.message_meta ?? {}}
           chatUUID={task.chat_uuid}
+          messageUUID={task.message_uuid}
           onMutate={() => onResolved(task)}
         />
 
