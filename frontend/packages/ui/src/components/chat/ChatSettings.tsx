@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { mutate } from "swr"
-import { Plus, X } from "lucide-react"
+import { Plus, Trash2, X } from "lucide-react"
 import { Button } from "../button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "../dropdown-menu"
@@ -13,11 +14,13 @@ import { Icon } from "../icon"
 
 const normalizeTag = (tag: string) => tag.trim().toLowerCase()
 
-const invalidateChatCaches = () =>
+const invalidateChatCaches = (chatUUID?: string) =>
   mutate(
     (key) =>
       typeof key === "string" &&
-      (key.startsWith("/api/v1/chats/list") || key === "/api/v1/chats/tags"),
+      (key.startsWith("/api/v1/chats/list") ||
+        key === "/api/v1/chats/tags" ||
+        (chatUUID ? key === `/api/v1/chats/${chatUUID}` : false)),
     undefined,
     { revalidate: true }
   )
@@ -26,18 +29,22 @@ export function ChatSettings({
   chat,
   open,
   setOpen,
+  onDeleted,
   children,
 }: {
   chat: any
   open: boolean
   setOpen: (open: boolean) => void
+  onDeleted?: (chatUUID: string) => void
   children: ReactNode
 }) {
-  const [markedForDeletion, setMarkedForDeletion] = useState(false)
   const [extraName, setExtraName] = useState(chat?.settings?.title || "")
   const [tags, setTags] = useState<string[]>(Array.isArray(chat?.tags) ? chat.tags : [])
   const [newTag, setNewTag] = useState("")
   const [savingTags, setSavingTags] = useState(false)
+  const [savingTitle, setSavingTitle] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const extraNameChanged =
     extraName !== chat?.settings?.title && extraName !== ""
 
@@ -61,7 +68,7 @@ export function ChatSettings({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags: nextTags }),
       })
-      await invalidateChatCaches()
+      await invalidateChatCaches(chat.uuid)
     } finally {
       setSavingTags(false)
     }
@@ -81,27 +88,70 @@ export function ChatSettings({
     void persistTags(tags.filter((entry) => entry !== tag))
   }
 
-  useEffect(() => {
-    if (markedForDeletion) {
-      //dispatch(deleteChat({ chatId: chat?.uuid }))
+  // Persists the user-visible chat title into the same server-side ChatSettings
+  // slot the internal automations integration writes to, so a manual rename and
+  // an automation-generated label stay consistent.
+  const persistTitle = async (nextTitle: string) => {
+    if (!chat?.uuid) {
+      return
     }
-  }, [markedForDeletion])
+    setSavingTitle(true)
+    try {
+      const response = await fetch(`/api/v1/chats/${chat.uuid}/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: nextTitle }),
+      })
+      if (response.ok) {
+        const data = await response.json().catch(() => null)
+        setExtraName(data?.settings?.title ?? "")
+        await invalidateChatCaches(chat.uuid)
+      }
+    } finally {
+      setSavingTitle(false)
+    }
+  }
 
   const onSaveExtraTitle = () => {
-    /*
-        api.chatsSettingsCreate(chat?.uuid, { title: extraName }).then((res) => {
-            //dispatch(updateChatSettings({ chatId: chat?.uuid, settings: res }))
-        }).catch((error) => {
-            toast.error(`Failed to save extra title: ${JSON.stringify(error)}`)
-        })*/
+    void persistTitle(extraName.trim())
+  }
+
+  const onClearExtraTitle = () => {
+    void persistTitle("")
   }
 
   const onResetExtraText = () => {
     setExtraName(chat?.settings?.title || "")
   }
 
+  const deleteChat = async () => {
+    if (!chat?.uuid) {
+      return
+    }
+    setDeleting(true)
+    try {
+      const response = await fetch(`/api/v1/chats/${chat.uuid}`, { method: "DELETE" })
+      if (response.ok) {
+        await invalidateChatCaches(chat.uuid)
+        setOpen(false)
+        onDeleted?.(chat.uuid)
+      }
+    } finally {
+      setDeleting(false)
+      setConfirmDelete(false)
+    }
+  }
+
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) {
+          setConfirmDelete(false)
+        }
+      }}
+    >
       {children}
       <DropdownMenuContent className="w-56" align="end">
         <DropdownMenuLabel>Chat Settings</DropdownMenuLabel>
@@ -132,6 +182,7 @@ export function ChatSettings({
               size="icon"
               className="size-8 shrink-0"
               aria-label="Save chat title"
+              disabled={savingTitle}
               onClick={onSaveExtraTitle}
             >
               <Icon name="check" size="sm" />
@@ -144,6 +195,8 @@ export function ChatSettings({
               size="icon"
               className="size-8 shrink-0"
               aria-label="Clear saved title"
+              disabled={savingTitle}
+              onClick={onClearExtraTitle}
             >
               <Icon name="trash" size="sm" />
             </Button>
@@ -233,6 +286,47 @@ export function ChatSettings({
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
           </>
+        )}
+        {confirmDelete ? (
+          <div className="px-2 py-1">
+            <p className="mb-2 text-xs text-muted-foreground">
+              Delete this chat? This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={deleting}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={deleting}
+                onClick={() => void deleteChat()}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={deleting}
+            onSelect={(event) => {
+              event.preventDefault()
+              setConfirmDelete(true)
+            }}
+          >
+            <Trash2 className="size-4" />
+            Delete chat
+          </DropdownMenuItem>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
