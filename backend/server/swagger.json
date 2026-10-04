@@ -1666,6 +1666,74 @@
                 }
             }
         },
+        "/api/v1/chats/{chat_uuid}/messages/{message_uuid}/runtime-selector/resolve": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Record the user's decision (started or cancelled) for a runtime selector carried by a message.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "messages"
+                ],
+                "summary": "Resolve runtime selector",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Selector message UUID",
+                        "name": "message_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chats.ResolveRuntimeSelectorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chats/{chat_uuid}/settings": {
             "put": {
                 "security": [
@@ -4315,6 +4383,21 @@
                     "type": "string"
                 },
                 "source_message_uuid": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "chats.ResolveRuntimeSelectorResponse": {
+            "type": "object",
+            "properties": {
+                "selector": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "status": {
                     "type": "string"
                 },
                 "success": {

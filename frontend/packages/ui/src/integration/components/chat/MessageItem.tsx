@@ -935,6 +935,7 @@ export function BotMessageItem({
         toolCalls={toolCalls}
         meta={(message.meta_data ?? {}) as Record<string, unknown>}
         chatUUID={chatUUID}
+        messageUUID={message.uuid}
         interactionState={interactionState}
         onMutate={() => {
           mutate(`/api/v1/chats/${chatUUID}/messages/list`);
