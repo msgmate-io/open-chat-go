@@ -6,7 +6,10 @@ import (
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -33,6 +36,99 @@ type interactionConfirmationMeta struct {
 	ChatUUID          string `json:"chat_uuid,omitempty"`
 	DecidedBy         string `json:"decided_by,omitempty"`
 	DecidedAt         string `json:"decided_at,omitempty"`
+}
+
+// approveInteractionConfirmationRequest is the optional body accepted by the
+// approve endpoint. It lets the widget apply OpenCode model/interaction
+// overrides (and a refreshed tool_init) to the chat's shared config right
+// before the deferred bot reply starts.
+type approveInteractionConfirmationRequest struct {
+	ConfigOverrides map[string]interface{} `json:"config_overrides,omitempty"`
+	ToolInit        map[string]interface{} `json:"tool_init,omitempty"`
+}
+
+// rejectInteractionConfirmationRequest is the optional body accepted by the
+// reject endpoint. "superseded" is used when the user switches the interaction
+// to a different bot: the old gate is closed, but the surrounding event should
+// read as superseded rather than a plain rejection.
+type rejectInteractionConfirmationRequest struct {
+	Superseded bool `json:"superseded,omitempty"`
+}
+
+// isAllowedInteractionConfirmationOverrideKey reports whether a shared-config
+// key may be mutated through the approve endpoint. Only OpenCode interaction
+// keys and the direct model/backend selection are allowed; everything else
+// (tools, integrations, system_prompt, ...) stays under the bot/creator's
+// control.
+func isAllowedInteractionConfirmationOverrideKey(key string) bool {
+	if strings.HasPrefix(key, "opencode_") {
+		return true
+	}
+	switch key {
+	case "model", "backend":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateInteractionConfirmationOverrides(overrides map[string]interface{}) error {
+	for key := range overrides {
+		if !isAllowedInteractionConfirmationOverrideKey(key) {
+			return fmt.Errorf("config_overrides.%s is not allowed", key)
+		}
+	}
+	return nil
+}
+
+// applyInteractionConfirmationOverrides merges the approved overrides into the
+// chat's persisted SharedChatConfig so the enqueued bot reply picks them up.
+func applyInteractionConfirmationOverrides(DB *gorm.DB, chat database.Chat, req approveInteractionConfirmationRequest) error {
+	if len(req.ConfigOverrides) == 0 && req.ToolInit == nil {
+		return nil
+	}
+	if chat.SharedConfigId == nil || *chat.SharedConfigId == 0 {
+		return errors.New("chat has no shared config")
+	}
+	var shared database.SharedChatConfig
+	if err := DB.First(&shared, "id = ?", *chat.SharedConfigId).Error; err != nil {
+		return err
+	}
+	config := map[string]interface{}{}
+	if len(shared.ConfigData) > 0 {
+		if err := json.Unmarshal(shared.ConfigData, &config); err != nil {
+			return err
+		}
+	}
+	for key, value := range req.ConfigOverrides {
+		config[key] = value
+	}
+	if req.ToolInit != nil {
+		config["tool_init"] = req.ToolInit
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	return DB.Model(&database.SharedChatConfig{}).
+		Where("id = ?", shared.ID).
+		Update("config_data", database.JSONRaw(encoded)).Error
+}
+
+// decodeOptionalJSONBody decodes an optional JSON request body. An empty body
+// (or EOF) leaves the target untouched and is not an error.
+func decodeOptionalJSONBody(r *http.Request, target interface{}) error {
+	if r.Body == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(target); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // BuildInteractionConfirmationMessage creates the bot message that renders the
@@ -126,12 +222,12 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 		return
 	}
 
-	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user.ID)
+	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user)
 	if !ok {
 		return
 	}
 
-	botUser, counterpartyOK := getChatCounterparty(chat, *user)
+	botUser, counterpartyOK := resolveChatBotCounterparty(chat, *user)
 	if !counterpartyOK || !botUser.IsAutomated {
 		http.Error(w, "Confirmation is only available in chats with bots", http.StatusConflict)
 		return
@@ -140,6 +236,20 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 	sourceMessageUUID := meta.SourceMessageUUID
 	if sourceMessageUUID == "" {
 		http.Error(w, "Confirmation has no source message", http.StatusConflict)
+		return
+	}
+
+	var req approveInteractionConfirmationRequest
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := validateInteractionConfirmationOverrides(req.ConfigOverrides); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := applyInteractionConfirmationOverrides(DB, chat, req); err != nil {
+		http.Error(w, "Failed to apply interaction overrides", http.StatusInternalServerError)
 		return
 	}
 
@@ -192,8 +302,14 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 		return
 	}
 
-	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user.ID)
+	chat, message, meta, ok := loadPendingInteractionConfirmation(w, r, DB, user)
 	if !ok {
+		return
+	}
+
+	var req rejectInteractionConfirmationRequest
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -216,6 +332,9 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 			return marshalErr
 		}
 		eventText := "The interaction was rejected by the user."
+		if req.Superseded {
+			eventText = "The interaction was superseded by a new interaction."
+		}
 		event := database.Message{
 			ChatId:     chat.ID,
 			SenderId:   message.SenderId,
@@ -242,7 +361,7 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 	})
 }
 
-func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, userID uint) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
+func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, user *database.User) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
 	chatUUID := r.PathValue("chat_uuid")
 	messageUUID := r.PathValue("message_uuid")
 	if chatUUID == "" || messageUUID == "" {
@@ -251,9 +370,10 @@ func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, 
 	}
 
 	var chat database.Chat
-	if err := DB.Preload("User1").
+	if err := scopedChatQuery(DB, user).
+		Preload("User1").
 		Preload("User2").
-		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, userID, userID).
+		Where("uuid = ?", chatUUID).
 		First(&chat).Error; err != nil {
 		http.Error(w, "Chat not found", http.StatusNotFound)
 		return database.Chat{}, database.Message{}, nil, false

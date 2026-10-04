@@ -13,7 +13,13 @@ export {
   type TextColor,
   type TextStyleDefinition,
 } from "./tokens/typography";
-export { isToday, isYesterday, isWithinLast7Days } from "./lib/date";
+export {
+  isToday,
+  isYesterday,
+  isWithinLast7Days,
+  getChatTimeBucket,
+  type ChatTimeBucket,
+} from "./lib/date";
 export { useIsMobile } from "./hooks/use-mobile";
 
 export { Button, buttonVariants } from "./components/button";

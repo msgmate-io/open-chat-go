@@ -56,7 +56,7 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	chat, err := findOwnedChat(DB, user.ID, chatUUID)
+	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
 		http.Error(w, "Chat not found", http.StatusNotFound)
 		return
@@ -321,6 +321,22 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 						Description: actionTaskStringField(confirmation, "description"),
 					})
 				}
+			}
+			// Runtime-selector proposals: a selector bot asks the user which
+			// runtime should handle the request. Until the user starts or
+			// cancels a choice the interaction is waiting on them.
+			for _, selector := range parseRuntimeSelectorsFromMeta(meta) {
+				status, _ := selector["status"].(string)
+				if status != "" && status != RuntimeSelectorPending {
+					continue
+				}
+				actions = append(actions, ActionTaskAction{
+					Kind:        ActionTaskKindRuntimeSelection,
+					ActionId:    actionTaskStringField(selector, "id"),
+					Title:       actionTaskFirstNonEmpty(actionTaskStringField(selector, "title"), "Runtime selection"),
+					Description: actionTaskFirstNonEmpty(actionTaskStringField(selector, "description"), actionTaskStringField(selector, "reasoning")),
+					Reason:      actionTaskFirstNonEmpty(actionTaskStringField(selector, "recommended"), actionTaskStringField(selector, "source")),
+				})
 			}
 		}
 	}

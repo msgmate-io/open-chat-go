@@ -23,6 +23,7 @@ type CreateChat struct {
 	SharedConfig map[string]interface{} `json:"shared_config,omitempty"`
 	ChatType     string                 `json:"chat_type,omitempty"`
 	AutoShare    bool                   `json:"auto_share,omitempty"`
+	Tags         []string               `json:"tags,omitempty"`
 }
 
 func mergeJSONMaps(base map[string]interface{}, overrides map[string]interface{}) map[string]interface{} {
@@ -189,18 +190,21 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// TODO check for blocked users
 	// Small optimization, try to always ensure User1Id < User2Id
+	tags := database.NormalizeChatTags(data.Tags)
 	var chat database.Chat
 	if user.ID < otherUser.ID {
 		chat = database.Chat{
 			User1Id:  user.ID,
 			User2Id:  otherUser.ID,
 			ChatType: data.ChatType,
+			Tags:     tags,
 		}
 	} else {
 		chat = database.Chat{
 			User1Id:  otherUser.ID,
 			User2Id:  user.ID,
 			ChatType: data.ChatType,
+			Tags:     tags,
 		}
 	}
 
@@ -209,7 +213,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var createdMessage *database.Message
 
-	if data.FirstMessage != "" {
+	if data.FirstMessage != "" || len(data.Attachments) > 0 {
 		// Prepare metadata for attachments if any
 		var metaData []byte
 		if len(data.Attachments) > 0 {
@@ -274,7 +278,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		DB.Save(&chat)
 	}
 
-	if data.FirstMessage != "" {
+	if data.FirstMessage != "" || len(data.Attachments) > 0 {
 		if otherUser.IsAutomated && createdMessage != nil {
 			queueClient, clientErr := util.GetAsynqClient(r)
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import { Grid2x2, LayoutGrid, List } from "lucide-react";
 import {
   Badge,
   Button,
@@ -82,6 +83,14 @@ type OverviewEntry = {
 
 type ViewFilter = "all" | "bots" | "people" | "owned" | "public";
 
+type EntityViewMode = "card" | "compact" | "list";
+
+const VIEW_MODE_OPTIONS = [
+  { value: "card", label: "Card view", Icon: LayoutGrid },
+  { value: "compact", label: "Compact view", Icon: Grid2x2 },
+  { value: "list", label: "List view", Icon: List },
+] as const;
+
 function normalizeDescription(raw: unknown): string {
   if (typeof raw !== "string") {
     return "";
@@ -113,28 +122,70 @@ function entryRank(entry: OverviewEntry): number {
   return 3;
 }
 
+function ViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: EntityViewMode;
+  onChange: (value: EntityViewMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="View mode"
+      className="surface-sunken flex shrink-0 gap-1 p-1"
+    >
+      {VIEW_MODE_OPTIONS.map(({ value: mode, label, Icon }) => {
+        const isActive = value === mode;
+        return (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={isActive}
+            aria-label={label}
+            title={label}
+            onClick={() => onChange(mode)}
+            className={cn(
+              "flex items-center justify-center rounded-md p-1.5 transition-[color,box-shadow,background-color]",
+              isActive
+                ? "bg-background text-foreground shadow-sm ring-1 ring-black/[0.04] dark:ring-white/[0.06]"
+                : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+            )}
+          >
+            <Icon className="size-4" aria-hidden />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function EntityCard({
   entity,
   navigateTo,
+  compact = false,
 }: {
   entity: OverviewEntry;
   navigateTo: (to: string) => void;
+  compact?: boolean;
 }) {
   const initials = (entity.name || "?").slice(0, 2).toUpperCase();
 
   return (
     <Card
       className={cn(
-        "group cursor-pointer border-border/70 bg-card/90 shadow-sm transition-all hover:-translate-y-0.5 hover:border-border hover:bg-card hover:shadow-md",
+        "group cursor-pointer border-border/70 bg-card/90 shadow-sm transition-all hover:border-border hover:bg-card hover:shadow-md",
+        !compact && "hover:-translate-y-0.5",
       )}
       onClick={() => navigateTo(`/chat/new/${entity.contactToken}`)}
     >
-      <CardHeader className="space-y-3 pb-3">
+      <CardHeader className={cn("pb-3", compact ? "space-y-2 p-3" : "space-y-3")}>
         <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className={cn("flex min-w-0 items-center", compact ? "gap-2" : "gap-3")}>
             <div
               className={cn(
-                "flex size-10 shrink-0 items-center justify-center rounded-full border text-sm font-semibold",
+                "flex shrink-0 items-center justify-center rounded-full border font-semibold",
+                compact ? "size-8 text-xs" : "size-10 text-sm",
                 entity.isAutomated
                   ? "border-primary/30 bg-primary/10 text-primary"
                   : "border-border bg-muted/60 text-foreground",
@@ -143,10 +194,14 @@ function EntityCard({
               {initials}
             </div>
             <div className="min-w-0">
-              <CardTitle className="truncate text-base">{entity.name}</CardTitle>
-              <CardDescription className="truncate">
-                {entity.isAutomated ? "Automated bot" : "Contact"}
-              </CardDescription>
+              <CardTitle className={cn("truncate", compact ? "text-sm" : "text-base")}>
+                {entity.name}
+              </CardTitle>
+              {!compact ? (
+                <CardDescription className="truncate">
+                  {entity.isAutomated ? "Automated bot" : "Contact"}
+                </CardDescription>
+              ) : null}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -169,30 +224,140 @@ function EntityCard({
             </Badge>
           </div>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {entity.sourceOwned ? <Badge variant="secondary">Owned</Badge> : null}
-          {entity.sourceContact ? <Badge variant="outline">In contacts</Badge> : null}
-          {entity.sourcePublic ? <Badge variant="outline">Public</Badge> : null}
-        </div>
+        {!compact ? (
+          <div className="flex flex-wrap gap-1.5">
+            {entity.sourceOwned ? <Badge variant="secondary">Owned</Badge> : null}
+            {entity.sourceContact ? <Badge variant="outline">In contacts</Badge> : null}
+            {entity.sourcePublic ? <Badge variant="outline">Public</Badge> : null}
+          </div>
+        ) : null}
       </CardHeader>
-      <CardContent className="space-y-3 pt-0">
-        <Text type={TextTypes.Body7} color="muted" className="line-clamp-2 min-h-10">
+      <CardContent className={cn("pt-0", compact ? "space-y-2" : "space-y-3")}>
+        <Text
+          type={TextTypes.Body7}
+          color="muted"
+          className={cn(compact ? "line-clamp-1 min-h-0" : "line-clamp-2 min-h-10")}
+        >
           {entity.description || "Start a new conversation."}
         </Text>
-        <div className="flex flex-wrap items-center gap-3">
+        {!compact ? (
+          <div className="flex flex-wrap items-center gap-3">
+            {entity.model ? (
+              <Text type={TextTypes.Body7} color="muted" className="rounded bg-muted px-2 py-0.5">
+                Model: {entity.model}
+              </Text>
+            ) : null}
+            {entity.backend ? (
+              <Text type={TextTypes.Body7} color="muted" className="rounded bg-muted px-2 py-0.5">
+                Backend: {entity.backend}
+              </Text>
+            ) : null}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EntityListRow({
+  entity,
+  navigateTo,
+}: {
+  entity: OverviewEntry;
+  navigateTo: (to: string) => void;
+}) {
+  const initials = (entity.name || "?").slice(0, 2).toUpperCase();
+
+  return (
+    <Card
+      className="group cursor-pointer border-border/70 bg-card/90 shadow-sm transition-all hover:border-border hover:bg-card"
+      onClick={() => navigateTo(`/chat/new/${entity.contactToken}`)}
+    >
+      <div className="flex items-center gap-3 px-3 py-2">
+        <div
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
+            entity.isAutomated
+              ? "border-primary/30 bg-primary/10 text-primary"
+              : "border-border bg-muted/60 text-foreground",
+          )}
+        >
+          {initials}
+        </div>
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <Text type={TextTypes.Body6} tag="span" bold className="max-w-[40%] shrink-0 truncate">
+            {entity.name}
+          </Text>
+          <Text type={TextTypes.Body7} color="muted" className="min-w-0 flex-1 truncate">
+            {entity.description || "Start a new conversation."}
+          </Text>
+        </div>
+        <div className="hidden shrink-0 items-center gap-2 sm:flex">
           {entity.model ? (
-            <Text type={TextTypes.Body7} color="muted" className="rounded bg-muted px-2 py-0.5">
-              Model: {entity.model}
+            <Text type={TextTypes.Body7} color="muted" className="truncate">
+              {entity.model}
             </Text>
           ) : null}
           {entity.backend ? (
-            <Text type={TextTypes.Body7} color="muted" className="rounded bg-muted px-2 py-0.5">
-              Backend: {entity.backend}
+            <Text type={TextTypes.Body7} color="muted" className="truncate">
+              {entity.backend}
             </Text>
           ) : null}
         </div>
-      </CardContent>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {entity.isAutomated && entity.sourceOwned && entity.botUUID ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
+              onClick={(event) => {
+                event.stopPropagation();
+                navigateTo(`/chats/bots/${encodeURIComponent(entity.botUUID || "")}/edit`);
+              }}
+            >
+              Edit
+            </Button>
+          ) : null}
+          <Badge variant="outline" className="shrink-0">
+            {entity.isAutomated ? "Bot" : "User"}
+          </Badge>
+        </div>
+      </div>
     </Card>
+  );
+}
+
+const VIEW_MODE_GRID_CLASSES: Record<EntityViewMode, string> = {
+  card: "grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3",
+  compact: "grid grid-cols-1 gap-2 sm:grid-cols-2",
+  list: "flex flex-col gap-1.5",
+};
+
+function EntityEntries({
+  entries,
+  viewMode,
+  navigateTo,
+}: {
+  entries: OverviewEntry[];
+  viewMode: EntityViewMode;
+  navigateTo: (to: string) => void;
+}) {
+  return (
+    <div className={VIEW_MODE_GRID_CLASSES[viewMode]}>
+      {entries.map((entry) =>
+        viewMode === "list" ? (
+          <EntityListRow key={entry.contactToken} entity={entry} navigateTo={navigateTo} />
+        ) : (
+          <EntityCard
+            key={entry.contactToken}
+            entity={entry}
+            navigateTo={navigateTo}
+            compact={viewMode === "compact"}
+          />
+        ),
+      )}
+    </div>
   );
 }
 
@@ -216,6 +381,13 @@ export function EntitiesOverview({
     const params = new URLSearchParams(window.location.search);
     return params.get("show_integrations") === "1";
   });
+  const [viewMode, setViewMode] = useState<EntityViewMode>(() => {
+    if (typeof window === "undefined") {
+      return "card";
+    }
+    const value = new URLSearchParams(window.location.search).get("view");
+    return value === "compact" || value === "list" ? value : "card";
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -227,9 +399,14 @@ export function EntitiesOverview({
     } else {
       url.searchParams.delete("show_integrations");
     }
+    if (viewMode === "card") {
+      url.searchParams.delete("view");
+    } else {
+      url.searchParams.set("view", viewMode);
+    }
     const next = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState({}, "", next);
-  }, [showIntegrations]);
+  }, [showIntegrations, viewMode]);
 
   const {
     data: contacts,
@@ -248,6 +425,10 @@ export function EntitiesOverview({
   const { data: actionTasksCount } = useSWR<{ count: number }>(
     "/api/v1/chats/action-tasks?count_only=1",
     fetcher,
+    {
+      refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 5000),
+      revalidateOnFocus: true,
+    },
   );
   const actionCount = typeof actionTasksCount?.count === "number" ? actionTasksCount.count : 0;
   const {
@@ -515,27 +696,35 @@ export function EntitiesOverview({
 
           {grouped.botsList.length > 0 ? (
             <section className="space-y-3">
-              <Text type={TextTypes.Heading6} tag="h2" bold>
-                Bots
-              </Text>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {grouped.botsList.map((entry) => (
-                  <EntityCard key={entry.contactToken} entity={entry} navigateTo={navigateTo} />
-                ))}
+              <div className="flex items-center justify-between gap-2">
+                <Text type={TextTypes.Heading6} tag="h2" bold>
+                  Bots
+                </Text>
+                <ViewModeToggle value={viewMode} onChange={setViewMode} />
               </div>
+              <EntityEntries
+                entries={grouped.botsList}
+                viewMode={viewMode}
+                navigateTo={navigateTo}
+              />
             </section>
           ) : null}
 
           {grouped.peopleList.length > 0 ? (
             <section className="space-y-3">
-              <Text type={TextTypes.Heading6} tag="h2" bold>
-                People
-              </Text>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {grouped.peopleList.map((entry) => (
-                  <EntityCard key={entry.contactToken} entity={entry} navigateTo={navigateTo} />
-                ))}
+              <div className="flex items-center justify-between gap-2">
+                <Text type={TextTypes.Heading6} tag="h2" bold>
+                  People
+                </Text>
+                {grouped.botsList.length === 0 ? (
+                  <ViewModeToggle value={viewMode} onChange={setViewMode} />
+                ) : null}
               </div>
+              <EntityEntries
+                entries={grouped.peopleList}
+                viewMode={viewMode}
+                navigateTo={navigateTo}
+              />
             </section>
           ) : null}
 

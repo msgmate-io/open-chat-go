@@ -10,6 +10,7 @@ import { resolveChatUIExtension, type ChatUIContext, type ChatUISendPayload } fr
 import { buildChatRunCommand } from "../../lib/open-chat-run";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
 import { APIRequestError, fetcher } from "../../lib/utils";
+import { revalidateChatData } from "../../lib/chat-cache";
 import { useBreakpoint } from "../utils";
 import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
@@ -96,6 +97,11 @@ export function MessagesScroll({
 
     const scrollRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    // Only keep the viewport pinned to the newest message while the user is
+    // already at the bottom. Once they scroll up to read older messages we stop
+    // forcing them back down as new streamed content arrives.
+    const shouldAutoScrollRef = useRef(true);
+    const AUTO_SCROLL_THRESHOLD = 150;
     
     const shouldLoadIntegrations = Boolean(chatUUID && chat?.partner?.is_automated);
 
@@ -144,12 +150,29 @@ export function MessagesScroll({
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
     const onSidebarButtonClick = isSm ? onToggleCollapse : () => navigate("/chat");
 
+    // Track whether the user is parked at the bottom. This runs on every scroll
+    // (including programmatic ones) so the pin state always reflects where the
+    // viewport actually is.
+    const handleMessagesScroll = useCallback(() => {
+        const scrollElement = scrollRef.current;
+        if (!scrollElement) return;
+        const distance = Math.abs(
+            scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop,
+        );
+        shouldAutoScrollRef.current = distance < AUTO_SCROLL_THRESHOLD;
+    }, []);
+
+    // Re-pin to the bottom whenever a different chat is opened.
     useEffect(() => {
-        if (scrollRef.current) {
-            const scrollElement = scrollRef.current;
-            const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
-            scrollElement.scrollTop = maxScroll;
-        }
+        shouldAutoScrollRef.current = true;
+    }, [chatUUID]);
+
+    useEffect(() => {
+        if (!shouldAutoScrollRef.current) return;
+        const scrollElement = scrollRef.current;
+        if (!scrollElement) return;
+        const maxScroll = scrollElement.scrollHeight - scrollElement.clientHeight;
+        scrollElement.scrollTop = maxScroll;
     }, [messages, partialMessages]);
 
     const onSendMessage = async (
@@ -202,10 +225,17 @@ export function MessagesScroll({
                 meta_data: newMessage.meta_data || {}
             };
             
+            // Sending a message always snaps the viewport back to the bottom.
+            shouldAutoScrollRef.current = true;
             mutateMessages({
                 ...messages,
                 rows: [messageWithAttachments, ...(messages?.rows ?? [])]
             }, false);
+
+            // The new user message changes the sidebar preview and moves the
+            // chat into the active state; refresh the derived caches so the
+            // list and state dots update without waiting for the next poll.
+            void revalidateChatData(chatUUID);
             
             // Clear input after successful send
             setText('');
@@ -332,6 +362,7 @@ export function MessagesScroll({
             )}
             <div
                 ref={scrollRef}
+                onScroll={handleMessagesScroll}
                 className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
                 style={{
                     paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
@@ -438,6 +469,101 @@ export function MessagesScroll({
 }
 
 
+type AdminViewParticipant = {
+    uuid?: string;
+    name?: string;
+    username?: string;
+    is_automated?: boolean;
+};
+
+// pickImpersonationTarget returns the participant an admin should impersonate to
+// act on another user's chat: the non-automated participant that is not the
+// acting admin, falling back to any non-admin participant.
+function pickImpersonationTarget(
+    adminView: { user1?: AdminViewParticipant; user2?: AdminViewParticipant } | undefined,
+    selfUUID?: string,
+): AdminViewParticipant | undefined {
+    if (!adminView) {
+        return undefined;
+    }
+    const participants = [adminView.user1, adminView.user2].filter(
+        (participant): participant is AdminViewParticipant => Boolean(participant?.uuid),
+    );
+    const notSelf = participants.filter((participant) => participant.uuid !== selfUUID);
+    const humans = notSelf.filter((participant) => !participant.is_automated);
+    return humans[0] ?? notSelf[0];
+}
+
+// AdminImpersonateButton lets an admin assume the identity of a chat
+// participant directly from the admin-view bar, so they can resolve that
+// user's pending confirmation as the user. It is only rendered when the
+// account-management integration (which owns the impersonation endpoints) is
+// available.
+function AdminImpersonateButton({
+    target,
+    chatUUID,
+}: {
+    target?: AdminViewParticipant;
+    chatUUID: string | null;
+}) {
+    const { data: integrations } = useSWR<{ rows?: Array<{ name?: string }> }>(
+        "/api/v1/integrations/list",
+        fetcher,
+        { revalidateOnFocus: false },
+    );
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const accountManagementAvailable = Boolean(
+        integrations?.rows?.some((integration) => integration.name === "account_management"),
+    );
+    if (!target?.uuid || !accountManagementAvailable) {
+        return null;
+    }
+
+    const targetName = target.name || target.username || "user";
+    const start = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            const response = await fetch(
+                "/api/v1/integrations/account_management/impersonation/start",
+                {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_uuid: target.uuid }),
+                },
+            );
+            if (!response.ok) {
+                setError((await response.text()).trim() || "Failed to start impersonation.");
+                return;
+            }
+            window.location.href = chatUUID ? `/chat/${chatUUID}` : "/chat";
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to start impersonation.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <span className="inline-flex flex-wrap items-center justify-center gap-2">
+            <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 border-black/40 bg-transparent px-2.5 text-xs text-black hover:bg-black/10"
+                disabled={busy}
+                onClick={() => void start()}
+            >
+                {busy ? "Impersonating…" : `Impersonate ${targetName}`}
+            </Button>
+            {error ? <span className="text-xs font-medium text-red-800">{error}</span> : null}
+        </span>
+    );
+}
+
 const MAX_LOAD_RETRIES = 4;
 
 export function MessagesView({ 
@@ -490,10 +616,13 @@ export function MessagesView({
     useEffect(() => {
         const isActive = Boolean((interactionStatus as any)?.is_active);
         if (wasInteractionActiveRef.current && !isActive) {
-            mutateMessages();
+            // Refresh the message list plus the sidebar preview, state dot and
+            // action-task feeds so a finished interaction is reflected without
+            // a manual reload (relevant for clients without a websocket).
+            void revalidateChatData(chatUUID);
         }
         wasInteractionActiveRef.current = isActive;
-    }, [interactionStatus, mutateMessages]);
+    }, [interactionStatus, chatUUID]);
 
     const hasLoadError = Boolean(chatError || messagesError || userError);
     const isOfflineCacheMiss = [chatError, messagesError, userError].some((error) => {
@@ -567,6 +696,20 @@ export function MessagesView({
 
     return (
         <div className="flex h-full min-h-0 w-full flex-col items-center px-2 md:px-4">
+            {chat?.admin_view ? (
+                <div className="mb-1 flex w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md bg-amber-500/90 px-4 py-2 text-center text-sm font-medium text-black">
+                    <span>
+                        Admin view: rendering the chat between{" "}
+                        <strong>{chat.admin_view.user1?.name || chat.admin_view.user1?.username || "user"}</strong> and{" "}
+                        <strong>{chat.admin_view.user2?.name || chat.admin_view.user2?.username || "user"}</strong>. You
+                        are not a participant in this chat.
+                    </span>
+                    <AdminImpersonateButton
+                        target={pickImpersonationTarget(chat.admin_view, (user as any)?.uuid)}
+                        chatUUID={chatUUID}
+                    />
+                </div>
+            ) : null}
             {!(chat?.chat_type === "interaction") ? (
                 <div className="absolute left-0 top-0 z-40 ml-2 mt-2 flex items-center gap-1.5 rounded-xl border border-border/60 bg-card/90 px-1.5 py-1 shadow-sm backdrop-blur-sm md:ml-3 md:mt-3 md:gap-2 md:px-2">
                     {leftPannelCollapsed ? (
