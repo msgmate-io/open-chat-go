@@ -22,11 +22,7 @@ import (
 // the interface registry directly (rather than backend/integrations) to avoid
 // an import cycle with integration packages that import backend/api/user.
 func settingsDefinitions() []integrationinterface.Definition {
-	defs := integrationinterface.List()
-	// Synthetic group exposing the backend core's own configuration (effective
-	// env values and bootstrap specs) for editing in the same UI.
-	defs = append(defs, integrationsettings.CoreDefinition())
-	return defs
+	return integrationsettings.ConfigDefinitions()
 }
 
 type revealIntegrationSettingsRequest struct {
@@ -43,6 +39,9 @@ type saveIntegrationSettingsResponse struct {
 	RestartRequired bool                                    `json:"restart_required"`
 	Persisted       bool                                    `json:"persisted"`
 	PersistError    string                                  `json:"persist_error,omitempty"`
+	RemotePersisted bool                                    `json:"remote_persisted"`
+	RemoteTarget    string                                  `json:"remote_target,omitempty"`
+	RemoteError     string                                  `json:"remote_error,omitempty"`
 }
 
 type restartServerResponse struct {
@@ -59,6 +58,37 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if !user.IsAdmin {
 		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// requireAdminPassword enforces an authenticated admin session *and* a fresh
+// password confirmation. The request body must be a JSON object with a
+// "password" field, matching the reveal/download endpoints.
+func requireAdminPassword(w http.ResponseWriter, r *http.Request) bool {
+	_, user, err := util.GetDBAndUser(r)
+	if err != nil || user == nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return false
+	}
+	if !user.IsAdmin {
+		http.Error(w, "User is not an admin", http.StatusForbidden)
+		return false
+	}
+
+	payload := revealIntegrationSettingsRequest{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return false
+	}
+	payload.Password = strings.TrimSpace(payload.Password)
+	if payload.Password == "" {
+		http.Error(w, "password is required", http.StatusBadRequest)
+		return false
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.Password)); err != nil {
+		http.Error(w, "invalid password", http.StatusUnauthorized)
 		return false
 	}
 	return true
@@ -167,20 +197,17 @@ func SaveIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 
 	integrationsettings.ApplyValues(def, normalized)
 
-	persisted := false
-	persistError := ""
-	if err := integrationsettings.PersistValues(def, normalized); err != nil {
-		persistError = err.Error()
-	} else {
-		persisted = true
-	}
+	outcome := integrationsettings.PersistValuesWithRemote(def, normalized)
 
 	writeJSON(w, http.StatusOK, saveIntegrationSettingsResponse{
-		Deployment:      integrationsettings.BuildDeploymentInfo(),
+		Deployment:      outcome.Deployment,
 		Integration:     integrationsettings.BuildIntegrationSnapshot(def, runtimecfg.GetAll(), false),
 		RestartRequired: true,
-		Persisted:       persisted,
-		PersistError:    persistError,
+		Persisted:       outcome.Persisted,
+		PersistError:    outcome.PersistError,
+		RemotePersisted: outcome.RemotePersisted,
+		RemoteTarget:    outcome.RemoteTarget,
+		RemoteError:     outcome.RemoteError,
 	})
 }
 
@@ -199,34 +226,13 @@ func RevealIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_, user, err := util.GetDBAndUser(r)
-	if err != nil || user == nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
-		return
-	}
-	if !user.IsAdmin {
-		http.Error(w, "User is not an admin", http.StatusForbidden)
+	if !requireAdminPassword(w, r) {
 		return
 	}
 
 	def, ok := integrationsettings.FindDefinition(settingsDefinitions(), r.PathValue("integration_name"))
 	if !ok || len(def.RuntimeEnvVars) == 0 {
 		http.Error(w, "integration not found", http.StatusNotFound)
-		return
-	}
-
-	payload := revealIntegrationSettingsRequest{}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-	payload.Password = strings.TrimSpace(payload.Password)
-	if payload.Password == "" {
-		http.Error(w, "password is required", http.StatusBadRequest)
-		return
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.Password)); err != nil {
-		http.Error(w, "invalid password", http.StatusUnauthorized)
 		return
 	}
 
@@ -301,10 +307,9 @@ type rawConfigSaveResponse struct {
 	Persisted       bool                               `json:"persisted"`
 	PersistError    string                             `json:"persist_error,omitempty"`
 	RestartRequired bool                               `json:"restart_required"`
-}
-
-type rawConfigDownloadRequest struct {
-	Password string `json:"password"`
+	RemotePersisted bool                               `json:"remote_persisted"`
+	RemoteTarget    string                             `json:"remote_target,omitempty"`
+	RemoteError     string                             `json:"remote_error,omitempty"`
 }
 
 // GetRawIntegrationSettings returns the active config document as YAML with
@@ -324,7 +329,44 @@ func GetRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 	if !requireAdmin(w, r) {
 		return
 	}
+	writeRawConfigResponse(w, r)
+}
 
+// ViewRawIntegrationSettings returns the redacted raw config after the admin
+// re-authenticates with their password. Unlike the legacy GET endpoint the
+// document body is only released after password confirmation.
+//
+//	@Summary      View raw integration settings
+//	@Description  Returns the active config document as YAML with sensitive values masked, after password confirmation.
+//	@Tags         admin
+//	@Accept       json
+//	@Produce      json
+//	@Success      200 {object} rawConfigResponse
+//	@Router       /api/v1/admin/integration-settings/raw/view [post]
+func ViewRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireAdminPassword(w, r) {
+		return
+	}
+	writeRawConfigResponse(w, r)
+}
+
+func writeRawConfigResponse(w http.ResponseWriter, _ *http.Request) {
+	payload, err := buildRawConfigResponse()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// buildRawConfigResponse renders the active config document as redacted YAML,
+// falling back to a synthesized in-memory document when no writable config
+// source is available.
+func buildRawConfigResponse() (rawConfigResponse, error) {
 	deployment := integrationsettings.BuildDeploymentInfo()
 	defs := settingsDefinitions()
 	values := runtimecfg.GetAll()
@@ -333,8 +375,7 @@ func GetRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 	inMemory := false
 	if err != nil {
 		if !errors.Is(err, integrationsettings.ErrNotPersistable) {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return rawConfigResponse{}, err
 		}
 		root = integrationsettings.BuildRuntimeConfigDocument(defs, values)
 		format = deployment.ConfigFormat
@@ -344,17 +385,16 @@ func GetRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 	redacted := integrationsettings.RedactConfig(root, values, defs)
 	rendered, err := integrationsettings.RenderConfigYAML(redacted)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return rawConfigResponse{}, err
 	}
 
-	writeJSON(w, http.StatusOK, rawConfigResponse{
+	return rawConfigResponse{
 		Deployment: deployment,
 		Format:     format,
 		YAML:       string(rendered),
 		Redacted:   true,
 		InMemory:   inMemory,
-	})
+	}, nil
 }
 
 // ValidateRawIntegrationSettings validates a raw config document without
@@ -416,38 +456,29 @@ func SaveRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	root, err := integrationsettings.ParseConfigDocument(payload.YAML)
+	// Mirror the config into the deployment-host kubernetes Secret when one is
+	// configured (decoupling the config from the Helm release). A read-only
+	// local config mount makes the file write fail, so a successful remote
+	// persist still counts as persisted.
+	result, err := integrationsettings.ApplyRawConfigDocument(runtimecfg.GetConfigSource(), payload.YAML)
 	if err != nil {
+		var validationErr *integrationsettings.ApplyValidationError
+		if errors.As(err, &validationErr) {
+			writeJSON(w, http.StatusBadRequest, rawConfigValidateResponse{Valid: false, Errors: validationErr.Errors})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	defs := settingsDefinitions()
-	if errs := integrationsettings.ValidateConfigDocument(root, defs); len(errs) > 0 {
-		writeJSON(w, http.StatusBadRequest, rawConfigValidateResponse{Valid: false, Errors: errs})
-		return
-	}
-
-	source := runtimecfg.GetConfigSource()
-	persisted := false
-	persistError := ""
-
-	if original, _, err := integrationsettings.LoadConfigDocument(source); err != nil {
-		persistError = err.Error()
-	} else {
-		restored := integrationsettings.RestoreRedactedConfig(original, root, runtimecfg.GetAll(), defs)
-		if _, err := integrationsettings.SaveConfigDocument(source, restored); err != nil {
-			persistError = err.Error()
-		} else {
-			persisted = true
-		}
-	}
-
 	writeJSON(w, http.StatusOK, rawConfigSaveResponse{
-		Deployment:      integrationsettings.BuildDeploymentInfo(),
-		Persisted:       persisted,
-		PersistError:    persistError,
-		RestartRequired: true,
+		Deployment:      result.Deployment,
+		Persisted:       result.Persisted,
+		PersistError:    result.PersistError,
+		RestartRequired: result.RestartRequired,
+		RemotePersisted: result.RemotePersisted,
+		RemoteTarget:    result.RemoteTarget,
+		RemoteError:     result.RemoteError,
 	})
 }
 
@@ -466,28 +497,7 @@ func DownloadRawIntegrationSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_, user, err := util.GetDBAndUser(r)
-	if err != nil || user == nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
-		return
-	}
-	if !user.IsAdmin {
-		http.Error(w, "User is not an admin", http.StatusForbidden)
-		return
-	}
-
-	payload := rawConfigDownloadRequest{}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-	payload.Password = strings.TrimSpace(payload.Password)
-	if payload.Password == "" {
-		http.Error(w, "password is required", http.StatusBadRequest)
-		return
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(payload.Password)); err != nil {
-		http.Error(w, "invalid password", http.StatusUnauthorized)
+	if !requireAdminPassword(w, r) {
 		return
 	}
 

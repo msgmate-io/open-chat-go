@@ -23,6 +23,11 @@ func TestInferFieldType(t *testing.T) {
 		{"spec key", integrationinterface.RuntimeEnvVar{Key: "OCI_A_SPEC"}, "", FieldTypeJSON},
 		{"multiline", integrationinterface.RuntimeEnvVar{Key: "OCI_A"}, "a\nb", FieldTypeJSON},
 		{"plain string", integrationinterface.RuntimeEnvVar{Key: "OCI_A"}, "hello", FieldTypeString},
+		{"explicit number", integrationinterface.RuntimeEnvVar{Key: "OCI_A", Type: "number"}, "", FieldTypeNumber},
+		{"explicit select", integrationinterface.RuntimeEnvVar{Key: "OCI_A", Type: "select"}, "", FieldTypeSelect},
+		{"rate heuristic", integrationinterface.RuntimeEnvVar{Key: "OCI_A_RATE"}, "", FieldTypeNumber},
+		{"tokens heuristic", integrationinterface.RuntimeEnvVar{Key: "OCI_A_TOKENS"}, "", FieldTypeNumber},
+		{"numeric value", integrationinterface.RuntimeEnvVar{Key: "OCI_A"}, "42", FieldTypeNumber},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,6 +68,49 @@ func TestBuildDescriptorsMasksSensitive(t *testing.T) {
 	revealed := BuildDescriptors(def, values, true)
 	if revealed[0].Value != "super-secret" {
 		t.Fatalf("expected revealed value, got %q", revealed[0].Value)
+	}
+}
+
+func TestBuildDescriptorsPassesMetadata(t *testing.T) {
+	min := 1.0
+	max := 10.0
+	step := 1.0
+	def := integrationinterface.Definition{
+		Name: "demo",
+		RuntimeEnvVars: []integrationinterface.RuntimeEnvVar{
+			{
+				Key:         "OCI_DEMO_RATE",
+				Label:       "Conversion rate",
+				Type:        "number",
+				Group:       "Conversion",
+				Order:       3,
+				Default:     "5",
+				Placeholder: "1-10",
+				Required:    true,
+				UserVisible: true,
+				Min:         &min,
+				Max:         &max,
+				Step:        &step,
+			},
+			{Key: "OCI_DEMO_UNLABELLED"},
+		},
+	}
+	descriptors := BuildDescriptors(def, nil, false)
+	if len(descriptors) != 2 {
+		t.Fatalf("expected 2 descriptors, got %d", len(descriptors))
+	}
+	rate := descriptors[0]
+	if rate.Label != "Conversion rate" || rate.Group != "Conversion" || rate.Order != 3 {
+		t.Fatalf("metadata not passed through: %+v", rate)
+	}
+	if !rate.Required || !rate.UserVisible {
+		t.Fatalf("required/user_visible not passed through: %+v", rate)
+	}
+	if rate.Type != FieldTypeNumber || rate.Min == nil || rate.Max == nil || rate.Step == nil {
+		t.Fatalf("numeric bounds not passed through: %+v", rate)
+	}
+	if descriptors[1].Label != "Demo unlabelled" {
+		t.Fatalf("expected humanized fallback label, got %q", descriptors[1].Label)
 	}
 }
 

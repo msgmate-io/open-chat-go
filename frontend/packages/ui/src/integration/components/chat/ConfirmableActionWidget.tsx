@@ -37,6 +37,48 @@ type ConfirmableActionExecuteResponse = {
   error?: string;
 };
 
+function isCoderFileAction(action: ConfirmableAction): boolean {
+  const name = (action.target_tool_name || "").toLowerCase();
+  return name === "coder_edit" || name === "coder_write";
+}
+
+// CoderFilePreview renders a lightweight edit/write preview for the native
+// coding-agent integration: a monospace view with removed lines (red) and added
+// lines (green). It intentionally avoids a diff dependency and degrades to a
+// plain added-content view for overwrites.
+function CoderFilePreview({ input }: { input: Record<string, unknown> }) {
+  const path = typeof input.path === "string" ? input.path : "";
+  const oldString = typeof input.old_string === "string" ? input.old_string : "";
+  const newString = typeof input.new_string === "string" ? input.new_string : "";
+  const content = typeof input.content === "string" ? input.content : "";
+  const isOverwrite = oldString === "" && content !== "";
+
+  const oldLines = oldString ? oldString.replace(/\n$/, "").split("\n") : [];
+  const newLines = isOverwrite ? content.replace(/\n$/, "").split("\n") : newString.replace(/\n$/, "").split("\n");
+
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/30">
+      <div className="border-b border-border/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+        {isOverwrite ? "overwrite" : "edit"} {path || "(no path)"}
+      </div>
+      <pre className="scrollbar-hidden max-h-64 overflow-auto p-2 text-xs leading-5">
+        {oldLines.map((line, index) => (
+          <div key={`old-${index}`} className="whitespace-pre-wrap break-all bg-red-500/10 text-red-600 dark:text-red-400">
+            {"- "}
+            {line}
+          </div>
+        ))}
+        {newLines.map((line, index) => (
+          <div key={`new-${index}`} className="whitespace-pre-wrap break-all bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+            {"+ "}
+            {line}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
 export function ConfirmableActionWidget({
   chatUUID,
   messageUUID,
@@ -172,6 +214,43 @@ export function ConfirmableActionWidget({
     }
   };
 
+  const rejectAction = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/v1/chats/${chatUUID}/messages/${messageUUID}/confirm-actions/${action.action_id}/reject`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      if (response.ok) {
+        onExecuted?.();
+        return;
+      }
+      let failureMessage = "Rejection failed.";
+      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      if (contentType.includes("application/json")) {
+        const payload = (await response.json()) as ConfirmableActionExecuteResponse;
+        if (payload.error) {
+          failureMessage = payload.error;
+        }
+      } else {
+        const textMessage = await response.text();
+        if (textMessage.trim() !== "") {
+          failureMessage = textMessage;
+        }
+      }
+      setError(failureMessage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rejection failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const unlockAndRetry = async () => {
     if (!serverUUID) {
       setUnlockError("This action has no server_uuid to unlock.");
@@ -231,6 +310,10 @@ export function ConfirmableActionWidget({
             <Text type={TextTypes.Body7} color="muted">
               {action.description || `Execute tool '${action.target_tool_name}' after review.`}
             </Text>
+
+            {isPending && isCoderFileAction(action) ? (
+              <CoderFilePreview input={(parsedInput ?? action.input ?? {}) as Record<string, unknown>} />
+            ) : null}
 
             {isPending ? (
               <>
@@ -296,6 +379,9 @@ export function ConfirmableActionWidget({
                 <Button type="button" size="sm" onClick={executeAction} disabled={busy || !parsedInput || executionBlocked}>
                   {busy ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
                   {action.confirm_label || "Confirm and execute"}
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={rejectAction} disabled={busy || executionBlocked}>
+                  Reject
                 </Button>
               </div>
             ) : null}

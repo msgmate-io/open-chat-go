@@ -50,6 +50,30 @@ type MobileBridge = {
   getRuntimeErrorState?: () => string;
   clearRuntimeErrorState?: () => string;
   retryActiveServerStart?: () => string;
+  getPendingSharedItems?: () => string;
+  readPendingSharedFileBase64?: (index: number, maxBytes: number) => string;
+  clearPendingSharedItems?: () => string;
+};
+
+export type PendingMobileSharedItemKind = "file" | "link" | "text";
+
+export type PendingMobileSharedItem = {
+  index: number;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: PendingMobileSharedItemKind;
+  text: string;
+  isImage: boolean;
+};
+
+export type MobileSharedFileContent = {
+  ok: boolean;
+  data?: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  message?: string;
 };
 
 export type PendingMobileJsonImport = {
@@ -613,5 +637,112 @@ export function retryActiveMobileServerStart(): BridgeResult {
     return { ok: false, message: "Unavailable in SSR" };
   }
   const raw = window.OpenChatMobileBridge?.retryActiveServerStart?.();
+  return parseBridgeResult(raw);
+}
+
+export function readPendingMobileSharedItems(): {
+  ok: boolean;
+  items: PendingMobileSharedItem[];
+  message?: string;
+} {
+  if (typeof window === "undefined") {
+    return { ok: false, items: [], message: "Unavailable in SSR" };
+  }
+  const raw = window.OpenChatMobileBridge?.getPendingSharedItems?.();
+  if (!raw) {
+    return { ok: false, items: [], message: "Mobile bridge unavailable" };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      ok?: unknown;
+      message?: unknown;
+      items?: Array<{
+        index?: unknown;
+        name?: unknown;
+        mimeType?: unknown;
+        size?: unknown;
+        kind?: unknown;
+        text?: unknown;
+        isImage?: unknown;
+      }>;
+    };
+
+    const items = Array.isArray(parsed.items)
+      ? parsed.items
+          .map((item) => {
+            if (!item || typeof item !== "object") {
+              return null;
+            }
+            const index = typeof item.index === "number" ? item.index : -1;
+            const name = typeof item.name === "string" ? item.name.trim() : "";
+            if (index < 0 || !name) {
+              return null;
+            }
+            const rawKind = typeof item.kind === "string" ? item.kind.trim() : "file";
+            const kind: PendingMobileSharedItemKind =
+              rawKind === "link" || rawKind === "text" ? rawKind : "file";
+            return {
+              index,
+              name,
+              mimeType: typeof item.mimeType === "string" ? item.mimeType.trim() : "",
+              size: typeof item.size === "number" && item.size > 0 ? item.size : 0,
+              kind,
+              text: typeof item.text === "string" ? item.text : "",
+              isImage: Boolean(item.isImage),
+            } satisfies PendingMobileSharedItem;
+          })
+          .filter((item): item is PendingMobileSharedItem => Boolean(item))
+      : [];
+
+    return {
+      ok: Boolean(parsed.ok),
+      items,
+      message: typeof parsed.message === "string" ? parsed.message : undefined,
+    };
+  } catch {
+    return { ok: false, items: [], message: "Invalid mobile bridge response" };
+  }
+}
+
+export function readPendingMobileSharedFileBase64(
+  index: number,
+  maxBytes = 5 * 1024 * 1024,
+): MobileSharedFileContent {
+  if (typeof window === "undefined") {
+    return { ok: false, message: "Unavailable in SSR" };
+  }
+  const raw = window.OpenChatMobileBridge?.readPendingSharedFileBase64?.(index, maxBytes);
+  if (!raw) {
+    return { ok: false, message: "Mobile bridge unavailable" };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      ok?: unknown;
+      data?: unknown;
+      name?: unknown;
+      mimeType?: unknown;
+      size?: unknown;
+      message?: unknown;
+    };
+    return {
+      ok: Boolean(parsed.ok),
+      data: typeof parsed.data === "string" ? parsed.data : undefined,
+      name: typeof parsed.name === "string" ? parsed.name : undefined,
+      mimeType: typeof parsed.mimeType === "string" ? parsed.mimeType : undefined,
+      size: typeof parsed.size === "number" ? parsed.size : undefined,
+      message: typeof parsed.message === "string" ? parsed.message : undefined,
+    };
+  } catch {
+    return { ok: false, message: "Invalid mobile bridge response" };
+  }
+}
+
+export function clearPendingMobileSharedItems(): BridgeResult {
+  if (typeof window === "undefined") {
+    return { ok: false, message: "Unavailable in SSR" };
+  }
+  const raw = window.OpenChatMobileBridge?.clearPendingSharedItems?.();
   return parseBridgeResult(raw);
 }

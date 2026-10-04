@@ -82,6 +82,9 @@ type CreateBotInteractionRequest struct {
 	ConfigOverrides map[string]interface{}     `json:"config_overrides,omitempty"`
 	AutoShare       bool                       `json:"auto_share,omitempty"`
 	Attachments     []BotInteractionAttachment `json:"attachments,omitempty"`
+	// Tags are category labels attached to the created interaction chat so
+	// users can filter chats by interaction type.
+	Tags []string `json:"tags,omitempty"`
 	// RequireConfirmation gates the interaction behind an explicit user
 	// confirmation widget before the bot reply is enqueued.
 	RequireConfirmation bool `json:"require_confirmation,omitempty"`
@@ -197,7 +200,25 @@ func applyInteractionConfigOverrides(
 		effectiveConfig[key] = value
 	}
 	if toolInit != nil {
-		effectiveConfig["tool_init"] = toolInit
+		// An explicit empty object clears the bot's default tool_init (the
+		// documented way to start an interaction without any tool_init). A
+		// non-empty object augments the bot default per tool key: a caller
+		// (eg a git trigger forwarding its workspace binding) must not
+		// accidentally drop a required tool_init the bot itself depends on.
+		if len(toolInit) == 0 {
+			effectiveConfig["tool_init"] = toolInit
+			return effectiveConfig
+		}
+		merged := map[string]interface{}{}
+		if existing, ok := effectiveConfig["tool_init"].(map[string]interface{}); ok {
+			for key, value := range existing {
+				merged[key] = value
+			}
+		}
+		for key, value := range toolInit {
+			merged[key] = value
+		}
+		effectiveConfig["tool_init"] = merged
 	}
 	return effectiveConfig
 }
@@ -1313,6 +1334,12 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 
 	effectiveConfig := decodeSharedConfig(runtime.DefaultSharedConfig)
 	effectiveConfig = applyInteractionConfigOverrides(effectiveConfig, req.ConfigOverrides, req.ToolInit)
+	// A bot may default every interaction to require explicit user confirmation
+	// via default_shared_config.require_confirmation (eg CI/coding bots that must
+	// never start work without an approval). An explicit request field asking for
+	// confirmation always wins; the config key is consumed here so it is not
+	// forwarded to the chat backend as shared config.
+	requireConfirmation := req.RequireConfirmation || consumeRequireConfirmationDefault(effectiveConfig)
 	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, effectiveConfig)
 	if defaultsErr != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
@@ -1333,14 +1360,15 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	tags := database.NormalizeChatTags(req.Tags)
 	var chat database.Chat
 	var message database.Message
 	var share database.SharedChatInstance
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if user.ID < runtime.BotUserId {
-			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction"}
+			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction", Tags: tags}
 		} else {
-			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: user.ID, ChatType: "interaction"}
+			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: user.ID, ChatType: "interaction", Tags: tags}
 		}
 		if err := tx.Create(&chat).Error; err != nil {
 			return err
@@ -1382,7 +1410,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			return err
 		}
 		latestMessageID := message.ID
-		if req.RequireConfirmation {
+		if requireConfirmation {
 			confirmation, confirmErr := chats.BuildInteractionConfirmationMessage(
 				tx,
 				chat,
@@ -1423,7 +1451,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !req.RequireConfirmation {
+	if !requireConfirmation {
 		if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
 			ChatUUID:    chat.UUID,
 			MessageUUID: message.UUID,
@@ -1434,7 +1462,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	response := BotInteractionResponse{ChatUUID: chat.UUID, RequiresConfirmation: req.RequireConfirmation}
+	response := BotInteractionResponse{ChatUUID: chat.UUID, RequiresConfirmation: requireConfirmation}
 	if req.AutoShare {
 		response.ChatShareUUID = share.ChatShareUUID
 		response.ChatShare = &BotInteractionChatShare{
@@ -1449,4 +1477,32 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// requireConfirmationConfigKey is the default_shared_config key that makes a bot
+// gate every interaction behind an explicit user confirmation.
+const requireConfirmationConfigKey = "require_confirmation"
+
+// consumeRequireConfirmationDefault reads (and removes) the
+// default_shared_config.require_confirmation flag. The key is removed so it is
+// never forwarded to the chat backend as shared config. Accepts a JSON boolean
+// or a string parseable as one (bootstrap YAML configs are sometimes quoted).
+func consumeRequireConfirmationDefault(config map[string]interface{}) bool {
+	if config == nil {
+		return false
+	}
+	raw, ok := config[requireConfirmationConfigKey]
+	if !ok {
+		return false
+	}
+	delete(config, requireConfirmationConfigKey)
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+		return err == nil && parsed
+	default:
+		return false
+	}
 }

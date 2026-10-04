@@ -185,6 +185,201 @@ func updateSourceMessageToolCallResult(tx *gorm.DB, sourceMessage database.Messa
 	return tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("tool_calls", string(encodedToolCalls)).Error
 }
 
+// RejectConfirmableAction marks a pending confirmable action as rejected by the
+// user without executing the target tool. It records the decision on the source
+// message so the model sees the rejection in its tool-call context on the next
+// turn, and emits an event message for the chat timeline. It intentionally does
+// not enqueue a continuation.
+func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	chatUUID := r.PathValue("chat_uuid")
+	messageUUID := r.PathValue("message_uuid")
+	actionID := r.PathValue("action_id")
+	if chatUUID == "" || messageUUID == "" || actionID == "" {
+		http.Error(w, "Invalid confirmable action path", http.StatusBadRequest)
+		return
+	}
+
+	reason := ""
+	if r.Body != nil {
+		var req struct {
+			Reason string `json:"reason,omitempty"`
+		}
+		if decErr := json.NewDecoder(r.Body).Decode(&req); decErr == nil {
+			reason = strings.TrimSpace(req.Reason)
+		}
+	}
+
+	var chat database.Chat
+	chatQuery := DB
+	if !user.IsAdmin {
+		chatQuery = chatQuery.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	}
+	if err := chatQuery.Preload("User1").
+		Preload("User2").
+		Preload("SharedConfig").
+		Where("uuid = ?", chatUUID).
+		First(&chat).Error; err != nil {
+		http.Error(w, "Chat not found or access denied", http.StatusNotFound)
+		return
+	}
+
+	var sourceMessage database.Message
+	if err := DB.Where("uuid = ? AND chat_id = ?", messageUUID, chat.ID).First(&sourceMessage).Error; err != nil {
+		http.Error(w, "Message not found", http.StatusNotFound)
+		return
+	}
+
+	messageMeta := map[string]interface{}{}
+	if len(sourceMessage.MetaData) > 0 {
+		_ = json.Unmarshal(sourceMessage.MetaData, &messageMeta)
+	}
+	actionsRaw, ok := messageMeta["confirmable_actions"].([]interface{})
+	if !ok || len(actionsRaw) == 0 {
+		http.Error(w, "No confirmable actions in message metadata", http.StatusBadRequest)
+		return
+	}
+
+	actionIndex := -1
+	var selectedAction map[string]interface{}
+	for i, rawAction := range actionsRaw {
+		action, ok := rawAction.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if id, _ := action["action_id"].(string); id == actionID {
+			actionIndex = i
+			selectedAction = action
+			break
+		}
+	}
+	if actionIndex < 0 {
+		http.Error(w, "Confirmable action not found", http.StatusNotFound)
+		return
+	}
+
+	status, _ := selectedAction["status"].(string)
+	if status != "" && status != "pending" {
+		http.Error(w, "Action already handled", http.StatusConflict)
+		return
+	}
+
+	targetToolName, _ := selectedAction["target_tool_name"].(string)
+	botUserID, humanUserID := findBotAndReceiver(chat, *user)
+	if botUserID == 0 {
+		http.Error(w, "No bot user available for this chat", http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	rejectionText := fmt.Sprintf("Rejected action `%s`.", targetToolName)
+	if reason != "" {
+		rejectionText = fmt.Sprintf("Rejected action `%s`: %s", targetToolName, reason)
+	}
+
+	selectedAction["status"] = "rejected"
+	selectedAction["rejected_by"] = user.UUID
+	selectedAction["rejected_at"] = now
+	selectedAction["rejection_reason"] = reason
+
+	actionsRaw[actionIndex] = selectedAction
+	messageMeta["confirmable_actions"] = actionsRaw
+	updatedMetaBytes, _ := json.Marshal(messageMeta)
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
+			return err
+		}
+		if err := markSourceMessageToolCallRejected(tx, sourceMessage, actionID, rejectionText); err != nil {
+			return err
+		}
+		eventMeta := map[string]interface{}{
+			"finished":    true,
+			"event_type":  "confirmable_action_execute",
+			"event_phase": "rejected",
+			"confirmable_action_execution": map[string]interface{}{
+				"action_id":           actionID,
+				"target_tool_name":    targetToolName,
+				"rejected_by":         user.UUID,
+				"rejected_at":         now,
+				"rejection_reason":    reason,
+				"source_message_uuid": sourceMessage.UUID,
+			},
+		}
+		eventMetaBytes, _ := json.Marshal(eventMeta)
+		eventMessage := database.Message{
+			ChatId:     chat.ID,
+			SenderId:   humanUserID,
+			ReceiverId: botUserID,
+			DataType:   "event",
+			Text:       &rejectionText,
+			MetaData:   database.JSONRaw(eventMetaBytes),
+		}
+		if err := tx.Create(&eventMessage).Error; err != nil {
+			return err
+		}
+		return tx.Model(&chat).Update("latest_message_id", eventMessage.ID).Error
+	})
+	if err != nil {
+		http.Error(w, "Failed to persist confirmable action rejection", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"status":    "rejected",
+		"action_id": actionID,
+	})
+}
+
+// markSourceMessageToolCallRejected flips a pending tool call to the rejected
+// terminal state and records the rejection text as its result.
+func markSourceMessageToolCallRejected(tx *gorm.DB, sourceMessage database.Message, actionID, rejectionText string) error {
+	if sourceMessage.ToolCalls == nil || len(*sourceMessage.ToolCalls) == 0 {
+		return nil
+	}
+	updatedToolCalls := make([]json.RawMessage, 0, len(*sourceMessage.ToolCalls))
+	updated := false
+	for _, rawToolCall := range *sourceMessage.ToolCalls {
+		var toolCall map[string]interface{}
+		if err := json.Unmarshal(rawToolCall, &toolCall); err != nil {
+			updatedToolCalls = append(updatedToolCalls, rawToolCall)
+			continue
+		}
+		toolCallID, _ := toolCall["id"].(string)
+		if toolCallID == actionID {
+			toolCall["result"] = rejectionText
+			toolCall["status"] = "rejected"
+			if confirmationMeta, ok := toolCall["confirmation"].(map[string]interface{}); ok {
+				confirmationMeta["status"] = "rejected"
+				confirmationMeta["rejected"] = true
+				toolCall["confirmation"] = confirmationMeta
+			}
+			updated = true
+		}
+		encoded, err := json.Marshal(toolCall)
+		if err != nil {
+			updatedToolCalls = append(updatedToolCalls, rawToolCall)
+			continue
+		}
+		updatedToolCalls = append(updatedToolCalls, encoded)
+	}
+	if !updated {
+		return nil
+	}
+	encodedToolCalls, err := json.Marshal(updatedToolCalls)
+	if err != nil {
+		return err
+	}
+	return tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("tool_calls", string(encodedToolCalls)).Error
+}
+
 func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
@@ -206,10 +401,14 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	}
 
 	var chat database.Chat
-	if err := DB.Preload("User1").
+	chatQuery := DB
+	if !user.IsAdmin {
+		chatQuery = chatQuery.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	}
+	if err := chatQuery.Preload("User1").
 		Preload("User2").
 		Preload("SharedConfig").
-		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, user.ID, user.ID).
+		Where("uuid = ?", chatUUID).
 		First(&chat).Error; err != nil {
 		http.Error(w, "Chat not found or access denied", http.StatusNotFound)
 		return

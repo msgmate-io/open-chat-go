@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import useSWR, { mutate as globalMutate } from "swr";
+import useSWR from "swr";
 import {
   Badge,
   Button,
@@ -13,10 +13,12 @@ import {
   LoadingSpinner,
   Text,
   TextTypes,
+  revalidateChatData,
   type ChatUIToolCall,
   type ConfirmableAction,
 } from "@open-chat-go/ui";
 import { cn, fetcher } from "@/lib/utils";
+import { AdminActionTasksWidget } from "@/components/chat/AdminActionTasksWidget";
 
 type ActionTaskAction = {
   kind: string;
@@ -69,6 +71,7 @@ type PreviewResponse = {
 
 type SelfUser = {
   uuid?: string;
+  is_admin?: boolean;
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -76,6 +79,7 @@ const ACTION_LABELS: Record<string, string> = {
   opencode_permission: "OpenCode permission",
   opencode_needs_action: "OpenCode needs action",
   interaction_confirmation: "Interaction confirmation",
+  runtime_selection: "Runtime selection",
   tool_confirmation: "Tool confirmation",
 };
 
@@ -276,6 +280,7 @@ function TaskCard({
           toolCalls={task.tool_calls ?? []}
           meta={task.message_meta ?? {}}
           chatUUID={task.chat_uuid}
+          messageUUID={task.message_uuid}
           onMutate={() => onResolved(task)}
         />
 
@@ -344,8 +349,10 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
       next.add(task.task_key);
       return next;
     });
-    void globalMutate("/api/v1/chats/action-tasks?count_only=1");
     void mutate();
+    // Resolving a task changes the chat state and preview, so refresh the
+    // derived chat caches (list, state dots, action-task feeds) too.
+    void revalidateChatData(task.chat_uuid);
   };
 
   const dismissTask = async (task: ActionTaskRow) => {
@@ -402,6 +409,8 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
           </Button>
         </div>
       </div>
+
+      {selfUser?.is_admin ? <AdminActionTasksWidget navigateTo={navigateTo} /> : null}
 
       {actionError ? (
         <Card className="border-destructive/30 bg-destructive/5">

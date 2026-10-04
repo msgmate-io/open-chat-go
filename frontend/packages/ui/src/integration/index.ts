@@ -12,6 +12,7 @@
 export { DataTable } from "./components/DataTable";
 export { DropdownSelect, type DropdownSelectItem } from "./components/DropdownSelect";
 export { IntegrationPageShell } from "./components/IntegrationPageShell";
+export { MsgmateTokenIcon } from "./components/MsgmateTokenIcon";
 export { SshShellTerminal } from "./components/SshShellTerminal";
 export { ToolInitFields } from "./components/ToolInitFields";
 
@@ -43,6 +44,18 @@ export {
   type PartialMessageState,
 } from "./components/chat/PartialMessages";
 export { WebsocketHandler, WebsocketHandlerBase } from "./components/WebsocketHandler";
+
+// --- chat cache invalidation ---------------------------------------------
+export {
+  isChatListKey,
+  isChatStatesKey,
+  isActionTasksKey,
+  revalidateChatsList,
+  revalidateChatStates,
+  revalidateActionTasks,
+  revalidateChat,
+  revalidateChatData,
+} from "./lib/chat-cache";
 
 // --- chat-UI extension seam ----------------------------------------------
 export {

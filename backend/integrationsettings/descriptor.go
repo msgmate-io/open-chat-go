@@ -28,14 +28,49 @@ type FieldDescriptor struct {
 	Sensitive    bool     `json:"sensitive"`
 	Required     bool     `json:"required"`
 	Advanced     bool     `json:"advanced"`
+	UserVisible  bool     `json:"user_visible"`
 	Group        string   `json:"group,omitempty"`
 	Order        int      `json:"order"`
 	Placeholder  string   `json:"placeholder,omitempty"`
 	Default      string   `json:"default,omitempty"`
 	Options      []string `json:"options,omitempty"`
+	Min          *float64 `json:"min,omitempty"`
+	Max          *float64 `json:"max,omitempty"`
+	Step         *float64 `json:"step,omitempty"`
 	Value        string   `json:"value"`
 	Configured   bool     `json:"configured"`
 	ConfigTarget string   `json:"config_target"`
+}
+
+// validFieldType reports whether the given explicit type hint is supported by
+// the settings renderer.
+func validFieldType(fieldType string) bool {
+	switch strings.ToLower(strings.TrimSpace(fieldType)) {
+	case FieldTypeString, FieldTypeBool, FieldTypeNumber, FieldTypeSelect, FieldTypeJSON, FieldTypeSecret:
+		return true
+	default:
+		return false
+	}
+}
+
+// humanizeKey turns an env key such as "OCI_MSGMATE_TOKENS_PER_EUR" into a
+// readable "Msgmate tokens per eur" fallback label.
+func humanizeKey(key string) string {
+	trimmed := strings.TrimSpace(key)
+	trimmed = strings.TrimPrefix(trimmed, "OCI_")
+	parts := strings.Split(trimmed, "_")
+	words := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		words = append(words, strings.ToLower(part))
+	}
+	if len(words) == 0 {
+		return trimmed
+	}
+	label := strings.Join(words, " ")
+	return strings.ToUpper(label[:1]) + label[1:]
 }
 
 func normalizeKey(key string) string {
@@ -46,10 +81,15 @@ func normalizeAliasJSONKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
 }
 
-// InferFieldType derives the renderer type for a declaration.
+// InferFieldType derives the renderer type for a declaration. An explicit,
+// supported declaration Type wins; otherwise the type is inferred from
+// Sensitive/Key/value.
 func InferFieldType(decl integrationinterface.RuntimeEnvVar, current string) string {
 	if decl.Sensitive {
 		return FieldTypeSecret
+	}
+	if validFieldType(decl.Type) {
+		return strings.ToLower(strings.TrimSpace(decl.Type))
 	}
 	key := normalizeKey(decl.Key)
 	if strings.Contains(key, "ENABLE") || strings.HasSuffix(key, "_ENABLED") {
@@ -63,7 +103,44 @@ func InferFieldType(decl integrationinterface.RuntimeEnvVar, current string) str
 	if looksLikeJSONKey(key) || strings.Contains(current, "\n") {
 		return FieldTypeJSON
 	}
+	if looksLikeNumberKey(key) || looksLikeNumberValue(current) {
+		return FieldTypeNumber
+	}
 	return FieldTypeString
+}
+
+// looksLikeNumberKey is a conservative heuristic that classifies obviously
+// numeric env keys as numbers when no explicit type is declared.
+func looksLikeNumberKey(key string) bool {
+	suffixes := []string{
+		"_RATE",
+		"_PRICE",
+		"_COUNT",
+		"_LIMIT",
+		"_PER_",
+		"_TOKENS",
+		"_DAYS",
+		"_SECONDS",
+		"_TIMEOUT",
+		"_SIZE",
+	}
+	for _, suffix := range suffixes {
+		if strings.Contains(key, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeNumberValue reports whether an unset/default value is a plain
+// number. It only applies to single-line values.
+func looksLikeNumberValue(current string) bool {
+	trimmed := strings.TrimSpace(current)
+	if trimmed == "" || strings.Contains(trimmed, "\n") {
+		return false
+	}
+	_, err := strconv.ParseFloat(trimmed, 64)
+	return err == nil
 }
 
 func looksLikeJSONKey(key string) bool {
@@ -146,16 +223,34 @@ func BuildDescriptors(def integrationinterface.Definition, values map[string]run
 			displayValue = "(hidden)"
 		}
 
-		advanced := fieldType == FieldTypeJSON && strings.Contains(current, "\n")
+		advanced := decl.Advanced || (fieldType == FieldTypeJSON && strings.Contains(current, "\n"))
+
+		label := strings.TrimSpace(decl.Label)
+		if label == "" {
+			label = humanizeKey(key)
+		}
+		group := strings.TrimSpace(decl.Group)
+		if group == "" {
+			group = descriptorGroup(def, key)
+		}
 
 		descriptors = append(descriptors, FieldDescriptor{
 			Key:          key,
-			Label:        key,
+			Label:        label,
 			Type:         fieldType,
 			Description:  strings.TrimSpace(decl.Description),
 			Sensitive:    sensitive,
+			Required:     decl.Required,
 			Advanced:     advanced,
-			Group:        descriptorGroup(def, key),
+			UserVisible:  decl.UserVisible,
+			Group:        group,
+			Order:        decl.Order,
+			Placeholder:  strings.TrimSpace(decl.Placeholder),
+			Default:      strings.TrimSpace(decl.Default),
+			Options:      append([]string(nil), decl.Options...),
+			Min:          decl.Min,
+			Max:          decl.Max,
+			Step:         decl.Step,
 			Value:        displayValue,
 			Configured:   configured,
 			ConfigTarget: resolveConfigTarget(def, key),

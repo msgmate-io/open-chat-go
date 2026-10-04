@@ -23,6 +23,7 @@ export function ChatBase({
     chatUUID=null,
     navigateTo,
     mobileViewMode = "content",
+    hideMobileShortcut = false,
     sidebarTitle,
     sidebar,
     sidebarTopSection,
@@ -32,6 +33,7 @@ export function ChatBase({
     chatUUID: string | null,
     navigateTo: (to: string) => void,
     mobileViewMode?: "list" | "content",
+    hideMobileShortcut?: boolean,
     sidebarTitle?: string,
     sidebar?: ReactNode,
     sidebarTopSection?: ReactNode,
@@ -46,6 +48,7 @@ export function ChatBase({
     const onToggleCollapse = useSidePanelCollapse(state => state.toggle);
     const [isMobile, setIsMobile] = useState(() => isMobileViewport())
     const [hasMounted, setHasMounted] = useState(false)
+    const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
     const [desktopLayout, setDesktopLayout] = useState<{ left: number; right: number }>({ left: 25, right: 75 })
     const pageContext = usePageContext()
     const activePath = pageContext?.urlPathname || (typeof window !== "undefined" ? window.location.pathname : "")
@@ -53,6 +56,13 @@ export function ChatBase({
     const resolvedSidebarTitle = isIntegrationMode
         ? (integrationName ?? "Integrations")
         : sidebarTitle || getPageMetadata(typeof window !== "undefined" ? window.location.pathname : "").sidebarTitle
+
+    // Selecting an entry from the mobile fullscreen sidebar should navigate and
+    // dismiss the sidebar so the destination page is visible immediately.
+    const handleSidebarNavigate = (to: string) => {
+        setMobileSidebarOpen(false)
+        navigateTo(to)
+    }
 
     const renderSidebar = ({
         collapsed,
@@ -71,7 +81,7 @@ export function ChatBase({
                 chatUUID={chatUUID}
                 leftPannelCollapsed={collapsed}
                 onToggleCollapse={toggle}
-                navigateTo={navigateTo}
+                navigateTo={handleSidebarNavigate}
                 themeSelector={<ConnectedThemeSelector />}
                 avatarSrc={logoUrl}
                 hideCollapseToggle={hideToggle}
@@ -81,7 +91,7 @@ export function ChatBase({
                         <IntegrationsNav
                             integrationName={integrationName ?? null}
                             activePath={activePath}
-                            navigateTo={navigateTo}
+                            navigateTo={handleSidebarNavigate}
                         />
                     ) : undefined)
                 }
@@ -123,23 +133,44 @@ export function ChatBase({
         setPanelRef(leftPannelRef);
     }, [setPanelRef]);
 
+    // Any route change should dismiss the transient mobile sidebar overlay.
+    useEffect(() => {
+        setMobileSidebarOpen(false)
+    }, [activePath])
+
     if (isMobile) {
-        const isListView = mobileViewMode === "list"
-        const showMobileChatsShortcut = !isListView && chatUUID === null
+        const isDedicatedListView = mobileViewMode === "list"
+        const isSidebarVisible = isDedicatedListView || mobileSidebarOpen
+        const canOpenMobileSidebar = isIntegrationMode || chatUUID === null
+        const showMobileChatsShortcut = !isSidebarVisible && canOpenMobileSidebar && !hideMobileShortcut
         const mobileBackTarget = isIntegrationMode ? "/integrations" : "/chat"
         const mobileBackLabel = isIntegrationMode ? "Integrations" : "Open chats"
+        const openMobileSidebar = () => {
+            // Integration pages have no dedicated list route: reveal the
+            // fullscreen sidebar in place so the integration/page list (and the
+            // page-specific top section) stays reachable on native.
+            if (isIntegrationMode) {
+                setMobileSidebarOpen(true)
+                return
+            }
+            navigateTo(mobileBackTarget)
+        }
         return (
-            <div className={`relative flex h-full min-h-0 w-full mobile-page-transition ${isListView ? "mobile-page-transition--list" : "mobile-page-transition--content"}`}>
+            <div className={`relative flex h-full min-h-0 w-full mobile-page-transition ${isSidebarVisible ? "mobile-page-transition--list" : "mobile-page-transition--content"}`}>
                 {showMobileChatsShortcut ? (
                     <div className="absolute left-3 top-3 z-40">
-                        <Button type="button" variant="outline" size="sm" onClick={() => navigateTo(mobileBackTarget)}>
+                        <Button type="button" variant="outline" size="sm" onClick={openMobileSidebar}>
                             <PanelLeft className="mr-1 h-4 w-4" />
                             {mobileBackLabel}
                         </Button>
                     </div>
                 ) : null}
-                {isListView ? (
-                    renderSidebar({ collapsed: false, toggle: () => {}, hideToggle: true })
+                {isSidebarVisible ? (
+                    renderSidebar({
+                        collapsed: false,
+                        toggle: () => setMobileSidebarOpen(false),
+                        hideToggle: isDedicatedListView && !mobileSidebarOpen,
+                    })
                 ) : (
                     children
                 )}

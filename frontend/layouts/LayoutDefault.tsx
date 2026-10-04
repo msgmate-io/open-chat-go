@@ -1,4 +1,5 @@
 import { useThemeStore } from "@open-chat-go/ui";
+import { SWRConfig } from "swr";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
@@ -15,6 +16,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { applyTheme, isThemeName } from "@/lib/theme";
 import { applyDocumentTitle } from "@open-chat-go/ui";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
+import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { MobileNativeSafeAreaSpacer } from "@/components/MobileNativeSafeAreaSpacer";
 import { isMobileAppRuntime } from "@open-chat-go/ui";
 import { navigate } from "vike/client/router";
@@ -59,6 +61,15 @@ function resolveInitialThemeFromBootstrap(): "light" | "dark" | "" {
     ? initialTheme
     : "";
 }
+
+// Global SWR defaults: state APIs should refresh whenever the tab regains
+// focus or the network reconnects, because hidden tabs pause their polling.
+// `keepPreviousData` is intentionally not enabled globally: it would leak the
+// previous chat's data across a key change during navigation.
+const SWR_GLOBAL_CONFIG = {
+  revalidateOnFocus: true,
+  revalidateOnReconnect: true,
+} as const;
 
 export default function LayoutDefault({ children }: { children: React.ReactNode }) {
   const theme = useThemeStore((state) => state.theme);
@@ -220,17 +231,20 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
 
   const rootClassName = isMobileRuntime
     ? "h-dvh overflow-hidden bg-background text-foreground flex flex-col"
-    : "min-h-screen h-dvh bg-background text-foreground flex flex-col";
+    : "h-dvh min-h-0 bg-background text-foreground flex flex-col";
 
   const contentClassName = isMobileRuntime
     ? "min-h-0 flex-1 overflow-hidden"
     : "min-h-0 flex-1 overflow-auto";
 
   return (
-    <div className={rootClassName}>
-      <OfflineIndicator />
-      <MobileNativeSafeAreaSpacer />
-      <div className={contentClassName}>{children}</div>
-    </div>
+    <SWRConfig value={SWR_GLOBAL_CONFIG}>
+      <div className={rootClassName}>
+        <ImpersonationBanner />
+        <OfflineIndicator />
+        <MobileNativeSafeAreaSpacer />
+        <div className={contentClassName}>{children}</div>
+      </div>
+    </SWRConfig>
   );
 }

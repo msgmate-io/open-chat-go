@@ -1,7 +1,7 @@
 import { ChatItemCompact } from "./ChatItem"
 import { ProfileCard } from "./ProfileCard"
 import { LoadingSpinner } from "./loading-spinner"
-import { isToday, isYesterday, isWithinLast7Days } from "../../lib/date"
+import { getChatTimeBucket } from "../../lib/date"
 import useSWR from 'swr'
 import { DefaultChats } from "./DefaultChats"
 import { NewChatCard } from "./NewChatCard"
@@ -9,16 +9,17 @@ import type React from "react"
 import { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import {
     DropdownMenu,
+    DropdownMenuCheckboxItem,
     DropdownMenuContent,
     DropdownMenuLabel,
-    DropdownMenuRadioGroup,
-    DropdownMenuRadioItem,
     DropdownMenuSeparator,
     DropdownMenuTrigger
 } from "../dropdown-menu"
 import { Button } from "../button"
+import { Input } from "../input"
 import { Text, TextTypes } from "../text"
-import { SlidersHorizontal } from "lucide-react"
+import { Calendar, Search, SlidersHorizontal, Tag, X } from "lucide-react"
+import { useCurrentUser } from "../../integration/hooks/use-current-user"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
@@ -37,10 +38,26 @@ export const SettingsIcon = () => (
     <SlidersHorizontal className="size-4" />
 );
 
+// Small removable chip used to surface an active search / time / tag filter.
+const FilterChip = ({ label, onRemove }: { label: string; onRemove: () => void }) => (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/70 bg-secondary px-2 py-[2px] text-[10px] text-foreground">
+        <span className="max-w-[10rem] truncate">{label}</span>
+        <button
+            type="button"
+            aria-label={`Remove ${label} filter`}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+            onClick={onRemove}
+        >
+            <X className="size-3" />
+        </button>
+    </span>
+);
+
 type ChatType = "conversation" | "integration" | "interaction"
 
 const CHAT_TYPE_QUERY_PARAM = "chat_type"
-const DEFAULT_CHAT_TYPE: ChatType = "conversation"
+const CHAT_TYPE_ORDER: ChatType[] = ["conversation", "integration", "interaction"]
+const DEFAULT_CHAT_TYPES: ChatType[] = ["conversation", "interaction"]
 const CHAT_TYPE_LABELS: Record<ChatType, string> = {
     conversation: "Conversations",
     integration: "Integrations",
@@ -51,20 +68,101 @@ const isChatType = (value: string | null): value is ChatType => {
     return value === "conversation" || value === "integration" || value === "interaction"
 }
 
-const getChatTypeFromUrl = (): ChatType => {
-    if (typeof window === "undefined") {
-        return DEFAULT_CHAT_TYPE
+const parseChatTypes = (value: string | null): ChatType[] => {
+    if (!value) {
+        return []
     }
-    const chatType = new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM)
-    return isChatType(chatType) ? chatType : DEFAULT_CHAT_TYPE
+    const parsed = value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(isChatType)
+    return CHAT_TYPE_ORDER.filter((type) => parsed.includes(type))
 }
 
-const getExplicitChatTypeFromUrl = (): ChatType | null => {
+const getChatTypesFromUrl = (): ChatType[] => {
+    if (typeof window === "undefined") {
+        return DEFAULT_CHAT_TYPES
+    }
+    const parsed = parseChatTypes(new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM))
+    return parsed.length > 0 ? parsed : DEFAULT_CHAT_TYPES
+}
+
+const getExplicitChatTypesFromUrl = (): ChatType[] | null => {
     if (typeof window === "undefined") {
         return null
     }
-    const chatType = new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM)
-    return isChatType(chatType) ? chatType : null
+    const raw = new URLSearchParams(window.location.search).get(CHAT_TYPE_QUERY_PARAM)
+    if (!raw) {
+        return null
+    }
+    const parsed = parseChatTypes(raw)
+    return parsed.length > 0 ? parsed : null
+}
+
+const isDefaultChatTypes = (types: ChatType[]): boolean => {
+    if (types.length !== DEFAULT_CHAT_TYPES.length) {
+        return false
+    }
+    return DEFAULT_CHAT_TYPES.every((type) => types.includes(type))
+}
+
+const serializeChatTypes = (types: ChatType[]): string =>
+    CHAT_TYPE_ORDER.filter((type) => types.includes(type)).join(",")
+
+const SEARCH_QUERY_PARAM = "q"
+const TIME_FROM_QUERY_PARAM = "time_from"
+const TIME_TO_QUERY_PARAM = "time_to"
+const TAGS_QUERY_PARAM = "tags"
+
+const getStringParam = (name: string): string => {
+    if (typeof window === "undefined") {
+        return ""
+    }
+    return new URLSearchParams(window.location.search).get(name) ?? ""
+}
+
+const parseTagsParam = (value: string): string[] =>
+    value
+        .split(",")
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag) => tag.length > 0)
+
+// datetime-local inputs work in the browser's local time; the API expects
+// RFC3339, so convert explicitly when reading/writing.
+const toLocalInputValue = (iso: string): string => {
+    if (!iso) {
+        return ""
+    }
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) {
+        return ""
+    }
+    const pad = (value: number) => String(value).padStart(2, "0")
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const localInputToISO = (value: string): string => {
+    if (!value) {
+        return ""
+    }
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+        return ""
+    }
+    return date.toISOString()
+}
+
+const formatTimeChip = (value: string): string => {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) {
+        return value
+    }
+    return date.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    })
 }
 
 // Chat types can be namespaced (e.g. "interaction:foo"); map any such value
@@ -108,38 +206,122 @@ export function ChatsList({
     showChats?: boolean
 }) {
     const [filterMenuOpen, setFilterMenuOpen] = useState(false)
-    const [chatTypeFilter, setChatTypeFilter] = useState<ChatType>(() => getChatTypeFromUrl())
+    const [chatTypeFilters, setChatTypeFilters] = useState<ChatType[]>(() => getChatTypesFromUrl())
     // Captured once so a direct link that explicitly carries chat_type is never overridden.
-    const [initialExplicitChatType] = useState<ChatType | null>(() => getExplicitChatTypeFromUrl())
+    const [initialExplicitChatTypes] = useState<ChatType[] | null>(() => getExplicitChatTypesFromUrl())
     // Distinguishes a user's manual filter choice from an auto-derived one.
     const userSelectedChatTypeRef = useRef(false)
 
-    const syncChatTypeToUrl = useCallback((nextChatType: ChatType) => {
+    // Text search over chat titles (the magnifying-glass filter).
+    const [searchOpen, setSearchOpen] = useState(() => getStringParam(SEARCH_QUERY_PARAM).length > 0)
+    const [searchQuery, setSearchQuery] = useState(() => getStringParam(SEARCH_QUERY_PARAM))
+    // Multi-select tag/category filter.
+    const [tagsMenuOpen, setTagsMenuOpen] = useState(false)
+    const [tagFilters, setTagFilters] = useState<string[]>(() => parseTagsParam(getStringParam(TAGS_QUERY_PARAM)))
+    // Start/end time range filter. `timeFrom`/`timeTo` are the applied RFC3339
+    // values (used for requests/URL); the drafts hold the local input value.
+    const [timeOpen, setTimeOpen] = useState(false)
+    const [timeFrom, setTimeFrom] = useState(() => getStringParam(TIME_FROM_QUERY_PARAM))
+    const [timeTo, setTimeTo] = useState(() => getStringParam(TIME_TO_QUERY_PARAM))
+    const [timeFromDraft, setTimeFromDraft] = useState(() => toLocalInputValue(getStringParam(TIME_FROM_QUERY_PARAM)))
+    const [timeToDraft, setTimeToDraft] = useState(() => toLocalInputValue(getStringParam(TIME_TO_QUERY_PARAM)))
+    const [timeError, setTimeError] = useState("")
+
+    const syncChatTypesToUrl = useCallback((nextChatTypes: ChatType[]) => {
         if (typeof window === "undefined") {
             return
         }
 
         const nextUrl = new URL(window.location.href)
-        if (nextChatType === DEFAULT_CHAT_TYPE) {
+        if (isDefaultChatTypes(nextChatTypes)) {
             nextUrl.searchParams.delete(CHAT_TYPE_QUERY_PARAM)
         } else {
-            nextUrl.searchParams.set(CHAT_TYPE_QUERY_PARAM, nextChatType)
+            nextUrl.searchParams.set(CHAT_TYPE_QUERY_PARAM, serializeChatTypes(nextChatTypes))
         }
 
         window.history.replaceState(window.history.state, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
     }, [])
 
-    const handleChatTypeChange = useCallback((value: string) => {
+    const handleChatTypeToggle = useCallback((value: string, checked: boolean) => {
         if (!isChatType(value)) {
             return
         }
         userSelectedChatTypeRef.current = true
-        setChatTypeFilter(value)
+        setChatTypeFilters((current) => {
+            if (checked) {
+                return current.includes(value) ? current : [...current, value]
+            }
+            if (!current.includes(value) || current.length === 1) {
+                return current
+            }
+            return current.filter((type) => type !== value)
+        })
+    }, [])
+
+    const handleResetFilters = useCallback(() => {
+        userSelectedChatTypeRef.current = true
+        setChatTypeFilters(DEFAULT_CHAT_TYPES)
+        setSearchQuery("")
+        setTagFilters([])
+        setTimeFrom("")
+        setTimeTo("")
+        setTimeFromDraft("")
+        setTimeToDraft("")
+        setTimeError("")
+    }, [])
+
+    const handleTagToggle = useCallback((tag: string, checked: boolean) => {
+        setTagFilters((current) => {
+            if (checked) {
+                return current.includes(tag) ? current : [...current, tag]
+            }
+            return current.filter((entry) => entry !== tag)
+        })
+    }, [])
+
+    const handleApplyTimeRange = useCallback(() => {
+        const fromISO = localInputToISO(timeFromDraft)
+        const toISO = localInputToISO(timeToDraft)
+        if (fromISO && toISO && new Date(fromISO).getTime() > new Date(toISO).getTime()) {
+            setTimeError("Start must be before end")
+            return
+        }
+        setTimeError("")
+        setTimeFrom(fromISO)
+        setTimeTo(toISO)
+        setTimeOpen(false)
+    }, [timeFromDraft, timeToDraft])
+
+    const handleClearTimeRange = useCallback(() => {
+        setTimeFrom("")
+        setTimeTo("")
+        setTimeFromDraft("")
+        setTimeToDraft("")
+        setTimeError("")
+    }, [])
+
+    const setUrlParam = useCallback((name: string, value: string) => {
+        if (typeof window === "undefined") {
+            return
+        }
+        const nextUrl = new URL(window.location.href)
+        if (value) {
+            nextUrl.searchParams.set(name, value)
+        } else {
+            nextUrl.searchParams.delete(name)
+        }
+        window.history.replaceState(window.history.state, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`)
     }, [])
 
     useEffect(() => {
         const onPopState = () => {
-            setChatTypeFilter(getChatTypeFromUrl())
+            setChatTypeFilters(getChatTypesFromUrl())
+            setSearchQuery(getStringParam(SEARCH_QUERY_PARAM))
+            setTagFilters(parseTagsParam(getStringParam(TAGS_QUERY_PARAM)))
+            setTimeFrom(getStringParam(TIME_FROM_QUERY_PARAM))
+            setTimeTo(getStringParam(TIME_TO_QUERY_PARAM))
+            setTimeFromDraft(toLocalInputValue(getStringParam(TIME_FROM_QUERY_PARAM)))
+            setTimeToDraft(toLocalInputValue(getStringParam(TIME_TO_QUERY_PARAM)))
         }
 
         window.addEventListener("popstate", onPopState)
@@ -147,8 +329,21 @@ export function ChatsList({
     }, [])
 
     useEffect(() => {
-        syncChatTypeToUrl(chatTypeFilter)
-    }, [chatTypeFilter, syncChatTypeToUrl])
+        syncChatTypesToUrl(chatTypeFilters)
+    }, [chatTypeFilters, syncChatTypesToUrl])
+
+    useEffect(() => {
+        setUrlParam(SEARCH_QUERY_PARAM, searchQuery.trim())
+    }, [searchQuery, setUrlParam])
+
+    useEffect(() => {
+        setUrlParam(TAGS_QUERY_PARAM, tagFilters.join(","))
+    }, [tagFilters, setUrlParam])
+
+    useEffect(() => {
+        setUrlParam(TIME_FROM_QUERY_PARAM, timeFrom)
+        setUrlParam(TIME_TO_QUERY_PARAM, timeTo)
+    }, [timeFrom, timeTo, setUrlParam])
 
     const { data: currentChat } = useSWR(
         chatUUID ? `/api/v1/chats/${chatUUID}` : null,
@@ -160,35 +355,100 @@ export function ChatsList({
     // that matches the chat's own type; the sync effect above then appends it to
     // the URL (replaceState, no reload).
     useEffect(() => {
-        if (!chatUUID || initialExplicitChatType || userSelectedChatTypeRef.current) {
+        if (!chatUUID || initialExplicitChatTypes || userSelectedChatTypeRef.current) {
             return
         }
         const derivedChatType = normalizeChatType(currentChat?.chat_type)
         if (!derivedChatType) {
             return
         }
-        setChatTypeFilter((current) => (current === derivedChatType ? current : derivedChatType))
-    }, [chatUUID, currentChat?.chat_type, initialExplicitChatType])
+        setChatTypeFilters((current) => (current.includes(derivedChatType) ? current : [...current, derivedChatType]))
+    }, [chatUUID, currentChat?.chat_type, initialExplicitChatTypes])
 
     const navigateWithFilter = useCallback((to: string) => {
-        if (!to.startsWith("/chat") || chatTypeFilter === DEFAULT_CHAT_TYPE) {
+        if (!to.startsWith("/chat")) {
+            navigateTo(to)
+            return
+        }
+
+        const params = new URLSearchParams()
+        if (!isDefaultChatTypes(chatTypeFilters)) {
+            params.set(CHAT_TYPE_QUERY_PARAM, serializeChatTypes(chatTypeFilters))
+        }
+        if (searchQuery.trim()) {
+            params.set(SEARCH_QUERY_PARAM, searchQuery.trim())
+        }
+        if (tagFilters.length > 0) {
+            params.set(TAGS_QUERY_PARAM, tagFilters.join(","))
+        }
+        if (timeFrom) {
+            params.set(TIME_FROM_QUERY_PARAM, timeFrom)
+        }
+        if (timeTo) {
+            params.set(TIME_TO_QUERY_PARAM, timeTo)
+        }
+
+        const query = params.toString()
+        if (!query) {
             navigateTo(to)
             return
         }
 
         const separator = to.includes("?") ? "&" : "?"
-        navigateTo(`${to}${separator}${CHAT_TYPE_QUERY_PARAM}=${chatTypeFilter}`)
-    }, [chatTypeFilter, navigateTo])
+        navigateTo(`${to}${separator}${query}`)
+    }, [chatTypeFilters, searchQuery, tagFilters, timeFrom, timeTo, navigateTo])
 
-    const activeFilterLabel = useMemo(() => CHAT_TYPE_LABELS[chatTypeFilter], [chatTypeFilter])
+    const activeFilterLabel = useMemo(
+        () =>
+            CHAT_TYPE_ORDER.filter((type) => chatTypeFilters.includes(type))
+                .map((type) => CHAT_TYPE_LABELS[type])
+                .join(", "),
+        [chatTypeFilters]
+    )
+    const { data: currentUser } = useCurrentUser()
+    const isAdmin = currentUser?.is_admin === true
+    const [seeAll, setSeeAll] = useState(false)
+
+    const hasSearchFilter = searchQuery.trim().length > 0
+    const hasTagFilter = tagFilters.length > 0
+    const hasTimeFilter = Boolean(timeFrom || timeTo)
+    const extraFilterCount = (hasSearchFilter ? 1 : 0) + (hasTagFilter ? 1 : 0) + (hasTimeFilter ? 1 : 0)
     
     const chatsListUrl = useCallback(() => {
         if (!showChats) {
             return null
         }
-        const url = '/api/v1/chats/list'
-        return `${url}?chat_types=${chatTypeFilter}`
-    }, [chatTypeFilter, showChats]);
+        const params = new URLSearchParams()
+        params.set("chat_types", serializeChatTypes(chatTypeFilters))
+        if (searchQuery.trim()) {
+            params.set(SEARCH_QUERY_PARAM, searchQuery.trim())
+        }
+        if (tagFilters.length > 0) {
+            params.set(TAGS_QUERY_PARAM, tagFilters.join(","))
+        }
+        if (timeFrom) {
+            params.set(TIME_FROM_QUERY_PARAM, timeFrom)
+        }
+        if (timeTo) {
+            params.set(TIME_TO_QUERY_PARAM, timeTo)
+        }
+        if (seeAll && isAdmin) {
+            params.set("scope", "all")
+        }
+        return `/api/v1/chats/list?${params.toString()}`
+    }, [chatTypeFilters, searchQuery, tagFilters, timeFrom, timeTo, showChats, seeAll, isAdmin])
+
+    const { data: availableTags } = useSWR<{ tags?: string[] }>(
+        showChats ? `/api/v1/chats/tags` : null,
+        fetcher,
+        { revalidateOnFocus: true }
+    )
+
+    const knownTags = useMemo(() => {
+        const set = new Set<string>(availableTags?.tags ?? [])
+        tagFilters.forEach((tag) => set.add(tag))
+        return Array.from(set).sort()
+    }, [availableTags, tagFilters])
 
     const { data: chats, isLoading, mutate: mutateChats } = useSWR(chatsListUrl, fetcher, {
         // Keep the list fresh so newly created chats show up without a manual
@@ -196,8 +456,10 @@ export function ChatsList({
         refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 7000),
         revalidateOnFocus: true,
     })
-    const { data: contacts, isLoading: contactsLoading } = useSWR(showChats ? `/api/v1/contacts/list` : null, fetcher)
-    const defaultBotContact = contacts?.rows.find((contact: { name?: string }) => contact.name === "bot")
+    const { data: defaultBotContact, isLoading: defaultBotLoading } = useSWR<{ contact_token?: string; name?: string } | null>(
+        showChats ? `/api/v1/contacts/default-bot` : null,
+        fetcher,
+    )
 
     const botChatUuids = useMemo(() => {
         if (!chats?.rows) {
@@ -225,7 +487,7 @@ export function ChatsList({
         }
     )
 
-    const { data: actionTasksCount } = useSWR<{ count: number }>(
+    const { data: actionTasksCount, mutate: mutateActionTasksCount } = useSWR<{ count: number }>(
         showDefaultChats ? `/api/v1/chats/action-tasks?count_only=1` : null,
         fetcher,
         {
@@ -242,11 +504,12 @@ export function ChatsList({
             if (!document.hidden) {
                 mutateChatStates()
                 mutateChats()
+                mutateActionTasksCount()
             }
         }
         document.addEventListener("visibilitychange", onVisibilityChange)
         return () => document.removeEventListener("visibilitychange", onVisibilityChange)
-    }, [mutateChatStates, mutateChats])
+    }, [mutateChatStates, mutateChats, mutateActionTasksCount])
 
     const chatStateByUuid = useMemo(() => {
         const map: Record<string, string> = {}
@@ -263,7 +526,7 @@ export function ChatsList({
             <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative size-7" aria-label="Filter chats">
                     <SettingsIcon />
-                    {chatTypeFilter !== DEFAULT_CHAT_TYPE ? (
+                    {!isDefaultChatTypes(chatTypeFilters) ? (
                         <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
                     ) : null}
                 </Button>
@@ -271,11 +534,51 @@ export function ChatsList({
             <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={(e) => e.preventDefault()}>
                 <DropdownMenuLabel>Filter chats</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup value={chatTypeFilter} onValueChange={handleChatTypeChange}>
-                    <DropdownMenuRadioItem value="conversation">Conversations</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="integration">Integrations</DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="interaction">Interactions</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                {CHAT_TYPE_ORDER.map((chatType) => (
+                    <DropdownMenuCheckboxItem
+                        key={chatType}
+                        checked={chatTypeFilters.includes(chatType)}
+                        onCheckedChange={(checked) => handleChatTypeToggle(chatType, checked === true)}
+                        onSelect={(event) => event.preventDefault()}
+                    >
+                        {CHAT_TYPE_LABELS[chatType]}
+                    </DropdownMenuCheckboxItem>
+                ))}
+            </DropdownMenuContent>
+        </DropdownMenu>
+    );
+
+    const TagsMenu = () => (
+        <DropdownMenu open={tagsMenuOpen} onOpenChange={setTagsMenuOpen}>
+            <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative size-7" aria-label="Filter by tag">
+                    <Tag className="size-4" />
+                    {hasTagFilter ? (
+                        <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
+                    ) : null}
+                </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={(e) => e.preventDefault()}>
+                <DropdownMenuLabel>Filter by tag</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {knownTags.length === 0 ? (
+                    <div className="px-3 py-2">
+                        <Text type={TextTypes.Body7} color="muted">
+                            No tags yet
+                        </Text>
+                    </div>
+                ) : (
+                    knownTags.map((tag) => (
+                        <DropdownMenuCheckboxItem
+                            key={tag}
+                            checked={tagFilters.includes(tag)}
+                            onCheckedChange={(checked) => handleTagToggle(tag, checked === true)}
+                            onSelect={(event) => event.preventDefault()}
+                        >
+                            {tag}
+                        </DropdownMenuCheckboxItem>
+                    ))
+                )}
             </DropdownMenuContent>
         </DropdownMenu>
     );
@@ -298,7 +601,7 @@ export function ChatsList({
         }
 
         if (chats.rows.length === 0) {
-            const isDefaultFilter = chatTypeFilter === DEFAULT_CHAT_TYPE
+            const isDefaultFilter = isDefaultChatTypes(chatTypeFilters) && extraFilterCount === 0
 
             return (
                 <div className="flex flex-col items-center px-4 py-8 text-center">
@@ -306,21 +609,27 @@ export function ChatsList({
                         <ExploreChatsIcon />
                     </div>
                     <Text type={TextTypes.Body5} tag="p" bold>
-                        {isDefaultFilter ? "No chats yet" : `No ${activeFilterLabel.toLowerCase()} yet`}
+                        {!isDefaultChatTypes(chatTypeFilters)
+                            ? `No ${activeFilterLabel.toLowerCase()} yet`
+                            : extraFilterCount > 0
+                                ? "No matching chats"
+                                : "No chats yet"}
                     </Text>
                     <Text type={TextTypes.Body7} color="muted" className="mt-1 mb-4">
                         {isDefaultFilter
                             ? "Start a new chat or try one of the default options above."
-                            : "Try another filter or start a new chat in this category."}
+                            : extraFilterCount > 0
+                                ? "Try adjusting or clearing your filters."
+                                : "Try another filter or start a new chat in this category."}
                     </Text>
                     {!isDefaultFilter ? (
                         <Button
                             variant="ghost"
                             size="sm"
                             className="mb-2"
-                            onClick={() => handleChatTypeChange(DEFAULT_CHAT_TYPE)}
+                            onClick={handleResetFilters}
                         >
-                            Back to conversations
+                            Clear filters
                         </Button>
                     ) : null}
                     <Button onClick={() => navigateWithFilter('/chat/new')} size="sm">
@@ -330,40 +639,54 @@ export function ChatsList({
             );
         }
 
+        // Sort by most recent activity so the fine-grained time dividers group
+        // consecutive rows into a single, readable heading.
+        const rows = [...chats.rows].sort(
+            (
+                a: { latest_message_at?: string },
+                b: { latest_message_at?: string }
+            ) => {
+                const aTime = a.latest_message_at ? new Date(a.latest_message_at).getTime() : 0
+                const bTime = b.latest_message_at ? new Date(b.latest_message_at).getTime() : 0
+                return bTime - aTime
+            }
+        )
+
         let lastDivider: string | null = null
 
-        return chats.rows.flatMap((chat: { uuid: string; latest_message?: { text?: string } }) => {
-            const chatDate = new Date();
-            let divider = null;
+        return rows.flatMap(
+            (chat: {
+                uuid: string
+                settings?: { title?: string }
+                latest_message?: { text?: string }
+                latest_message_at?: string
+                tags?: string[]
+            }) => {
+                const parsed = chat.latest_message_at ? new Date(chat.latest_message_at) : null
+                const chatDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed : null
+                let divider = null
 
-            if (isToday(chatDate)) {
-                if (lastDivider !== 'Today') {
-                    divider = renderDivider('Today');
-                    lastDivider = 'Today';
+                if (chatDate) {
+                    const bucket = getChatTimeBucket(chatDate)
+                    if (bucket.key !== lastDivider) {
+                        divider = renderDivider(bucket.label)
+                        lastDivider = bucket.key
+                    }
                 }
-            } else if (isYesterday(chatDate)) {
-                if (lastDivider !== 'Yesterday') {
-                    divider = renderDivider('Yesterday');
-                    lastDivider = 'Yesterday';
-                }
-            } else if (isWithinLast7Days(chatDate)) {
-                if (lastDivider !== 'Previous 7 Days') {
-                    divider = renderDivider('Previous 7 Days');
-                    lastDivider = 'Previous 7 Days';
-                }
+
+                return [
+                    divider,
+                    <ChatItemCompact
+                        chat={chat}
+                        key={`chat_${chat.uuid}`}
+                        isSelected={chat.uuid === chatUUID}
+                        navigateTo={navigateWithFilter}
+                        state={chatStateByUuid[chat.uuid]}
+                        tags={chat.tags}
+                    />,
+                ].filter(Boolean)
             }
-
-            return [
-                divider,
-                <ChatItemCompact
-                    chat={chat}
-                    key={`chat_${chat.uuid}`}
-                    isSelected={chat.uuid === chatUUID}
-                    navigateTo={navigateWithFilter}
-                    state={chatStateByUuid[chat.uuid]}
-                />,
-            ].filter(Boolean);
-        });
+        )
     };
 
     return (
@@ -381,6 +704,7 @@ export function ChatsList({
                     <DefaultChats
                         navigateTo={navigateWithFilter}
                         defaultBotContact={defaultBotContact}
+                        isBotLoading={defaultBotLoading}
                         botAvatarSrc={avatarSrc}
                         actionCount={actionCount}
                     />
@@ -391,16 +715,149 @@ export function ChatsList({
                             <Text type={TextTypes.Body7} color="muted" tag="span" bold>
                                 Filters
                             </Text>
-                            <FilterMenu />
+                            <div className="flex items-center gap-1">
+                                {isAdmin ? (
+                                    <Button
+                                        variant={seeAll ? "default" : "ghost"}
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={() => setSeeAll((value) => !value)}
+                                        title="Show chats owned by all users (admin)"
+                                    >
+                                        See all
+                                    </Button>
+                                ) : null}
+                                <Button
+                                    variant={searchOpen ? "default" : "ghost"}
+                                    size="icon"
+                                    className="relative size-7"
+                                    aria-label="Search chat titles"
+                                    onClick={() => setSearchOpen((value) => !value)}
+                                >
+                                    <Search className="size-4" />
+                                    {hasSearchFilter ? (
+                                        <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
+                                    ) : null}
+                                </Button>
+                                <Button
+                                    variant={timeOpen || hasTimeFilter ? "default" : "ghost"}
+                                    size="icon"
+                                    className="relative size-7"
+                                    aria-label="Filter by time range"
+                                    onClick={() => setTimeOpen((value) => !value)}
+                                >
+                                    <Calendar className="size-4" />
+                                    {hasTimeFilter ? (
+                                        <span className="bg-primary absolute top-1 right-1 size-1.5 rounded-full" aria-hidden="true" />
+                                    ) : null}
+                                </Button>
+                                <TagsMenu />
+                                <FilterMenu />
+                            </div>
                         </div>
-                        {chatTypeFilter !== DEFAULT_CHAT_TYPE ? (
+                        {searchOpen ? (
+                            <div className="px-3 pb-2">
+                                <Input
+                                    autoFocus
+                                    value={searchQuery}
+                                    onChange={(event) => setSearchQuery(event.target.value)}
+                                    placeholder="Search chat titles"
+                                    className="h-7 text-xs"
+                                />
+                            </div>
+                        ) : null}
+                        {timeOpen ? (
+                            <div className="mx-3 mb-2 rounded-md border border-border/70 bg-card p-2">
+                                <div className="grid grid-cols-2 gap-2">
+                                    <label className="flex flex-col gap-1">
+                                        <span className="text-[9px] uppercase tracking-wide text-muted-foreground">From</span>
+                                        <Input
+                                            type="datetime-local"
+                                            value={timeFromDraft}
+                                            onChange={(event) => setTimeFromDraft(event.target.value)}
+                                            className="h-7 text-xs"
+                                        />
+                                    </label>
+                                    <label className="flex flex-col gap-1">
+                                        <span className="text-[9px] uppercase tracking-wide text-muted-foreground">To</span>
+                                        <Input
+                                            type="datetime-local"
+                                            value={timeToDraft}
+                                            onChange={(event) => setTimeToDraft(event.target.value)}
+                                            className="h-7 text-xs"
+                                        />
+                                    </label>
+                                </div>
+                                {timeError ? (
+                                    <Text type={TextTypes.Body7} className="mt-1 block text-[10px] text-red-500">
+                                        {timeError}
+                                    </Text>
+                                ) : null}
+                                <div className="mt-2 flex justify-end gap-1">
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={handleClearTimeRange}
+                                    >
+                                        Clear
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={handleApplyTimeRange}
+                                    >
+                                        Apply
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : null}
+                        {extraFilterCount > 0 ? (
+                            <div className="flex flex-wrap items-center gap-1 px-3 pb-2">
+                                {hasSearchFilter ? (
+                                    <FilterChip
+                                        label={`Search: ${searchQuery.trim()}`}
+                                        onRemove={() => setSearchQuery("")}
+                                    />
+                                ) : null}
+                                {hasTimeFilter ? (
+                                    <FilterChip
+                                        label={
+                                            timeFrom && timeTo
+                                                ? `${formatTimeChip(timeFrom)} → ${formatTimeChip(timeTo)}`
+                                                : timeFrom
+                                                    ? `Since ${formatTimeChip(timeFrom)}`
+                                                    : `Until ${formatTimeChip(timeTo)}`
+                                        }
+                                        onRemove={handleClearTimeRange}
+                                    />
+                                ) : null}
+                                {tagFilters.map((tag) => (
+                                    <FilterChip
+                                        key={tag}
+                                        label={tag}
+                                        onRemove={() => handleTagToggle(tag, false)}
+                                    />
+                                ))}
+                                {!isDefaultChatTypes(chatTypeFilters) || extraFilterCount > 1 ? (
+                                    <button
+                                        type="button"
+                                        className="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+                                        onClick={handleResetFilters}
+                                    >
+                                        Clear all
+                                    </button>
+                                ) : null}
+                            </div>
+                        ) : null}
+                        {!isDefaultChatTypes(chatTypeFilters) ? (
                             <div className="px-4 pb-1">
                                 <Text type={TextTypes.Body7} color="muted" className="text-[10px] uppercase tracking-wide">
                                     Showing: {activeFilterLabel}
                                 </Text>
                             </div>
                         ) : null}
-                        {!contactsLoading && !isLoading ? renderChatItems() : (
+                        {!isLoading ? renderChatItems() : (
                             <div className="flex h-40 items-center justify-center">
                                 <LoadingSpinner />
                             </div>
