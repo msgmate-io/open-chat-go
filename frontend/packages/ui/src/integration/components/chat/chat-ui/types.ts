@@ -68,6 +68,8 @@ export interface ChatUIMessageExtrasProps {
   /** Raw message meta_data; private widgets read their own keys. */
   meta: Record<string, unknown>;
   chatUUID?: string;
+  /** UUID of the message the extras are rendered for (widgets persist to it). */
+  messageUUID?: string;
   interactionState?: string | null;
   /** Invalidate chat data after widget side effects. */
   onMutate: () => void;
