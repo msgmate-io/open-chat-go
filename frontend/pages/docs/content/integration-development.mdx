@@ -139,7 +139,9 @@ python3 development/scripts/check_host_surface.py --check-baseline integrations.
 
 `development/scripts/tests/test_host_surface.sh` exercises the guard hermetically
 (no Go toolchain, no network) and runs in CI next to the dependency-surface
-self-test.
+self-test. Both hermetic self-tests plus the baseline-invariant check below can
+be run together, still without Go, through
+`development/scripts/tests/test_host_dep_boundary_ci.sh`.
 
 ### Measuring the dependency surface
 
@@ -182,7 +184,11 @@ python3 backend/scripts/integration_dep_surface.py \
 
 The same script is exercised hermetically (stub `go`, no toolchain needed) by
 `development/scripts/tests/test_integration_dep_surface.sh`, which pins the
-exit codes above and runs in CI.
+exit codes above and runs in CI. The committed-file invariant is additionally
+pinned without Go by `development/scripts/tests/test_dep_surface_fixture.py`
+(module discovery over the `clients/integrations` checkout and the
+`--check-baseline` verdict), which `test_host_dep_boundary_ci.sh` runs
+together with the other hermetic checks.
 
 ## Tools
 
