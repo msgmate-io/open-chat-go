@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import useSWR, { mutate as globalMutate } from "swr";
+import useSWR from "swr";
 import {
   Badge,
   Button,
@@ -13,6 +13,7 @@ import {
   LoadingSpinner,
   Text,
   TextTypes,
+  revalidateChatData,
   type ChatUIToolCall,
   type ConfirmableAction,
 } from "@open-chat-go/ui";
@@ -348,8 +349,10 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
       next.add(task.task_key);
       return next;
     });
-    void globalMutate("/api/v1/chats/action-tasks?count_only=1");
     void mutate();
+    // Resolving a task changes the chat state and preview, so refresh the
+    // derived chat caches (list, state dots, action-task feeds) too.
+    void revalidateChatData(task.chat_uuid);
   };
 
   const dismissTask = async (task: ActionTaskRow) => {
