@@ -20,6 +20,7 @@ import { Input } from "../input"
 import { Text, TextTypes } from "../text"
 import { Calendar, Search, SlidersHorizontal, Tag, X } from "lucide-react"
 import { useCurrentUser } from "../../integration/hooks/use-current-user"
+import { listChatSearchActions } from "../../integration/components/chat/chat-ui/registry"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) => fetch(...args).then(res => res.json())
 
@@ -398,6 +399,14 @@ export function ChatsList({
         navigateTo(`${to}${separator}${query}`)
     }, [chatTypeFilters, searchQuery, tagFilters, timeFrom, timeTo, navigateTo])
 
+    // If the chat that is currently open gets deleted from the list, leave the
+    // now-missing chat page.
+    const handleChatDeleted = useCallback((deletedChatUUID: string) => {
+        if (chatUUID && deletedChatUUID === chatUUID) {
+            navigateTo("/chat/new")
+        }
+    }, [chatUUID, navigateTo])
+
     const activeFilterLabel = useMemo(
         () =>
             CHAT_TYPE_ORDER.filter((type) => chatTypeFilters.includes(type))
@@ -683,6 +692,7 @@ export function ChatsList({
                         navigateTo={navigateWithFilter}
                         state={chatStateByUuid[chat.uuid]}
                         tags={chat.tags}
+                        onDeleted={handleChatDeleted}
                     />,
                 ].filter(Boolean)
             }
@@ -756,7 +766,7 @@ export function ChatsList({
                             </div>
                         </div>
                         {searchOpen ? (
-                            <div className="px-3 pb-2">
+                            <div className="flex flex-col gap-1 px-3 pb-2">
                                 <Input
                                     autoFocus
                                     value={searchQuery}
@@ -764,6 +774,20 @@ export function ChatsList({
                                     placeholder="Search chat titles"
                                     className="h-7 text-xs"
                                 />
+                                {searchQuery.trim() ? (
+                                    <div className="flex flex-wrap items-center gap-1">
+                                        {listChatSearchActions().map((action) => {
+                                            const SearchAction = action.Component
+                                            return (
+                                                <SearchAction
+                                                    key={action.id}
+                                                    query={searchQuery.trim()}
+                                                    navigateTo={navigateTo}
+                                                />
+                                            )
+                                        })}
+                                    </div>
+                                ) : null}
                             </div>
                         ) : null}
                         {timeOpen ? (
