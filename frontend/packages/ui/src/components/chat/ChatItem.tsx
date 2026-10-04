@@ -137,6 +137,7 @@ export function ChatItemCompact({
   isSelected = false,
   navigateTo = () => {},
   state,
+  tags,
 }: {
   chat: {
     uuid?: string;
@@ -146,10 +147,14 @@ export function ChatItemCompact({
   isSelected?: boolean;
   navigateTo: (to: string) => void;
   state?: string;
+  tags?: string[];
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const title = chat?.settings?.title?.trim();
   const content = chat?.latest_message?.text || "No messages yet";
+  const visibleTags = (tags ?? []).filter((tag) => tag.trim().length > 0);
+  const shownTags = visibleTags.slice(0, 3);
+  const hiddenTagCount = visibleTags.length - shownTags.length;
 
   return (
     <ChatSettings chat={chat} open={settingsOpen} setOpen={setSettingsOpen}>
@@ -182,6 +187,21 @@ export function ChatItemCompact({
                 {content}
               </Text>
             )}
+            {shownTags.length > 0 ? (
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                {shownTags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex max-w-[7rem] items-center truncate rounded-full border border-border/70 bg-secondary px-1.5 py-[1px] text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    {tag}
+                  </span>
+                ))}
+                {hiddenTagCount > 0 ? (
+                  <span className="text-[9px] text-muted-foreground">+{hiddenTagCount}</span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="absolute right-1 top-1/2 -translate-y-1/2">
             <DropdownMenuTrigger asChild>
