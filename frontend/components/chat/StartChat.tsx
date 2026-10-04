@@ -21,6 +21,7 @@ import {
 } from "@/lib/tool-init";
 import { buildOpenChatRunCommand, sanitizeRunChatConfig } from "@open-chat-go/ui";
 import { resolveChatUIExtension, type ChatUIContext } from "@open-chat-go/ui";
+import { revalidateChatData } from "@open-chat-go/ui";
 import { MessageInputOptionsMenuItems } from "@open-chat-go/ui";
 
 type BotModel = {
@@ -231,6 +232,8 @@ export function StartChat({
             if (isBotContact && selectedModel) {
                 clearPendingToolInit(contactToken, selectedModel)
             }
+            // Surface the freshly created chat in the sidebar immediately.
+            void revalidateChatData(chat.uuid)
             if (nextRoute === "voice") {
                 navigateTo(`/integrations/voice/chat/${encodeURIComponent(chat.uuid)}`)
                 return
