@@ -333,69 +333,74 @@ export function LandingHero({
     }, [accountManagementConfig?.signup_requires_admin_approval, hasSignupEnabled, setTab, signupGateResolved, tab])
 
     return <>
-        <div className="flex relative w-full z-40">
-            <div className="absolute flex w-full flex-col md:flex-row items-start p-4 text-foreground">
-                <Text type={TextTypes.Heading5} tag="div" bold>
-                    Open-Chat
-                </Text>
-                <Text type={TextTypes.Body6} color="muted" className="mt-1 ml-0 md:mt-3 md:ml-1">
-                    and Service Msgmate.io by TBS (beta-{versionData?.version || 'loading...'})
-                </Text>
+        <div className="relative flex h-full min-h-0 flex-col">
+            <div className="relative z-40 w-full md:absolute md:inset-x-0 md:top-0">
+                <div className="flex w-full flex-col items-start bg-background/80 p-4 text-foreground backdrop-blur md:flex-row">
+                    <Text type={TextTypes.Heading5} tag="div" bold>
+                        Open-Chat
+                    </Text>
+                    <Text type={TextTypes.Body6} color="muted" className="mt-1 ml-0 md:mt-3 md:ml-1">
+                        and Service Msgmate.io by TBS (beta-{versionData?.version || 'loading...'})
+                    </Text>
+                </div>
             </div>
-        </div>
-        <div className="flex md:flex-row flex-col items-center justify-center content-center h-full">
-            <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-background md:w-2/3 h-full shadow-xl z-10 relative text-foreground">
-                <Typewriter
-                    fullHeight
-                    typingSpeed={10}
-                    persistKey="landing-typewriter"
-                    texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)}
-                />
-            </div>
-            <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-full">
-                <div className="flex flex-row items-end justify-end content-center w-full">
-                    <div className="p-2 hover:bg-accent rounded-xl z-40">
-                        <ConnectedThemeSelector variant="icon-dropdown" />
+            <div className="flex md:flex-row flex-col items-center justify-center content-center h-full min-h-0 flex-1">
+                <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-background md:w-2/3 h-full shadow-xl z-10 relative text-foreground">
+                    <Typewriter
+                        fullHeight
+                        typingSpeed={10}
+                        persistKey="landing-typewriter"
+                        texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)}
+                    />
+                </div>
+                <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-full">
+                    <div className="flex flex-row items-end justify-end content-center w-full">
+                        <div className="p-2 hover:bg-accent rounded-xl z-40">
+                            <ConnectedThemeSelector variant="icon-dropdown" />
+                        </div>
                     </div>
+                    <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4">
+                        {tab === "index" && <IndexTab hasSignupEnabled={hasSignupEnabled} navigateTo={navigateTo}/>} 
+                        {tab === "login" && <LoginSection
+                            navigateTo={navigateTo}
+                            onSignUpClick={() => navigateTo("/sign-up")}
+                            googleLoginEnabled={Boolean(accountManagementConfig?.google_signup_enabled)}
+                            googleClientID={accountManagementConfig?.google_client_id}
+                            googleLoginRedirectURL={accountManagementConfig?.google_signup_redirect_url}
+                        />}
+                        {tab === "register" && <RegisterTab hasSignupEnabled={hasSignupEnabled} config={accountManagementConfig} navigateTo={navigateTo} />}
+                        {tab === "signup-request-send" && <SignupRequestTab navigateTo={navigateTo} />}
+                        {tab === "email-verification" && <EmailVerificationSection navigateTo={navigateTo} />}
+                    </div>
+                    <DefaultFooter navigateTo={navigateTo} />
                 </div>
-                <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4">
-                    {tab === "index" && <IndexTab hasSignupEnabled={hasSignupEnabled} navigateTo={navigateTo}/>} 
-                    {tab === "login" && <LoginSection
-                        navigateTo={navigateTo}
-                        onSignUpClick={() => navigateTo("/sign-up")}
-                        googleLoginEnabled={Boolean(accountManagementConfig?.google_signup_enabled)}
-                        googleClientID={accountManagementConfig?.google_client_id}
-                        googleLoginRedirectURL={accountManagementConfig?.google_signup_redirect_url}
-                    />}
-                    {tab === "register" && <RegisterTab hasSignupEnabled={hasSignupEnabled} config={accountManagementConfig} navigateTo={navigateTo} />}
-                    {tab === "signup-request-send" && <SignupRequestTab navigateTo={navigateTo} />}
-                    {tab === "email-verification" && <EmailVerificationSection navigateTo={navigateTo} />}
-                </div>
-                <DefaultFooter navigateTo={navigateTo} />
             </div>
         </div>
-        <div className="fixed bottom-3 left-3 z-50 flex items-center gap-2">
+        <div
+            className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
+            style={{ paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))" }}
+        >
             <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                className="h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => navigateTo("/docs")}
             >
                 <BookOpen className="size-3.5" aria-hidden="true" />
-                Documentation
+                <span className="hidden sm:inline">Documentation</span>
+                <span className="sm:hidden">Docs</span>
             </Button>
-        </div>
-        <div className="fixed bottom-3 right-3 md:right-1/3 z-50">
             <div className="relative isolate">
-                <span aria-hidden="true" className="landing-video-glow" />
+                <span aria-hidden="true" className="landing-video-glow hidden sm:block" />
                 <Button
                     variant="ghost"
                     size="sm"
-                    className="relative h-7 gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                    className="relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
                     onClick={() => setIsVideoOpen(true)}
                 >
                     <PlayCircle className="size-3.5" aria-hidden="true" />
-                    Watch Release Announcement
+                    <span className="hidden sm:inline">Watch Release Announcement</span>
+                    <span className="sm:hidden">Demo</span>
                 </Button>
             </div>
         </div>
