@@ -138,7 +138,7 @@ export default function Page() {
 
   if (isLoading) {
     return (
-      <ChatBase chatUUID={null} hideMobileShortcut navigateTo={(to: string) => navigate(to)}>
+      <ChatBase chatUUID={null} navigateTo={(to: string) => navigate(to)}>
         <div className="flex h-full items-center justify-center">
           <LoadingSpinner size={48} />
         </div>
@@ -149,9 +149,9 @@ export default function Page() {
   const isBotContact = contact?.is_automated === true;
 
   return (
-    <ChatBase chatUUID={null} hideMobileShortcut navigateTo={(to: string) => navigate(to)}>
+    <ChatBase chatUUID={null} navigateTo={(to: string) => navigate(to)}>
       <div
-        className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-4 overflow-y-auto px-4 pt-6 md:px-6"
+        className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-4 overflow-y-auto px-4 pt-16 md:px-6 md:pt-6"
         style={{
           paddingBottom: `calc(${formScrollInset} + 1.5rem)`,
           scrollPaddingBottom: `calc(${formScrollInset} + 1rem)`,

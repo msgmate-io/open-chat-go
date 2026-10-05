@@ -180,7 +180,7 @@ export default function RegisterSection({
   }
 
   return (
-    <div className="container py-24 sm:py-32 flex flex-col flex-grow items-center content-center justify-center text-foreground max-w-xl">
+    <div className="container pt-6 pb-20 sm:py-32 flex flex-col flex-grow items-center content-center justify-start sm:justify-center text-foreground max-w-xl">
       <div className="flex flex-col items-center content-center justify-center pb-2">
         <Text type={TextTypes.Heading5} tag="h1" bold center>
           {requestMode ? "Send signup request" : "Create your account"}
