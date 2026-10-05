@@ -127,7 +127,7 @@ func TestRenderCoderTodoPlan(t *testing.T) {
 	if meta["revision"] != 3 || meta["next_item_id"] != "2" || meta["completed"] != 1 {
 		t.Fatalf("metadata: %+v", meta)
 	}
-	if got := RenderCoderTodoPlan(CoderTodoPlan{Revision: 2}); got != "Todo plan (revision 2): none." {
+	if got := RenderCoderTodoPlan(CoderTodoPlan{Revision: 2}); got != "Todo plan (revision 2): all done." {
 		t.Fatalf("cleared render: %q", got)
 	}
 }
