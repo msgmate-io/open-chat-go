@@ -363,7 +363,7 @@ export function MessagesScroll({
             <div
                 ref={scrollRef}
                 onScroll={handleMessagesScroll}
-                className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
+                className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
                 style={{
                     paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
                 }}
