@@ -117,19 +117,19 @@
   }
 
   .message-bubble-user {
-    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-secondary text-secondary-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-secondary text-secondary-foreground dark:ring-white/[0.04];
   }
 
   .message-bubble-bot {
-    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-card text-card-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-card text-card-foreground dark:ring-white/[0.04];
   }
 
   .message-bubble-outgoing {
-    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-border/70 bg-surface-elevated text-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-border/70 bg-surface-elevated text-foreground dark:ring-white/[0.04];
   }
 
   .message-bubble-pending {
-    @apply rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-muted/70 text-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-muted/70 text-foreground dark:ring-white/[0.04];
   }
 
   .message-bubble-user .chat-markdown,
@@ -145,6 +145,8 @@
 
   .chat-markdown {
     @apply max-w-none text-sm leading-7 text-foreground md:text-[0.95rem];
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .chat-markdown :where(p) {
@@ -153,10 +155,12 @@
 
   .chat-markdown :where(pre) {
     @apply my-3 overflow-x-auto rounded-xl border border-border bg-muted/60 p-4 text-sm;
+    max-width: 100%;
   }
 
   .chat-markdown :where(code:not(pre code)) {
     @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em];
+    overflow-wrap: anywhere;
   }
 
   .chat-markdown :where(blockquote) {
