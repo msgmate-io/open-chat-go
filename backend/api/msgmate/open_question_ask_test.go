@@ -18,6 +18,7 @@ func TestCollectAskActions(t *testing.T) {
 		"name":      "coder_ask",
 		"type":      "function",
 		"status":    "pending",
+		"id":        "call_ask_order",
 		"arguments": `{"question":"which ordering do you prefer?","title":"Deploy ordering","description":"pick one","options":["blue","green","canary"],"default":"blue"}`,
 	}
 
@@ -72,6 +73,7 @@ func TestCollectAskActionsObjectArguments(t *testing.T) {
 		"name":   "coder_ask",
 		"type":   "function",
 		"status": "pending",
+		"id":     "call_ask_deploy",
 		"arguments": map[string]interface{}{
 			"question":     "continue with the deploy?",
 			"options":      []interface{}{"yes", "no", "later"},
@@ -131,6 +133,7 @@ func TestCollectAskActionsTwoAccordingToInitializerExercisesSecondArm(t *testing
 		"name":   "coder_ask",
 		"type":   "function",
 		"status": "pending",
+		"id":     "call_ask_plan",
 		"arguments": map[string]interface{}{
 			"question": "which plan?",
 			"options":  []string{"plan-a", "plan-b"},
