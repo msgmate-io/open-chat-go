@@ -357,6 +357,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts
+          # Merge into one directory so the per-artifact version.txt files
+          # collapse into a single release asset (duplicate asset names make
+          # action-gh-release fail on upload/overwrite).
+          merge-multiple: true
 
       - name: Resolve release metadata
         id: release_meta
