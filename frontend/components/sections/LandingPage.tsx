@@ -334,7 +334,7 @@ export function LandingHero({
 
     return <>
         <div className="relative flex h-full min-h-0 flex-col">
-            <div className="relative z-40 w-full md:absolute md:inset-x-0 md:top-0">
+            <div className="relative z-40 w-full md:absolute md:left-0 md:top-0 md:w-2/3">
                 <div className="flex w-full flex-col items-start bg-background/80 p-4 text-foreground backdrop-blur md:flex-row">
                     <Text type={TextTypes.Heading5} tag="div" bold>
                         Open-Chat
