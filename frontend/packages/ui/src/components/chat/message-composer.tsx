@@ -2,6 +2,7 @@ import {
   forwardRef,
   useEffect,
   useRef,
+  type ClipboardEventHandler,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -34,6 +35,7 @@ export interface MessageComposerProps {
   hasAttachments?: boolean;
   footerOptions?: ReactNode;
   className?: string;
+  onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
 }
 
 export function CancelResponseButton({ onClick }: { onClick: () => void }) {
@@ -106,6 +108,7 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
       hasAttachments = false,
       footerOptions,
       className,
+      onPaste,
     },
     ref
     ) {
@@ -143,6 +146,7 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
             placeholder={placeholder}
             rows={1}
             onChange={(event) => setText(event.target.value)}
+            onPaste={onPaste}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
