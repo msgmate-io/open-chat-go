@@ -24,69 +24,106 @@ interface UploadedFileResponse {
   openai_file_id?: string;
 }
 
-export function useFileUpload({ onFileUploaded, reuploadToOpenAI = false }: FileUploadBaseProps) {  const [isUploading, setIsUploading] = useState(false);
+export const MAX_UPLOAD_SIZE = 5 * 1024 * 1024;
+
+export const ALLOWED_UPLOAD_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+];
+
+export function isAllowedUpload(file: File): boolean {
+  if (file.size > MAX_UPLOAD_SIZE) {
+    alert("File too large. Maximum size is 5MB.");
+    return false;
+  }
+
+  if (file.type && !ALLOWED_UPLOAD_TYPES.includes(file.type)) {
+    alert("File type not allowed.");
+    return false;
+  }
+
+  return true;
+}
+
+const MIME_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+};
+
+export function defaultFileNameForMime(mimeType: string): string {
+  const extension = MIME_EXTENSIONS[mimeType] ?? "bin";
+  return `pasted-file-${Date.now()}.${extension}`;
+}
+
+export async function uploadFileToServer(
+  file: File,
+  reuploadToOpenAI = false
+): Promise<UploadedFileResponse> {
+  const formData = new FormData();
+  const fileName = file.name?.trim() ? file.name : defaultFileNameForMime(file.type);
+  formData.append("file", file, fileName);
+
+  const url = new URL("/api/v1/files/upload", window.location.origin);
+  if (reuploadToOpenAI) {
+    url.searchParams.set("reupload_to_openai", "true");
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    body: formData,
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.statusText}`);
+  }
+
+  return (await response.json()) as UploadedFileResponse;
+}
+
+export function useFileUpload({ onFileUploaded, reuploadToOpenAI = false }: FileUploadBaseProps) {
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const file = files[0];
-
-    if (file.size > 5 * 1024 * 1024) {
-      alert("File too large. Maximum size is 5MB.");
-      return;
-    }
-
-    const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/gif",
-      "image/webp",
-      "application/pdf",
-      "text/plain",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      alert("File type not allowed.");
-      return;
-    }
+  const uploadFile = async (file: File) => {
+    if (!isAllowedUpload(file)) return;
 
     setIsUploading(true);
-
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const url = new URL("/api/v1/files/upload", window.location.origin);
-      if (reuploadToOpenAI) {
-        url.searchParams.set("reupload_to_openai", "true");
-      }
-
-      const response = await fetch(url.toString(), {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.statusText}`);
-      }
-
-      const uploadedFile: UploadedFileResponse = await response.json();
+      const uploadedFile = await uploadFileToServer(file, reuploadToOpenAI);
       onFileUploaded(uploadedFile.file_id, uploadedFile.file_name);
     } catch (error) {
       console.error("File upload error:", error);
       alert("Failed to upload file. Please try again.");
     } finally {
       setIsUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+    }
+  };
+
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    await uploadFile(files[0]);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
@@ -94,6 +131,7 @@ export function useFileUpload({ onFileUploaded, reuploadToOpenAI = false }: File
     isUploading,
     fileInputRef,
     handleFileSelect,
+    uploadFile,
     openFilePicker: () => fileInputRef.current?.click(),
   };
 }
