@@ -106,6 +106,7 @@ var capabilityClasses = []CapabilityClass{
 	{"tool_budget", CapabilityTierCore, "per-chat tool budgets cap runaway turns without losing the final summary"},
 	{"subagents", CapabilityTierCore, "coder_task sub-agents run in a fresh, restricted context"},
 	{"shell_modes", CapabilityTierCore, "foreground, background/streaming and interactive shell modes"},
+	{"todo_list", CapabilityTierCore, "a visible per-chat task list (coder_todo_write/coder_todo_read/todo plan state)"},
 	{"hive_mind", CapabilityTierCore, "cross-agent dispatch and observation through the hive mind"},
 	{"error_recovery", CapabilityTierCore, "tool/infra failures surface as errors and the agent recovers"},
 	{"observability", CapabilityTierCore, "tool calls and reasoning stay visible in the chat and its metadata"},
@@ -585,6 +586,28 @@ var capabilityScenarios = []CapabilityScenario{
 			"the reply contains the marker nonce",
 		},
 		Tracks: []int{390, 658},
+	},
+	{
+		ID:              "todo_list_visible_plan",
+		Title:           "Keep a visible per-chat task list with coder_todo_write/coder_todo_read",
+		Role:            "repl",
+		Capability:      "todo_list",
+		Tags:            []string{"live", "sandbox", "mutating"},
+		RequiresSandbox: true,
+		Mutating:        true,
+		Tools:           []string{"coder_todo_write", "coder_todo_read"},
+		Prompt: "Real-world capability scenario TODO LIST. In the bound workspace: (1) write a 3-item plan with " +
+			"coder_todo_write (write the marker " + capabilityMarkerToken + " into the second item), (2) read the plan " +
+			"back with coder_todo_read and report its revision and items verbatim, (3) update the plan so the first " +
+			"item is completed and re-read it, (4) clear the plan and confirm it is empty. " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"coder_todo_write and coder_todo_read were both called",
+			"the plan kept its items and revision across write/read/update cycles",
+			"the reported plan state is verbatim tool output",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 394, 630},
 	},
 }
 
