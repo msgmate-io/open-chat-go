@@ -886,11 +886,11 @@ jobs:
           fi
 
   run-pr-ci-go-tests:
-    name: Run PR CI Go Tests (${{ matrix.shard }}/2)
+    name: Run PR CI Go Tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     # Go unit tests run natively and do not consume the backend image, so they
     # must not wait for the (slow) image build. Running them right after the
-    # context job lets both shards overlap with build-backend-image-once
+    # context job lets all shards overlap with build-backend-image-once
     # instead of starting only after it finishes.
     needs: [run-pr-ci-tests-and-deployments]
     if: |
@@ -903,7 +903,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
     steps:
@@ -1002,7 +1002,7 @@ jobs:
         env:
           ASYNQ_REDIS_ADDR: 127.0.0.1:6380
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: "2"
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           set -euo pipefail
           packages="$(
@@ -1033,12 +1033,12 @@ jobs:
           set -euo pipefail
           if [ "${{ steps.context.outputs.should_test }}" != "" ]; then
             if [ "${{ steps.go_tests.outcome }}" != "success" ]; then
-              echo "::error::Go tests failed on shard ${{ matrix.shard }}/2."
+              echo "::error::Go tests failed on shard ${{ matrix.shard }}/${{ strategy.job-total }}."
               exit 1
             fi
-            echo "Go suite shard ${{ matrix.shard }}/2: passed."
+            echo "Go suite shard ${{ matrix.shard }}/${{ strategy.job-total }}: passed."
           else
-            echo "Go suite shard ${{ matrix.shard }}/2: skipped."
+            echo "Go suite shard ${{ matrix.shard }}/${{ strategy.job-total }}: skipped."
           fi
 
   run-pr-ci-ai-mock-tests:
@@ -1191,21 +1191,20 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       # Cheap planning job (no checkout/profile/backend): translates the
-      # E2E_SHARD_COUNT repo variable into a shard matrix. Everything stays in
-      # one job (value unset / 1) so concurrent Playwright workers parallelise
-      # the suite; set the variable to >1 to split the suite across that many
-      # parallel runner jobs ("split-able"). Each shard runs with
-      # --pass-with-no-tests, so over-splitting can never fail on an empty shard.
+      # E2E_SHARD_COUNT repo variable into a shard matrix. Unset defaults to 4
+      # parallel runner jobs; set the variable (1-8) to override. Each shard runs
+      # with --pass-with-no-tests, so over-splitting can never fail on an empty
+      # shard.
       - name: Compute E2E shard matrix
         id: plan
         env:
           REQUESTED_SHARDS: ${{ vars.E2E_SHARD_COUNT }}
         run: |
           set -euo pipefail
-          raw="${REQUESTED_SHARDS:-1}"
+          raw="${REQUESTED_SHARDS:-4}"
           if ! printf '%s' "$raw" | grep -Eq '^[0-9]+$'; then
-            echo "::warning::E2E_SHARD_COUNT='${raw}' is not a non-negative integer; defaulting to 1."
-            raw=1
+            echo "::warning::E2E_SHARD_COUNT='${raw}' is not a non-negative integer; defaulting to 4."
+            raw=4
           fi
           shards="$raw"
           if [ "$shards" -lt 1 ]; then shards=1; fi
