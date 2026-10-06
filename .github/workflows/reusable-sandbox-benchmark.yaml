@@ -264,6 +264,8 @@ jobs:
           tags: ${{ steps.resolve.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
+          cache-from: type=gha,scope=sandbox-backend-full
+          cache-to: type=gha,mode=max,scope=sandbox-backend-full
 
   sandbox-image-ensure:
     name: Ensure Sandbox Image
