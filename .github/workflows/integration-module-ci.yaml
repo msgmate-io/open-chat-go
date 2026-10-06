@@ -30,6 +30,10 @@ on:
       - development/scripts/tests/test_integration_dep_surface.sh
       - development/scripts/check_host_surface.py
       - development/scripts/tests/test_host_surface.sh
+      # ci#423: committed-baseline double-check (host-surface + dep-surface
+      # re-validated hermetically through the same helper functions).
+      - development/scripts/tests/test_committed_baselines.py
+      - development/scripts/tests/test_host_dep_boundary_ci.sh
       - integrations.host-surface.json
       - integrations.dep-surface.json
   workflow_dispatch:
@@ -140,6 +144,13 @@ jobs:
       - name: dependency-surface fixture self-test (no Go)
         run: |
           python3 development/scripts/tests/test_dep_surface_fixture.py
+
+      # ci#423: the committed host-surface and dep-surface baselines are
+      # re-validated hermetically (through the same helper functions the guards
+      # use) so a follow-up cannot land a decoupling regression without Go.
+      - name: committed-baseline double-check (no Go)
+        run: |
+          python3 development/scripts/tests/test_committed_baselines.py
 
       # ci#423 step 4: the PR gate itself. It is toolchain-free here (no GOWORK
       # in this job, so it validates the baseline and states that it only did
