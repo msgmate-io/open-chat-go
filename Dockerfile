@@ -43,15 +43,17 @@ ENV OPENCHAT_NO_SETUP=1
 WORKDIR /backend
 
 RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-pip py3-yaml git
-COPY clients/ /clients/
-COPY backend/ ./
 # Integration manifest + build tooling. The manifest lives at the image root
 # (repo root) so the manager resolves the same relative paths as on the host:
 # /clients/integrations/<name> and /backend/go.work.
+# Copy the tooling before the (frequently changing) source so the apk + pip
+# layers stay cached across builds.
 COPY integrations.yaml /integrations.yaml
 COPY integrations.lock.json /integrations.lock.json
 COPY development/ /development/
 RUN pip install --no-cache-dir --break-system-packages /development/build-tools
+COPY clients/ /clients/
+COPY backend/ ./
 
 FROM basebuilder AS builder
 

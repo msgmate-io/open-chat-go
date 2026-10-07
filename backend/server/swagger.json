@@ -1113,6 +1113,12 @@
                     },
                     {
                         "type": "string",
+                        "description": "Comma-separated tags to exclude (a chat carrying any is hidden)",
+                        "name": "exclude_tags",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Only chats with activity at/after this RFC3339 timestamp",
                         "name": "time_from",
                         "in": "query"
@@ -1258,6 +1264,57 @@
                     },
                     "400": {
                         "description": "Invalid chat UUID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Delete a chat and its messages/settings owned by the authenticated user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chats"
+                ],
+                "summary": "Delete chat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat UUID",
+                        "name": "chat_uuid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deletion result",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid chat UUID",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Chat not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Unable to delete chat",
                         "schema": {
                             "type": "string"
                         }
@@ -3870,6 +3927,10 @@
                     "additionalProperties": true
                 },
                 "description": {
+                    "type": "string"
+                },
+                "integration_name": {
+                    "description": "IntegrationName is the compiled integration whose bot bootstrap config\ndeclared this bot (empty for user-created bots).",
                     "type": "string"
                 },
                 "is_active": {

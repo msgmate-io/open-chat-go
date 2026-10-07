@@ -37,12 +37,15 @@ if ! command -v "${NFPM}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# nFPM resolves relative contents/scripts paths against the config directory.
-cd "${SCRIPT_DIR}"
-
+# Resolve caller-provided paths before changing directories: callers (e.g. CI)
+# may pass BIN/OUT_DIR relative to the repository root.
 ABS_BIN="$(cd "$(dirname "${BIN}")" && pwd)/$(basename "${BIN}")"
 mkdir -p "${OUT_DIR}"
+OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 TARGET="${OUT_DIR}/open-chat_${VERSION}_${ARCH}.deb"
+
+# nFPM resolves relative contents/scripts paths against the config directory.
+cd "${SCRIPT_DIR}"
 
 ARCH="${ARCH}" VERSION="${VERSION}" BIN="${ABS_BIN}" \
   "${NFPM}" package \

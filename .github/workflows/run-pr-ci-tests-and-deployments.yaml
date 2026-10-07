@@ -886,11 +886,11 @@ jobs:
           fi
 
   run-pr-ci-go-tests:
-    name: Run PR CI Go Tests (${{ matrix.shard }}/2)
+    name: Run PR CI Go Tests (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     # Go unit tests run natively and do not consume the backend image, so they
     # must not wait for the (slow) image build. Running them right after the
-    # context job lets both shards overlap with build-backend-image-once
+    # context job lets all shards overlap with build-backend-image-once
     # instead of starting only after it finishes.
     needs: [run-pr-ci-tests-and-deployments]
     if: |
@@ -903,7 +903,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
     steps:
@@ -1002,7 +1002,7 @@ jobs:
         env:
           ASYNQ_REDIS_ADDR: 127.0.0.1:6380
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: "2"
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           set -euo pipefail
           packages="$(
@@ -1033,12 +1033,12 @@ jobs:
           set -euo pipefail
           if [ "${{ steps.context.outputs.should_test }}" != "" ]; then
             if [ "${{ steps.go_tests.outcome }}" != "success" ]; then
-              echo "::error::Go tests failed on shard ${{ matrix.shard }}/2."
+              echo "::error::Go tests failed on shard ${{ matrix.shard }}/${{ strategy.job-total }}."
               exit 1
             fi
-            echo "Go suite shard ${{ matrix.shard }}/2: passed."
+            echo "Go suite shard ${{ matrix.shard }}/${{ strategy.job-total }}: passed."
           else
-            echo "Go suite shard ${{ matrix.shard }}/2: skipped."
+            echo "Go suite shard ${{ matrix.shard }}/${{ strategy.job-total }}: skipped."
           fi
 
   run-pr-ci-ai-mock-tests:
@@ -1178,18 +1178,66 @@ jobs:
             exit 1
           fi
 
-  run-pr-ci-e2e-tests:
-    name: Run PR CI E2E Tests
+  run-pr-ci-e2e-plan:
+    name: Plan PR CI E2E Shards
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once]
+    needs: [run-pr-ci-tests-and-deployments]
+    # Always run (even when the E2E suite is skipped) so the shard matrix is
+    # never empty - `fromJson(needs...outputs.matrix)` in the matrix job would
+    # otherwise fail on an undefined/empty output.
+    if: always()
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      # Cheap planning job (no checkout/profile/backend): translates the
+      # E2E_SHARD_COUNT repo variable into a shard matrix. Unset defaults to 4
+      # parallel runner jobs; set the variable (1-8) to override. Each shard runs
+      # with --pass-with-no-tests, so over-splitting can never fail on an empty
+      # shard.
+      - name: Compute E2E shard matrix
+        id: plan
+        env:
+          REQUESTED_SHARDS: ${{ vars.E2E_SHARD_COUNT }}
+        run: |
+          set -euo pipefail
+          raw="${REQUESTED_SHARDS:-4}"
+          if ! printf '%s' "$raw" | grep -Eq '^[0-9]+$'; then
+            echo "::warning::E2E_SHARD_COUNT='${raw}' is not a non-negative integer; defaulting to 4."
+            raw=4
+          fi
+          shards="$raw"
+          if [ "$shards" -lt 1 ]; then shards=1; fi
+          if [ "$shards" -gt 8 ]; then
+            echo "::warning::E2E_SHARD_COUNT=${shards} is capped at 8."
+            shards=8
+          fi
+          matrix="$(jq -cn --argjson n "$shards" '[range(1; $n + 1)]')"
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "E2E shard plan: ${shards} job(s) ${matrix}"
+
+  run-pr-ci-e2e-tests:
+    name: Run PR CI E2E Tests (${{ matrix.shard }}/${{ needs.run-pr-ci-e2e-plan.outputs.shards }})
+    runs-on: ubuntu-latest
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, run-pr-ci-e2e-plan]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.build-backend-image-once.result == 'success' &&
+      needs.run-pr-ci-e2e-plan.result == 'success' &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_e2e_test != ''
-    outputs:
-      e2e_status: ${{ steps.finalize.outputs.e2e_status }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.run-pr-ci-e2e-plan.outputs.matrix) }}
     steps:
+      # No disk-reclamation step here: the E2E shard only installs Playwright
+      # and pulls one prebuilt backend image (<5 GB), which comfortably fits the
+      # runner's default free space. The `jlumbroso/free-disk-space` action
+      # spent ~2.5-4 min removing Android/.NET/Haskell for no benefit (its slow
+      # phases are the rm -rf of Android/.NET, not just the apt/prune phases).
+
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
@@ -1213,7 +1261,19 @@ jobs:
         working-directory: development/ci/e2e
         run: |
           set -euo pipefail
-          npm ci || npm install
+          # A transient npm registry hiccup should not fail the whole E2E job;
+          # mirror the bounded retry used for the Redis image pull.
+          for attempt in 1 2 3; do
+            if npm ci || npm install; then
+              exit 0
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "::error::Failed to install E2E npm dependencies after ${attempt} attempts."
+              exit 1
+            fi
+            echo "npm dependency install failed (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
 
       - name: Get Playwright version
         id: playwright-version
@@ -1292,9 +1352,17 @@ jobs:
           OPEN_CHAT_USERNAME: admin
           OPEN_CHAT_PASSWORD: password
           CI: "true"
+          E2E_WORKERS: ${{ vars.E2E_WORKERS || '4' }}
         run: |
           set -euo pipefail
-          npx playwright test
+          # Run the selected shard with concurrent workers. Playwright's built-in
+          # --shard/--workers flags make the suite split-able and parallelisable;
+          # --pass-with-no-tests keeps an empty shard (over-split) green.
+          echo "Running E2E shard ${{ matrix.shard }}/${{ needs.run-pr-ci-e2e-plan.outputs.shards }} with ${E2E_WORKERS} worker(s)."
+          npx playwright test \
+            --workers="${E2E_WORKERS}" \
+            --shard="${{ matrix.shard }}/${{ needs.run-pr-ci-e2e-plan.outputs.shards }}" \
+            --pass-with-no-tests
 
       - name: Stop backend for E2E tests
         if: always()
@@ -1312,7 +1380,7 @@ jobs:
         if: always() && steps.playwright_tests.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-e2e-report
+          name: playwright-e2e-report-shard-${{ matrix.shard }}
           path: development/ci/e2e/playwright-report/
           retention-days: 7
 
@@ -1321,11 +1389,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ steps.playwright_tests.outcome }}" = "success" ]; then
-            echo "e2e_status=passed" >> "$GITHUB_OUTPUT"
-            echo "Playwright E2E tests passed."
+            echo "Playwright E2E tests passed (shard ${{ matrix.shard }}/${{ needs.run-pr-ci-e2e-plan.outputs.shards }})."
           else
-            echo "e2e_status=failed" >> "$GITHUB_OUTPUT"
-            echo "::error::Playwright E2E tests failed."
+            echo "::error::Playwright E2E tests failed (shard ${{ matrix.shard }}/${{ needs.run-pr-ci-e2e-plan.outputs.shards }})."
             exit 1
           fi
 
@@ -1694,8 +1760,9 @@ jobs:
     needs: [run-pr-ci-tests-and-deployments, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, build-backend-image-once]
     # Security trigger scope: PR events only; the review ping comment is authored
     # by github-actions (never the rely-on bot user) and notes the failure so the
-    # author can see it; the fix-plan issue creation itself is handled by the
-    # dispatched planning agent below.
+    # author can see it. The planning interaction - and, via the server-side
+    # plan_auto_implement post-action, the coding agent - are dispatched directly
+    # through the Open-Chat client; no reusable trigger workflow is involved.
     if: >-
       always() &&
       github.event_name == 'pull_request' &&
@@ -1781,8 +1848,14 @@ jobs:
           BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
           ATTEMPT: ${{ steps.attempts.outputs.attempt }}
           MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
+          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
         run: |
           set -euo pipefail
+          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
+            PLAN_NOTE="@${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments."
+          else
+            PLAN_NOTE="@${BOT_USER} a fix-plan session has been created and is **awaiting approval before it starts**; open the fix-plan interaction from the badge below and approve the pending confirmation to start the read-only planner."
+          fi
           COMMENT_BODY="$(cat <<EOF
           <!-- open-chat-ci-failure-plan -->
           :x: **PR CI run failed** (fix attempt ${ATTEMPT}/${MAX_ATTEMPTS})
@@ -1792,7 +1865,7 @@ jobs:
 
           Run: ${RUN_URL}
 
-          @${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments.
+          ${PLAN_NOTE}
           EOF
           )"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
@@ -1810,6 +1883,7 @@ jobs:
           OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
           OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || 'issue-plan-bot' }}
+          OPEN_CHAT_IMPLEMENT_BOT: ${{ vars.OPEN_CHAT_IMPLEMENT_BOT || vars.OPEN_CHAT_CODING_BOT || 'open-chat-go-repl-bot' }}
           BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
           FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
           RUN_URL: ${{ steps.failure.outputs.run_url }}
@@ -1821,31 +1895,38 @@ jobs:
           REPO: ${{ github.repository }}
           ATTEMPT: ${{ steps.attempts.outputs.attempt }}
           MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
+          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import os, json
           from client.client import OpenChatClient, TokenAuth
 
+          require_confirmation = os.environ.get("REQUIRE_CONFIRMATION", "true").strip().lower() in ("true", "1", "yes")
           post_action = {
-              "kind": "github_issue_comment",
+              "kind": "plan_auto_implement",
               "repo": os.environ["REPO"],
               "number": int(os.environ["PR_NUMBER"]),
-              # The posted comment re-enters the repo workloop: it is picked up
-              # by open-chat-pr-issue-comment-repl because it mentions the bot
-              # user (footer), which creates the fix-plan issue and implements.
+              # The server-side plan_auto_implement action posts the plan as a PR
+              # comment and dispatches the coding agent as a separate,
+              # confirmation-gated interaction. No comment-REPL / reusable
+              # workflow is involved; the dispatch is self-contained.
+              "bot": os.environ["OPEN_CHAT_IMPLEMENT_BOT"],
+              "require_confirmation": require_confirmation,
+              "post_badge": True,
               "header": (
                   "<!-- open-chat-post-interaction -->\n"
-                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")\n"
-                  "<!-- open-chat-ci-fix-plan-post -->"
+                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")"
               ),
               "footer": (
                   "Attempt " + os.environ["ATTEMPT"] + "/" + os.environ["MAX_ATTEMPTS"]
                   + " | run: " + os.environ["RUN_URL"] + " | PR: " + os.environ["PR_URL"] + "\n\n"
-                  "@cur1ousdude continue: create a fix-plan issue titled '[CI fix plan] PR #"
-                  + os.environ["PR_NUMBER"] + " attempt " + os.environ["ATTEMPT"] + "' containing the plan above "
-                  "(prefixed with the failing jobs and the run url), link the issue in a short PR comment, then "
-                  "implement it on the PR branch (" + os.environ["PR_BRANCH"] + ", head "
+                  "When the plan is ready, the coding agent runs as a separate"
+                  + (" confirmation-gated" if require_confirmation else "")
+                  + " interaction; approve the implementation badge to start it. The agent should "
+                  "create or update a '[CI fix plan] PR #"
+                  + os.environ["PR_NUMBER"] + "' issue, implement the plan on the PR branch ("
+                  + os.environ["PR_BRANCH"] + ", head "
                   + os.environ["PR_SHA"] + ") and push the fix commits so CI re-runs. Never poll CI."
               ),
           }
@@ -1888,6 +1969,8 @@ jobs:
                                + os.environ["FAILED_JOBS"] + "\n")
           message = message + ("CI run url: " + os.environ["RUN_URL"] + "\n")
           message = message + ("PR url: " + os.environ["PR_URL"] + "\n")
+          if require_confirmation:
+              message = message + ("\nNOTE: this planning interaction is confirmation-gated; it will not start until the owner approves the pending confirmation.\n")
 
           client = OpenChatClient(
               base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
@@ -1896,7 +1979,8 @@ jobs:
           me = client.me()
           print("Authenticated as:", me.name)
           bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          interaction = bot.create_interaction(message=message, overrides={"post_action": post_action}, share=True)
+          overrides = {"post_action": post_action, "require_confirmation": require_confirmation}
+          interaction = bot.create_interaction(message=message, overrides=overrides, share=True)
           print("Created interaction chat:", interaction.uuid)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write(f"chat_uuid={interaction.uuid}\n")
@@ -1913,14 +1997,20 @@ jobs:
           CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
           SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
+          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
         run: |
           set -euo pipefail
           INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
           SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
           BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
+          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
+            NOTE="*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate interaction.*"
+          else
+            NOTE="*A fix-plan session was created for this CI failure and is **awaiting approval**: click the badge above, review it and approve the pending confirmation to start the read-only planner. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate, confirmation-gated interaction.*"
+          fi
           COMMENT_BODY="$(printf '%s\n' \
             "[![open-chat fix plan session](%s)](%s)" \
-            "*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment (marker open-chat-ci-fix-plan-post) which automatically dispatches the implementation agent.")"
+            "${NOTE}")"
           COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
           payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
           curl -fsSL -X POST \
@@ -2085,74 +2175,20 @@ jobs:
 
           echo "Full suite gate satisfied."
 
-  post-deploy-approval-link:
-    name: Post Deploy Approval Link
-    runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests]
-    if: always() && github.event_name == 'pull_request' && needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
-    env:
-      COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-    steps:
-      - name: Checkout source repository for templates
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
-          token: ${{ secrets.BOT_TOKEN || github.token }}
-          submodules: recursive
-
-      - name: Profile setup
-        uses: ./.github/actions/profile-setup
-        with:
-          profile: full-ci
-          token: ${{ secrets.BOT_TOKEN || github.token }}
-      - name: Update progress comment when approval gate opens
-        env:
-          BOT_USER: ${{ env.BOT_USER }}
-        run: |
-          set -euo pipefail
-          TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
-          TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.image_url != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
-          TPL_STEP_DEPLOY='${{ format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) }}'
-          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_e2e_test != '') && format('- [ ] `(4) test` `go={3}` `ai-mock={4}` `ai-real={5}`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, github.run_id, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && 'running' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' && 'running' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
-          TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
-          TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
-          export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/005-progress-approval-open.md)"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comment_id="$(
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
-          )"
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
-              -d "$payload"
-          else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
-              -d "$payload"
-          fi
-
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, post-deploy-approval-link]
+    # The progress comment (including the `approve here` link) is already posted
+    # and kept up to date by `run-pr-ci-tests-and-deployments` /
+    # `update-progress-comment-after-tests`; the former separate
+    # `post-deploy-approval-link` job only re-rendered the identical comment.
+    # Wait for the test jobs here so the approval gate still opens after tests.
+    needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests]
     if: |
       always() &&
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       needs.build-backend-image-once.result == 'success' &&
-      needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' &&
-      (needs.post-deploy-approval-link.result == 'success' || needs.post-deploy-approval-link.result == 'skipped')
+      needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != ''
     concurrency:
       group: pr-deploy-${{ github.event.pull_request.number }}
       cancel-in-progress: true
