@@ -36,12 +36,19 @@ type openChatConfig struct {
 }
 
 type openChatBootstrapConfig struct {
-	Users    json.RawMessage                  `json:"users,omitempty"`
-	Bots     json.RawMessage                  `json:"bots,omitempty"`
-	SSH      *openChatSSHBootstrapConfig      `json:"ssh,omitempty"`
-	Opencode *openChatOpencodeBootstrapConfig `json:"opencode,omitempty"`
-	Git      *openChatGitBootstrapConfig      `json:"git,omitempty"`
-	MCP      *openChatMCPBootstrapConfig      `json:"mcp,omitempty"`
+	Users         json.RawMessage                       `json:"users,omitempty"`
+	Bots          json.RawMessage                       `json:"bots,omitempty"`
+	SSH           *openChatSSHBootstrapConfig           `json:"ssh,omitempty"`
+	Opencode      *openChatOpencodeBootstrapConfig      `json:"opencode,omitempty"`
+	DockerSandbox *openChatDockerSandboxBootstrapConfig `json:"docker_sandbox,omitempty"`
+	Git           *openChatGitBootstrapConfig           `json:"git,omitempty"`
+	MCP           *openChatMCPBootstrapConfig           `json:"mcp,omitempty"`
+}
+
+type openChatDockerSandboxBootstrapConfig struct {
+	Owner     openChatOwnerList `json:"owner,omitempty"`
+	Owners    []string          `json:"owners,omitempty"`
+	Sandboxes json.RawMessage   `json:"sandboxes,omitempty"`
 }
 
 type openChatMCPBootstrapConfig struct {
@@ -634,11 +641,20 @@ func toOpenChatBootstrapRuntime(cfg openChatConfig) runtimecfg.OpenChatBootstrap
 		}
 	}
 
+	if cfg.Bootstrap.DockerSandbox != nil {
+		owners := append([]string{}, cfg.Bootstrap.DockerSandbox.Owners...)
+		owners = append(owners, cfg.Bootstrap.DockerSandbox.Owner...)
+		out.DockerSandboxDefaultOwners = normalizeOwners(owners)
+
+		if len(bytes.TrimSpace(cfg.Bootstrap.DockerSandbox.Sandboxes)) > 0 {
+			out.DockerSandboxSpecs = append(out.DockerSandboxSpecs, string(bytes.TrimSpace(cfg.Bootstrap.DockerSandbox.Sandboxes)))
+		}
+	}
+
 	if cfg.Bootstrap.Git != nil {
 		owners := append([]string{}, cfg.Bootstrap.Git.Owners...)
 		owners = append(owners, cfg.Bootstrap.Git.Owner...)
 		out.GitDefaultOwners = normalizeOwners(owners)
-
 		if len(bytes.TrimSpace(cfg.Bootstrap.Git.Tokens)) > 0 {
 			out.GitTokenSpecs = append(out.GitTokenSpecs, string(bytes.TrimSpace(cfg.Bootstrap.Git.Tokens)))
 		}
