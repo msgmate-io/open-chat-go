@@ -8,7 +8,10 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type UserDetails struct {
@@ -24,6 +27,14 @@ type UserDetails struct {
 	IsAutomated  bool      `json:"is_automated"`
 	UserType     string    `json:"user_type"`
 
+	// Account details
+	EmailVerified    bool `json:"email_verified"`
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
+	// Assigned capabilities
+	Permissions  []string `json:"permissions"`
+	Integrations []string `json:"integrations"`
+
 	// Activity details
 	LastLogin     *time.Time `json:"last_login,omitempty"`
 	SessionsCount int        `json:"sessions_count"`
@@ -33,7 +44,99 @@ type UserDetails struct {
 
 type PaginatedUsersData struct {
 	database.Pagination
-	Users []UserDetails `json:"users"`
+	Users      []UserDetails `json:"users"`
+	TotalUsers int64         `json:"total_users"`
+}
+
+// userListFilters captures the query parameters accepted by GetUsersWithDetails.
+type userListFilters struct {
+	Search        string
+	Automated     *bool
+	Admin         *bool
+	EmailVerified *bool
+	Integration   string
+}
+
+// parseBoolFilter accepts "true"/"false" (and "1"/"0") and treats "all",
+// "any" or an empty value as "no filter".
+func parseBoolFilter(value string) (*bool, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case "", "all", "any":
+		return nil, nil
+	case "true", "1", "yes":
+		v := true
+		return &v, nil
+	case "false", "0", "no":
+		v := false
+		return &v, nil
+	default:
+		return nil, fmt.Errorf("invalid boolean filter %q", value)
+	}
+}
+
+func parseUserListFilters(r *http.Request) (userListFilters, error) {
+	query := r.URL.Query()
+	filters := userListFilters{
+		Search:      strings.TrimSpace(query.Get("search")),
+		Integration: strings.ToLower(strings.TrimSpace(query.Get("integration"))),
+	}
+
+	// Automated accounts are hidden by default; pass `automated=all` to include
+	// them or `automated=true` to list only automated accounts.
+	automatedParam := strings.TrimSpace(query.Get("automated"))
+	if automatedParam == "" {
+		defaultAutomated := false
+		filters.Automated = &defaultAutomated
+	} else {
+		automated, err := parseBoolFilter(automatedParam)
+		if err != nil {
+			return filters, err
+		}
+		filters.Automated = automated
+	}
+
+	admin, err := parseBoolFilter(query.Get("admin"))
+	if err != nil {
+		return filters, err
+	}
+	filters.Admin = admin
+
+	emailVerified, err := parseBoolFilter(query.Get("email_verified"))
+	if err != nil {
+		return filters, err
+	}
+	filters.EmailVerified = emailVerified
+
+	return filters, nil
+}
+
+// applyUserFilters applies the parsed filters to a user query. The same query
+// builder must be used for the count and the paginated fetch so the pagination
+// metadata stays consistent.
+func applyUserFilters(query *gorm.DB, DB *gorm.DB, filters userListFilters) *gorm.DB {
+	if filters.Search != "" {
+		like := "%" + strings.ToLower(filters.Search) + "%"
+		query = query.Where(
+			"LOWER(name) LIKE ? OR LOWER(username) LIKE ? OR LOWER(email) LIKE ?",
+			like, like, like,
+		)
+	}
+	if filters.Automated != nil {
+		query = query.Where("is_automated = ?", *filters.Automated)
+	}
+	if filters.Admin != nil {
+		query = query.Where("is_admin = ?", *filters.Admin)
+	}
+	if filters.EmailVerified != nil && DB.Migrator().HasTable("account_states") {
+		sub := DB.Table("account_states").Select("user_id").Where("is_email_verified = ?", *filters.EmailVerified)
+		query = query.Where("id IN (?)", sub)
+	}
+	if filters.Integration != "" && DB.Migrator().HasTable("integration_accesses") {
+		sub := DB.Table("integration_accesses").Select("user_id").Where("integration_name = ?", filters.Integration)
+		query = query.Where("id IN (?)", sub)
+	}
+	return query
 }
 
 func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +151,12 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filters, err := parseUserListFilters(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Setup pagination
 	pagination := database.Pagination{Page: 1, Limit: 20}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
@@ -58,13 +167,18 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 
 	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
 		if limit, err := strconv.Atoi(limitParam); err == nil && limit > 0 {
+			if limit > 200 {
+				limit = 200
+			}
 			pagination.Limit = limit
 		}
 	}
 
+	baseQuery := applyUserFilters(DB.Model(&database.User{}), DB, filters)
+
 	// Get total count for pagination
 	var totalUsers int64
-	if err := DB.Model(&database.User{}).Count(&totalUsers).Error; err != nil {
+	if err := baseQuery.Count(&totalUsers).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Error counting users: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -74,7 +188,8 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 
 	// Get users with pagination
 	var users []database.User
-	if err := DB.Offset(pagination.GetOffset()).
+	if err := baseQuery.
+		Offset(pagination.GetOffset()).
 		Limit(pagination.GetLimit()).
 		Order("created_at DESC").
 		Find(&users).Error; err != nil {
@@ -86,17 +201,43 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 
 	for _, u := range users {
 		details := UserDetails{
-			ID:           u.ID,
-			UUID:         u.UUID,
-			CreatedAt:    u.CreatedAt,
-			UpdatedAt:    u.UpdatedAt,
-			Name:         u.Name,
-			Username:     u.Username,
-			Email:        u.Email,
-			ContactToken: u.ContactToken,
-			IsAdmin:      u.IsAdmin,
-			IsAutomated:  u.IsAutomated,
-			UserType:     "regular",
+			ID:               u.ID,
+			UUID:             u.UUID,
+			CreatedAt:        u.CreatedAt,
+			UpdatedAt:        u.UpdatedAt,
+			Name:             u.Name,
+			Username:         u.Username,
+			Email:            u.Email,
+			ContactToken:     u.ContactToken,
+			IsAdmin:          u.IsAdmin,
+			IsAutomated:      u.IsAutomated,
+			UserType:         "regular",
+			TwoFactorEnabled: u.TwoFactorEnabled,
+			Permissions:      []string{},
+			Integrations:     []string{},
+		}
+
+		if verified, verr := database.IsUserEmailVerified(DB, u.ID); verr == nil {
+			details.EmailVerified = verified
+		}
+
+		if u.IsAutomated {
+			details.UserType = "automated"
+		}
+
+		// Assigned integration access.
+		if access, aerr := database.ListIntegrationAccessByUserID(DB, u.ID); aerr == nil {
+			for _, row := range access {
+				details.Integrations = append(details.Integrations, row.IntegrationName)
+			}
+		}
+
+		// Explicit capability permissions.
+		var permissions []database.Permission
+		if perr := DB.Where("user_id = ?", u.ID).Order("permission asc").Find(&permissions).Error; perr == nil {
+			for _, p := range permissions {
+				details.Permissions = append(details.Permissions, string(p.Permission))
+			}
 		}
 
 		// Get activity stats
@@ -108,10 +249,6 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 		var latestSession database.Session
 		if err := DB.Where("user_id = ?", u.ID).Order("created_at DESC").First(&latestSession).Error; err == nil {
 			details.LastLogin = &latestSession.CreatedAt
-		}
-
-		if u.IsAutomated {
-			details.UserType = "automated"
 		}
 
 		// Get chat counts (as participant in User1Id or User2Id)
@@ -132,6 +269,7 @@ func GetUsersWithDetails(w http.ResponseWriter, r *http.Request) {
 	response := PaginatedUsersData{
 		Pagination: pagination,
 		Users:      userDetails,
+		TotalUsers: totalUsers,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
