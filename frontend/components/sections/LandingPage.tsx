@@ -333,9 +333,9 @@ export function LandingHero({
     }, [accountManagementConfig?.signup_requires_admin_approval, hasSignupEnabled, setTab, signupGateResolved, tab])
 
     return <>
-        <div className="relative flex h-full min-h-0 flex-col">
+        <div className="relative flex min-h-full flex-col bg-secondary md:h-full md:min-h-0 md:bg-transparent">
             <div className="relative z-40 w-full md:absolute md:left-0 md:top-0 md:w-2/3">
-                <div className="flex w-full flex-col items-start bg-background/80 p-4 text-foreground backdrop-blur md:flex-row">
+                <div className="flex w-full flex-col items-start p-4 text-foreground md:flex-row md:bg-background/80 md:backdrop-blur">
                     <Text type={TextTypes.Heading5} tag="div" bold>
                         Open-Chat
                     </Text>
