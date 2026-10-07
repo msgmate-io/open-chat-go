@@ -1047,6 +1047,15 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
+	// Declared sandboxes are upserted (and their SSH server records registered)
+	// before the opencode/git bootstrap so a git workspace can bind to a
+	// declared template sandbox in this same startup pass.
+	dockerSandboxDefaultOwners := append([]string{}, openChatBootstrap.DockerSandboxDefaultOwners...)
+	dockerSandboxSpecs := append([]string{}, openChatBootstrap.DockerSandboxSpecs...)
+	if err := applyDockerSandboxBootstrapSources(DB, adminUser.Username, dockerSandboxDefaultOwners, dockerSandboxSpecs); err != nil {
+		return err
+	}
+
 	if err := applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs); err != nil {
 		return err
 	}
