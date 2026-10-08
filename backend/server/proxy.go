@@ -179,8 +179,7 @@ func mobileSessionCookieName(target *url.URL, sessionNamespace string) string {
 	if sessionNamespace != "" {
 		key = sessionNamespace + "|" + targetKey
 	}
-	// codeql[go/weak-sensitive-data-hashing] the input is a public proxy cookie
-	// name shared verbatim with the Android client, not a secret.
+	// codeql[go/weak-sensitive-data-hashing] -- input is a public, client-pinned cookie name, not sensitive data.
 	h := sha1.Sum([]byte(strings.ToLower(key)))
 	return "session_id_mobile_" + hex.EncodeToString(h[:])[:12]
 }
