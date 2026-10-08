@@ -1,8 +1,10 @@
 package chats
 
 import (
+	"encoding/json"
 	"testing"
 
+	"backend/chatstate"
 	"backend/database"
 )
 
@@ -49,6 +51,63 @@ func TestMessageHasPendingConfirmationRecognizesOpencodeQuestion(t *testing.T) {
 	}
 	if messageHasPendingConfirmation(cancelled) {
 		t.Fatalf("expected a cancelled opencode_question marker to be ignored")
+	}
+}
+
+func TestResolveInteractionStatusPendingQuestionBeatsRunningBackend(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "status-owner@example.com", false)
+	bot := createUserForChatsTest(t, DB, "status-bot@example.com", false)
+	bot.IsAutomated = true
+	if err := DB.Save(bot).Error; err != nil {
+		t.Fatalf("failed to mark bot automated: %v", err)
+	}
+
+	chat := database.Chat{User1Id: owner.ID, User2Id: bot.ID, ChatType: "interaction"}
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatalf("failed to create chat: %v", err)
+	}
+
+	shared := database.SharedChatConfig{
+		ChatId:     chat.ID,
+		ConfigData: json.RawMessage(`{"chat_backend":"status-test-backend"}`),
+	}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	if err := DB.Model(&chat).Update("shared_config_id", shared.ID).Error; err != nil {
+		t.Fatalf("failed to link shared config: %v", err)
+	}
+
+	text := "Should I plan for option A or option B?"
+	msg := database.Message{
+		ChatId:     chat.ID,
+		SenderId:   bot.ID,
+		ReceiverId: owner.ID,
+		DataType:   "text",
+		Text:       &text,
+		MetaData:   database.JSONRaw(`{"finished":true,"opencode_question":{"status":"pending","id":"que_1"}}`),
+	}
+	if err := DB.Create(&msg).Error; err != nil {
+		t.Fatalf("failed to create message: %v", err)
+	}
+
+	// Simulate the live OpenCode session still reporting "running" while the
+	// ask-only question is pending: the pending user action must win over the
+	// backend-running short-circuit so the chat shows needs_confirmation.
+	chatstate.RegisterBackendStateProvider("status-test-backend", func(string) (chatstate.BackendState, bool) {
+		return chatstate.BackendStateRunning, true
+	})
+
+	status, err := resolveInteractionStatus(DB, nil, chat)
+	if err != nil {
+		t.Fatalf("resolveInteractionStatus failed: %v", err)
+	}
+	if status.State != string(chatstate.StateNeedsConfirmation) {
+		t.Fatalf("expected needs_confirmation, got state=%q source=%q active=%v", status.State, status.Source, status.IsActive)
+	}
+	if status.IsActive {
+		t.Fatalf("expected IsActive=false while waiting on the user")
 	}
 }
 
