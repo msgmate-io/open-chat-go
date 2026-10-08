@@ -137,6 +137,23 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		Source:   "none",
 	}
 
+	// Pending user actions take precedence over backend activity: when the
+	// agent is waiting on the user (a confirmable action, an opencode
+	// permission prompt or an ask-only relay question) the interaction is not
+	// "active work" even if the backend session is still alive. This is what
+	// keeps the blue "needs confirmation" state visible while an ask-only
+	// question is paused, instead of the running backend short-circuit hiding
+	// it. Runs before the backend/queue checks below on purpose.
+	if hasPendingConfirmationInRecentMessages(DB, chat.ID) {
+		if latest, err := latestMessageForChat(DB, chat.ID); err == nil {
+			response.LatestMessageUUID = latest.UUID
+		}
+		response.State = string(chatstate.StateNeedsConfirmation)
+		response.IsActive = false
+		response.Source = "message_meta"
+		return response, nil
+	}
+
 	// External chat backends (eg opencode) run generations outside the bot
 	// reply queue, so their live activity is reported through a state
 	// provider instead of the queue.
@@ -184,15 +201,8 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	finished, _ := meta["finished"].(bool)
 	response.LatestMessageFinished = &finished
 
-	// A finished bot message that still carries a pending user confirmation
-	// (confirmable action or permission prompt) means the interaction is
-	// waiting on the user, not done.
-	if hasPendingConfirmationInRecentMessages(DB, chat.ID) {
-		response.State = string(chatstate.StateNeedsConfirmation)
-		response.IsActive = false
-		return response, nil
-	}
-
+	// A finished bot message that still carries a pending user confirmation was
+	// already handled by the early needs_confirmation check above.
 	if finished {
 		if errFlag, _ := meta["error"].(bool); errFlag {
 			response.State = string(chatstate.StateFailed)
