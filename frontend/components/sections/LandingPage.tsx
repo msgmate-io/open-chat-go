@@ -377,13 +377,13 @@ export function LandingHero({
             </div>
         </div>
         <div
-            className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
+            className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
             style={{ paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))" }}
         >
             <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                className="pointer-events-auto h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => navigateTo("/docs")}
             >
                 <BookOpen className="size-3.5" aria-hidden="true" />
@@ -395,7 +395,7 @@ export function LandingHero({
                 <Button
                     variant="ghost"
                     size="sm"
-                    className="relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                    className="pointer-events-auto relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
                     onClick={() => setIsVideoOpen(true)}
                 >
                     <PlayCircle className="size-3.5" aria-hidden="true" />
