@@ -154,6 +154,167 @@ func parseConfirmActionPayload(raw string) (map[string]interface{}, bool) {
 	return payload, true
 }
 
+// askPayloadType is the discriminator a tool result (or a promoted tool-call
+// row) carries to be surfaced as an open question with selectable options. The
+// related coder tools surface their questions through it; the frontend already
+// understands it.
+const askPayloadType = "open_question"
+
+// parseAskPayload detects an open_question payload in a tool result. It returns
+// false for any other tool result so unrelated tool outputs are left untouched.
+func parseAskPayload(raw string) (map[string]interface{}, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, false
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	typeValue, _ := payload["type"].(string)
+	if typeValue != askPayloadType {
+		return nil, false
+	}
+	return payload, true
+}
+
+// toolAskPayload tries to surface an open question that a paused coder ask call
+// (eg coder_ask in an interactive session) carries. The tool call pauses with a
+// pending confirmation whose result is the generic confirm-action payload, so
+// the question text and its selectable options would otherwise be lost: the
+// ask tool only stores the question in its persisted tool input, and the
+// earlier confirmaction backcompat path drops any options key the model sent
+// with it. The answer is keyed by the raw argument name, which is what the ask
+// tool re-emits as its resolved input.
+//
+// The payload carries the raw option values so the interactive frontend renders
+// them verbatim as a selectable widget. The options arm below accepts both a
+// []interface{} list (the shape tool inputs persist as) and a []string list (a
+// caller that built the arguments from a typed struct); a typed []string list
+// is converted to []interface{} so downstream JSON round-trips (map re-serialization
+// in the interactive confirm path) never turn it into a []float64.
+func toolAskPayload(toolCall map[string]interface{}) (map[string]interface{}, bool) {
+	name, _ := toolCall["name"].(string)
+	if strings.TrimSpace(name) != "coder_ask" {
+		return nil, false
+	}
+	status, _ := toolCall["status"].(string)
+	switch status {
+	case ToolCallStatusFailed:
+		return nil, false
+	case ToolCallStatusPendingConfirmation, ToolCallStatusOngoing, ToolCallStatusSucceeded, "pending", "":
+		// Promotable statuses: a pending/pending-confirmation call pauses the
+		// turn waiting for the answer, an ongoing call is mid-flight, a
+		// succeeded call carries the already-resolved arguments (the promoted
+		// tool-call row keeps the raw coder_ask input), and a missing status is
+		// treated as pending for robustness against varied persistence shapes.
+		// Only an explicit failure must never surface an open question.
+	default:
+		return nil, false
+	}
+
+	var args map[string]interface{}
+	switch raw := toolCall["arguments"].(type) {
+	case string:
+		if strings.TrimSpace(raw) == "" {
+			return nil, false
+		}
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			return nil, false
+		}
+	case map[string]interface{}:
+		args = raw
+	case nil:
+		return nil, false
+	default:
+		return nil, false
+	}
+
+	payload := map[string]interface{}{
+		"type":       askPayloadType,
+		"status":     "pending",
+		"confirmed":  false,
+		"prompt":     "",
+		"default":    "",
+		"options":    []interface{}{},
+		"answer_key": "",
+	}
+	if question, ok := args["question"].(string); ok && strings.TrimSpace(question) != "" {
+		payload["prompt"] = strings.TrimSpace(question)
+	}
+	if title, ok := args["title"].(string); ok && strings.TrimSpace(title) != "" {
+		payload["title"] = strings.TrimSpace(title)
+	}
+	if description, ok := args["description"].(string); ok && strings.TrimSpace(description) != "" {
+		payload["description"] = strings.TrimSpace(description)
+	}
+	if answerKey, ok := args["answer_key"].(string); ok && strings.TrimSpace(answerKey) != "" {
+		payload["answer_key"] = strings.TrimSpace(answerKey)
+	}
+	if defaultAnswer, ok := args["default"].(string); ok && strings.TrimSpace(defaultAnswer) != "" {
+		payload["default"] = strings.TrimSpace(defaultAnswer)
+	}
+	if options, ok := args["options"].([]interface{}); ok && len(options) > 0 {
+		payload["options"] = options
+	} else if options, ok := args["options"].([]string); ok && len(options) > 0 {
+		// Normalize a typed []string list into []interface{} so the JSON
+		// round-trip through a map never degrades it to []float64 (#945).
+		asInterface := make([]interface{}, len(options))
+		for i, option := range options {
+			asInterface[i] = option
+		}
+		payload["options"] = asInterface
+	}
+	return payload, true
+}
+
+// buildAskActionFromToolCall builds the user-facing open_question action from a
+// persisted tool-call row. The promote path keeps the raw coder_ask arguments
+// on the row (ci#724 promotion), so the title, description and selectable
+// options the model sent reach the chat UI unchanged.
+func buildAskActionFromToolCall(toolCall map[string]interface{}) (map[string]interface{}, bool) {
+	payload, ok := toolAskPayload(toolCall)
+	if !ok {
+		return nil, false
+	}
+
+	actionID, _ := toolCall["id"].(string)
+	if actionID == "" {
+		return nil, false
+	}
+	action := map[string]interface{}{
+		"action_id":        actionID,
+		"source_tool_name": toolCall["name"],
+		"target_tool_name": toolCall["name"],
+		"status":           "pending",
+		"type":             askPayloadType,
+		"created_at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	for _, key := range []string{"title", "description", "prompt", "default", "options", "answer_key"} {
+		if value, exists := payload[key]; exists {
+			action[key] = value
+		}
+	}
+	return action, true
+}
+
+// collectAskActions finds every pending coder ask call in the turn and promotes
+// it into a structured open_question that the chat UI renders as a selectable
+// options widget (ci#753).
+func collectAskActions(toolCalls []interface{}) []interface{} {
+	actions := make([]interface{}, 0)
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		action, promoted := buildAskActionFromToolCall(toolCall)
+		if promoted {
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
+
 func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	actions := make([]interface{}, 0)
 	for _, rawToolCall := range toolCalls {
@@ -1408,6 +1569,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				text = confirmableTurnPrompt(confirmableActions)
 			}
 		}
+		// ci#753: a pending coder ask call is promoted into an open_question the
+		// chat UI renders as a selectable options widget. The call already
+		// paused with a confirmable action, so this rides alongside rather than
+		// replacing that flow (and it is what carries the model-provided options
+		// that were previously dropped).
+		if askActions := collectAskActions(allToolCalls); len(askActions) > 0 {
+			metadata["ask_actions"] = askActions
+		}
 		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 			metadata["runtime_selectors"] = runtimeSelectors
 		}
@@ -1910,6 +2079,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				confirmableActions := collectConfirmableActions(allToolCalls)
 				if len(confirmableActions) > 0 {
 					partialMeta["confirmable_actions"] = confirmableActions
+				}
+				// ci#753: the streaming frame mirrors the finished-turn
+				// open_question promotion, so a pending coder ask call carries
+				// its selectable options even before the turn completes.
+				if askActions := collectAskActions(allToolCalls); len(askActions) > 0 {
+					partialMeta["ask_actions"] = askActions
 				}
 				if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 					partialMeta["runtime_selectors"] = runtimeSelectors
