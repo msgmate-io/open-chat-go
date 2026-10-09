@@ -188,7 +188,12 @@ exit codes above and runs in CI. The committed-file invariant is additionally
 pinned without Go by `development/scripts/tests/test_dep_surface_fixture.py`
 (module discovery over the `clients/integrations` checkout and the
 `--check-baseline` verdict), which `test_host_dep_boundary_ci.sh` runs
-together with the other hermetic checks.
+together with the other hermetic checks. That runner also executes
+`development/scripts/tests/test_committed_baselines.py`, which re-validates
+the *committed* `integrations.host-surface.json` and
+`integrations.dep-surface.json` through the same helper functions the guards
+use, so a follow-up cannot land a decoupling regression without a Go
+toolchain.
 
 ## Tools
 
