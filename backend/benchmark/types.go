@@ -44,9 +44,10 @@ const SchemaVersion = 1
 // FreeModel is one model from the registry that the sweep should target.
 // Only the model identifier is acted upon; everything else is provenance.
 type FreeModel struct {
-	ID     string `json:"model_id"`
-	Title  string `json:"title,omitempty"`
-	Source string `json:"registry_source,omitempty"` // file the entry came from
+	ID      string `json:"model_id"`
+	Title   string `json:"title,omitempty"`
+	Context int    `json:"context_window,omitempty"`  // registry context hint for the matrix
+	Source  string `json:"registry_source,omitempty"` // file the entry came from
 }
 
 // TestResult is the aggregated final outcome of one (model, test) pair.
@@ -94,6 +95,7 @@ type ModelReport struct {
 	Registry string       `json:"registry_source,omitempty"`
 	Counts   Counts       `json:"counts"`
 	PassRate string       `json:"pass_rate"`
+	Context  string       `json:"context_window,omitempty"`
 	Results  []TestResult `json:"results"`
 }
 
