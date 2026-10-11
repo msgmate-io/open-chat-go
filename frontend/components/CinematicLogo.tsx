@@ -11,15 +11,18 @@ export function CinematicLogo({
   size = 240,
   defaultClass = "",
   logoUrl = image,
+  // When fluid, the logo fills its (responsive) parent instead of forcing a
+  // fixed pixel square, so callers can clamp it to the viewport.
+  fluid = false,
+}: {
+  className?: string;
+  onClick?: () => void;
+  clickedClass?: string;
+  size?: number;
+  defaultClass?: string;
+  logoUrl?: string;
+  fluid?: boolean;
 }) {
-  <div className="absolute inset-0 "
-      style={{
-          backgroundImage: `url(${logoUrl})`,
-          backgroundSize: 'cover',
-          filter: 'grayscale(100%)',
-      }}
-  >
-  </div>
   const [logoClicked, setLogoClicked] = useState(false);
 
   const handleLogoClick = () => {
@@ -30,11 +33,12 @@ export function CinematicLogo({
   return (
       <div
           className={cn(
-              `w-[${size}px] h-[${size}px] relative`,
+              fluid ? "size-full" : `w-[${size}px] h-[${size}px]`,
+              "relative",
               className,
               logoClicked ? clickedClass : defaultClass
           )}
-          style={{
+          style={fluid ? undefined : {
               width: `${size}px`,
               height: `${size}px`
           }}
