@@ -80,6 +80,8 @@ func TestClassifyShellCommand(t *testing.T) {
 		"FOO=bar grep -rn x backend | head -5":     BashCategoryRepoInspection,
 		"kubectl logs deploy/open-chat --tail 100": BashCategoryIntegrationCLI,
 		"docker ps --format '{{.Names}}'":          BashCategoryIntegrationCLI,
+		"gh pr checks 873 --watch":                 BashCategoryGitHubWait,
+		"gh run watch 123456789":                   BashCategoryGitHubWait,
 		"my-unrecognised-tool --flags":             BashCategoryResidualShell,
 		"":                                         BashCategoryResidualShell,
 	}
@@ -141,6 +143,12 @@ func TestComputeBashCoverage(t *testing.T) {
 	}
 	if report.ShippedCalls != 3 {
 		t.Fatalf("the shipped gh/git calls must be counted as shipped, got %d", report.ShippedCalls)
+	}
+	if report.ResidualCalls != 1 {
+		t.Fatalf("only the unrecognised call stays on the residual shell, got %d", report.ResidualCalls)
+	}
+	if report.ShippedRatio != 0.6 {
+		t.Fatalf("3 of 5 classified calls are shipped typed work, got %v", report.ShippedRatio)
 	}
 	byID := map[string]BashCoverageBucket{}
 	for _, bucket := range report.Buckets {
