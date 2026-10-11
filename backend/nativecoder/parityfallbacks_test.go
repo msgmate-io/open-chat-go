@@ -126,7 +126,7 @@ func TestParityFallbackValidationRejectsDrift(t *testing.T) {
 // uses: whitespace around a copied gap id must not lose the guidance, while an
 // empty or unknown id is reported as absent instead of returning an empty line.
 func TestParityFallbackLookupIsForgiving(t *testing.T) {
-	if _, ok := ParityFallbackFor("  multi_edit_patch  "); !ok {
+	if _, ok := ParityFallbackFor("  subagents  "); !ok {
 		t.Fatal("padded gap id did not resolve")
 	}
 	for _, id := range []string{"", "   ", "not_a_gap"} {
