@@ -49,6 +49,32 @@ func EnsureAccountStateRowForUser(DB *gorm.DB, user *User) error {
 	).Error
 }
 
+// IsUserSuspended reports whether the account_management integration flagged
+// the account as administratively suspended. It reads the shared
+// `account_states` table the same way email verification does, and degrades to
+// "not suspended" when the integration (and therefore its table) is not
+// compiled into this build.
+func IsUserSuspended(DB *gorm.DB, userID uint) (bool, error) {
+	if DB == nil || userID == 0 {
+		return false, nil
+	}
+	if !DB.Migrator().HasTable("account_states") {
+		return false, nil
+	}
+
+	var row struct {
+		Suspended bool `gorm:"column:suspended"`
+	}
+	err := DB.Table("account_states").Select("suspended").Where("user_id = ?", userID).Take(&row).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return row.Suspended, nil
+}
+
 func IsUserEmailVerified(DB *gorm.DB, userID uint) (bool, error) {
 	if DB == nil || userID == 0 {
 		return true, nil

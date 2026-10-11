@@ -307,6 +307,22 @@ func enforceEmailVerificationForAPI(DB *gorm.DB, r *http.Request, userID uint) e
 	return errors.New("email verification required")
 }
 
+// enforceAccountNotSuspended blocks requests from accounts the
+// account_management integration has administratively suspended. It writes the
+// response and returns false when the request must not proceed.
+func enforceAccountNotSuspended(DB *gorm.DB, userID uint, w http.ResponseWriter) bool {
+	suspended, err := database.IsUserSuspended(DB, userID)
+	if err != nil {
+		http.Error(w, "Unable to load account state", http.StatusInternalServerError)
+		return false
+	}
+	if suspended {
+		http.Error(w, "account suspended", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func cookieSecureFromRequest(r *http.Request) bool {
 	return r != nil && (r.TLS != nil ||
 		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") ||
@@ -379,6 +395,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		if user, accessToken, ok := resolveUserFromBearerToken(DB, r); ok {
+			if !enforceAccountNotSuspended(DB, user.ID, w) {
+				return
+			}
 			if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
 				http.Error(w, "email verification required", http.StatusForbidden)
 				return
@@ -414,6 +433,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 		if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
 			http.Error(w, "Unable to load user state", http.StatusInternalServerError)
+			return
+		}
+		if !enforceAccountNotSuspended(DB, user.ID, w) {
 			return
 		}
 		if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
@@ -466,6 +488,11 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Suspended accounts are treated as anonymous on optional-auth routes.
+		if suspended, err := database.IsUserSuspended(DB, user.ID); err != nil || suspended {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -550,6 +577,12 @@ func FrontendAuthMiddleware(next http.Handler) http.Handler {
 		var currentUser database.User
 		if err := DB.First(&currentUser, "id = ?", session.UserId).Error; err != nil {
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		if suspended, err := database.IsUserSuspended(DB, currentUser.ID); err == nil && suspended {
+			clearSessionCookie(w, r)
+			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 
