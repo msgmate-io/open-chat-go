@@ -49,6 +49,8 @@ backend/uploads/*
 backend/open-chat.json
 open-chat.json
 .open-chat.json
+# The Debian/APT package ships a tracked default conffile for /etc/open-chat.
+!development/packaging/open-chat.json
 .sandbox-results/
 .android-ci-results/
 .ci-sandbox-*.env
