@@ -779,15 +779,13 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
-          # Two cache backends: the GitHub Actions cache is fastest to restore on
-          # hosted runners, and GHCR is durable across runs/eviction. Both are
-          # layer caches (mode=max also caches intermediate stages).
-          cache-from: |
-            type=gha,scope=build-full
-            type=registry,ref=${{ steps.image.outputs.cache_ref }}
-          cache-to: |
-            type=gha,scope=build-full,mode=max
-            type=registry,ref=${{ steps.image.outputs.cache_ref }},mode=max
+          # Registry layer cache (mode=max also caches intermediate stages).
+          # Measured: adding a second type=gha,mode=max exporter pushed the
+          # "Build Backend Image Once" job from ~5m21s to ~6m10s - the GHA cache
+          # export alone took ~92s, so the durable GHCR cache is the only
+          # backend worth keeping here.
+          cache-from: type=registry,ref=${{ steps.image.outputs.cache_ref }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.cache_ref }},mode=max
 
       - name: Print built image provenance
         run: |
@@ -854,12 +852,8 @@ jobs:
             # core-only smoke build: no integration frontend pages are linked,
             # so an empty frontend stage is enough.
             FRONTEND_STAGE=frontend_empty
-          cache-from: |
-            type=gha,scope=build-core-only
-            type=registry,ref=${{ steps.image.outputs.cache_ref }}
-          cache-to: |
-            type=gha,scope=build-core-only,mode=max
-            type=registry,ref=${{ steps.image.outputs.cache_ref }},mode=max
+          cache-from: type=registry,ref=${{ steps.image.outputs.cache_ref }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.cache_ref }},mode=max
 
       - name: Start backend from core-only image for smoke test
         env:
