@@ -139,14 +139,14 @@ func TestComputeBashCoverage(t *testing.T) {
 	if report.CoverageRatio <= 0.79 || report.CoverageRatio >= 0.81 {
 		t.Fatalf("coverage ratio %v should be ~0.8", report.CoverageRatio)
 	}
-	if report.ShippedCalls != 3 {
-		t.Fatalf("the shipped gh/git calls must be counted as shipped, got %d", report.ShippedCalls)
+	if report.ShippedCalls != 4 {
+		t.Fatalf("the shipped gh/git/go calls must be counted as shipped, got %d", report.ShippedCalls)
 	}
 	byID := map[string]BashCoverageBucket{}
 	for _, bucket := range report.Buckets {
 		byID[bucket.Category] = bucket
 	}
-	if byID[BashCategoryGitHubCLI].Calls != 2 || byID[BashCategoryBuildTestRun].Calls != 1 {
+	if byID[BashCategoryGitHubCLI].Calls != 2 || byID[BashCategoryBuildTestRun].Calls != 1 || !byID[BashCategoryBuildTestRun].Shipped {
 		t.Fatalf("unexpected buckets %+v", byID)
 	}
 	if byID[BashCategoryResidualShell].Calls != 1 || byID[BashCategoryResidualShell].Expressible {
