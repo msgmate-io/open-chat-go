@@ -205,7 +205,15 @@ func loadOpenChatConfig(raw []byte, source string) (openChatConfig, error) {
 	}
 
 	if cfg, err := decodeOpenChatConfigJSON(raw, source); err == nil {
-		return cfg, nil
+		// The strict JSON fast-path does not resolve "$anchors." references;
+		// only the YAML path below does. JSON is a subset of YAML and tooling
+		// (e.g. the CI config-delta publisher) emits minified JSON, so a JSON
+		// config must resolve references exactly like its YAML equivalent:
+		// fall through to the resolution path when the document still carries
+		// a "$anchors." marker instead of returning the raw reference strings.
+		if !bytes.Contains(raw, []byte(openChatYamlRefPrefix)) {
+			return cfg, nil
+		}
 	} else if !isOpenChatConfigSyntaxError(err) {
 		return openChatConfig{}, err
 	}
