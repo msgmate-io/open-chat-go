@@ -413,6 +413,7 @@ func BackendRouting(
 	filesHandler := &files.FilesHandler{}
 	integrationsHandler := &apiintegrations.IntegrationsHandler{}
 	toolsHandler := &tools.ToolsHandler{}
+	mcpServerHandler := &tools.MCPServerHandler{}
 	modelsHandler := &models.ModelsHandler{}
 	botsHandler := &bots.BotsHandler{}
 
@@ -454,6 +455,9 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/{tool_name}/enqueue", toolsHandler.EnqueueTool)
 	v1PrivateApis.HandleFunc("GET /interactions/{chat_uuid}/tools", toolsHandler.GetAvailableTools)
 	v1PrivateApis.HandleFunc("POST /interactions/{chat_uuid}/tools/init", toolsHandler.StoreToolInitData)
+
+	// Open-Chat MCP server (read-only interaction history) for coding agents.
+	v1PrivateApis.HandleFunc("POST /mcp", mcpServerHandler.HandleMCP)
 
 	v1PrivateApis.HandleFunc("POST /contacts/add", contactsHandler.Add)
 	v1PrivateApis.HandleFunc("GET  /contacts/list", contactsHandler.List)
