@@ -2,6 +2,7 @@ package user
 
 import (
 	"backend/database"
+	"backend/secretstore"
 	"gorm.io/gorm"
 	"net/http"
 	"strings"
@@ -52,6 +53,9 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// Drop any cached secret authorization bound to these sessions.
+	secretstore.RevokeSessions(tokens...)
 
 	// Clear the cookie by setting an expired cookie
 	http.SetCookie(w, &http.Cookie{
