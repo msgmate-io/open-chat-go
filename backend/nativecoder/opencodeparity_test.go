@@ -100,7 +100,7 @@ func TestPendingParityToolsAreOutsideTheCurrentSurface(t *testing.T) {
 			t.Errorf("pending tool %q is already part of the coder surface", tool)
 		}
 	}
-	for _, want := range []string{"coder_patch", "coder_codesearch", "coder_mcp_call"} {
+	for _, want := range []string{"coder_codesearch", "coder_mcp_call"} {
 		found := false
 		for _, tool := range pending {
 			if tool == want {
@@ -141,7 +141,7 @@ func TestRetirementParityBlockersListOpenGaps(t *testing.T) {
 		t.Fatal("expected opencode parity to block retirement while gaps are open")
 	}
 	joined := strings.Join(blockers, "\n")
-	for _, want := range []string{"multi_edit_patch", "mcp_servers", "subagents"} {
+	for _, want := range []string{"code_search_and_lsp", "mcp_servers", "subagents"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("blockers do not mention gap %q:\n%s", want, joined)
 		}
@@ -201,7 +201,7 @@ func TestParityBlockersAreTheOnlyGateOnceTheRolloutIsComplete(t *testing.T) {
 		RetainedParity:   ParityRetentionEntries(),
 	})
 	joinedReadiness := strings.Join(readiness, "\n")
-	if !strings.Contains(joinedReadiness, "multi_edit_patch") {
+	if !strings.Contains(joinedReadiness, "code_search_and_lsp") {
 		t.Fatalf("the composed retirement gate must report the open ci#394 gaps, got %v", readiness)
 	}
 	if strings.Contains(joinedReadiness, "still runs opencode") {

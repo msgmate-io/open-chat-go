@@ -33,8 +33,6 @@ const ParityFallbackVersion = 1
 // use with the current coder surface. Keep the gap ids in sync with
 // openCodeParityRegistry; ValidateParityFallbackGuidance fails on drift.
 var parityFallbackGuidance = map[string]string{
-	"multi_edit_patch": "Apply a refactor as a sequence of coder_edit calls, or write the changed files and " +
-		"let coder_bash apply one generated patch (git apply) when there are many hunks.",
 	"image_and_structured_reads": "Ask for a textual description instead of the image, and inspect " +
 		"structured documents by filtering them with coder_grep - a screenshot or a notebook has to be " +
 		"reduced to text before the model sees it.",
