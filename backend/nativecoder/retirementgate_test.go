@@ -98,14 +98,14 @@ func TestEvaluateBashRetirementPhasesBlocksOverThresholdShare(t *testing.T) {
 // A category whose typed surface the plan does not yet ship blocks its phase
 // even at zero observed share: the gate reads the registry, not the bucket.
 func TestEvaluateBashRetirementPhasesBlocksUnshippedSurface(t *testing.T) {
-	unshipped := mustCategory(t, BashCategoryBuildTestRun)
+	unshipped := mustCategory(t, BashCategoryEnvProbing)
 	if unshipped.Shipped {
 		t.Fatalf("precondition: %q is expected to be unshipped in the plan", unshipped.ID)
 	}
 	gates := EvaluateBashRetirementPhases(reportFor(0.01, 100))
-	gate := phaseGateByID(t, gates, "phase_2_build_test_run")
+	gate := phaseGateByID(t, gates, unshipped.Phase)
 	if gate.Ready {
-		t.Fatalf("phase_2_build_test_run must not be ready while its surface is unshipped")
+		t.Fatalf("%s must not be ready while its surface is unshipped", unshipped.Phase)
 	}
 	entry := categoryGateByID(t, gate.Categories, unshipped.ID)
 	if entry.Shipped || entry.Retired {
