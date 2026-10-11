@@ -51,6 +51,13 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Resolve build cache ref
+        id: cache
+        run: |
+          set -euo pipefail
+          REPO="$(echo "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          echo "ref=${REGISTRY}/${REPO}:buildcache-core-only" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -58,3 +65,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ steps.cache.outputs.ref }}
+          cache-to: type=registry,ref=${{ steps.cache.outputs.ref }},mode=max
