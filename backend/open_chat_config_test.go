@@ -501,6 +501,48 @@ func TestLoadOpenChatConfigYamlUnknownNamedAnchorRef(t *testing.T) {
 	}
 }
 
+// TestLoadOpenChatConfigJSONResolvesTrailingAnchors guards against the JSON
+// fast-path bypassing "$anchors." reference resolution. Minified JSON (as
+// emitted by the CI config-delta publisher) is valid YAML too, so a JSON
+// config must resolve its trailing anchors exactly like the YAML variant;
+// otherwise long artifacts (SSH private keys, kubeconfigs) reach the runtime
+// as the literal "$anchors.<name>" string and break bootstrap.
+func TestLoadOpenChatConfigJSONResolvesTrailingAnchors(t *testing.T) {
+	raw := []byte(`{"env":{"NODE_VERSION":"$anchors.node_version"},"bootstrap":{"ssh":{"owner":"admin","keys":[{"name":"sandbox-key","private_key":"$anchors.ssh_key"}]}},"anchors":{"node_version":"16","ssh_key":"vault-key-data"}}`)
+
+	cfg, err := loadOpenChatConfig(raw, "minified json config")
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected minified JSON config: %v", err)
+	}
+	if cfg.Env["NODE_VERSION"] != "16" {
+		t.Fatalf("JSON $anchors reference did not resolve: %#v", cfg.Env["NODE_VERSION"])
+	}
+	if cfg.Bootstrap == nil || cfg.Bootstrap.SSH == nil {
+		t.Fatalf("expected bootstrap.ssh to be parsed from JSON config")
+	}
+	var keys []struct {
+		Name       string `json:"name"`
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.Unmarshal(cfg.Bootstrap.SSH.Keys, &keys); err != nil {
+		t.Fatalf("failed decoding ssh keys: %v", err)
+	}
+	if len(keys) != 1 || keys[0].PrivateKey != "vault-key-data" {
+		t.Fatalf("JSON $anchors reference did not resolve in ssh key: %#v", keys)
+	}
+}
+
+// TestLoadOpenChatConfigJSONUnknownAnchorRef makes sure an unknown reference in
+// a JSON config fails with a helpful message instead of passing the literal
+// marker through to the runtime.
+func TestLoadOpenChatConfigJSONUnknownAnchorRef(t *testing.T) {
+	raw := []byte(`{"env":{"NODE_VERSION":"$anchors.does_not_exist"},"anchors":{"other":"x"}}`)
+	_, err := loadOpenChatConfig(raw, "minified json config")
+	if err == nil || !strings.Contains(err.Error(), "does_not_exist") {
+		t.Fatalf("expected unknown-anchor reference error from JSON config, got %v", err)
+	}
+}
+
 // TestCIMsgmateYamlConfigLoads guards the YAML CI config variant (anchors +
 // multi-line kubeconfigs / SSH keys) against loader regressions.
 func TestCIMsgmateYamlConfigLoads(t *testing.T) {
