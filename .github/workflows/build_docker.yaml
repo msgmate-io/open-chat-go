@@ -65,5 +65,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ steps.cache.outputs.ref }}
-          cache-to: type=registry,ref=${{ steps.cache.outputs.ref }},mode=max
+          cache-from: |
+            type=gha,scope=build-core-only
+            type=registry,ref=${{ steps.cache.outputs.ref }}
+          cache-to: |
+            type=gha,scope=build-core-only,mode=max
+            type=registry,ref=${{ steps.cache.outputs.ref }},mode=max

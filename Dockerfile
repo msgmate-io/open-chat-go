@@ -44,6 +44,13 @@ ENV OPENCHAT_NO_SETUP=1
 WORKDIR /backend
 
 RUN apk add --no-cache gcc musl-dev bash libc6-compat python3 py3-pip py3-yaml git
+# Warm the Go standard-library build cache once and stash it at /gocache. This
+# layer depends only on the Go toolchain, NOT on the application source, so it
+# survives every source/integration change and is reused from the layer cache
+# (gha/registry). The builder stage seeds its build-cache mount from /gocache
+# before compiling, which removes the (large) std re-compile from every build.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build std && mkdir -p /gocache && cp -a /root/.cache/go-build/. /gocache/
 # Integration manifest + build tooling. The manifest lives at the image root
 # (repo root) so the manager resolves the same relative paths as on the host:
 # /clients/integrations/<name> and /backend/go.work.
@@ -83,11 +90,13 @@ ARG MVPAPP_VERSION=dockerbuild
 RUN ls -alt
 # Cache the Go module download, the compiler's content-addressed build cache and
 # the repo-local tool bin (swag) so incremental builds only recompile the
-# packages that actually changed instead of the whole dependency tree.
+# packages that actually changed instead of the whole dependency tree. The
+# build cache is seeded from the source-independent /gocache layer (pre-warmed
+# std) before building.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/backend/.tools \
-    bash full_build.sh --no-frontend
+    bash -c 'cp -a /gocache/. /root/.cache/go-build/ 2>/dev/null || true; bash full_build.sh --no-frontend'
 RUN mkdir -p /backend/little_world_default_bots \
   && if [ -d /clients/integrations/admin_db_managemnt_integration/little_world_default_bots ]; then \
        cp -a /clients/integrations/admin_db_managemnt_integration/little_world_default_bots/. /backend/little_world_default_bots/; \
