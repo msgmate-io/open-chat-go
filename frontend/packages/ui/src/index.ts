@@ -26,6 +26,10 @@ export {
   SMALL_SCREEN_MAX_HEIGHT,
   isSmallScreenViewport,
   clampCssSize,
+  AUTH_SHELL_CLASSES,
+  AUTH_BODY_CLASSES,
+  AUTH_PANEL_CLASSES,
+  AUTH_CONTENT_CLASSES,
 } from "./lib/responsive";
 
 export { Button, buttonVariants } from "./components/button";

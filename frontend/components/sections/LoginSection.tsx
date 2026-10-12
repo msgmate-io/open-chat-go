@@ -206,6 +206,13 @@ export default function LoginHero({
 
     return (
         <div className="flex flex-col relative w-full gap-0">
+            {isMobileRuntime && (
+                <div className="pb-3">
+                    <MobileServerSelector
+                        onStatus={(message) => setError({ non_field_errors: message })}
+                    />
+                </div>
+            )}
             <FormProvider {...form}>
                 <form id="login-form" className="flex flex-col gap-0" onSubmit={form.handleSubmit(onSubmit)}>
                 <FormField
@@ -296,13 +303,6 @@ export default function LoginHero({
                     {form.formState.isSubmitting && <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />}
                     Login
                 </Button>
-                {isMobileRuntime && (
-                    <div className="pt-2">
-                        <MobileServerSelector
-                            onStatus={(message) => setError({ non_field_errors: message })}
-                        />
-                    </div>
-                )}
                 {errors?.non_field_errors && (
                     <Text type={TextTypes.Body6} color="destructive" center tag="span">
                         {error?.non_field_errors}
