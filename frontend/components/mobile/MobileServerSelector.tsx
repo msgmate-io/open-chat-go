@@ -20,7 +20,9 @@ import {
   addMobileServer,
   backupMobileServerData,
   clearMobileServerOpencodeConfig,
+  isMobileServerAuthenticatedWithProbe,
   type MobileServerConfig,
+  probeActiveMobileServerAuthenticated,
   readMobileAppConfig,
   readMobileServerOpencodeConfig,
   readMobileServerLogs,
@@ -87,6 +89,7 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
   const [configPreviewTruncated, setConfigPreviewTruncated] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetFinalConfirmOpen, setResetFinalConfirmOpen] = useState(false);
+  const [probedActiveAuth, setProbedActiveAuth] = useState(false);
 
   const refresh = useCallback(() => {
     const config = readMobileAppConfig();
@@ -94,9 +97,27 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
     setActiveServerId(config.activeServerId);
   }, []);
 
+  // Confirm the active server's session against the backend. The native cookie
+  // jar read can miss right after login (or on a cold start), so the live probe
+  // is what reliably flips the selector to "Auth" once a real session exists -
+  // including after a Google login, which replies through the proxy.
+  const probeActiveAuth = useCallback(() => {
+    let cancelled = false;
+    void probeActiveMobileServerAuthenticated().then((authenticated) => {
+      if (!cancelled) {
+        setProbedActiveAuth(authenticated);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => probeActiveAuth(), [probeActiveAuth, activeServerId]);
 
   // Re-read the native config whenever the app/page regains focus. The native
   // host derives `isAuthenticated` from the persisted session cookie, so this is
@@ -112,6 +133,9 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
     const refreshFromNative = () => {
       refresh();
       setIsSelectingConfig(false);
+      void probeActiveMobileServerAuthenticated().then((authenticated) => {
+        setProbedActiveAuth(authenticated);
+      });
     };
 
     const onVisibilityChange = () => {
@@ -136,8 +160,11 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
   );
 
   const hasAuthenticated = useMemo(
-    () => servers.some((server) => server.isAuthenticated === true),
-    [servers],
+    () =>
+      servers.some((server) =>
+        isMobileServerAuthenticatedWithProbe(server, activeServerId, probedActiveAuth),
+      ),
+    [servers, activeServerId, probedActiveAuth],
   );
 
   const openCreate = () => {
@@ -313,7 +340,7 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
                   {activeServer?.upstreamUrl}
                 </Text>
               </div>
-              {activeServer?.isAuthenticated ? (
+              {isMobileServerAuthenticatedWithProbe(activeServer, activeServerId, probedActiveAuth) ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">
                   <CheckCircle2 className="h-3 w-3" />
                   Auth
@@ -355,7 +382,7 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
                       {isActive && (
                         <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">Active</span>
                       )}
-                      {server.isAuthenticated ? (
+                      {isMobileServerAuthenticatedWithProbe(server, activeServerId, probedActiveAuth) ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">
                           <CheckCircle2 className="h-3 w-3" />
                           Auth
