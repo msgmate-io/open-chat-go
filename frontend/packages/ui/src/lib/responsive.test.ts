@@ -4,6 +4,7 @@ import {
   AUTH_CONTENT_CLASSES,
   AUTH_PANEL_CLASSES,
   AUTH_SHELL_CLASSES,
+  AUTH_THEME_TOGGLE_CLASSES,
   SMALL_SCREEN_MAX_HEIGHT,
   SMALL_SCREEN_MAX_WIDTH,
   clampCssSize,
@@ -95,5 +96,17 @@ describe("auth shell layout classes", () => {
       expect(tokens).toContain("justify-start")
       expect(tokens).toContain("md:justify-center")
     }
+  })
+
+  it("floats the theme toggle to the header corner on small viewports only", () => {
+    const tokens = AUTH_THEME_TOGGLE_CLASSES.split(/\s+/)
+    // Pinned to the top-right so it lines up with the page header instead of
+    // taking its own row below it.
+    expect(tokens).toContain("absolute")
+    expect(tokens).toContain("right-0")
+    expect(tokens).toContain("top-0")
+    // Desktop keeps the toggle in the panel flow, right-aligned.
+    expect(tokens).toContain("md:static")
+    expect(tokens).toContain("md:w-full")
   })
 })
