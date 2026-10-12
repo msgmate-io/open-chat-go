@@ -14,8 +14,12 @@ import {
   TextTypes,
   clearPendingMobileSharedItems,
   isMobileAppRuntime,
+  readMobileAppConfig,
   readPendingMobileSharedFileBase64,
   readPendingMobileSharedItems,
+  resolveMobileServerAuthSelection,
+  setActiveMobileServer,
+  type MobileServerAuthSelection,
   type PendingMobileSharedItem,
 } from "@open-chat-go/ui";
 import { File as FileIcon, Image as ImageIcon, Link as LinkIcon, X } from "lucide-react";
@@ -87,6 +91,8 @@ export default function Page() {
   const [isUploading, setIsUploading] = useState(true);
   const [isLoadingBots, setIsLoadingBots] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+  const [authSelection, setAuthSelection] = useState<MobileServerAuthSelection | null>(null);
+  const [activeAuthenticated, setActiveAuthenticated] = useState<boolean | null>(null);
   const objectUrls = useRef<string[]>([]);
 
   useEffect(() => {
@@ -103,6 +109,14 @@ export default function Page() {
     }
 
     setItems(result.items);
+
+    // Detect already-authenticated servers. `isAuthenticated` comes from the
+    // native host reading the persisted session cookie, so a server that was
+    // logged in during a previous session is recognised too. When the active
+    // server is not authenticated but another configured one is, the UI offers
+    // to switch to it (see below), so sharing goes through without a new login.
+    setAuthSelection(resolveMobileServerAuthSelection(readMobileAppConfig()));
+
     void prepareItems(result.items);
     void loadBots();
 
@@ -192,10 +206,15 @@ export default function Page() {
   const loadBots = async () => {
     setIsLoadingBots(true);
     try {
-      const [contactsResponse, botsResponse] = await Promise.all([
+      const [selfResponse, contactsResponse, botsResponse] = await Promise.all([
+        fetch("/api/v1/user/self", { credentials: "include" }),
         fetch("/api/v1/contacts/list?limit=200&page=1", { credentials: "include" }),
         fetch("/api/v1/bots/list?include_public=true&limit=200&page=1", { credentials: "include" }),
       ]);
+
+      // Confirm the real session for the active server instead of trusting a UI
+      // hint: this reflects an authentication that persists across app restarts.
+      setActiveAuthenticated(selfResponse.ok);
 
       const contacts: ContactsResponse = contactsResponse.ok ? await contactsResponse.json() : { rows: [] };
       const bots: BotsResponse = botsResponse.ok ? await botsResponse.json() : { rows: [] };
@@ -233,10 +252,32 @@ export default function Page() {
 
       setBotContacts(Array.from(byToken.values()).sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
+      setActiveAuthenticated(false);
       setBotContacts([]);
     } finally {
       setIsLoadingBots(false);
     }
+  };
+
+  const signIn = () => {
+    const target = "/mobile/share";
+    const query = `redirect=${encodeURIComponent(target)}&next=${encodeURIComponent(target)}`;
+    navigate(`/login?${query}`);
+  };
+
+  const switchToRecommendedServer = () => {
+    const target = authSelection?.recommended;
+    if (!target) {
+      return;
+    }
+    const result = setActiveMobileServer(target.id);
+    if (!result.ok) {
+      setStatus(result.message || "Failed to switch server");
+      return;
+    }
+    // The native host restarts the backend and reopens /mobile/share with the
+    // shared items intact, so the share is preserved across the switch.
+    setStatus(`Switching to “${target.label}”…`);
   };
 
   const filteredBots = useMemo(() => {
@@ -283,6 +324,24 @@ export default function Page() {
               Server
             </Text>
             <MobileServerSelector onStatus={setStatus} className="w-full" />
+            {activeAuthenticated === true && authSelection?.active ? (
+              <Text type={TextTypes.Body7} className="text-emerald-600">
+                Signed in to {authSelection.active.label}.
+              </Text>
+            ) : activeAuthenticated === false ? (
+              <div className="space-y-1">
+                <Text type={TextTypes.Body7} className="text-amber-600">
+                  {authSelection?.recommended
+                    ? `Not signed in to this server. ${authSelection.recommended.label} is authenticated.`
+                    : "No authenticated server found. Sign in to share."}
+                </Text>
+                {authSelection?.recommended ? (
+                  <Button type="button" variant="outline" size="sm" onClick={switchToRecommendedServer}>
+                    Switch to {authSelection.recommended.label}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-4 space-y-2">
@@ -372,9 +431,14 @@ export default function Page() {
                 <LoadingSpinner />
               </div>
             ) : filteredBots.length === 0 ? (
-              <Text type={TextTypes.Body6} color="muted">
-                No bots available. Sign in to your server and try again.
-              </Text>
+              <div className="flex flex-col items-start gap-2">
+                <Text type={TextTypes.Body6} color="muted">
+                  No bots available. Sign in to your server and try again.
+                </Text>
+                <Button type="button" variant="outline" size="sm" onClick={signIn}>
+                  Sign in
+                </Button>
+              </div>
             ) : (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {filteredBots.map((bot) => (
