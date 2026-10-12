@@ -59,6 +59,15 @@ func ValidateToolsAndInitConfigWithResolver(toolsRaw interface{}, toolInitRaw in
 			initPayload, has = toolInitMap[actualName]
 		}
 		if !has {
+			// A tool may require init data (RequiresInit) so the runtime
+			// injects its context at call time, while its init schema needs no
+			// manually configured fields. Such a tool must not force every bot
+			// that lists it to also carry a redundant tool_init entry, or a
+			// config delta can leave the bot half-configured and rejected. Only
+			// fail when the schema actually requires fields the config omits.
+			if err := ValidatePayloadAgainstSchema(map[string]interface{}{}, tool.GetToolInitSchema(), true); err == nil {
+				continue
+			}
 			return fmt.Errorf("missing tool_init for required tool %q", configuredName)
 		}
 		if err := ValidatePayloadAgainstSchema(initPayload, tool.GetToolInitSchema(), true); err != nil {
