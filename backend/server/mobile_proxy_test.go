@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,9 +13,11 @@ import (
 )
 
 type capturedProxyRequest struct {
-	Host   string
-	Origin string
-	Path   string
+	Host           string
+	Origin         string
+	Path           string
+	ForwardedProto string
+	ForwardedHost  string
 }
 
 type proxyRequestRecorder struct {
@@ -26,9 +29,11 @@ func (rec *proxyRequestRecorder) record(r *http.Request) {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	rec.requests = append(rec.requests, capturedProxyRequest{
-		Host:   r.Host,
-		Origin: r.Header.Get("Origin"),
-		Path:   r.URL.Path,
+		Host:           r.Host,
+		Origin:         r.Header.Get("Origin"),
+		Path:           r.URL.Path,
+		ForwardedProto: r.Header.Get("X-Forwarded-Proto"),
+		ForwardedHost:  r.Header.Get("X-Forwarded-Host"),
 	})
 }
 
@@ -126,6 +131,74 @@ func TestMobileProxyKeepsOriginForNonUpgradeRequests(t *testing.T) {
 	if got.Origin != "http://localhost:1984" {
 		t.Fatalf("expected original Origin to be preserved for non-upgrade, got %q", got.Origin)
 	}
+}
+
+func TestMobileProxyForwardsBrowserSchemeToUpstream(t *testing.T) {
+	recorder := &proxyRequestRecorder{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.record(r)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	withMobileProxyRuntimeConfig(t, upstream.URL)
+
+	config := setupServerTestDB(t)
+	DB := database.SetupDatabase(*config)
+	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/account_management/config", nil)
+	req.Host = "127.0.0.1:1984"
+
+	httpRecorder := httptest.NewRecorder()
+	router.ServeHTTP(httpRecorder, req)
+
+	if httpRecorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 from proxied request, got %d", httpRecorder.Code)
+	}
+
+	got := recorder.last(t)
+	if got.ForwardedProto != "http" {
+		t.Fatalf("expected upstream X-Forwarded-Proto %q, got %q", "http", got.ForwardedProto)
+	}
+	if got.ForwardedHost != "127.0.0.1:1984" {
+		t.Fatalf("expected upstream X-Forwarded-Host %q, got %q", "127.0.0.1:1984", got.ForwardedHost)
+	}
+}
+
+func TestRewriteMobileProxyForwardedProto(t *testing.T) {
+	cases := []struct {
+		name       string
+		existing   string
+		tls        bool
+		wantResult string
+	}{
+		{name: "plain request becomes http", existing: "", tls: false, wantResult: "http"},
+		{name: "tls request becomes https", existing: "", tls: true, wantResult: "https"},
+		{name: "existing header preserved", existing: "https", tls: false, wantResult: "https"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:1984/api/v1/integrations/list", nil)
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+			if tc.existing != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.existing)
+			}
+
+			rewriteMobileProxyForwardedProto(req)
+
+			if got := req.Header.Get("X-Forwarded-Proto"); got != tc.wantResult {
+				t.Fatalf("expected X-Forwarded-Proto %q, got %q", tc.wantResult, got)
+			}
+		})
+	}
+}
+
+func TestRewriteMobileProxyForwardedProtoIgnoresNilRequest(t *testing.T) {
+	rewriteMobileProxyForwardedProto(nil)
 }
 
 func TestRewriteMobileProxyRequestOrigin(t *testing.T) {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
   Dialog,
@@ -88,18 +88,24 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetFinalConfirmOpen, setResetFinalConfirmOpen] = useState(false);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     const config = readMobileAppConfig();
     setServers(config.servers);
     setActiveServerId(config.activeServerId);
-  };
-
-  useEffect(() => {
-    refresh();
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !editorOpen || !editingServer) {
+    refresh();
+  }, [refresh]);
+
+  // Re-read the native config whenever the app/page regains focus. The native
+  // host derives `isAuthenticated` from the persisted session cookie, so this is
+  // what lets a server authenticated in a previous session show its correct
+  // state after the share sheet (or the whole app) was reopened. The cookie jar
+  // can also finish loading slightly after first paint on a cold start, so a
+  // short retry covers the initial miss.
+  useEffect(() => {
+    if (typeof window === "undefined") {
       return;
     }
 
@@ -114,13 +120,15 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
       }
     };
 
+    const retryTimer = window.setTimeout(refreshFromNative, 400);
     window.addEventListener("focus", refreshFromNative);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
+      window.clearTimeout(retryTimer);
       window.removeEventListener("focus", refreshFromNative);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [editorOpen, editingServer]);
+  }, [refresh]);
 
   const activeServer = useMemo(
     () => servers.find((server) => server.id === activeServerId) || servers[0],
