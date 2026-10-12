@@ -387,7 +387,7 @@ export function LandingHero({
                         texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)}
                     />
                 </div>
-                <div className={`${AUTH_PANEL_CLASSES} relative`}>
+                <div className={AUTH_PANEL_CLASSES}>
                     <div className={AUTH_THEME_TOGGLE_CLASSES} data-testid="landing-theme-toggle">
                         <div className="p-2 hover:bg-accent rounded-xl z-40">
                             <ConnectedThemeSelector variant="icon-dropdown" />
