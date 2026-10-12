@@ -12,7 +12,7 @@
   }
 
   .chat-list-scroll {
-    @apply relative flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-2 py-2;
+    @apply relative flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 py-1.5;
     scroll-padding-bottom: calc(0.5rem + max(var(--openchat-safe-bottom, env(safe-area-inset-bottom, 0px)), 0px));
   }
 
@@ -40,7 +40,7 @@
   }
 
   .chat-list-divider {
-    @apply my-2 flex items-center justify-between px-1;
+    @apply my-0.5 flex items-center justify-between px-1;
   }
 
   .chat-list-row {
