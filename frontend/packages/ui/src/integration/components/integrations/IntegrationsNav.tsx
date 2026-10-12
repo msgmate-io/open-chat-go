@@ -9,6 +9,7 @@ type IntegrationRow = {
   name: string;
   admin_only?: boolean;
   user_accessible?: boolean;
+  labels?: string[];
 };
 
 type IntegrationsResponse = {
@@ -21,6 +22,9 @@ type IntegrationFrontendRoute = {
   public: boolean;
   description?: string;
   asset_path?: string;
+  title?: string;
+  section?: string;
+  order?: number;
 };
 
 type IntegrationOverviewResponse = {
@@ -129,6 +133,25 @@ export function IntegrationsNav({
       .sort((a, b) => a.route.localeCompare(b.route));
   }, [overviewData, integrationName]);
 
+  const docs = useMemo(() => {
+    const routes = overviewData?.frontend_routes ?? [];
+    const base = integrationName ? `/integrations/${integrationName}` : "";
+    return routes
+      .filter((route) => route.kind === "doc" && typeof route.route === "string" && !route.route.includes("{"))
+      .filter((route) => {
+        if (route.public) return false;
+        if (!base) return true;
+        return route.route === base || route.route.startsWith(`${base}/`);
+      })
+      .sort((a, b) => {
+        const sectionOrder = (a.section || "").localeCompare(b.section || "");
+        if (sectionOrder !== 0) return sectionOrder;
+        const orderDiff = (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
+        if (orderDiff !== 0) return orderDiff;
+        return a.route.localeCompare(b.route);
+      });
+  }, [overviewData, integrationName]);
+
   const currentPath = normalizePath(activePath);
 
   if (isOverview) {
@@ -159,7 +182,10 @@ export function IntegrationsNav({
             <NavRow
               key={integration.name}
               label={integration.name}
-              secondary={integration.admin_only ? "admin" : undefined}
+              secondary={
+                (integration.labels ?? []).join(", ") ||
+                (integration.admin_only ? "admin" : undefined)
+              }
               selected={currentPath === `/integrations/${integration.name}`}
               onSelect={() => navigateTo(`/integrations/${encodeURIComponent(integration.name)}/`)}
             />
@@ -187,23 +213,43 @@ export function IntegrationsNav({
             <div key={i} className="h-12 animate-pulse rounded-lg bg-muted" />
           ))}
         </div>
-      ) : pages.length === 0 ? (
+      ) : pages.length === 0 && docs.length === 0 ? (
         <Text type={TextTypes.Body7} color="muted" className="px-1 py-2">
           No frontend pages registered
         </Text>
       ) : (
-        pages.map((page) => {
-          const secondary = shortRoutePath(page.route, integrationName);
-          return (
-            <NavRow
-              key={page.route}
-              label={page.description?.trim() || routeTitle(page.route, integrationName)}
-              secondary={secondary || undefined}
-              selected={currentPath === normalizePath(page.route)}
-              onSelect={() => navigateTo(page.route)}
-            />
-          );
-        })
+        <>
+          {pages.map((page) => {
+            const secondary = shortRoutePath(page.route, integrationName);
+            return (
+              <NavRow
+                key={page.route}
+                label={page.description?.trim() || routeTitle(page.route, integrationName)}
+                secondary={secondary || undefined}
+                selected={currentPath === normalizePath(page.route)}
+                onSelect={() => navigateTo(page.route)}
+              />
+            );
+          })}
+          {docs.length > 0 ? (
+            <>
+              <div className="chat-list-divider">
+                <Text type={TextTypes.Body7} color="muted" tag="span" bold>
+                  Documentation
+                </Text>
+              </div>
+              {docs.map((doc) => (
+                <NavRow
+                  key={doc.route}
+                  label={doc.title?.trim() || doc.description?.trim() || routeTitle(doc.route, integrationName)}
+                  secondary={doc.section?.trim() || undefined}
+                  selected={currentPath === normalizePath(doc.route)}
+                  onSelect={() => navigateTo(doc.route)}
+                />
+              ))}
+            </>
+          ) : null}
+        </>
       )}
     </div>
   );
