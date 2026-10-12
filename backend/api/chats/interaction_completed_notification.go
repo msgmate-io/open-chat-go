@@ -155,6 +155,10 @@ func dispatchInteractionNotification(ctx context.Context, db *gorm.DB, slug, tit
 	if !ok || fn == nil {
 		return nil
 	}
+	// The in-app notification can open the finished interaction chat directly.
+	if chatUUID := strings.TrimSpace(chat.UUID); chatUUID != "" {
+		payload["action"] = map[string]interface{}{"type": "chat", "target": chatUUID}
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
