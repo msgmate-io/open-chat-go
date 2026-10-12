@@ -26,6 +26,7 @@ export {
   SMALL_SCREEN_MAX_HEIGHT,
   isSmallScreenViewport,
   clampCssSize,
+  clampCssSizeVh,
   AUTH_SHELL_CLASSES,
   AUTH_BODY_CLASSES,
   AUTH_PANEL_CLASSES,

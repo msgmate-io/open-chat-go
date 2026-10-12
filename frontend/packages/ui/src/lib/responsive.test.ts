@@ -7,6 +7,7 @@ import {
   SMALL_SCREEN_MAX_HEIGHT,
   SMALL_SCREEN_MAX_WIDTH,
   clampCssSize,
+  clampCssSizeVh,
   isSmallScreenViewport,
 } from "./responsive"
 
@@ -28,6 +29,12 @@ describe("isSmallScreenViewport", () => {
     expect(isSmallScreenViewport(900, SMALL_SCREEN_MAX_HEIGHT - 1)).toBe(true)
   })
 
+  it("treats the native app portrait viewport as small", () => {
+    // ~393x441 CSS px (a 1179x1322 screenshot at DPR ~3) - the landing page
+    // hero must switch to the compact layout here.
+    expect(isSmallScreenViewport(393, 441)).toBe(true)
+  })
+
   it("treats the breakpoint boundary as non-small", () => {
     expect(isSmallScreenViewport(SMALL_SCREEN_MAX_WIDTH, SMALL_SCREEN_MAX_HEIGHT)).toBe(false)
   })
@@ -47,6 +54,27 @@ describe("clampCssSize", () => {
   it("rounds the pixel size and clamps the ratio into [0, 1]", () => {
     expect(clampCssSize(240.4, 2)).toBe("min(240px, 100vmin)")
     expect(clampCssSize(240.6, -1)).toBe("min(241px, 0vmin)")
+  })
+})
+
+describe("clampCssSizeVh", () => {
+  it("bounds the size by both vmin and vh", () => {
+    expect(clampCssSizeVh(330, 0.5, 0.28)).toBe("min(330px, 50vmin, 28vh)")
+  })
+
+  it("rounds the pixel size and clamps both ratios into [0, 1]", () => {
+    expect(clampCssSizeVh(240.6, 2, 3)).toBe("min(241px, 100vmin, 100vh)")
+    expect(clampCssSizeVh(240.4, -1, -1)).toBe("min(240px, 0vmin, 0vh)")
+  })
+
+  it("shrinks the hero on the short native viewport where a vmin-only clamp would not", () => {
+    // 393x441: vmin bound is 0.5*393 = 196.5px, but 28vh = 123.5px wins, so the
+    // logo (and therefore the Open-Chat button + server selector below it) stays
+    // above the fixed action bar.
+    const vminOnly = clampCssSize(330, 0.5)
+    const bounded = clampCssSizeVh(330, 0.5, 0.28)
+    expect(vminOnly).toBe("min(330px, 50vmin)")
+    expect(bounded).toBe("min(330px, 50vmin, 28vh)")
   })
 })
 
