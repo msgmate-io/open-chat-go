@@ -28,9 +28,18 @@ const (
 // The widget creates the interaction client-side and then records the decision
 // (with the resulting interaction identifiers) so a reload shows the resolved
 // state instead of the pending widget.
+//
+// Because the interaction is created client-side, the endpoint supports a
+// two-phase "started" flow: the widget first claims the selector (decision
+// "started" without a started chat uuid, carrying a client-generated claim_id),
+// creates the interaction only if the claim succeeded, and then records the
+// resulting interaction identifiers with the same claim_id. This makes a second
+// widget instance (or a second browser tab) unable to start the same selector
+// twice: its claim is rejected with 409 before it can create anything.
 type resolveRuntimeSelectorRequest struct {
 	SelectorID            string `json:"selector_id"`
 	Decision              string `json:"decision"`
+	ClaimID               string `json:"claim_id,omitempty"`
 	StartedChatUUID       string `json:"started_chat_uuid,omitempty"`
 	StartedInteractionURL string `json:"started_interaction_url,omitempty"`
 }
@@ -182,46 +191,99 @@ func (h *ChatsHandler) ResolveRuntimeSelector(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Runtime selector not found", http.StatusNotFound)
 		return
 	}
-	if status, _ := selector["status"].(string); status != "" && status != RuntimeSelectorPending {
-		http.Error(w, "Runtime selector has already been resolved", http.StatusConflict)
+
+	claimID := strings.TrimSpace(req.ClaimID)
+	statusValue, _ := selector["status"].(string)
+	pending := statusValue == "" || statusValue == RuntimeSelectorPending
+	existingClaim, _ := selector["claim_id"].(string)
+	startedChatUUID := strings.TrimSpace(req.StartedChatUUID)
+	startedURL := strings.TrimSpace(req.StartedInteractionURL)
+
+	if startedChatUUID != "" && !isResolvableStartedInteraction(DB, user, startedChatUUID) {
+		http.Error(w, "Started interaction chat not found", http.StatusConflict)
 		return
 	}
 
-	startedChatUUID := strings.TrimSpace(req.StartedChatUUID)
-	startedURL := strings.TrimSpace(req.StartedInteractionURL)
-	if decision == "started" && startedChatUUID != "" {
-		startedChat, err := findAccessibleChat(DB, user, startedChatUUID)
-		if err != nil {
-			http.Error(w, "Started interaction chat not found", http.StatusConflict)
+	if decision == "cancelled" {
+		if !pending {
+			http.Error(w, "Runtime selector has already been resolved", http.StatusConflict)
 			return
 		}
-		if !isInteractionChatType(startedChat.ChatType) {
-			http.Error(w, "Started chat is not an interaction", http.StatusConflict)
+		selector["status"] = RuntimeSelectorCancelled
+		selector["decided_by"] = user.UUID
+		selector["decided_at"] = time.Now().UTC().Format(time.RFC3339)
+		if err := persistRuntimeSelectorMeta(DB, message, meta, selectors); err != nil {
+			http.Error(w, "Failed to update runtime selector", http.StatusInternalServerError)
 			return
 		}
+		writeRuntimeSelectorResolved(w, selector)
+		return
 	}
 
-	status := RuntimeSelectorConfirmed
-	if decision == "cancelled" {
-		status = RuntimeSelectorCancelled
-	}
-	selector["status"] = status
-	selector["decided_by"] = user.UUID
-	selector["decided_at"] = time.Now().UTC().Format(time.RFC3339)
-	if decision == "started" {
+	// decision == "started"
+	if pending {
+		// First phase: claim the selector. Callers that already created the
+		// interaction may record its identifiers in the same call.
+		selector["status"] = RuntimeSelectorConfirmed
+		selector["decided_by"] = user.UUID
+		selector["decided_at"] = time.Now().UTC().Format(time.RFC3339)
+		if claimID != "" {
+			selector["claim_id"] = claimID
+		}
 		if startedChatUUID != "" {
 			selector["started_chat_uuid"] = startedChatUUID
 		}
 		if startedURL != "" {
 			selector["started_interaction_url"] = startedURL
 		}
-	}
-
-	if err := persistRuntimeSelectorMeta(DB, message, meta, selectors); err != nil {
-		http.Error(w, "Failed to update runtime selector", http.StatusInternalServerError)
+		if err := persistRuntimeSelectorMeta(DB, message, meta, selectors); err != nil {
+			http.Error(w, "Failed to update runtime selector", http.StatusInternalServerError)
+			return
+		}
+		writeRuntimeSelectorResolved(w, selector)
 		return
 	}
 
+	// Already resolved. Let the claim owner complete the second phase (record
+	// the started interaction) or retry a claim that did not create anything
+	// yet. Any other claim (a second widget instance or browser tab) is
+	// rejected with 409 before it can create a duplicate interaction.
+	recorded, _ := selector["started_chat_uuid"].(string)
+	if statusValue == RuntimeSelectorConfirmed &&
+		claimID != "" &&
+		claimID == strings.TrimSpace(existingClaim) &&
+		strings.TrimSpace(recorded) == "" {
+		if startedChatUUID != "" {
+			selector["started_chat_uuid"] = startedChatUUID
+		}
+		if startedURL != "" {
+			selector["started_interaction_url"] = startedURL
+		}
+		if err := persistRuntimeSelectorMeta(DB, message, meta, selectors); err != nil {
+			http.Error(w, "Failed to update runtime selector", http.StatusInternalServerError)
+			return
+		}
+		writeRuntimeSelectorResolved(w, selector)
+		return
+	}
+
+	http.Error(w, "Runtime selector has already been resolved", http.StatusConflict)
+}
+
+// isResolvableStartedInteraction reports whether a client-supplied started chat
+// uuid names a chat the user may access and that is an interaction.
+func isResolvableStartedInteraction(DB *gorm.DB, user *database.User, chatUUID string) bool {
+	startedChat, err := findAccessibleChat(DB, user, chatUUID)
+	if err != nil {
+		return false
+	}
+	return isInteractionChatType(startedChat.ChatType)
+}
+
+// writeRuntimeSelectorResolved emits the successful resolve response for a
+// selector whose status was just recorded.
+func writeRuntimeSelectorResolved(w http.ResponseWriter, selector map[string]interface{}) {
+	status, _ := selector["status"].(string)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ResolveRuntimeSelectorResponse{
 		Success:  true,

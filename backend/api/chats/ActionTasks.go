@@ -19,6 +19,7 @@ const actionTasksMaxChats = 300
 const (
 	ActionTaskKindConfirmableAction       = "confirmable_action"
 	ActionTaskKindOpencodePermission      = "opencode_permission"
+	ActionTaskKindOpencodeQuestion        = "opencode_question"
 	ActionTaskKindOpencodeNeedsAction     = "opencode_needs_action"
 	ActionTaskKindInteractionConfirmation = "interaction_confirmation"
 	ActionTaskKindRuntimeSelection        = "runtime_selection"

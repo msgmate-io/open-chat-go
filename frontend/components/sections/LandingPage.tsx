@@ -14,6 +14,7 @@ import {
   Text,
   TextTypes,
   Typewriter,
+  clampCssSize,
   openChatLandingTypewriterTexts,
 } from "@open-chat-go/ui"
 import { create } from 'zustand'
@@ -55,6 +56,26 @@ type AccountManagementPublicConfig = {
     google_signup_redirect_url?: string
     google_signup_start_url?: string
     require_email_verification?: boolean
+}
+
+// Wraps the cinematic logo in a viewport-clamped square so the landing/login
+// hero art never overflows a very short / near-square device (the native app
+// screenshots). The logo itself fills the wrapper (`fluid`).
+function ResponsiveLogo({
+    preferredPx,
+    vminRatio,
+    className,
+}: {
+    preferredPx: number
+    vminRatio: number
+    className?: string
+}) {
+    const size = clampCssSize(preferredPx, vminRatio)
+    return (
+        <div className={className} style={{ width: size, height: size }}>
+            <CinematicLogo fluid className="pointer-events-none" />
+        </div>
+    )
 }
 
 function GenerateTextForLoggedInUser(user: { name?: string }) {
@@ -175,9 +196,9 @@ function IndexTab({
     return <div className="flex w-full flex-col items-center justify-center">
         {isLoggedIn ? (
             <>
-                <div className="mb-5 md:hidden">
-                    <div className="flex flex-col items-center gap-3 rounded-3xl bg-secondary/70 p-5">
-                        <CinematicLogo className={"pointer-events-none"} size={330} />
+                <div className="mb-4 md:hidden [@media(max-height:700px)]:mb-2">
+                    <div className="flex flex-col items-center gap-3 rounded-3xl bg-secondary/70 p-5 [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
+                        <ResponsiveLogo preferredPx={330} vminRatio={0.5} className="pointer-events-none" />
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
                             <div className="w-full max-w-[260px]">
@@ -188,7 +209,7 @@ function IndexTab({
                 </div>
                 <div className="mb-6 hidden md:block">
                     <div className="flex flex-col items-center gap-4 rounded-3xl bg-secondary/70 p-6">
-                        <CinematicLogo className={"pointer-events-none"} size={480} />
+                        <ResponsiveLogo preferredPx={480} vminRatio={0.6} className="pointer-events-none" />
                         <Button variant="ghost" className={pillClass} onClick={() => navigateTo("/chat")}>Open-Chat</Button>
                         {isMobileRuntime ? (
                             <div className="w-full max-w-[260px]">
@@ -200,17 +221,17 @@ function IndexTab({
             </>
         ) : (
             <>
-                <div className="mb-5 md:hidden" style={{ perspective: "1400px" }}>
+                <div className="mb-4 md:hidden [@media(max-height:700px)]:mb-2" style={{ perspective: "1400px" }}>
                     <div
                         className="group relative"
-                        style={{ width: "330px", height: "330px" }}
+                        style={{ width: clampCssSize(330, 0.5), height: clampCssSize(330, 0.5) }}
                         tabIndex={0}
                     >
                         <div className="relative h-full w-full transition-transform duration-700 [transform-style:preserve-3d] group-hover:[transform:rotateY(180deg)] group-focus:[transform:rotateY(180deg)] group-focus-within:[transform:rotateY(180deg)]">
                             <div className="absolute inset-0 flex items-center justify-center [backface-visibility:hidden]">
-                                <CinematicLogo className={"pointer-events-none"} size={330} />
+                                <CinematicLogo fluid className={"pointer-events-none"} />
                             </div>
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-3xl bg-secondary/70 p-5 [backface-visibility:hidden] [transform:rotateY(180deg)]">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-3xl bg-secondary/70 p-5 [backface-visibility:hidden] [transform:rotateY(180deg)] [@media(max-height:700px)]:gap-2 [@media(max-height:700px)]:p-3">
                                 {hasSignupEnabled && <Button variant="ghost" className={pillClass} onClick={() => {
                                     navigateTo("/sign-up")
                                 }}>Sign-up</Button>}
@@ -229,12 +250,12 @@ function IndexTab({
                 <div className="mb-6 hidden md:block" style={{ perspective: "1700px" }}>
                     <div
                         className="group relative"
-                        style={{ width: "480px", height: "480px" }}
+                        style={{ width: clampCssSize(480, 0.6), height: clampCssSize(480, 0.6) }}
                         tabIndex={0}
                     >
                         <div className="relative h-full w-full transition-transform duration-700 [transform-style:preserve-3d] group-hover:[transform:rotateY(180deg)] group-focus:[transform:rotateY(180deg)] group-focus-within:[transform:rotateY(180deg)]">
                             <div className="absolute inset-0 flex items-center justify-center [backface-visibility:hidden]">
-                                <CinematicLogo className={"pointer-events-none"} size={480} />
+                                <CinematicLogo fluid className={"pointer-events-none"} />
                             </div>
                             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-3xl bg-secondary/70 p-6 [backface-visibility:hidden] [transform:rotateY(180deg)]">
                                 {hasSignupEnabled && <Button variant="ghost" className={pillClass} onClick={() => {
@@ -333,7 +354,7 @@ export function LandingHero({
     }, [accountManagementConfig?.signup_requires_admin_approval, hasSignupEnabled, setTab, signupGateResolved, tab])
 
     return <>
-        <div className="relative flex min-h-full flex-col bg-secondary md:h-full md:min-h-0 md:bg-transparent">
+        <div className="relative flex min-h-full flex-col overflow-y-auto bg-secondary md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent">
             <div className="relative z-40 w-full md:absolute md:left-0 md:top-0 md:w-2/3">
                 <div className="flex w-full flex-col items-start p-4 text-foreground md:flex-row md:bg-background/80 md:backdrop-blur">
                     <Text type={TextTypes.Heading5} tag="div" bold>
@@ -344,7 +365,7 @@ export function LandingHero({
                     </Text>
                 </div>
             </div>
-            <div className="flex md:flex-row flex-col items-center justify-center content-center h-full min-h-0 flex-1">
+            <div className="flex md:flex-row flex-col items-center justify-center content-center h-auto min-h-0 md:h-full flex-1">
                 <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-background md:w-2/3 h-full shadow-xl z-10 relative text-foreground">
                     <Typewriter
                         fullHeight
@@ -353,13 +374,13 @@ export function LandingHero({
                         texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)}
                     />
                 </div>
-                <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-full">
+                <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-auto md:h-full">
                     <div className="flex flex-row items-end justify-end content-center w-full">
                         <div className="p-2 hover:bg-accent rounded-xl z-40">
                             <ConnectedThemeSelector variant="icon-dropdown" />
                         </div>
                     </div>
-                    <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4">
+                    <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4">
                         {tab === "index" && <IndexTab hasSignupEnabled={hasSignupEnabled} navigateTo={navigateTo}/>} 
                         {tab === "login" && <LoginSection
                             navigateTo={navigateTo}
@@ -377,13 +398,13 @@ export function LandingHero({
             </div>
         </div>
         <div
-            className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
+            className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 px-3 md:right-1/3"
             style={{ paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))" }}
         >
             <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                className="pointer-events-auto h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/70 px-2.5 text-xs font-normal text-muted-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => navigateTo("/docs")}
             >
                 <BookOpen className="size-3.5" aria-hidden="true" />
@@ -395,7 +416,7 @@ export function LandingHero({
                 <Button
                     variant="ghost"
                     size="sm"
-                    className="relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
+                    className="pointer-events-auto relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
                     onClick={() => setIsVideoOpen(true)}
                 >
                     <PlayCircle className="size-3.5" aria-hidden="true" />

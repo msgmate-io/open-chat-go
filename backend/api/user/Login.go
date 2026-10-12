@@ -5,13 +5,16 @@ import (
 	"backend/database"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	integrationinterface "github.com/msgmate-io/go-integration-interface/integrationinterface"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type UserLogin struct {
@@ -79,6 +82,68 @@ func cookieDomainOverrideFromQuery(r *http.Request) (string, error) {
 	return host, nil
 }
 
+func clientIPFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		if idx := strings.Index(forwarded, ","); idx >= 0 {
+			forwarded = forwarded[:idx]
+		}
+		if forwarded = strings.TrimSpace(forwarded); forwarded != "" {
+			return forwarded
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+// authMethodFromLoginPayload classifies a login attempt so login history can
+// distinguish password, two-factor and recovery-code attempts.
+func authMethodFromLoginPayload(data UserLogin) string {
+	switch {
+	case strings.TrimSpace(data.RecoveryCode) != "":
+		return "recovery_code"
+	case strings.TrimSpace(data.TwoFactorCode) != "":
+		return "two_factor"
+	default:
+		return "password"
+	}
+}
+
+// publishAuthEvent fans a single authentication attempt out to every
+// integration that registered an auth event sink. Sink errors are logged and
+// never affect the authentication result.
+func publishAuthEvent(r *http.Request, DB *gorm.DB, userID uint, identifier, method string, success bool, failureReason string) {
+	sinks := integrationinterface.AuthEventSinks()
+	if len(sinks) == 0 {
+		return
+	}
+	event := integrationinterface.AuthEvent{
+		DB:            DB,
+		UserID:        userID,
+		Identifier:    identifier,
+		Method:        method,
+		Success:       success,
+		FailureReason: failureReason,
+		IP:            clientIPFromRequest(r),
+		OccurredAt:    time.Now().UTC(),
+	}
+	if r != nil {
+		event.UserAgent = strings.TrimSpace(r.Header.Get("User-Agent"))
+	}
+	for _, sink := range sinks {
+		if err := sink.Sink(r.Context(), event); err != nil {
+			log.Printf("integration %q auth event sink error: %v", sink.IntegrationName, err)
+		}
+	}
+}
+
 // curl -X POST -H "Content-Type: application/json" -H "Origin: localhost:8080" -d '{"email":"tim+test@timschupp.de","password":"password"}' http://localhost:8080/api/v1/user/login -v
 // https://stackoverflow.com/questions/23259586/bcrypt-password-hashing-in-golang-compatible-with-node-js
 
@@ -125,8 +190,10 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiry := time.Now().Add(24 * time.Hour)
+	method := authMethodFromLoginPayload(data)
 	err, token, twofaRequired, user := LoginUser(DB, data.Email, data.Password, data.TwoFactorCode, data.RecoveryCode, expiry)
 	if err != nil {
+		publishAuthEvent(r, DB, user.ID, strings.TrimSpace(data.Email), method, false, err.Error())
 		if twofaRequired {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -136,6 +203,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
+	publishAuthEvent(r, DB, user.ID, strings.TrimSpace(data.Email), method, true, "")
 
 	cookieDomain := h.CookieDomain
 	if override, err := cookieDomainOverrideFromQuery(r); err != nil {
@@ -217,6 +285,12 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 				return fmt.Errorf("invalid two-factor code"), "", true, database.User{}
 			}
 		}
+	}
+	if suspended, err := database.IsUserSuspended(DB, user.ID); err != nil {
+		return err, "", false, database.User{}
+	} else if suspended {
+		// Global suspension: never hand out a session for a suspended account.
+		return fmt.Errorf("account suspended"), "", false, user
 	}
 	if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
 		return err, "", false, database.User{}

@@ -20,7 +20,13 @@ export {
   getChatTimeBucket,
   type ChatTimeBucket,
 } from "./lib/date";
-export { useIsMobile } from "./hooks/use-mobile";
+export { useIsMobile, useIsSmallScreen } from "./hooks/use-mobile";
+export {
+  SMALL_SCREEN_MAX_WIDTH,
+  SMALL_SCREEN_MAX_HEIGHT,
+  isSmallScreenViewport,
+  clampCssSize,
+} from "./lib/responsive";
 
 export { Button, buttonVariants } from "./components/button";
 export { Text, textColorVariants, type TextProps } from "./components/text";

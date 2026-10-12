@@ -209,6 +209,90 @@ func TestResolveRuntimeSelectorAlreadyResolvedConflicts(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeSelectorClaimThenRecord(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner-runtime-claim@example.com", false)
+	chat, message, bot := seedRuntimeSelector(t, DB, owner)
+	startedChat := createChatOfType(t, DB, owner, bot, "interaction")
+	startedURL := "/interaction/claim-share"
+
+	// Phase 1: claim the selector without an interaction yet. A competing
+	// widget instance must not be able to claim it afterwards.
+	claim := callResolveRuntimeSelector(t, DB, owner, chat, message, map[string]interface{}{
+		"selector_id": "tc-1",
+		"decision":    "started",
+		"claim_id":    "claim-a",
+	})
+	if claim.Code != 200 {
+		t.Fatalf("expected claim to succeed, got %d: %s", claim.Code, claim.Body.String())
+	}
+	_, selectors := loadRuntimeSelectors(t, DB, message)
+	if selectors[0]["status"] != RuntimeSelectorConfirmed {
+		t.Fatalf("expected confirmed after claim, got %#v", selectors[0]["status"])
+	}
+	if selectors[0]["claim_id"] != "claim-a" {
+		t.Fatalf("expected claim id to persist, got %#v", selectors[0]["claim_id"])
+	}
+	if _, ok := selectors[0]["started_chat_uuid"]; ok {
+		t.Fatalf("expected no started chat recorded during claim, got %#v", selectors[0]["started_chat_uuid"])
+	}
+
+	competing := callResolveRuntimeSelector(t, DB, owner, chat, message, map[string]interface{}{
+		"selector_id": "tc-1",
+		"decision":    "started",
+		"claim_id":    "claim-b",
+	})
+	if competing.Code != 409 {
+		t.Fatalf("expected competing claim to conflict, got %d: %s", competing.Code, competing.Body.String())
+	}
+
+	// Phase 2: the claim owner records the interaction identifiers.
+	record := callResolveRuntimeSelector(t, DB, owner, chat, message, map[string]interface{}{
+		"selector_id":             "tc-1",
+		"decision":                "started",
+		"claim_id":                "claim-a",
+		"started_chat_uuid":       startedChat.UUID,
+		"started_interaction_url": startedURL,
+	})
+	if record.Code != 200 {
+		t.Fatalf("expected record to succeed, got %d: %s", record.Code, record.Body.String())
+	}
+	_, selectors = loadRuntimeSelectors(t, DB, message)
+	if selectors[0]["started_chat_uuid"] != startedChat.UUID {
+		t.Fatalf("expected started chat uuid to persist, got %#v", selectors[0]["started_chat_uuid"])
+	}
+	if selectors[0]["started_interaction_url"] != startedURL {
+		t.Fatalf("expected started url to persist, got %#v", selectors[0]["started_interaction_url"])
+	}
+
+	// A competing claim after the record is still rejected.
+	late := callResolveRuntimeSelector(t, DB, owner, chat, message, map[string]interface{}{
+		"selector_id": "tc-1",
+		"decision":    "started",
+		"claim_id":    "claim-b",
+	})
+	if late.Code != 409 {
+		t.Fatalf("expected late competing claim to conflict, got %d: %s", late.Code, late.Body.String())
+	}
+}
+
+func TestResolveRuntimeSelectorClaimIsIdempotentForOwner(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner-runtime-reclaim@example.com", false)
+	chat, message, _ := seedRuntimeSelector(t, DB, owner)
+
+	for i := 0; i < 2; i++ {
+		rr := callResolveRuntimeSelector(t, DB, owner, chat, message, map[string]interface{}{
+			"selector_id": "tc-1",
+			"decision":    "started",
+			"claim_id":    "claim-a",
+		})
+		if rr.Code != 200 {
+			t.Fatalf("expected claim retry %d to succeed, got %d: %s", i, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestResolveRuntimeSelectorRejectsInvalidDecision(t *testing.T) {
 	DB := setupChatsTestDB(t)
 	owner := createUserForChatsTest(t, DB, "owner-runtime-invalid@example.com", false)
