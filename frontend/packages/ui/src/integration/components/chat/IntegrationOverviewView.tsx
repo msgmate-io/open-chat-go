@@ -55,6 +55,9 @@ type IntegrationFrontendRouteOverview = {
   public: boolean;
   description?: string;
   asset_path?: string;
+  title?: string;
+  section?: string;
+  order?: number;
 };
 
 type IntegrationOverviewResponse = {
@@ -70,6 +73,7 @@ type IntegrationOverviewResponse = {
     sensitive: boolean;
     description?: string;
   }>;
+  labels?: string[];
 };
 
 type OpenAPISchema = {
@@ -103,7 +107,7 @@ type OpenAPIDocument = {
   paths?: Record<string, Record<string, OpenAPIOperation>>;
 };
 
-type OverviewTab = "readme" | "api" | "models" | "functions" | "pages" | "env";
+type OverviewTab = "readme" | "api" | "models" | "functions" | "pages" | "docs" | "env";
 
 function parseRoute(route: string): { method: string; path: string } | null {
   const trimmed = route.trim();
@@ -322,6 +326,7 @@ export function IntegrationOverviewView({
   const frontendRoutes = Array.isArray(data.frontend_routes) ? data.frontend_routes : [];
   const readmeMarkdown = typeof data.readme_markdown === "string" ? data.readme_markdown.trim() : "";
   const runtimeEnvVars = Array.isArray(data.runtime_env_vars) ? data.runtime_env_vars : [];
+  const labels = Array.isArray(data.labels) ? data.labels : [];
 
   const tabs: Array<{ key: OverviewTab; label: string; count: number }> = [
     { key: "readme", label: "README.md", count: readmeMarkdown ? 1 : 0 },
@@ -334,18 +339,43 @@ export function IntegrationOverviewView({
       label: "Pages",
       count: frontendRoutes.filter((route) => route.kind === "page").length,
     },
+    {
+      key: "docs",
+      label: "Docs",
+      count: frontendRoutes.filter((route) => route.kind === "doc").length,
+    },
   ];
   const frontendPages = frontendRoutes.filter((route) => route.kind === "page");
+  const frontendDocs = frontendRoutes
+    .filter((route) => route.kind === "doc")
+    .sort((a, b) => {
+      const sectionOrder = (a.section || "").localeCompare(b.section || "");
+      if (sectionOrder !== 0) return sectionOrder;
+      const orderDiff = (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
+      if (orderDiff !== 0) return orderDiff;
+      return a.route.localeCompare(b.route);
+    });
 
   return (
     <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4 overflow-y-auto px-4 py-6 md:px-6">
       <Card className="border-border/70 bg-gradient-to-br from-background via-background to-muted/30">
         <CardHeader className="space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle className="text-2xl">Integration: {data.name}</CardTitle>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle className="text-2xl">Integration: {data.name}</CardTitle>
+                {labels.map((label) => (
+                  <Badge
+                    key={label}
+                    variant={label.toLowerCase() === "core" ? "secondary" : "outline"}
+                    className="capitalize"
+                  >
+                    {label}
+                  </Badge>
+                ))}
+              </div>
               <CardDescription>
-                API, models, functions, and pages overview for this compiled integration module.
+                API, models, functions, docs, and pages overview for this compiled integration module.
               </CardDescription>
             </div>
             {showBackButton ? (
@@ -644,6 +674,54 @@ export function IntegrationOverviewView({
             <Card className="border-dashed border-border/70 bg-muted/30">
               <CardHeader>
                 <CardTitle className="text-base">No frontend pages registered</CardTitle>
+              </CardHeader>
+            </Card>
+          )}
+        </section>
+      ) : null}
+
+      {activeTab === "docs" ? (
+        <section className="space-y-3">
+          <Text type={TextTypes.Heading6} tag="h2" bold>
+            Integration Documentation
+          </Text>
+          {frontendDocs.length ? (
+            <div className="space-y-2">
+              {frontendDocs.map((doc) => (
+                <Card key={`${doc.kind}-${doc.route}`}>
+                  <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {doc.section ? (
+                          <Badge variant="secondary">{doc.section}</Badge>
+                        ) : null}
+                        <Badge variant={doc.public ? "secondary" : "outline"}>
+                          {doc.public ? "public" : "auth"}
+                        </Badge>
+                        <Text type={TextTypes.Body6} bold>
+                          {doc.title?.trim() || doc.route}
+                        </Text>
+                      </div>
+                      {doc.description ? (
+                        <Text type={TextTypes.Body7} color="muted">
+                          {doc.description}
+                        </Text>
+                      ) : null}
+                      <Text type={TextTypes.Body7} color="muted" className="font-mono">
+                        {doc.route}
+                      </Text>
+                    </div>
+                    <Button type="button" variant="outline" onClick={() => navigateTo(doc.route)}>
+                      Open doc
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card className="border-dashed border-border/70 bg-muted/30">
+              <CardHeader>
+                <CardTitle className="text-base">No documentation pages registered</CardTitle>
               </CardHeader>
             </Card>
           )}
