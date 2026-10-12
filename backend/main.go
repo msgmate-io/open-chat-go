@@ -957,6 +957,20 @@ func main() {
 				Value:   false,
 				Sources: ufcli.EnvVars("OPEN_CHAT_CONFIG_OVERRIDE_ENV"),
 			},
+			// Registered so the password advertised by resolveBootSecretPassword
+			// (and the `config defines secret blocks` error) is a real flag rather
+			// than one urfave/cli rejects as undefined. The value is read from the
+			// raw args before command parsing; the flag only needs to exist here.
+			&ufcli.StringFlag{
+				Name:    "secret-password",
+				Usage:   "password used to unseal config `secrets:` blocks at boot",
+				Sources: ufcli.EnvVars("OPEN_CHAT_SECRET_PASSWORD"),
+			},
+			&ufcli.StringFlag{
+				Name:    "secret-password-file",
+				Usage:   "path to a file containing the boot secret password",
+				Sources: ufcli.EnvVars("OPEN_CHAT_SECRET_PASSWORD_FILE"),
+			},
 		},
 		Commands: []*ufcli.Command{
 			cmd.RunCli(),
