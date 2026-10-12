@@ -23,8 +23,10 @@ type ListedChat struct {
 	// chat's own update time when it has no messages yet). The UI uses it for
 	// the fine-grained time dividers and the time-range filter.
 	LatestMessageAt *time.Time `json:"latest_message_at,omitempty"`
-	ChatShareUUID   string     `json:"chat_share_uuid,omitempty"`
-	SharedChatURL   string     `json:"shared_interaction_url,omitempty"`
+	// Pinned marks a chat the requesting user pinned; pinned chats sort first.
+	Pinned        bool   `json:"pinned"`
+	ChatShareUUID string `json:"chat_share_uuid,omitempty"`
+	SharedChatURL string `json:"shared_interaction_url,omitempty"`
 	// AdminView is set when an admin is listing/viewing a chat they do not
 	// participate in, so the UI can clearly mark that another user's chat is
 	// being rendered.
@@ -289,9 +291,13 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		chatIDs = append(chatIDs, chat.ID)
 	}
 	settingsByChat := loadChatSettingsViews(DB, chatIDs)
+	pinnedByChat := loadChatPins(DB, user.ID, chatIDs)
 	for i := range listedChats {
 		if view := settingsByChat[chats[i].ID]; view != nil {
 			listedChats[i].Settings = view
+		}
+		if pinnedByChat[chats[i].ID] {
+			listedChats[i].Pinned = true
 		}
 	}
 

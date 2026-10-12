@@ -5,8 +5,13 @@ on:
   push:
     branches:
       - main
-  release:
-    types: [published]
+  # Note: a `release: [published]` trigger was removed. The `github-pages`
+  # environment only allows the `main` branch to deploy, so published release
+  # tags (including the `manual-*` prereleases) were rejected by environment
+  # protection rules before the job even started. Pages/APT already refresh on
+  # every push to `main`. To deploy on stable releases again, an environment
+  # admin must add a tag policy (e.g. `open-chat-*`) to `github-pages` and then
+  # re-add the trigger here.
 
 concurrency:
   group: deploy-storybook-github-pages
@@ -24,6 +29,7 @@ env:
 jobs:
   deploy:
     name: Deploy Pages
+    if: github.event_name != 'release' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
     environment:
       name: github-pages
