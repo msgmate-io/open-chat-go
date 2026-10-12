@@ -74,6 +74,7 @@
   "/chats/bots/{bot_uuid}/edit",
   "/chats/bots",
   "/chats/bots/create",
+  "/chats/notifications",
   "/callback",
   "/mobile/runtime-error",
   "/mobile/config",
