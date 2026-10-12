@@ -10,7 +10,7 @@
     "mcp": {
       "repo": "https://github.com/msgmate-io/open-chat-go-mcp-integration",
       "ref": "main",
-      "commit": "5c936ec2f6b43d0a6a1afe1eb3134749c203750f",
+      "commit": "ea7fb6c256aa1f3c99beff2570fb06ec3914b217",
       "source": "git"
     },
     "rest_api_tool": {
