@@ -46,7 +46,7 @@ export function DefaultChats({
           }
         }}
       >
-        <div className="flex items-center gap-3 px-2 py-2">
+        <div className="flex items-center gap-3 px-2 py-1.5">
           {botAvatarSrc ? (
             <img src={botAvatarSrc} className="size-8 rounded-full object-cover" alt="" />
           ) : (
@@ -60,7 +60,7 @@ export function DefaultChats({
         </div>
       </Card>
       <Card className={cn("chat-list-row")} onClick={() => navigateTo("/chat/new")}>
-        <div className="flex items-center gap-3 px-2 py-2">
+        <div className="flex items-center gap-3 px-2 py-1.5">
           <div className="flex size-8 items-center justify-center rounded-md bg-muted">
             <ExploreChatsIcon />
           </div>
@@ -76,7 +76,7 @@ export function DefaultChats({
         )}
         onClick={() => navigateTo("/chats/actions")}
       >
-        <div className="flex items-center gap-3 px-2 py-2">
+        <div className="flex items-center gap-3 px-2 py-1.5">
           <div
             className={cn(
               "flex size-8 items-center justify-center rounded-md",
