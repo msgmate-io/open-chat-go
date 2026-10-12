@@ -50,12 +50,21 @@ func resolveCLISecretPassword(c *cli.Command) (string, error) {
 	return "", nil
 }
 
-func authorizeActiveProvider(ctx context.Context, password string) (secretstore.Provider, error) {
+// authorizeActiveProvider authorizes the active secret provider under a
+// distinct cache key. Callers that need more than one password in flight at
+// once (e.g. `secret rekey`, which holds both the old and the new password)
+// MUST pass different session keys, otherwise the second authorization
+// overwrites the first in the provider's cache and subsequent unseal attempts
+// decrypt with the wrong derived key.
+func authorizeActiveProvider(ctx context.Context, sessionKey, password string) (secretstore.Provider, error) {
 	provider := secretstore.Active()
 	if provider == nil {
 		return nil, secretstore.ErrNoProvider
 	}
-	if _, err := provider.Authorize(ctx, secretstore.AuthParams{SessionKey: secretstore.BootSessionKey, Password: password}); err != nil {
+	if strings.TrimSpace(sessionKey) == "" {
+		sessionKey = secretstore.BootSessionKey
+	}
+	if _, err := provider.Authorize(ctx, secretstore.AuthParams{SessionKey: sessionKey, Password: password}); err != nil {
 		return nil, err
 	}
 	return provider, nil
@@ -84,7 +93,7 @@ func secretSealCli() *cli.Command {
 			if err != nil {
 				return err
 			}
-			provider, err := authorizeActiveProvider(ctx, password)
+			provider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey, password)
 			if err != nil {
 				return err
 			}
@@ -156,11 +165,15 @@ func secretRekeyCli() *cli.Command {
 			if len(blocks) == 0 {
 				return errors.New("config has no `secrets` section")
 			}
-			oldProvider, err := authorizeActiveProvider(ctx, oldPassword)
+			// Use distinct session keys: the provider caches the derived key per
+			// session key, so reusing secretstore.BootSessionKey for both
+			// passwords would overwrite the old-password authorization and make
+			// oldProvider.Unseal decrypt old blocks with the new key.
+			oldProvider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey+":rekey-old", oldPassword)
 			if err != nil {
 				return err
 			}
-			newProvider, err := authorizeActiveProvider(ctx, newPassword)
+			newProvider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey+":rekey-new", newPassword)
 			if err != nil {
 				return err
 			}
@@ -214,7 +227,7 @@ func secretMigrateConfigCli() *cli.Command {
 			if err != nil {
 				return err
 			}
-			provider, err := authorizeActiveProvider(ctx, password)
+			provider, err := authorizeActiveProvider(ctx, secretstore.BootSessionKey, password)
 			if err != nil {
 				return err
 			}
