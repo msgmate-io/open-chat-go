@@ -219,7 +219,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "The toolchain: go/npm/cargo/python builds, tests and the produced programs. Wrapped as raw shell today, so exit codes and diagnostics have to be scraped from stdout.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_2_build_test_run",
-		Shipped:     false,
+		Shipped:     true,
 		Examples: []string{
 			"go build ./...",
 			"go test ./backend/nativecoder/...",
