@@ -328,6 +328,16 @@ func GetServerFlags() []cli.Flag {
 			Usage:   "maximum number of active browser tokens per user; oldest browser tokens are evicted when the limit is exceeded",
 			Value:   10,
 		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("OPEN_CHAT_SECRET_PASSWORD"),
+			Name:    "secret-password",
+			Usage:   "password used to unseal config `secrets:` blocks at startup",
+		},
+		&cli.StringFlag{
+			Sources: cli.EnvVars("OPEN_CHAT_SECRET_PASSWORD_FILE"),
+			Name:    "secret-password-file",
+			Usage:   "path to a file containing the config secret password",
+		},
 	}
 
 	flags = append(flags, GetRedisFlags()...)
@@ -1044,6 +1054,15 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
 	sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
 	if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
+		return err
+	}
+
+	// Declared sandboxes are upserted (and their SSH server records registered)
+	// before the opencode/git bootstrap so a git workspace can bind to a
+	// declared template sandbox in this same startup pass.
+	dockerSandboxDefaultOwners := append([]string{}, openChatBootstrap.DockerSandboxDefaultOwners...)
+	dockerSandboxSpecs := append([]string{}, openChatBootstrap.DockerSandboxSpecs...)
+	if err := applyDockerSandboxBootstrapSources(DB, adminUser.Username, dockerSandboxDefaultOwners, dockerSandboxSpecs); err != nil {
 		return err
 	}
 

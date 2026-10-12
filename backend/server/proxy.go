@@ -2,10 +2,10 @@ package server
 
 import (
 	"backend/runtimecfg"
+	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -158,18 +158,30 @@ func resolveMobileSessionNamespace() string {
 }
 
 // mobileSessionCookieName derives a stable, namespaced cookie name for a mobile
-// proxy target. The name only needs to be deterministic and collision-resistant
-// for the configured targets; it is not a credential or a password, so a fast
-// non-cryptographic hash is the appropriate tool here.
+// proxy target.
+//
+// This name is a wire contract with the Android client
+// (open-chat-go-mobile: MainActivity.sessionCookieNameForServer), which reads
+// the proxy cookie from the local WebView cookie jar to decide whether a server
+// shows as authenticated. The client computes
+// "session_id_mobile_" + sha1(lower("<server-id>|<upstream-url>"))[:12], so the
+// backend must produce the exact same digest. The value is a public cookie
+// *name*, never a credential; it cannot be switched to a "better" hash without
+// changing the client in lockstep.
+//
+// Regression note (open-chat-go-ci#221): 7fd81b7 switched this to SHA-256 and
+// f340f89 to FNV-1a. Both stopped matching the Android client, so proxy-mode
+// servers always showed "No auth" in the native server selector even after a
+// successful login.
 func mobileSessionCookieName(target *url.URL, sessionNamespace string) string {
 	targetKey := strings.TrimSpace(target.String())
 	key := targetKey
 	if sessionNamespace != "" {
 		key = sessionNamespace + "|" + targetKey
 	}
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(strings.ToLower(key)))
-	return "session_id_mobile_" + hex.EncodeToString(h.Sum(nil))[:12]
+	// Deliberately SHA-1 to match the Android client; the input is a public cookie name, not a credential (see doc above).
+	h := sha1.Sum([]byte(strings.ToLower(key)))
+	return "session_id_mobile_" + hex.EncodeToString(h[:])[:12]
 }
 
 func rewriteSessionCookieName(cookiePair string, namespacedSessionCookie string) string {
