@@ -31,6 +31,7 @@ export {
   AUTH_BODY_CLASSES,
   AUTH_PANEL_CLASSES,
   AUTH_CONTENT_CLASSES,
+  AUTH_THEME_TOGGLE_CLASSES,
 } from "./lib/responsive";
 
 export { Button, buttonVariants } from "./components/button";
