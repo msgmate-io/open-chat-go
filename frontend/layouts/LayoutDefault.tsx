@@ -18,7 +18,7 @@ import { applyDocumentTitle } from "@open-chat-go/ui";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { MobileNativeSafeAreaSpacer } from "@/components/MobileNativeSafeAreaSpacer";
-import { isMobileAppRuntime } from "@open-chat-go/ui";
+import { isMobileAppRuntime, OpenInAppWidget } from "@open-chat-go/ui";
 import { navigate } from "vike/client/router";
 
 function resolveThemeOverrideFromUrl(): "light" | "dark" | "" {
@@ -244,6 +244,7 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
         <ImpersonationBanner />
         <OfflineIndicator />
         <div className={contentClassName}>{children}</div>
+        <OpenInAppWidget />
       </div>
     </SWRConfig>
   );
