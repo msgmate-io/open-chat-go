@@ -251,6 +251,13 @@ func mcpInteractionTools() []mcpToolDefinition {
 		for k, v := range extra {
 			props[k] = v
 		}
+		// `required` must be a JSON-Schema array (never null): the MCP
+		// TypeScript SDK validates inputSchema with zod's `z.array(...).optional()`,
+		// which rejects an explicit null and makes clients fail with
+		// "Failed to get tools".
+		if required == nil {
+			required = []string{}
+		}
 		return map[string]interface{}{"type": "object", "properties": props, "required": required}
 	}
 
