@@ -43,6 +43,7 @@ func newMobileAPIWSReverseProxy(target *url.URL) *httputil.ReverseProxy {
 		baseDirector(r)
 		rewriteMobileProxyRequestCookies(r, namespacedSessionCookie)
 		rewriteMobileProxyRequestOrigin(r, target)
+		rewriteMobileProxyForwardedProto(r)
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
@@ -219,6 +220,36 @@ func isWebSocketUpgradeRequest(r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
+}
+
+// rewriteMobileProxyForwardedProto records the browser-facing scheme of the
+// original request in X-Forwarded-Proto before it is proxied to the upstream.
+//
+// The mobile API/WS proxy fronts an HTTPS upstream (e.g. https://msgmate.io)
+// from the Android WebView, which loads the local server over plain HTTP
+// (http://127.0.0.1:1984). The local reverse proxy establishes a TLS connection
+// to the upstream, so the upstream (and any TLS-terminating edge in front of it)
+// sees "https" and would otherwise build browser-facing URLs - most importantly
+// the Google Identity Services login/redirect URL - with the https scheme. The
+// WebView then follows those to https://127.0.0.1:1984, which has no TLS
+// listener, so Google login silently fails and the native server selector keeps
+// showing "No auth". Forwarding the real scheme keeps the callback on
+// http://127.0.0.1:1984 and the session cookie non-Secure.
+//
+// An inbound header is preserved when already present (e.g. the local server
+// itself sits behind a TLS terminator) so we never downgrade a known scheme.
+func rewriteMobileProxyForwardedProto(r *http.Request) {
+	if r == nil {
+		return
+	}
+	if existing := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); existing != "" {
+		return
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	r.Header.Set("X-Forwarded-Proto", scheme)
 }
 
 func rewriteMobileProxyRequestCookies(r *http.Request, namespacedSessionCookie string) {
