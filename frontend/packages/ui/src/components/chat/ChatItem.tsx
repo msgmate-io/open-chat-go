@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Pin } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { OnlineIndicator } from "./OnlineIndicator";
 import { ChatSettings } from "./ChatSettings";
@@ -36,6 +37,7 @@ export function ChatItem({
     partner?: { first_name?: string; second_name?: string; is_bot?: boolean; is_online?: boolean };
     settings?: { title?: string };
     newest_message?: { text?: string };
+    pinned?: boolean;
   };
   isSelected?: boolean;
   onDeleted?: (chatUUID: string) => void;
@@ -60,7 +62,7 @@ export function ChatItem({
             }
           }}
         >
-          <div className="relative px-2 py-2">
+          <div className="relative px-2 py-1.5">
             <div className="flex items-start gap-2 pr-8">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -147,6 +149,7 @@ export function ChatItemCompact({
     uuid?: string;
     settings?: { title?: string };
     latest_message?: { text?: string };
+    pinned?: boolean;
   } | null;
   isSelected?: boolean;
   navigateTo: (to: string) => void;
@@ -176,14 +179,17 @@ export function ChatItemCompact({
             }
           }}
         >
-          <div className="relative flex items-center gap-2 px-2 py-2">
+          <div className="relative flex items-center gap-2 px-2 py-1.5">
             <ChatStateDot state={state} />
             <div className="min-w-0 flex-1 pr-8">
               {title ? (
                 <>
-                  <Text type={TextTypes.Body6} tag="span" bold className="block truncate">
-                    {title}
-                  </Text>
+                  <div className="flex items-center gap-1">
+                    {chat?.pinned ? <Pin className="size-3 shrink-0 text-primary" aria-hidden="true" /> : null}
+                    <Text type={TextTypes.Body6} tag="span" bold className="block min-w-0 truncate">
+                      {title}
+                    </Text>
+                  </div>
                   <Text type={TextTypes.Body7} color="muted" className="block truncate">
                     {content}
                   </Text>
