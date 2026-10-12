@@ -3,7 +3,6 @@ package chats
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/url"
 	"strings"
@@ -15,11 +14,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// notificationSlugInteractionCompleted is emitted for every completed
-// interaction (the automated agent's final reply is ready). The slug is
-// registered by the notifications integration; dispatch is a no-op when that
-// integration is not loaded, so the core stays valid on every profile.
-const notificationSlugInteractionCompleted = "interaction_completed"
+// Interaction notification slugs emitted by the core interaction lifecycle.
+// The slugs are registered by the notifications integration; dispatch is a
+// no-op when that integration is not loaded, so the core stays valid on every
+// profile.
+const (
+	// notificationSlugInteractionCompleted is emitted for every completed
+	// interaction (the automated agent's final reply is ready).
+	notificationSlugInteractionCompleted = "interaction_completed"
+	// notificationSlugInteractionConfirmed is emitted when the owner approves
+	// a pending interaction confirmation so its deferred reply can start.
+	notificationSlugInteractionConfirmed = "interaction_confirmed"
+	// notificationSlugInteractionActionTaken is emitted when a confirmable
+	// action inside an interaction has been executed.
+	notificationSlugInteractionActionTaken = "interaction_action_taken"
+)
 
 // maybeDispatchInteractionCompletedNotification emits the
 // `interaction_completed` notification after a final automated reply is
@@ -55,35 +64,110 @@ func maybeDispatchInteractionCompletedNotification(ctx context.Context, db *gorm
 		return
 	}
 
-	def, ok := integrationinterface.Get("notifications")
-	if !ok {
-		return
-	}
-	fn, ok := def.Functions["dispatch_notification"]
-	if !ok || fn == nil {
-		return
-	}
-
 	interactionURL := interactionCompletedURL(db, chat, receiver)
 	tags := completedInteractionTags(chat)
 	interactionType := interactionCompletedType(chat)
 	body := buildInteractionCompletedBody(interactionURL, interactionType, tags)
 
-	payload := map[string]interface{}{
-		"db":                 db,
-		"slug":               notificationSlugInteractionCompleted,
-		"receiver_user_uuid": ownerUUID,
-		"title":              "Interaction completed",
-		"body":               body,
-		"source_integration": "core",
-		"context":            interactionCompletedContext(db, chat, interactionURL, tags),
+	if err := dispatchInteractionNotification(ctx, db, notificationSlugInteractionCompleted, "Interaction completed", body, ownerUUID, interactionCompletedContext(db, chat, interactionURL, tags)); err != nil {
+		log.Printf("interaction-completed notification dispatch failed for chat %s: %v", chat.UUID, err)
+	}
+}
+
+// maybeDispatchInteractionConfirmedNotification emits the
+// `interaction_confirmed` notification once the owner approves a pending
+// interaction confirmation. The approve handler is the smallest correct hook:
+// it is the single point where the interaction leaves the pending gate and its
+// deferred reply is enqueued, and it carries the interaction chat + owner.
+//
+// Best-effort: notification failures are logged and never affect the approval.
+func maybeDispatchInteractionConfirmedNotification(ctx context.Context, db *gorm.DB, chat database.Chat, owner database.User) {
+	if db == nil {
+		return
+	}
+	if !strings.HasPrefix(strings.TrimSpace(chat.ChatType), "interaction") {
+		return
+	}
+	ownerUUID := strings.TrimSpace(owner.UUID)
+	if ownerUUID == "" {
+		return
+	}
+
+	interactionURL := interactionCompletedURL(db, chat, owner)
+	tags := completedInteractionTags(chat)
+	interactionType := interactionCompletedType(chat)
+	body := buildInteractionConfirmedBody(interactionURL, interactionType, tags)
+
+	if err := dispatchInteractionNotification(ctx, db, notificationSlugInteractionConfirmed, "Interaction confirmed", body, ownerUUID, interactionCompletedContext(db, chat, interactionURL, tags)); err != nil {
+		log.Printf("interaction-confirmed notification dispatch failed for chat %s: %v", chat.UUID, err)
+	}
+}
+
+// MaybeDispatchInteractionActionTakenNotification emits the
+// `interaction_action_taken` notification once a confirmable action has been
+// executed. The confirmable-action executor is the smallest correct hook: the
+// user's decision to execute the action (and its success/failure) is recorded
+// there, and the interaction chat + action are in scope.
+//
+// `status` is the terminal action status ("executed" or "failed"); actions that
+// still wait for an SSH-key unlock stay pending and must not be announced.
+// Best-effort: notification failures are logged and never affect execution.
+func MaybeDispatchInteractionActionTakenNotification(ctx context.Context, db *gorm.DB, chat database.Chat, actor database.User, toolName, status string) {
+	if db == nil {
+		return
+	}
+	if !strings.HasPrefix(strings.TrimSpace(chat.ChatType), "interaction") {
+		return
+	}
+	receiverUUID := strings.TrimSpace(actor.UUID)
+	if receiverUUID == "" {
+		return
+	}
+
+	interactionURL := interactionCompletedURL(db, chat, actor)
+	tags := completedInteractionTags(chat)
+	body := buildInteractionActionTakenBody(interactionURL, toolName, status)
+	contextMap := interactionCompletedContext(db, chat, interactionURL, tags)
+	if action := strings.TrimSpace(toolName); action != "" {
+		contextMap["action"] = action
+	}
+	if result := strings.TrimSpace(status); result != "" {
+		contextMap["action_status"] = result
+	}
+
+	if err := dispatchInteractionNotification(ctx, db, notificationSlugInteractionActionTaken, "Interaction action taken", body, receiverUUID, contextMap); err != nil {
+		log.Printf("interaction-action-taken notification dispatch failed for chat %s: %v", chat.UUID, err)
+	}
+}
+
+// dispatchInteractionNotification resolves the notifications integration and
+// forwards one interaction notification. It is a no-op when the integration is
+// not loaded, so the core remains valid on every integration profile.
+func dispatchInteractionNotification(ctx context.Context, db *gorm.DB, slug, title, body, receiverUUID string, contextMap map[string]interface{}) error {
+	if db == nil || strings.TrimSpace(receiverUUID) == "" {
+		return nil
+	}
+	def, ok := integrationinterface.Get("notifications")
+	if !ok {
+		return nil
+	}
+	fn, ok := def.Functions["dispatch_notification"]
+	if !ok || fn == nil {
+		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if _, err := fn(ctx, payload); err != nil {
-		log.Printf("interaction-completed notification dispatch failed for chat %s: %v", chat.UUID, err)
-	}
+	_, err := fn(ctx, map[string]interface{}{
+		"db":                 db,
+		"slug":               slug,
+		"receiver_user_uuid": receiverUUID,
+		"title":              title,
+		"body":               body,
+		"source_integration": "core",
+		"context":            contextMap,
+	})
+	return err
 }
 
 func decodeMessageMetadata(raw database.JSONRaw) (map[string]interface{}, bool) {
@@ -179,20 +263,54 @@ func interactionCompletedType(chat database.Chat) string {
 }
 
 // buildInteractionCompletedBody renders the compact completion notification
-// body. It keeps the message Signal-friendly: the direct interaction link plus
-// the type and tags, so the receiver can open the interaction for details.
+// body: the direct interaction link plus the type and tags. It intentionally
+// omits any "Interaction completed" preamble because the Signal renderer puts
+// the title (monospace + bold) on its own first line, so the body starts
+// directly with the link.
 func buildInteractionCompletedBody(interactionURL, interactionType string, tags []string) string {
-	var b strings.Builder
-	if interactionURL = strings.TrimSpace(interactionURL); interactionURL != "" {
-		fmt.Fprintf(&b, "Interaction completed: %s\n", interactionURL)
-	} else {
-		b.WriteString("Interaction completed\n")
+	return interactionLinkLine(interactionURL, interactionTypeDetails(interactionType, tags))
+}
+
+// buildInteractionConfirmedBody renders the confirmation notification body: the
+// direct interaction link plus the type and tags, mirroring the completion body.
+func buildInteractionConfirmedBody(interactionURL, interactionType string, tags []string) string {
+	return interactionLinkLine(interactionURL, interactionTypeDetails(interactionType, tags))
+}
+
+// buildInteractionActionTakenBody renders the confirmable-action notification
+// body: the direct interaction link plus the executed tool and result status.
+func buildInteractionActionTakenBody(interactionURL, toolName, status string) string {
+	details := "Action: " + strings.TrimSpace(toolName)
+	if result := strings.TrimSpace(status); result != "" {
+		details += " (" + result + ")"
 	}
-	fmt.Fprintf(&b, "Type: %s", strings.TrimSpace(interactionType))
+	return interactionLinkLine(interactionURL, details)
+}
+
+// interactionTypeDetails renders the shared "Type: <type>, Tags: <...>" detail
+// suffix used by the interaction lifecycle bodies.
+func interactionTypeDetails(interactionType string, tags []string) string {
+	details := "Type: " + strings.TrimSpace(interactionType)
 	if len(tags) > 0 {
-		fmt.Fprintf(&b, ", Tags: %s", strings.Join(tags, ", "))
+		details += ", Tags: " + strings.Join(tags, ", ")
 	}
-	return b.String()
+	return details
+}
+
+// interactionLinkLine joins the direct interaction link and a short detail
+// suffix on a single line (two spaces between them), e.g.
+// "https://ci.msgmate.io/interaction/<uuid>  Type: assign, Tags: git".
+func interactionLinkLine(interactionURL, details string) string {
+	interactionURL = strings.TrimSpace(interactionURL)
+	details = strings.TrimSpace(details)
+	switch {
+	case interactionURL == "":
+		return details
+	case details == "":
+		return interactionURL
+	default:
+		return interactionURL + "  " + details
+	}
 }
 
 // interactionCompletedContext adds the repo/PR context from the interaction's
