@@ -162,6 +162,79 @@ export function getActiveMobileServerConfig(): MobileServerConfig | null {
   return config.servers.find((server) => server.id === config.activeServerId) || config.servers[0] || null;
 }
 
+export function isMobileServerAuthenticated(server: MobileServerConfig | null | undefined): boolean {
+  return Boolean(server && server.isAuthenticated === true);
+}
+
+// isMobileServerAuthenticatedWithProbe resolves a server's auth state from the
+// native cookie hint plus a live same-origin session probe. The native host
+// derives `isAuthenticated` from the WebView cookie jar, which can miss on a
+// cold start, when the cookie is committed slightly after the first paint, or
+// when a Google-login callback replied through a different code path. The probe
+// (`probeActiveMobileServerAuthenticated`) confirms the *active* server's real
+// session against `/api/v1/user/self`, so a successful login reliably flips the
+// server selector to "Auth" without requiring a background/foreground cycle.
+// The probe never *clears* a native positive hint, so a server authenticated in
+// a previous session still shows as authenticated before the probe resolves.
+export function isMobileServerAuthenticatedWithProbe(
+  server: MobileServerConfig | null | undefined,
+  activeServerId: string,
+  activeServerProbeAuthenticated: boolean,
+): boolean {
+  if (!server) {
+    return false;
+  }
+  if (server.isAuthenticated === true) {
+    return true;
+  }
+  return activeServerProbeAuthenticated && server.id === activeServerId;
+}
+
+// probeActiveMobileServerAuthenticated performs a lightweight same-origin probe
+// of the currently active server's session. In the native app the WebView is
+// fronted by the local runtime proxy, so `/api/v1/user/self` is rewritten to the
+// active upstream and answers 200 only when a valid session cookie is present.
+export async function probeActiveMobileServerAuthenticated(): Promise<boolean> {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const response = await fetch("/api/v1/user/self", {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export type MobileServerAuthSelection = {
+  active: MobileServerConfig | null;
+  activeIsAuthenticated: boolean;
+  authenticated: MobileServerConfig[];
+  recommended: MobileServerConfig | null;
+};
+
+// resolveMobileServerAuthSelection inspects the native server config and picks
+// the server the share flow should use. "Already authenticated" servers are
+// identified from the persisted session cookie the native host reads out of the
+// WebView jar (not an ephemeral in-memory flag), so a server authenticated in a
+// previous session stays selected. When the active server is not authenticated
+// but another one is, `recommended` points at it so the caller can switch.
+export function resolveMobileServerAuthSelection(config: MobileAppConfig): MobileServerAuthSelection {
+  const active =
+    config.servers.find((server) => server.id === config.activeServerId) || config.servers[0] || null;
+  const authenticated = config.servers.filter((server) => isMobileServerAuthenticated(server));
+  const activeIsAuthenticated = isMobileServerAuthenticated(active);
+  return {
+    active,
+    activeIsAuthenticated,
+    authenticated,
+    recommended: activeIsAuthenticated ? active : authenticated[0] || null,
+  };
+}
+
 export function readMobileAppConfig(): MobileAppConfig {
   if (typeof window === "undefined") {
     return defaultConfig;
