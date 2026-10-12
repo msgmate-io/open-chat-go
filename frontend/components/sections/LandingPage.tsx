@@ -16,6 +16,10 @@ import {
   Typewriter,
   clampCssSize,
   openChatLandingTypewriterTexts,
+  AUTH_SHELL_CLASSES,
+  AUTH_BODY_CLASSES,
+  AUTH_PANEL_CLASSES,
+  AUTH_CONTENT_CLASSES,
 } from "@open-chat-go/ui"
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
@@ -354,7 +358,7 @@ export function LandingHero({
     }, [accountManagementConfig?.signup_requires_admin_approval, hasSignupEnabled, setTab, signupGateResolved, tab])
 
     return <>
-        <div className="relative flex min-h-full flex-col overflow-y-auto bg-secondary md:h-full md:min-h-0 md:overflow-hidden md:bg-transparent">
+        <div className={AUTH_SHELL_CLASSES}>
             <div className="relative z-40 w-full md:absolute md:left-0 md:top-0 md:w-2/3">
                 <div className="flex w-full flex-col items-start p-4 text-foreground md:flex-row md:bg-background/80 md:backdrop-blur">
                     <Text type={TextTypes.Heading5} tag="div" bold>
@@ -365,7 +369,7 @@ export function LandingHero({
                     </Text>
                 </div>
             </div>
-            <div className="flex md:flex-row flex-col items-center justify-center content-center h-auto min-h-0 md:h-full flex-1">
+            <div className={AUTH_BODY_CLASSES}>
                 <div className="hidden md:flex flex-col flex-grow items-center justify-center content-center bg-background md:w-2/3 h-full shadow-xl z-10 relative text-foreground">
                     <Typewriter
                         fullHeight
@@ -374,13 +378,13 @@ export function LandingHero({
                         texts={(isLoading || error) ? TEXTS : GenerateTextForLoggedInUser(user)}
                     />
                 </div>
-                <div className="flex flex-col flex-grow items-center justify-center content-center bg-secondary text-secondary-foreground w-full md:w-1/3 h-auto md:h-full">
+                <div className={AUTH_PANEL_CLASSES}>
                     <div className="flex flex-row items-end justify-end content-center w-full">
                         <div className="p-2 hover:bg-accent rounded-xl z-40">
                             <ConnectedThemeSelector variant="icon-dropdown" />
                         </div>
                     </div>
-                    <div className="flex flex-col items-center justify-center content-center w-full flex-grow p-4 pb-20 md:pb-4">
+                    <div className={AUTH_CONTENT_CLASSES}>
                         {tab === "index" && <IndexTab hasSignupEnabled={hasSignupEnabled} navigateTo={navigateTo}/>} 
                         {tab === "login" && <LoginSection
                             navigateTo={navigateTo}
