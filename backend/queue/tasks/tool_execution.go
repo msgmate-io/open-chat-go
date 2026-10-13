@@ -43,6 +43,7 @@ func HandleToolExecution(_ context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	toolInitData := database.NewToolInitDataManager(deps.DB).ResolveToolInitData(chat, payload.ToolName)
+	toolInitData = database.WithTrustedBotRuntime(toolInitData, &user)
 	dynamicTools := map[string]interface{}{}
 	mcpTools := map[string]interface{}{}
 	if chat.SharedConfig != nil && len(chat.SharedConfig.ConfigData) > 0 {
