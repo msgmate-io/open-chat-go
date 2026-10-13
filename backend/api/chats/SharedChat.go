@@ -73,6 +73,10 @@ type PublicInteractionChat struct {
 	Partner            interface{}            `json:"partner"`
 	Config             interface{}            `json:"config"`
 	InteractionDetails map[string]interface{} `json:"interaction_details,omitempty"`
+	// FollowUp describes the follow-up interaction this interaction handed off
+	// to (e.g. the agent a runtime-selector/chooser bot picked), so a viewer
+	// clicking the interaction badge can be redirected to it.
+	FollowUp *PublicFollowUp `json:"follow_up,omitempty"`
 }
 
 func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, accessMode string, targetUserID *uint) (database.SharedChatInstance, error) {
@@ -292,6 +296,7 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		},
 		Config:             config,
 		InteractionDetails: interactionDetails,
+		FollowUp:           publicFollowUpForInteraction(DB, chat),
 	})
 }
 
