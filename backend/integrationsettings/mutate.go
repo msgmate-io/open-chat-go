@@ -143,7 +143,7 @@ func applyUpsert(root map[string]interface{}, op ConfigUpsertOp) error {
 		if fmt.Sprintf("%v", row[key]) != fmt.Sprintf("%v", op.Value[key]) {
 			continue
 		}
-		merged := make(map[string]interface{}, len(row)+len(op.Value))
+		merged := make(map[string]interface{})
 		for k, v := range row {
 			merged[k] = v
 		}
