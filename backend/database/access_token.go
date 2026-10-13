@@ -36,11 +36,20 @@ const (
 	// AudienceBrowserAPI marks short-lived tokens minted for browser/API
 	// clients embedded in third party frontends.
 	AudienceBrowserAPI = "browser-api"
+	// AudienceMCPInteraction marks the long-lived credential the opencode
+	// integration mints for the built-in Open-Chat MCP server. Like the browser
+	// audience it is default-deny: only the MCP endpoint accepts it. Unlike a
+	// browser token it never grants the admin "see all chats" scope, so an
+	// agent runtime can only read the interactions its owner participates in.
+	AudienceMCPInteraction = "mcp-interaction"
 
 	ScopeBotsRead         = "bots:read"
 	ScopeBotsWrite        = "bots:write"
 	ScopeInteractionsList = "interactions:list"
 	ScopeInteractionsRead = "interactions:read"
+	// ScopeInteractionsMCP grants read access to the read-only interaction
+	// history MCP server (POST /api/v1/mcp).
+	ScopeInteractionsMCP = "interactions:mcp"
 )
 
 // ValidTokenScopes is the set of scopes that can be granted to restricted
@@ -50,6 +59,7 @@ var ValidTokenScopes = map[string]struct{}{
 	ScopeBotsWrite:        {},
 	ScopeInteractionsList: {},
 	ScopeInteractionsRead: {},
+	ScopeInteractionsMCP:  {},
 }
 
 func IsValidTokenScope(scope string) bool {
@@ -148,4 +158,13 @@ func AccessTokenFromContext(ctx context.Context) *AccessToken {
 func IsBrowserToken(ctx context.Context) bool {
 	token := AccessTokenFromContext(ctx)
 	return token != nil && token.Audience == AudienceBrowserAPI
+}
+
+// IsMCPInteractionToken reports whether the request was authenticated with the
+// audience-bound token the opencode integration mints for the built-in
+// Open-Chat MCP server. Such requests are owner-scoped only: they never see the
+// admin "all chats" view.
+func IsMCPInteractionToken(ctx context.Context) bool {
+	token := AccessTokenFromContext(ctx)
+	return token != nil && token.Audience == AudienceMCPInteraction
 }
