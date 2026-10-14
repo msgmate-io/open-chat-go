@@ -65,6 +65,8 @@ export {
   registerChatUIMessageRenderer,
   registerChatSearchAction,
   listChatSearchActions,
+  registerChatSidebarHeaderAction,
+  listChatSidebarHeaderActions,
   registerChatUIHelper,
   resolveChatUIExtension,
   resolveChatUIExtensionForChat,
@@ -73,6 +75,8 @@ export {
 export type {
   ChatSearchAction,
   ChatSearchActionProps,
+  ChatSidebarHeaderAction,
+  ChatSidebarHeaderActionProps,
   ChatUIAttachment,
   ChatUIContact,
   ChatUIContext,
