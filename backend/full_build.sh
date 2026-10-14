@@ -258,10 +258,10 @@ fi
 # Build with ldflags
 if [ -n "$LDFLAGS" ]; then
     echo "Building with ldflags: $LDFLAGS"
-    go build $TRIMPATH_FLAG -ldflags "$LDFLAGS" -o backend .
+    go build $TRIMPATH_FLAG -buildvcs=false -ldflags "$LDFLAGS" -o backend .
 else
     echo "Building backend (no custom ldflags)"
-    go build $TRIMPATH_FLAG -o backend .
+    go build $TRIMPATH_FLAG -buildvcs=false -o backend .
 fi
 
 echo "Full build complete!"

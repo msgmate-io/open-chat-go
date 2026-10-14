@@ -48,3 +48,22 @@ backend/go.work.sum
 backend/integrations/externalintegrations/imports_gen.go
 .integrations
 integrations.local.yaml
+
+# Keep VCS metadata, local build artifacts and the host-side Go build cache out
+# of the build context: they are never used inside the image and previously
+# inflated the transferred context (integration `.git` dirs + a stale 165 MB
+# backend/backend binary).
+**/.git
+**/node_modules
+**/*.map
+.ci-cache
+backend/backend
+backend/data.db*
+# Keep the empty placeholder: server/routing.go has //go:embed all:frontend,
+# which needs at least one embeddable file when the frontend stage is empty
+# (the core-only smoke build uses frontend_empty). The built frontend is copied
+# in from the frontend stage on top of this at image-build time.
+backend/server/frontend/*
+!backend/server/frontend/.keep
+clients/integrations/**/.git
+
