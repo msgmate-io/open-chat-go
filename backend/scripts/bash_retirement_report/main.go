@@ -270,7 +270,7 @@ func buildReport(samples []nativecoder.BashCallSample, coderSystemPrompt string)
 				{Category: nativecoder.BashCategoryGitHubCLI, RetiredBy: "phase_1_github", Shipped: true},
 				{Category: nativecoder.BashCategoryGitMutation, RetiredBy: "phase_2_git", Shipped: true},
 				{Category: nativecoder.BashCategoryRepoInspection, RetiredBy: "phase_2_git", Shipped: true},
-				{Category: nativecoder.BashCategoryEnvProbing, Shipped: true},
+				{Category: nativecoder.BashCategoryEnvProbing, Shipped: false},
 				{Category: nativecoder.BashCategoryIntegrationCLI, RetiredBy: "phase_4_longtail", Shipped: true},
 				{Category: nativecoder.BashCategoryGitHubWait, RetiredBy: "phase_6_github_wait", Shipped: true},
 				{Category: nativecoder.BashCategoryResidualShell, Shipped: false},
