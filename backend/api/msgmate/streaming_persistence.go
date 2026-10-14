@@ -102,12 +102,26 @@ func (p *partialMessagePersister) flush(seq int64, text string, reasoning []stri
 	}
 
 	updates := map[string]interface{}{
-		"seq":       seq,
-		"text":      text,
-		"reasoning": reasoning,
+		"seq":  seq,
+		"text": text,
+	}
+	// GORM map updates bypass the struct field JSON serializers, so []string /
+	// []json.RawMessage values reach the driver as raw slices. SQLite rejects
+	// that with "SQL logic error: row value misused (1)" and silently drops the
+	// snapshot, which loses the tool-call state for every tool-using bot. Marshal
+	// the JSON columns explicitly so the stored text matches what the field
+	// serializer writes and reads back.
+	if reasoningJSON, err := json.Marshal(reasoning); err != nil {
+		log.Printf("streaming persistence: failed to marshal reasoning (chat %s): %v", p.chatUUID, err)
+	} else {
+		updates["reasoning"] = string(reasoningJSON)
 	}
 	if len(toolCallsJSON) > 0 {
-		updates["tool_calls"] = toolCallsJSON
+		if encoded, err := json.Marshal(toolCallsJSON); err != nil {
+			log.Printf("streaming persistence: failed to marshal tool calls (chat %s): %v", p.chatUUID, err)
+		} else {
+			updates["tool_calls"] = string(encoded)
+		}
 	}
 
 	result := p.db.Model(&database.StreamingMessage{}).Where("id = ?", p.rowID).Updates(updates)
