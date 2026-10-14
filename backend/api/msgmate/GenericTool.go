@@ -23,6 +23,17 @@ func (t *GenericTool) RunTool(input interface{}) (string, error) {
 	return t.Definition.RunFunction(input, initData)
 }
 
+// ResolveConfirmation delegates to the definition's code-defined resolver when
+// present, passing the tool init context. Without a resolver it falls back to
+// the static RequiresConfirmation flag.
+func (t *GenericTool) ResolveConfirmation(input interface{}) (bool, string) {
+	if t.Definition.ResolveConfirmation == nil {
+		return t.RequiresConfirmation, ""
+	}
+	initData, _ := t.ToolInit.(map[string]interface{})
+	return t.Definition.ResolveConfirmation(input, initData)
+}
+
 func (t *GenericTool) ParseArguments(input string) (interface{}, error) {
 	// Get the type of the input
 	inputType := reflect.TypeOf(t.Definition.InputType)

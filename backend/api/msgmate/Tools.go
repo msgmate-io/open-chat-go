@@ -23,6 +23,11 @@ type Tool interface {
 	GetAdminOnly() bool
 	GetRequiresInit() bool
 	GetRequiresConfirmation() bool
+	// ResolveConfirmation returns the call-time confirmation requirement. Tools
+	// without a code-defined resolver fall back to GetRequiresConfirmation.
+	// When confirmation is not required, a non-empty resolved result replaces
+	// the tool's own Run output (e.g. an autonomous answer).
+	ResolveConfirmation(input interface{}) (requiresConfirmation bool, resolvedResult string)
 	GetStopOnFirstConfirmableToolCall() bool
 	GetConfirmationBlockMessage() string
 	ConstructTool() interface{}
@@ -103,6 +108,7 @@ func registerExternalToolsLocked() {
 			RequiredParams:                 externalDef.RequiredParams,
 			Parameters:                     externalDef.Parameters,
 			RunFunction:                    externalDef.Run,
+			ResolveConfirmation:            externalDef.ResolveConfirmation,
 		}
 		defCopy := def
 
@@ -220,6 +226,13 @@ func (t *BaseTool) GetRequiresInit() bool {
 
 func (t *BaseTool) GetRequiresConfirmation() bool {
 	return t.RequiresConfirmation
+}
+
+// ResolveConfirmation is the default confirmation resolution: it mirrors the
+// static RequiresConfirmation flag and never auto-resolves. Tools that need a
+// call-time decision (eg the coder_ask autonomous answer) override it.
+func (t *BaseTool) ResolveConfirmation(input interface{}) (bool, string) {
+	return t.RequiresConfirmation, ""
 }
 
 func (t *BaseTool) GetStopOnFirstConfirmableToolCall() bool {

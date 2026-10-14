@@ -953,7 +953,9 @@ func processStreamingResponseReader(
 			var toolResult string
 			status := ToolCallStatusSucceeded
 			toolErr := ""
-			if tool.GetRequiresConfirmation() {
+			requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
+			switch {
+			case requiresConfirmation:
 				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
 				toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
 				status = ToolCallStatusPendingConfirmation
@@ -966,7 +968,15 @@ func processStreamingResponseReader(
 				if tool.GetStopOnFirstConfirmableToolCall() {
 					result.stopAfterTool = true
 				}
-			} else {
+			case resolvedResult != "":
+				// A code-defined resolver (eg coder_ask in an autonomous session)
+				// decided the call must not be confirmed and supplied the answer
+				// itself; use it as the tool result and continue instead of
+				// pausing for the user.
+				toolResult = resolvedResult
+				result.result = resolvedResult
+				status = ToolCallStatusSucceeded
+			default:
 				executedResult, runErr := tool.RunTool(toolInput)
 				if runErr != nil {
 					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
