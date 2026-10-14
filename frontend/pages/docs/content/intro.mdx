@@ -8,9 +8,8 @@ section: Introduction
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@open-chat-go/ui";
 
-Open Chat Go is a federated chat platform that combines a Go backend, a React
-frontend, an async worker queue, and a growing set of LLM models, tools and
-integrations.
+Open Chat Go is a chat platform that combines a Go backend, a React frontend,
+an async worker queue, and a growing set of LLM models, tools and integrations.
 
 This documentation covers the **public** surface of the platform: the REST and
 WebSocket APIs, the chat and interaction model, bots and agents, models and
@@ -65,6 +64,16 @@ administration material is intentionally excluded.
         <CardDescription>Every `open-chat` subcommand, flag and config option.</CardDescription>
       </CardHeader>
       <CardContent className="text-sm text-muted-foreground">Operate the server from the terminal.</CardContent>
+    </Card>
+  </a>
+
+  <a href="/docs#tui">
+    <Card className="h-full transition-colors hover:bg-muted/30">
+      <CardHeader>
+        <CardTitle className="text-base">Terminal UI</CardTitle>
+        <CardDescription>Chat with your default bot from the terminal.</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">Launch the TUI with `open-chat tui`.</CardContent>
     </Card>
   </a>
 </div>

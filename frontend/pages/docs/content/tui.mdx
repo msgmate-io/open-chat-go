@@ -1,0 +1,70 @@
+---
+title: Terminal UI (TUI)
+path: tui
+description: Chat with your default bot from the terminal with the Open-Chat TUI.
+order: 54
+adminOnly: false
+section: Clients
+---
+
+The Open-Chat **TUI** is a full-screen, keyboard-driven terminal client for
+chatting with your default bot and managing multiple server connections. It is
+launched through the `open-chat` binary:
+
+```bash
+open-chat tui
+```
+
+A standalone `open-chat-tui` binary can also be run directly. `open-chat tui`
+resolves the TUI in this order: the `OPEN_CHAT_TUI_BIN` override, a TUI
+bundled into the build, `open-chat-tui` on your `PATH`, `open-chat-tui` next to
+the running `open-chat` binary, and finally `~/.cargo/bin/open-chat-tui`.
+
+## Features
+
+- Full-screen, keyboard-driven UI — navigate with the arrow keys or `j`/`k`
+  (vim-style) and select with `Enter`.
+- Multi-server management — add, edit, delete and switch between server
+  connections. A default local server (`http://127.0.0.1:1984`) is always
+  available.
+- Two sign-in methods — browser login or an API key.
+- Persistent, device-scoped configuration — servers and tokens are stored under
+  the platform user-config directory (for example
+  `~/.config/open-chat-go/tui/config.json` on Linux), so the device stays
+  authorized until the token expires.
+- Authenticated chat — a prompt-style chat input with your default bot
+  preselected.
+
+## Signing in
+
+- **Browser login** — opens the CLI authorization page in your browser and
+  polls until the device is approved.
+- **API key** — paste a personal access token (`ocat_…`).
+
+Tokens are written with `0600` permissions on Unix.
+
+## Configuration
+
+The TUI keeps a small JSON config:
+
+```json
+{
+  "servers": [
+    { "name": "local", "url": "http://127.0.0.1:1984" },
+    { "name": "hosted", "url": "https://chat.example.com", "token": "ocat_…" }
+  ],
+  "active": "local",
+  "default_bot": "bot"
+}
+```
+
+Useful flags and environment variables:
+
+| Flag / env var | Purpose |
+| --- | --- |
+| `--where` | Print the config file path. |
+| `--version` | Print the TUI version. |
+| `OPEN_CHAT_TUI_CONFIG_DIR` | Override the config directory (useful for tests and ephemeral environments). |
+
+The TUI talks to the regular HTTP API, so it works against any Open Chat Go
+server that the terminal can reach.

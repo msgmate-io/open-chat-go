@@ -36,10 +36,6 @@ through the admin integration access routes. A grant never unlocks an
 `AdminOnly` integration for a non-admin. Those management routes are
 intentionally not documented here.
 
-Administrative account, bot and per-user integration-access management is
-provided by a private integration and is intentionally not part of the public
-documentation surface.
-
 ## Tool interface
 
 Tools implement a common Go interface (`clients/go_tool_interface`). A tool
@@ -59,10 +55,5 @@ through the `/api/v1/tools/typing/...` endpoints.
 Implement the integration interface, register it with the integrations registry
 in `backend/integrations`, and declare its routes and access requirements. Tools
 are then published automatically and appear in the catalogue once the server
-starts.
-
-See [Integration Prebuild & Linkage Design](/docs#integration-prebuild-design)
-for why committed integration binaries, Go plugins and `c-shared` libraries do
-not work here, and for the incremental path (Go build-cache reuse, a stable
-`Host` interface, and prebuilt release/OCI artifacts) towards loading
-integrations on demand.
+starts. See [Integration Development](/docs#integration-development) for the
+interfaces, the manifest and a walkthrough for adding a custom integration.
