@@ -19,6 +19,7 @@ open-chat server   [flags]   # API + optional embedded worker + frontend
 open-chat worker   [flags]   # background worker only
 open-chat run      [flags]   # one-shot interaction, prints the bot reply
 open-chat client   <cmd>     # authenticated API calls for scripts
+open-chat tui      [flags]   # launch the terminal UI (when bundled)
 ```
 
 Run `open-chat <command> --help` to print the authoritative flag list for the
@@ -193,6 +194,13 @@ open-chat client hash-password --password "$NEW_PASSWORD"
 Shared flags: `--host` (`OPEN_CHAT_HOST`, default `http://localhost:1984`),
 `--api-token` (`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
 their own `open-chat client ...` subcommands.
+
+## `open-chat tui`
+
+Launches the terminal UI when the `tui` integration is part of the build. All
+arguments after the command name are forwarded to the TUI, so its own flags
+(for example `--where` and `--version`) work through `open-chat tui`. See
+[Terminal UI](/docs#tui) for usage and configuration.
 
 ## `open-chat.json` example
 
