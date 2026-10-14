@@ -4,6 +4,7 @@ import (
 	"backend/api/msgmate"
 	userapi "backend/api/user"
 	"backend/database"
+	"backend/integrationhost"
 	"backend/integrations"
 	"backend/queue"
 	"backend/runtimecfg"
@@ -787,6 +788,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	credentialsOutputDir = filepath.Dir(c.String("db-path"))
 
 	integrations.EnsureLoaded()
+	integrationhost.Install()
 	msgmate.EnsureExternalToolsRegistered()
 	database.RegisterExternalModels(integrations.AdditionalModels()...)
 	for _, migration := range integrations.AdditionalMigrations() {
