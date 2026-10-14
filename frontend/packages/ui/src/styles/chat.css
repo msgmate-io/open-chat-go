@@ -167,6 +167,18 @@
     @apply my-3 border-l-2 border-border pl-3 text-muted-foreground italic;
   }
 
+  .chat-markdown-table {
+    @apply w-full min-w-max border-collapse text-sm;
+  }
+
+  .chat-markdown-table :where(th, td) {
+    @apply border border-border px-2 py-1 text-left align-top;
+  }
+
+  .chat-markdown-table :where(thead th) {
+    @apply bg-muted/50 font-semibold;
+  }
+
   .scrollbar-hidden {
     -ms-overflow-style: none;
     scrollbar-width: none;
