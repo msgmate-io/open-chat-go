@@ -284,6 +284,12 @@ jobs:
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
+      # GitHub environment that gates the deploy/post-deploy suites. Same-repo
+      # PRs targeting `main` use the unprotected `msgmate-io-ci` environment (no
+      # admin confirmation); every other PR keeps the protected
+      # `msgmate-io-pr-deployment` environment. See DEVELOPMENT.md
+      # "Pull-request CI labels and deployment policy".
+      approval_environment: ${{ steps.context.outputs.approval_environment }}
       target_ref: ${{ steps.context.outputs.target_ref }}
       pr_number: ${{ steps.context.outputs.pr_number }}
       source_repository: ${{ steps.context.outputs.source_repository }}
@@ -470,8 +476,22 @@ jobs:
             PR_NAMESPACE=""
             PR_HELM_RELEASE=""
           fi
+          # Approval gate environment. A same-repo PR targeting `main` is the
+          # consolidation / CI-environment case and uses the unprotected
+          # `msgmate-io-ci` environment, so the full suite (including the
+          # post-deploy sandbox and real-AI suites) runs without an admin
+          # confirmation. Every other PR keeps the protected
+          # `msgmate-io-pr-deployment` environment. See DEVELOPMENT.md
+          # "Pull-request CI labels and deployment policy".
+          APPROVAL_ENVIRONMENT="$DEPLOYMENT_NAME"
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+            && [ "${{ github.event.pull_request.base.ref }}" = "main" ] \
+            && [ "$IS_SAME_REPO_PR" = "true" ]; then
+            APPROVAL_ENVIRONMENT="${{ env.DEPLOYMENT_CI }}"
+          fi
           echo "ci_repository=$CI_REPOSITORY" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
+          echo "approval_environment=$APPROVAL_ENVIRONMENT" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "source_repository=$SOURCE_REPOSITORY" >> "$GITHUB_OUTPUT"
@@ -2246,7 +2266,7 @@ jobs:
       group: pr-deploy-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     environment:
-      name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
+      name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.approval_environment }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
