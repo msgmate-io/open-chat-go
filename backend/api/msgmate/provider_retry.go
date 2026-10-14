@@ -252,6 +252,84 @@ func describeProviderFailure(err error) (string, int) {
 	return summary, attempts
 }
 
+// Failure reason values recorded in message metadata ("failure_reason") and
+// reused to pick user-facing guidance. They distinguish a genuine provider-side
+// failure (or a recognised transient network problem) from an unclassified
+// internal error, so the chat never speculates about credits or outages.
+const (
+	FailureReasonContextWindow    = "context_window_exceeded"
+	FailureReasonProviderError    = "provider_error"
+	FailureReasonTransientNetwork = "transient_network_error"
+	FailureReasonInternal         = "internal_error"
+)
+
+// GenerationFailureClassification is the outcome of classifying a failed
+// generation. ProviderSummary and ProviderAttempts are only meaningful for
+// FailureReasonProviderError.
+type GenerationFailureClassification struct {
+	Reason           string
+	ProviderSummary  string
+	ProviderAttempts int
+}
+
+// ClassifyGenerationFailure maps a generation error onto a stable failure
+// reason. Only errors that are genuinely provider-side (a provider HTTP
+// response) or a recognised transient network problem may later be described as
+// a provider issue; everything else is reported as internal so the user is not
+// told credits/outage are the cause.
+func ClassifyGenerationFailure(err error) GenerationFailureClassification {
+	if err == nil {
+		return GenerationFailureClassification{Reason: FailureReasonInternal}
+	}
+	if isContextWindowExceededError(err) {
+		return GenerationFailureClassification{Reason: FailureReasonContextWindow}
+	}
+	summary, attempts := describeProviderFailure(err)
+	if attempts < 1 {
+		attempts = 1
+	}
+	if summary != "" {
+		return GenerationFailureClassification{
+			Reason:           FailureReasonProviderError,
+			ProviderSummary:  summary,
+			ProviderAttempts: attempts,
+		}
+	}
+	if isTransientNetworkError(err) {
+		return GenerationFailureClassification{
+			Reason:           FailureReasonTransientNetwork,
+			ProviderAttempts: attempts,
+		}
+	}
+	return GenerationFailureClassification{Reason: FailureReasonInternal, ProviderAttempts: attempts}
+}
+
+// isTransientNetworkError reports whether err matches a connection-level
+// failure that is recognised as transient (worth explaining as a connectivity
+// problem rather than an internal fault).
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msgLower := strings.ToLower(err.Error())
+	for _, marker := range transientNetworkErrorMarkers {
+		if strings.Contains(msgLower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// TruncateFailureDetail trims a raw error string for safe inclusion in a
+// user-facing message.
+func TruncateFailureDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if len(detail) > 300 {
+		detail = detail[:300] + "…"
+	}
+	return detail
+}
+
 // providerRetryOptionsFromConfig reads the optional provider retry flags from
 // a chat config map. All flags are optional; when provider_retry is unset or
 // false the returned options keep the legacy single-attempt behavior.
