@@ -45,6 +45,16 @@ generate_swagger() {
 
 run_step "resolve integrations" resolve_integrations
 
+# Compile the integration source-repository registry from the lockfiles so the
+# /integrations overview can deep-link models and API routes back to their
+# implementation. Best-effort and idempotent (only rewrites on content change,
+# so it cannot loop the file watcher).
+if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT_DIR/scripts/generate_integration_source_registry.py" ]; then
+  run_step "generate integration source registry" \
+    python3 "$ROOT_DIR/scripts/generate_integration_source_registry.py" || \
+    log "warning: failed to generate integration source registry"
+fi
+
 # Build in Go workspace mode; the generated workspace selects the profile's
 # modules and replaces all msgmate module paths.
 export GOWORK="$ROOT_DIR/go.work"

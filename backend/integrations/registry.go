@@ -1,7 +1,7 @@
 package integrations
 
 import (
-	_ "backend/integrations/externalintegrations"
+	extgen "backend/integrations/externalintegrations"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -465,6 +465,25 @@ func LabelsFor(def extiface.Definition) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SourceRepository returns the source repository declaration for an
+// integration, if the build generated one. It lets the /integrations overview
+// link back to the code that implements a model, route or function.
+func SourceRepository(name string) (extgen.SourceRepository, bool) {
+	key := normalizeIntegrationName(name)
+	if src, ok := extgen.SourceRepositories[key]; ok {
+		return src, true
+	}
+	// A few definitions append "_integration" to their manifest id (e.g. the
+	// go-client integration registers as "go_client_integration"). Fall back to
+	// the manifest id so those still resolve.
+	if trimmed := strings.TrimSuffix(key, "_integration"); trimmed != key {
+		if src, ok := extgen.SourceRepositories[trimmed]; ok {
+			return src, true
+		}
+	}
+	return extgen.SourceRepository{}, false
 }
 
 func Get(name string) (extiface.Definition, bool) {
