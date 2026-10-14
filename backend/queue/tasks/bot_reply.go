@@ -147,7 +147,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 		failureMessage := botReplyFailureMessage(err)
 		if !responseAlreadySent {
-			if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
+			if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage, err); sendErr != nil {
 				failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
 			}
 		}
@@ -225,23 +225,58 @@ func botReplyFailureMessage(err error) string {
 		return "I paused this reply. Send another message when you want me to continue."
 	}
 
-	errLower := strings.ToLower(err.Error())
-	if strings.Contains(errLower, "connection refused") ||
-		strings.Contains(errLower, "no such host") ||
-		strings.Contains(errLower, "timeout") ||
-		strings.Contains(errLower, "api key") ||
-		strings.Contains(errLower, "unauthorized") ||
-		strings.Contains(errLower, "forbidden") {
+	switch classification := msgmate.ClassifyGenerationFailure(err); classification.Reason {
+	case msgmate.FailureReasonProviderError:
+		return fmt.Sprintf("I could not generate a reply: my AI provider request failed (%s). Please try again in a moment or switch to another model.", classification.ProviderSummary)
+	case msgmate.FailureReasonTransientNetwork:
+		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
+	case msgmate.FailureReasonContextWindow:
+		return "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+	}
+
+	if isProviderReachabilityError(err) {
 		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
 	}
 
-	return "I ran into an error while generating a reply. Please try again in a moment."
+	return fmt.Sprintf("I hit an internal error while generating this reply: %s", msgmate.TruncateFailureDetail(err.Error()))
 }
 
-func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string) error {
+// isProviderReachabilityError recognises provider configuration / connectivity
+// problems that produce a network-level error rather than a provider HTTP
+// response, so they can be described as reachability issues instead of an
+// internal fault.
+func isProviderReachabilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errLower := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection refused",
+		"no such host",
+		"timeout",
+		"api key",
+		"unauthorized",
+		"forbidden",
+	} {
+		if strings.Contains(errLower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string, err error) error {
 	metadata := map[string]interface{}{
 		"finished": true,
 		"error":    true,
+	}
+	if err != nil {
+		classification := msgmate.ClassifyGenerationFailure(err)
+		metadata["failure_reason"] = classification.Reason
+		metadata["error_detail"] = err.Error()
+		if classification.ProviderSummary != "" {
+			metadata["provider_error"] = classification.ProviderSummary
+		}
 	}
 
 	return ocClient.SendChatMessage(chatUUID, client.SendMessage{
