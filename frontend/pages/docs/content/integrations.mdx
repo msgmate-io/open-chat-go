@@ -60,3 +60,9 @@ Implement the integration interface, register it with the integrations registry
 in `backend/integrations`, and declare its routes and access requirements. Tools
 are then published automatically and appear in the catalogue once the server
 starts.
+
+See [Integration Prebuild & Linkage Design](/docs#integration-prebuild-design)
+for why committed integration binaries, Go plugins and `c-shared` libraries do
+not work here, and for the incremental path (Go build-cache reuse, a stable
+`Host` interface, and prebuilt release/OCI artifacts) towards loading
+integrations on demand.
