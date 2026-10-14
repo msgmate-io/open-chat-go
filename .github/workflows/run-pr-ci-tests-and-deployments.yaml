@@ -760,6 +760,19 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      # Per-integration checkout cache. `sync --frozen` re-validates the pinned
+      # commits and only clones what is missing, so restoring the checkouts turns
+      # the ~49s clone of ~29 repos into a few seconds.
+      - name: Cache integration checkouts
+        uses: actions/cache@v4
+        with:
+          path: |
+            clients/integrations
+            .integrations
+          key: integrations-${{ runner.os }}-${{ hashFiles('integrations.lock.json', 'profile_setup.yaml') }}
+          restore-keys: |
+            integrations-${{ runner.os }}-
+
       - name: Materialize full integrations
         run: |
           set -euo pipefail
@@ -788,6 +801,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Persist the container's Go build cache between runs and inject it into
+      # the build through the `gobuildcache` build context (see Dockerfile). The
+      # Dockerfile's type=cache mount is intentionally NOT exported by
+      # cache-to=type=registry, so this actions/cache directory is the only
+      # durable compiler cache for the image build.
+      - name: Restore Go build cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/go-build
+          key: docker-go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            docker-go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
+            docker-go-build-${{ runner.os }}-
+
+      - name: Ensure Go build cache directory exists
+        run: mkdir -p .ci-cache/go-build
+
       - name: Build and push backend image
         id: build
         uses: docker/build-push-action@v6
@@ -799,6 +829,11 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
+          # Bind the restored host-side Go build cache into the builder as the
+          # `gobuildcache` named context (the Dockerfile defines an empty scratch
+          # stage with the same name as the local-build fallback).
+          build-contexts: |
+            gobuildcache=.ci-cache/go-build
           # Registry layer cache (mode=max also caches intermediate stages).
           # Measured: adding a second type=gha,mode=max exporter pushed the
           # "Build Backend Image Once" job from ~5m21s to ~6m10s - the GHA cache
@@ -978,6 +1013,17 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
             go-build-${{ runner.os }}-
+
+      - name: Cache integration checkouts
+        if: steps.context.outputs.should_test != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            clients/integrations
+            .integrations
+          key: integrations-${{ runner.os }}-${{ hashFiles('integrations.lock.json', 'profile_setup.yaml') }}
+          restore-keys: |
+            integrations-${{ runner.os }}-
 
       - name: Materialize full integration test module set
         if: steps.context.outputs.should_test != ''
