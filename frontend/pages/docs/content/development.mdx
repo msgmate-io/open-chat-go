@@ -101,6 +101,38 @@ ownership". If you need to heal a checkout without starting the stack, run
 | `development/helm/` | Helm chart for deployment (materialized by the profile setup). |
 | `development/scripts/` | Build, release and codegen helper scripts. |
 
+## PR CI labels and deployment policy
+
+PR CI (`.github/workflows/run-pr-ci-tests-and-deployments.yaml`) is driven
+entirely by the labels applied to a pull request when it is opened: `test`,
+`build`, `e2e`, `sandbox-test`, `test-core-only`, `ai-test-mock`,
+`ai-test-real` and `deploy` (`release-android` only on an explicit Android
+request; `slow-android-build-test` only on an explicit maintainer request). The
+`deploy` and `sandbox-test` labels are special: they spin up a deployment and
+run the expensive post-deploy sandbox and real-AI suites, so they touch an
+environment.
+
+Policy:
+
+- Use `deploy` and `sandbox-test` **only on dedicated consolidation PRs
+  targeting `main`** (the `chore/consolidate-*` PRs), which are the single
+  place where a batch of ready changes is verified as a whole. Feature, bugfix,
+  docs and chore PRs carry the ordinary code-change labels only.
+- A same-repository PR targeting `main` is the CI-environment case: its
+  deploy/test gate uses the **unprotected** `msgmate-io-ci` GitHub environment,
+  so the full suite — including the post-deploy sandbox and real-AI suites —
+  runs without an admin confirmation.
+- Every other PR keeps the protected `msgmate-io-pr-deployment` environment and
+  therefore needs an explicit maintainer approval before it deploys (and before
+  its post-deploy suites can run).
+- Production promotion (`main` → `production`) always keeps the
+  admin-protected `msgmate-io-production` environment.
+- Maintainers may make rare, deliberate exceptions (for example to validate an
+  infrastructure change); the risk is theirs and they should say so on the PR.
+
+Never wait for or poll CI, deployments or approvals from an agent turn; report
+what is pending instead.
+
 ## Integration frontend pages
 
 Frontend pages for integrations live in **their own integration repositories**
