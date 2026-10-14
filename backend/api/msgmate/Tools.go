@@ -67,6 +67,11 @@ func init() {
 	// chat, so an autonomous loop needs no external CronJob. Same free-name
 	// rule: an integration shipping its own `coder_schedule` keeps ownership.
 	registerToolConstructorIfFree("coder_schedule", nil, NewCoderScheduleTool)
+	// ci#394 gap 7 (ticket ci#957): `coder_compact` folds a transcript excerpt
+	// into this chat's bounded session summary and persists it; the summary is
+	// re-injected on later turns so a long interaction survives the context
+	// window. Integration tool keeps ownership under the same free-name rule.
+	registerToolConstructorIfFree("coder_compact", nil, NewCoderCompactTool)
 	// ci#809: `all_tasks_completed` is the explicit machine-readable end of a
 	// task; the turn reader promotes its call into `task_completed` metadata.
 	registerToolConstructorIfFree("all_tasks_completed", nil, NewAllTasksCompletedTool)
