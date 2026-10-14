@@ -60,3 +60,27 @@ require (
 	gorm.io/gorm v1.31.2
 	modernc.org/sqlite v1.55.0 // indirect
 )
+
+// Generated swagger docs package (backend/docs) imports the swaggo runtime;
+// the package is not linked into the binary but must resolve for `go list ./...`.
+require (
+	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/go-openapi/jsonpointer v1.0.0 // indirect
+	github.com/go-openapi/jsonreference v1.0.0 // indirect
+	github.com/go-openapi/spec v0.20.9 // indirect
+	github.com/go-openapi/swag v0.27.1 // indirect
+	github.com/go-openapi/swag/cmdutils v0.27.1 // indirect
+	github.com/go-openapi/swag/conv v0.27.1 // indirect
+	github.com/go-openapi/swag/fileutils v0.27.1 // indirect
+	github.com/go-openapi/swag/jsonutils v0.27.1 // indirect
+	github.com/go-openapi/swag/loading v0.27.1 // indirect
+	github.com/go-openapi/swag/mangling v0.27.1 // indirect
+	github.com/go-openapi/swag/netutils v0.27.1 // indirect
+	github.com/go-openapi/swag/pools v0.27.1 // indirect
+	github.com/go-openapi/swag/stringutils v0.27.1 // indirect
+	github.com/go-openapi/swag/typeutils v0.27.1 // indirect
+	github.com/go-openapi/swag/yamlutils v0.27.1 // indirect
+	github.com/sv-tools/openapi v0.4.0 // indirect
+	github.com/swaggo/swag/v2 v2.0.0-rc5
+	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
