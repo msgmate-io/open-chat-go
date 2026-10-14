@@ -9,13 +9,14 @@ section: Platform
 
 Open Chat Go is assembled from a small core plus a set of pluggable
 **integration modules**. Each module can contribute tools, routes and
-configuration. This page lists the modules that ship in the public
-`core-only` profile (`"private": false` in
+configuration. This page lists the modules that ship in the public `core-only`
+profile (declared in
 [`integrations.yaml`](https://github.com/msgmate-io/open-chat-go/blob/main/integrations.yaml))
 and are therefore documented here.
 
-Modules marked private in the manifest are internal tooling and are
-intentionally excluded from the public documentation surface.
+Deployments can select additional integrations through their own profile; see
+[Integration Development](/docs#integration-development) for the manifest and
+profile system.
 
 ## Public modules
 

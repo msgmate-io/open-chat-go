@@ -1,19 +1,19 @@
 ---
 title: Integration Development
 path: integration-development
-description: Build an Open-Chat integration or tool, and add a custom integration to a profile.
+description: Build an Open Chat Go integration or tool and register it with a profile.
 order: 33
 section: Platform
 ---
 
-Open-Chat is extended through **integrations** and **tools**. Both live in their
-own repositories and are wired into the server through stable Go interfaces, so
-the core stays small and integrations can be developed, versioned and (when
-needed) kept private independently.
+Open Chat Go is extended through **integrations** and **tools**. Both live in
+their own repositories and are wired into the server through stable Go
+interfaces, so the core stays small while capabilities can be developed,
+versioned and (when needed) kept private independently.
 
-This page covers the integration/tool interfaces, the manifest and profile
-system, the frontend page linking contract, a step-by-step walkthrough for
-**adding a custom integration**, and the local development loop.
+This page covers the integration and tool interfaces, the manifest and profile
+system, the frontend page contract, a step-by-step walkthrough for **adding a
+custom integration**, and the local development loop.
 
 ## The interfaces
 
@@ -29,6 +29,7 @@ package my_integration
 
 import (
     "github.com/msgmate-io/go-integration-interface/integrationinterface"
+    "github.com/msgmate-io/go-tool-interface/toolinterface"
 )
 
 func init() {
@@ -50,38 +51,47 @@ The server discovers integrations through generated side-effect imports
 (`backend/integrations/externalintegrations/imports_gen.go`) that the manager
 writes for the selected profile — the core never hardcodes an integration.
 
-### Tools
+## Tools
 
 Tools are declared on the integration definition and implement the tool
-interface from `go_tool_interface`. A tool definition describes its function
-name, description and input JSON schema; the server exposes it to models for the
-integrations a user can access.
+interface. A tool definition describes its function name, description and input
+JSON schema; the server exposes it to models for the integrations a user can
+access. Tools can also require initialisation data (`requires_init`) or an
+explicit user confirmation before they run (`requires_confirmation`).
 
 ## Manifest and profiles
 
-Integrations are declared in `integrations.yaml` at the repository root and
-fetched on demand by the `openchat-integrations` manager
-([`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools),
-vendored at `development/build-tools`). No integration is a git submodule.
+Integrations are declared in
+[`integrations.yaml`](https://github.com/msgmate-io/open-chat-go/blob/main/integrations.yaml)
+at the repository root and fetched on demand by the `openchat-integrations`
+manager from
+[`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools)
+(vendored at `development/build-tools`). No integration is a git submodule.
 
-- **Profiles** select which integrations are compiled and served: `core-only`
-  (public default), `default`, `full`, `full-ci` and `full-android`.
-- **Private content** (private integrations, the private profiles, the CI
-  tooling, the Helm chart and the mobile client) lives outside the public
-  repository. `openchat-integrations setup` materializes it per
-  `profile_setup.yaml` and mirrors the private integrations manifest into
-  `.integrations/private/`.
-- **Lockfile**: `integrations.lock.json` pins public integration commits; the
-  private pins live in the private `ci` repository. `sync --frozen` checks out
-  the pinned commits.
+A **profile** selects which integrations are compiled and served:
+
+- `core-only` (the public default) includes `mcp`, `rest_api_tool` and
+  `go_client`.
+- Deployments can define additional profiles in their own manifest to pull in
+  further integrations. The manager is not tied to a fixed list: whatever a
+  profile names is fetched, linked and compiled.
+
+`integrations.lock.json` pins the resolved commits so `sync --frozen` checks out
+exactly the recorded revisions (used by CI and release builds).
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install ./development/build-tools
 
-.venv/bin/openchat-integrations setup   --profile full   # repos + symlinks + private manifest
-.venv/bin/openchat-integrations prepare --profile full   # sync + resolve + frontend link
+.venv/bin/openchat-integrations list    --profile core-only
+.venv/bin/openchat-integrations prepare --profile core-only  # sync + resolve + frontend link
 ```
+
+`prepare` is the high-level path: it fetches checkouts, generates the Go
+workspace (`backend/go.work`) and the side-effect import file, and links
+integration frontend pages. See the
+[build tools README](https://github.com/msgmate-io/open-chat-go-build-tools)
+for the full CLI.
 
 ## Frontend pages owned by an integration
 
@@ -144,8 +154,8 @@ collide are de-registered in favour of the integration page).
 ### Integration documentation pages
 
 An integration can publish documentation pages whose React code lives in the
-integration repository, exactly like its other frontend pages. Declare them
-with `FrontendDocs` and register the matching Vike page/asset in
+integration repository, exactly like its other frontend pages. Declare them with
+`FrontendDocs` and register the matching Vike page/asset in
 `integration.frontend.json`:
 
 ```go
@@ -163,7 +173,7 @@ FrontendDocs: []integrationinterface.FrontendDoc{
 
 `Title`, `Section` and `Order` drive the documentation navigation; `Route` and
 `AssetPath` behave like `FrontendPage`. Documentation routes are served by the
-backend, listed (with their metadata) in the integration overview
+backend, listed with their metadata in the integration overview
 (`frontend_routes` entries with `kind: "doc"`) and surfaced in the sidebar and
 the `/integrations` overview, which can filter integrations by `pages`, `docs`
 or `routes`.
@@ -173,7 +183,7 @@ or `routes`.
 Integrations are labelled `core` (part of the public `core-only` profile in
 `integrations.yaml`) or `full` (only available in a larger profile)
 automatically, and the `/integrations` overview can filter by label. An
-integration can add its own labels via the definition `Labels` field:
+integration can add its own labels through the definition `Labels` field:
 
 ```go
 Labels: []string{"media"},
@@ -194,11 +204,8 @@ Labels: []string{"media"},
    contribution. Keep the integration self-contained: all integration state and
    models live in the integration package.
 
-3. **Declare it in the manifest.** Add an entry under `integrations:` (and to a
-   profile under `profiles:`) in `integrations.yaml`, or, for a private
-   integration, in the private manifest fragment
-   (`openchat/private-integrations.yaml` in the `ci` repository). Minimal
-   public entry:
+3. **Declare it in the manifest.** Add an entry under `integrations:` and to a
+   profile under `profiles:` in your `integrations.yaml`:
 
    ```yaml
    integrations:
@@ -222,9 +229,8 @@ Labels: []string{"media"},
 5. **Materialize and build.**
 
    ```bash
-   .venv/bin/openchat-integrations sync    --profile full   # fetch the new repo
-   .venv/bin/openchat-integrations resolve --profile full   # go.work + imports
-   cd backend && ./full_build.sh            # or `go build ./...`
+   .venv/bin/openchat-integrations prepare --profile core-only  # fetch + resolve + frontend link
+   cd backend && go build ./...            # full_build.sh wraps prepare + build
    ```
 
 6. **Develop locally against a fork** without editing the manifest:
@@ -238,20 +244,9 @@ Labels: []string{"media"},
    repository playbook). Never add `slow-android-build-test` unless explicitly
    requested.
 
-## Build performance and prebuilt integrations
-
-Every selected integration is compiled into the core binary through the
-generated side-effect imports, so a warm build cache is what keeps incremental
-builds fast. Committing prebuilt binaries, Go plugins or `c-shared` libraries
-into integration repositories does **not** work with this build model. See
-[Integration Prebuild & Linkage Design](/docs#integration-prebuild-design) for
-the full rationale and the recommended incremental path (build-cache reuse, a
-stable `Host` interface and prebuilt release/OCI artifacts).
-
 ## Licensing
 
-The core server and the public `frontend` are licensed `AGPL-3.0-or-later`;
+The core server and the public `frontend` are licensed `AGPL-3.0-or-later`; the
 brand assets under `frontend/assets/` are explicitly excluded (all rights
 reserved). Integrations live in their own repositories and carry their own
-license — private integrations are proprietary and are never part of the public
-source. See the repository `NOTICE`/`COPYRIGHT` files and `frontend/NOTICE`.
+license. See the repository `NOTICE`/`COPYRIGHT` files and `frontend/NOTICE`.
