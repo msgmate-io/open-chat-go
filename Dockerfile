@@ -68,6 +68,13 @@ FROM basebuilder AS builder
 
 ARG INTEGRATION_PROFILE=core-only
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
+# Non-core profiles may bundle integration-provided auxiliary binaries (for
+# example the Rust TUI compiled by backend/full_build.sh). Install a native
+# Rust toolchain only for those profiles so the public core-only image stays
+# lean; the bundle step is best-effort and skips cleanly when cargo is absent.
+RUN if [ "${INTEGRATION_PROFILE}" != "core-only" ]; then \
+      apk add --no-cache rust cargo; \
+    fi
 COPY --from=frontend_selected /workspace/frontend/routes.json server/routes.json
 COPY --from=frontend_selected /workspace/frontend/dist/client server/frontend/
 
@@ -95,6 +102,7 @@ RUN ls -alt
 # std) before building.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/root/.cargo \
     --mount=type=cache,target=/backend/.tools \
     bash -c 'cp -a /gocache/. /root/.cache/go-build/ 2>/dev/null || true; bash full_build.sh --no-frontend'
 RUN mkdir -p /backend/little_world_default_bots \
