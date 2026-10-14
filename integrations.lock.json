@@ -4,7 +4,7 @@
     "go_client": {
       "repo": "https://github.com/msgmate-io/open-chat-go-golang-client",
       "ref": "main",
-      "commit": "5e99aba392e3b0fd07539b892746650b1a355d9d",
+      "commit": "79b39a1ef14103d8aca2cf434aefcd19cb6b1789",
       "source": "git"
     },
     "mcp": {
