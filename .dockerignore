@@ -25,6 +25,11 @@ development/*
 development/ci/*
 !development/ci/openchat
 !development/ci/openchat/**
+# full_build.sh invokes the integration asset bundler (embeds optional
+# integration binaries such as the Rust TUI); keep just that one script.
+!development/scripts
+development/scripts/*
+!development/scripts/bundle_integration_assets.py
 # Local Python build artifacts from installing the CLI must not leak into images.
 development/build-tools/build
 development/build-tools/*.egg-info
