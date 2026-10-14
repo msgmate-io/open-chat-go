@@ -985,16 +985,37 @@ jobs:
           set -euo pipefail
           # Private integration repos require auth for git clone.
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full
-          "$BUILD_TOOLS" resolve --profile full
+          # This step runs on all four Go-test shards (plus the image build)
+          # concurrently, so a transient pip/git/module-proxy hiccup on one
+          # runner must not fail that shard before tests even start. Every
+          # command below is idempotent, so retry a bounded number of times
+          # before surfacing a genuine error (mirrors backend/full_build.sh).
+          retry() {
+            local attempt=1 max=3 delay=15
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "::error::'$*' failed after $max attempts"
+                return 1
+              fi
+              echo "'$*' failed (attempt ${attempt}/${max}); retrying in ${delay}s..." >&2
+              attempt=$((attempt + 1))
+              sleep "$delay"
+            done
+          }
+          download_modules() { (cd backend && go mod download); }
+          BUILD_TOOLS="$(retry bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          retry "$BUILD_TOOLS" sync --frozen --profile full
+          retry "$BUILD_TOOLS" resolve --profile full
           echo "GOWORK=${GITHUB_WORKSPACE}/backend/go.work" >> "$GITHUB_ENV"
           TAGS="$(cat backend/.generated/build_tags 2>/dev/null || true)"
           if [ -n "$TAGS" ]; then
             echo "GOFLAGS=-tags=${TAGS}" >> "$GITHUB_ENV"
           fi
           # Populate the module cache used by the workspace before tests run.
-          (cd backend && go mod download)
+          # Network hiccups (e.g. module proxy stream errors mid-download) can
+          # abort the fetch after minutes of transfer; retry instead of
+          # failing the shard (mirrors backend/full_build.sh).
+          retry download_modules
 
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''

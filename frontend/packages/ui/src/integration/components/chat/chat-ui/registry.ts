@@ -1,4 +1,9 @@
-import type { ChatSearchAction, ChatUIExtension, ChatUIMessageRenderer } from "./types";
+import type {
+  ChatSearchAction,
+  ChatUIExtension,
+  ChatUIExtensionMatchContext,
+  ChatUIMessageRenderer,
+} from "./types";
 
 const extensions = new Map<string, ChatUIExtension>();
 const messageRenderers: ChatUIMessageRenderer[] = [];
@@ -19,6 +24,34 @@ export function resolveChatUIExtension(chatBackend: string | null | undefined): 
     return null;
   }
   return extensions.get(key) ?? null;
+}
+
+/**
+ * Resolves the chat UI extension for a chat. The keyed chatBackend lookup wins
+ * when the chat declares one; otherwise the first extension whose `match`
+ * predicate accepts the context is returned. This lets a tool-only integration
+ * (whose chats never set a chat_backend key) still provide custom views.
+ */
+export function resolveChatUIExtensionForChat(
+  ctx: ChatUIExtensionMatchContext | null | undefined
+): ChatUIExtension | null {
+  const keyed = resolveChatUIExtension(ctx?.chatBackend);
+  if (keyed) {
+    return keyed;
+  }
+  for (const extension of extensions.values()) {
+    if (!extension.match) {
+      continue;
+    }
+    try {
+      if (extension.match(ctx ?? {})) {
+        return extension;
+      }
+    } catch {
+      // A throwing predicate must not break chat rendering.
+    }
+  }
+  return null;
 }
 
 export function registerChatUIMessageRenderer(renderer: ChatUIMessageRenderer): void {

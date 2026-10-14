@@ -770,7 +770,15 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 					log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
 					tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
 				} else {
-					log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+					// A RequiresInit tool with no explicit tool_init usually
+					// self-initializes from the injected trusted runtime (eg the
+					// native coder tools read api_host/session_id/_runtime). Only
+					// warn when there is no runtime to inject at all, so a real
+					// misconfiguration stays visible without one noisy line per
+					// tool per interaction.
+					if len(trustedRuntime) == 0 {
+						log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+					}
 					tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
 				}
 			}

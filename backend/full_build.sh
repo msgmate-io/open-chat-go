@@ -125,6 +125,15 @@ else
   "$BUILD_TOOLS" prepare ${INTEGRATION_PROFILE:+--profile "$INTEGRATION_PROFILE"}
 fi
 
+# Compile the integration source-repository registry from the lockfiles so the
+# /integrations overview can deep-link models and API routes back to their
+# implementation. Best-effort: a failure only drops the source links.
+SOURCE_REGISTRY_SCRIPT="$REPO_ROOT/backend/scripts/generate_integration_source_registry.py"
+if [ -f "$SOURCE_REGISTRY_SCRIPT" ] && command -v python3 >/dev/null 2>&1; then
+  python3 "$SOURCE_REGISTRY_SCRIPT" || \
+    echo "warning: failed to generate integration source registry" >&2
+fi
+
 # IMPORTANT: This script is used in CI with GOOS/GOARCH set for cross-compilation.
 # Build-time tools (like `swag`) must be built for the *host* platform so they
 # can run locally. Capture the host platform before overriding.
