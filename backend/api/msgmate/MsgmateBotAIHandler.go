@@ -941,13 +941,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		return strings.TrimSpace(clean), thoughts
 	}
 
-	streamFailureReason := func(streamErr error) string {
-		if isContextWindowExceededError(streamErr) {
-			return "context_window_exceeded"
-		}
-		return "upstream_provider_error"
-	}
-
 	// Helper function to send final message and cleanup
 	sendFinalMessage := func(isCancelled bool, streamErr error) {
 		// If we're still thinking when finishing, add the final thinking time
@@ -965,38 +958,57 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				reasoningEntries = append(reasoningEntries, "Response paused.")
 			}
 		}
+		var streamFailure GenerationFailureClassification
 		if streamErr != nil {
 			text = strings.TrimSpace(text)
-			failureReason := streamFailureReason(streamErr)
-			providerGuidance := "This can happen if your provider tokens/credits are exhausted or if the provider is having a temporary outage."
-			reasoningEntry := "Response stopped due to an upstream provider error (possible token/credit exhaustion or temporary provider outage)."
-			if failureReason == "context_window_exceeded" {
-				providerGuidance = "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+			streamFailure = ClassifyGenerationFailure(streamErr)
+			reasoningEntry := ""
+			switch streamFailure.Reason {
+			case FailureReasonContextWindow:
+				guidance := "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
 				reasoningEntry = "Response stopped because the model context window was exceeded."
-			}
-			providerSummary, providerAttempts := describeProviderFailure(streamErr)
-			if failureReason == "upstream_provider_error" && providerSummary != "" {
-				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s.", providerSummary)
-				if providerAttempts > 1 {
-					providerGuidance = fmt.Sprintf(
-						"The AI provider failed on all %d attempts (last error: %s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits. You can retry in a moment or switch to a different model or provider.",
-						providerAttempts, providerSummary)
-				} else {
-					providerGuidance = fmt.Sprintf(
-						"The AI provider returned an error (%s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits.",
-						providerSummary,
-					)
-				}
-				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s (attempts: %d).", providerSummary, providerAttempts)
 				if text == "" {
-					text = fmt.Sprintf("I could not generate a reply: my AI provider request failed. %s Please try again in a moment or switch to another model.", providerGuidance)
+					text = "I ran into an error while generating a reply. " + guidance + " Please try again in a moment."
 				} else {
-					text += "\n\n" + providerGuidance
+					text += "\n\nI ran into an error while finishing this reply. " + guidance
 				}
-			} else if text == "" {
-				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
-			} else {
-				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
+			case FailureReasonProviderError:
+				summary := streamFailure.ProviderSummary
+				attempts := streamFailure.ProviderAttempts
+				var guidance string
+				if attempts > 1 {
+					guidance = fmt.Sprintf(
+						"The AI provider failed on all %d attempts (last error: %s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits. You can retry in a moment or switch to a different model or provider.",
+						attempts, summary)
+					reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s (attempts: %d).", summary, attempts)
+				} else {
+					guidance = fmt.Sprintf(
+						"The AI provider returned an error (%s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits.",
+						summary,
+					)
+					reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s.", summary)
+				}
+				if text == "" {
+					text = fmt.Sprintf("I could not generate a reply: my AI provider request failed. %s Please try again in a moment or switch to another model.", guidance)
+				} else {
+					text += "\n\n" + guidance
+				}
+			case FailureReasonTransientNetwork:
+				guidance := "This looks like a temporary network problem reaching the AI provider."
+				reasoningEntry = "Response stopped due to a transient network error reaching the AI provider."
+				if text == "" {
+					text = "I can't reach my AI provider right now. " + guidance + " Please try again in a moment."
+				} else {
+					text += "\n\nI ran into a problem finishing this reply. " + guidance
+				}
+			default:
+				detail := TruncateFailureDetail(streamErr.Error())
+				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
+				if text == "" {
+					text = fmt.Sprintf("I hit an internal error while generating this reply: %s", detail)
+				} else {
+					text += fmt.Sprintf("\n\nI hit an internal error while finishing this reply: %s", detail)
+				}
 			}
 			if reasoning {
 				reasoningEntries = append(reasoningEntries, reasoningEntry)
@@ -1015,14 +1027,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			metadata["backend"] = backend
 		}
 		if streamErr != nil {
-			failureReason := streamFailureReason(streamErr)
 			metadata["error"] = true
-			metadata["failure_reason"] = failureReason
+			metadata["failure_reason"] = streamFailure.Reason
 			metadata["error_detail"] = streamErr.Error()
+			if streamFailure.ProviderSummary != "" {
+				metadata["provider_error"] = streamFailure.ProviderSummary
+			}
 			if code, body, attempts, isProviderErr := providerErrorInfo(streamErr); isProviderErr {
 				metadata["error_code"] = code
 				if summary, providerName := extractProviderErrorDetail(code, body); summary != "" {
-					metadata["provider_error"] = summary
+					if _, exists := metadata["provider_error"]; !exists {
+						metadata["provider_error"] = summary
+					}
 					if providerName != "" {
 						metadata["provider_name"] = providerName
 					}
@@ -1030,6 +1046,8 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if attempts > 1 {
 					metadata["provider_retry_attempts"] = attempts
 				}
+			} else if streamFailure.ProviderAttempts > 1 {
+				metadata["provider_retry_attempts"] = streamFailure.ProviderAttempts
 			}
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
