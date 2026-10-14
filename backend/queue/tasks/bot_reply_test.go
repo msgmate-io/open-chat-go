@@ -3,7 +3,10 @@ package tasks
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"backend/api/msgmate"
 )
 
 func TestBotReplyFailureMessage(t *testing.T) {
@@ -33,9 +36,24 @@ func TestBotReplyFailureMessage(t *testing.T) {
 			expected: "I can't reach my AI provider right now. Please check the provider configuration and try again.",
 		},
 		{
-			name:     "generic error",
+			name:     "provider http failure",
+			err:      &msgmate.ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"insufficient_quota"}}`, Attempts: 1},
+			expected: "I could not generate a reply: my AI provider request failed (HTTP 429 (insufficient_quota)). Please try again in a moment or switch to another model.",
+		},
+		{
+			name:     "transient network failure",
+			err:      errors.New(`request failed: Post "https://example": connection reset by peer`),
+			expected: "I can't reach my AI provider right now. Please check the provider configuration and try again.",
+		},
+		{
+			name:     "context window exceeded",
+			err:      errors.New("maximum context length exceeded"),
+			expected: "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output.",
+		},
+		{
+			name:     "generic error names the actual error",
 			err:      errors.New("unexpected decoder failure"),
-			expected: "I ran into an error while generating a reply. Please try again in a moment.",
+			expected: "I hit an internal error while generating this reply: unexpected decoder failure",
 		},
 	}
 
@@ -46,5 +64,16 @@ func TestBotReplyFailureMessage(t *testing.T) {
 				t.Fatalf("unexpected message\nexpected: %q\nactual:   %q", tt.expected, got)
 			}
 		})
+	}
+}
+
+func TestBotReplyFailureMessageUnclassifiedDoesNotMentionCreditsOrOutage(t *testing.T) {
+	got := botReplyFailureMessage(errors.New("unexpected decoder failure"))
+	gotLower := strings.ToLower(got)
+	if strings.Contains(gotLower, "credit") || strings.Contains(gotLower, "outage") {
+		t.Fatalf("unclassified errors must not speculate about credits/outage: %q", got)
+	}
+	if !strings.Contains(got, "unexpected decoder failure") {
+		t.Fatalf("unclassified errors must name the actual error: %q", got)
 	}
 }
