@@ -63,6 +63,7 @@ integrations.local.yaml
 backend/go.work
 backend/go.work.sum
 backend/integrations/externalintegrations/imports_gen.go
+backend/integrations/externalintegrations/sources_gen.go
 
 # Build-tools virtualenv (development/scripts/build_tools.sh)
 .venv/
