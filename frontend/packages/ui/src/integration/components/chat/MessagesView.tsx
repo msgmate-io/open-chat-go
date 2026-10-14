@@ -358,22 +358,24 @@ export function MessagesScroll({
     };
     return (
         <div className="chat-messages-column">
-            {uiExtension?.ChatDetails ? (
-                <uiExtension.ChatDetails
-                    ctx={chatUIContext}
-                    showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
-                    leftPannelCollapsed={leftPannelCollapsed}
-                    onToggleSidebar={onSidebarButtonClick}
-                />
-            ) : (
-                <InteractionChatInfo
-                    chat={chat}
-                    user={user}
-                    showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
-                    leftPannelCollapsed={leftPannelCollapsed}
-                    onToggleSidebar={onSidebarButtonClick}
-                />
-            )}
+            <div className="chat-details-region">
+                {uiExtension?.ChatDetails ? (
+                    <uiExtension.ChatDetails
+                        ctx={chatUIContext}
+                        showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
+                        leftPannelCollapsed={leftPannelCollapsed}
+                        onToggleSidebar={onSidebarButtonClick}
+                    />
+                ) : (
+                    <InteractionChatInfo
+                        chat={chat}
+                        user={user}
+                        showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
+                        leftPannelCollapsed={leftPannelCollapsed}
+                        onToggleSidebar={onSidebarButtonClick}
+                    />
+                )}
+            </div>
             <PullToRefresh
                 onRefresh={handlePullRefresh}
                 scrollRef={scrollRef}
