@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
-  Badge,
   Button,
   Collapsible,
   CollapsibleContent,
@@ -16,6 +15,7 @@ import {
   DialogTitle,
   Input,
 } from "@open-chat-go/ui";
+import { ToolValueText } from "./ToolCallDetail";
 
 export type ConfirmableAction = {
   action_id: string;
@@ -40,6 +40,62 @@ type ConfirmableActionExecuteResponse = {
 function isCoderFileAction(action: ConfirmableAction): boolean {
   const name = (action.target_tool_name || "").toLowerCase();
   return name === "coder_edit" || name === "coder_write";
+}
+
+// commandSummary surfaces the command/path a confirmable action will run so the
+// widget shows what is about to be executed, even before it is expanded.
+function commandSummary(action: ConfirmableAction, input: Record<string, unknown> | null): string {
+  const source = input ?? action.input ?? null;
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return "";
+  }
+  const command = typeof source.command === "string" ? source.command.trim() : "";
+  if (command) {
+    return command;
+  }
+  if (Array.isArray(source.commands)) {
+    const commands = source.commands.map((item) => String(item)).filter((item) => item.trim() !== "");
+    if (commands.length > 0) {
+      return commands.join("\n");
+    }
+  }
+  const path = typeof source.path === "string" ? source.path.trim() : "";
+  const gitAction = typeof source.action === "string" ? source.action.trim() : "";
+  const message = typeof source.message === "string" ? source.message.trim() : "";
+  if (gitAction) {
+    if (gitAction === "commit" && message) return `git commit -m "${message}"`;
+    return path ? `git ${gitAction} ${path}` : `git ${gitAction}`;
+  }
+  if (isCoderFileAction(action) && path) {
+    return path;
+  }
+  return "";
+}
+
+function confirmStatusLabel(status: ConfirmableAction["status"]): string {
+  switch (status) {
+    case "executed":
+      return "done";
+    case "failed":
+      return "failed";
+    case "rejected":
+      return "rejected";
+    default:
+      return "confirm";
+  }
+}
+
+function confirmStatusClasses(status: ConfirmableAction["status"]): string {
+  switch (status) {
+    case "executed":
+      return "border-emerald-500/30 text-emerald-700";
+    case "failed":
+      return "border-rose-500/30 text-rose-700";
+    case "rejected":
+      return "border-border text-muted-foreground";
+    default:
+      return "border-amber-500/30 text-amber-700";
+  }
 }
 
 // CoderFilePreview renders a lightweight edit/write preview for the native
@@ -130,6 +186,11 @@ export function ConfirmableActionWidget({
     }
     return `${first[0]}: ${firstValue} +${entries.length - 1} more`;
   }, [action.input, parsedInput]);
+
+  const commandText = useMemo(
+    () => commandSummary(action, parsedInput),
+    [action, parsedInput],
+  );
 
   const serverUUID = useMemo(() => {
     const source = parsedInput ?? action.input;
@@ -290,17 +351,20 @@ export function ConfirmableActionWidget({
           <span className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             Confirm
           </span>
-          <code className="break-all text-xs">{action.target_tool_name}</code>
-          <Badge
-            variant={isPending ? "secondary" : "outline"}
+          <code className="shrink-0 break-all text-xs">{action.target_tool_name}</code>
+          {commandText ? (
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+              {commandText}
+            </span>
+          ) : null}
+          <span
             className={cn(
-              "ml-auto mr-1 text-[10px] uppercase",
-              isPending ? "border-amber-300/70 bg-amber-50 text-amber-700" : "",
-              isExecuted ? "border-emerald-300/70 bg-emerald-50 text-emerald-700" : ""
+              "ml-auto shrink-0 rounded border px-1 py-px text-[10px] uppercase tracking-wide",
+              confirmStatusClasses(status)
             )}
           >
-            {status}
-          </Badge>
+            {confirmStatusLabel(status)}
+          </span>
           {isDanger ? <AlertTriangle className="mt-0.5 size-3.5 text-amber-500" /> : null}
           <ChevronDown className={`mt-0.5 size-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
         </CollapsibleTrigger>
@@ -310,6 +374,12 @@ export function ConfirmableActionWidget({
             <Text type={TextTypes.Body7} color="muted">
               {action.description || `Execute tool '${action.target_tool_name}' after review.`}
             </Text>
+
+            {commandText && !isCoderFileAction(action) ? (
+              <pre className="scrollbar-hidden max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-background/60 p-2 font-mono text-[11px] leading-5">
+                {commandText}
+              </pre>
+            ) : null}
 
             {isPending && isCoderFileAction(action) ? (
               <CoderFilePreview input={(parsedInput ?? action.input ?? {}) as Record<string, unknown>} />
@@ -367,9 +437,15 @@ export function ConfirmableActionWidget({
                   <span className="ml-2 truncate text-right">{resultPreview}</span>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                  <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/30 p-2 text-xs leading-5">
-                    <code>{resultText || "No output"}</code>
-                  </pre>
+                  {action.result !== undefined && action.result !== null ? (
+                    <div className="mt-1">
+                      <ToolValueText value={action.result} />
+                    </div>
+                  ) : (
+                    <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-muted/30 p-2 text-xs leading-5">
+                      <code>{resultText || "No output"}</code>
+                    </pre>
+                  )}
                 </CollapsibleContent>
               </Collapsible>
             ) : null}
