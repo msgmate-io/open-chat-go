@@ -953,7 +953,9 @@ func processStreamingResponseReader(
 			var toolResult string
 			status := ToolCallStatusSucceeded
 			toolErr := ""
-			if tool.GetRequiresConfirmation() {
+			requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
+			switch {
+			case requiresConfirmation:
 				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
 				toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
 				status = ToolCallStatusPendingConfirmation
@@ -966,7 +968,15 @@ func processStreamingResponseReader(
 				if tool.GetStopOnFirstConfirmableToolCall() {
 					result.stopAfterTool = true
 				}
-			} else {
+			case resolvedResult != "":
+				// A code-defined resolver (eg coder_ask in an autonomous session)
+				// decided the call must not be confirmed and supplied the answer
+				// itself; use it as the tool result and continue instead of
+				// pausing for the user.
+				toolResult = resolvedResult
+				result.result = resolvedResult
+				status = ToolCallStatusSucceeded
+			default:
 				executedResult, runErr := tool.RunTool(toolInput)
 				if runErr != nil {
 					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
@@ -998,6 +1008,18 @@ func processStreamingResponseReader(
 				executedToolResults[contentSignature] = toolResult
 			}
 
+			break
+		}
+
+		// StopOnFirstConfirmableToolCall means the model must resolve this
+		// confirmable action before any further tool call in the same assistant
+		// turn is surfaced. Without this we would keep reading the response and
+		// turn every batched confirmable call into its own confirmable action,
+		// so all of them get approved and re-applied on already-mutated state.
+		// Drop the rest of the batch instead; the model re-issues the remaining
+		// calls one at a time.
+		if result.stopAfterTool {
+			log.Printf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
 			break
 		}
 	}

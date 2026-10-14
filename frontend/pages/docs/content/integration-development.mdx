@@ -238,6 +238,16 @@ Labels: []string{"media"},
    repository playbook). Never add `slow-android-build-test` unless explicitly
    requested.
 
+## Build performance and prebuilt integrations
+
+Every selected integration is compiled into the core binary through the
+generated side-effect imports, so a warm build cache is what keeps incremental
+builds fast. Committing prebuilt binaries, Go plugins or `c-shared` libraries
+into integration repositories does **not** work with this build model. See
+[Integration Prebuild & Linkage Design](/docs#integration-prebuild-design) for
+the full rationale and the recommended incremental path (build-cache reuse, a
+stable `Host` interface and prebuilt release/OCI artifacts).
+
 ## Licensing
 
 The core server and the public `frontend` are licensed `AGPL-3.0-or-later`;
