@@ -16,6 +16,7 @@ export type {
   ChatUIMessageRenderer,
   ChatUISendPayload,
   ChatUIToolCall,
+  ChatUIThoughtsProps,
 } from "./types";
 export {
   registerChatUIExtension,
