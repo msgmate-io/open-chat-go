@@ -123,6 +123,10 @@ export function InteractionChatInfo({
   const config = chat?.config ?? {};
   const partner = chat?.partner;
   const partnerInitial = partner?.name?.charAt(0)?.toUpperCase() ?? "B";
+  // A user-visible chat title (set manually or by the internal_automations
+  // integration) takes precedence over the bot name in the header, mirroring
+  // how the chat list labels the row.
+  const chatTitle = (chat?.settings?.title || "").trim();
   const { data: toolsData } = useSWR<ToolsResponse>("/api/v1/tools?page=1&page_size=200", fetcher);
   const toolsByName = useMemo(() => {
     const rows = toolsData?.rows ?? [];
@@ -180,7 +184,9 @@ export function InteractionChatInfo({
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-foreground">
-              {partner?.name || "Bot"} {isInteractionChat ? "interaction" : "conversation"}
+              {chatTitle
+                ? chatTitle
+                : `${partner?.name || "Bot"} ${isInteractionChat ? "interaction" : "conversation"}`}
             </p>
             <BotDisplay
               selectedModel={config.model}

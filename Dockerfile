@@ -91,6 +91,13 @@ FROM basebuilder AS builder
 
 ARG INTEGRATION_PROFILE=core-only
 ENV INTEGRATION_PROFILE=${INTEGRATION_PROFILE}
+# Non-core profiles may bundle integration-provided auxiliary binaries (for
+# example the Rust TUI compiled by backend/full_build.sh). Install a native
+# Rust toolchain only for those profiles so the public core-only image stays
+# lean; the bundle step is best-effort and skips cleanly when cargo is absent.
+RUN if [ "${INTEGRATION_PROFILE}" != "core-only" ]; then \
+      apk add --no-cache rust cargo; \
+    fi
 # Build the production image exactly like the release pipeline: a static
 # (CGO_ENABLED=0), stripped (-s -w) and path-reproducible (-trimpath) binary.
 # This shrinks the embedded SQLite/Postgres-only backend from ~165 MB to the
@@ -130,6 +137,7 @@ RUN ls -alt
 #    never runs on the critical path.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/root/.cargo \
     --mount=type=cache,target=/backend/.tools \
     --mount=type=bind,from=gobuildcache,target=/gobuildcache,ro \
     bash -c 'cp -a /gocache/. /root/.cache/go-build/ 2>/dev/null || true; \
