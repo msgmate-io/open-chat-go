@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import type { ConfirmableAction } from "../ConfirmableActionWidget";
 
 export interface ChatUIAttachment {
   file_id: string;
@@ -96,6 +97,26 @@ export interface ChatUIMessageBodyProps {
   /** True while the message is still streaming (not yet marked finished). */
   isGenerating: boolean;
   interactionState?: string | null;
+  /**
+   * UUID of the chat, for bodies that render confirmable-action widgets and
+   * therefore call the confirm/reject API. Present for live chats; absent on
+   * the read-only docs previews.
+   */
+  chatUUID?: string;
+  /**
+   * Confirmable actions attached to this message (the proposals the model
+   * paused on, with their execution status and result). Supplied when the
+   * extension declares `inlineConfirmableActions`, so the body can render them
+   * inline with its tool calls.
+   */
+  confirmableActions?: ConfirmableAction[];
+  /**
+   * When set, the message is still syncing and the confirmable actions must not
+   * be executed yet; pass it to the confirm widget's `executionBlockedReason`.
+   */
+  executionBlockedReason?: string;
+  /** Invalidate chat data after a widget side effect (confirm/reject). */
+  onMutate?: () => void;
 }
 
 export type ChatUIMessageBody = ComponentType<ChatUIMessageBodyProps>;
@@ -158,10 +179,20 @@ export interface ChatUIExtension {
    * Optional custom renderer for the assistant message body and its tool calls.
    * When provided it replaces the default summarised tool-call block and the
    * markdown body, so an integration can render tool calls inline, in order, as
-   * they stream in. The thoughts blocks and confirmable-action widgets are
-   * still rendered by the core around it.
+   * they stream in. The thoughts blocks are still rendered by the core, and the
+   * confirmable-action widgets too unless the extension sets
+   * `inlineConfirmableActions`.
    */
   MessageBody?: ChatUIMessageBody;
+  /**
+   * When true, the extension's `MessageBody` owns the message's confirmable
+   * actions (typically rendering the confirm/execute widget inline with its
+   * tool calls). The core then suppresses its own confirmable-action widgets,
+   * the "review and confirm" hint and the standalone
+   * `confirmable_action_execute` event bubbles (requested/completed/failed/
+   * rejected), so the confirmation is rendered completely in-line.
+   */
+  inlineConfirmableActions?: boolean;
   /** Message input with two modes: before the chat started and after. */
   MessageInput?: {
     isPreStart: (ctx: ChatUIContext) => boolean;
