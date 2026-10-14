@@ -1000,6 +1000,18 @@ func processStreamingResponseReader(
 
 			break
 		}
+
+		// StopOnFirstConfirmableToolCall means the model must resolve this
+		// confirmable action before any further tool call in the same assistant
+		// turn is surfaced. Without this we would keep reading the response and
+		// turn every batched confirmable call into its own confirmable action,
+		// so all of them get approved and re-applied on already-mutated state.
+		// Drop the rest of the batch instead; the model re-issues the remaining
+		// calls one at a time.
+		if result.stopAfterTool {
+			log.Printf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
+			break
+		}
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
