@@ -160,6 +160,29 @@ export interface ChatSearchAction {
   Component: ComponentType<ChatSearchActionProps>;
 }
 
+/**
+ * Props passed to a sidebar header action. Core and integrations register here
+ * to surface a compact control in the chat sidebar header, left of the compose
+ * button (for example the notifications unread indicator on mobile). The action
+ * component decides its own visibility (for example by hiding itself above the
+ * small-mobile breakpoint).
+ */
+export interface ChatSidebarHeaderActionProps {
+  /** Navigate to an app route, e.g. the notifications inbox. */
+  navigateTo: (to: string) => void;
+}
+
+/**
+ * A control contributed to the chat sidebar header.
+ */
+export interface ChatSidebarHeaderAction {
+  /** Stable id used for React keys and de-duplication. */
+  id: string;
+  /** Ordering hint; lower values render first. */
+  order?: number;
+  Component: ComponentType<ChatSidebarHeaderActionProps>;
+}
+
 export interface ChatUIExtension {
   /**
    * Discriminator value: the "chat_backend" key of the chat's shared config
