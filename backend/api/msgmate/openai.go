@@ -910,30 +910,29 @@ func processStreamingResponseReader(
 
 			contentSignature := fmt.Sprintf("%s:%s", currentToolCall.name, strings.TrimSpace(currentToolCall.arguments))
 			if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
-				log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior result", contentSignature)
-
-				status := ToolCallStatusSucceeded
-				toolErr := ""
-				if strings.Contains(strings.ToLower(cachedResult), " failed with error:") {
-					status = ToolCallStatusFailed
-					toolErr = "duplicate tool call reused prior failure result"
-				}
+				// Only successful calls are cached, so a cache hit is a repeat of
+				// a call that already succeeded. Failures are deliberately not
+				// cached: the state may change between two identical calls (e.g.
+				// a coding workspace becomes selected after the first read
+				// failed), and replaying a stale error would trap the model in a
+				// failure loop instead of letting it recover.
+				log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
 
 				result.usedTool = true
 				result.id = currentToolCall.id
 				result.toolName = currentToolCall.name
 				result.arguments = currentToolCall.arguments
 				result.result = cachedResult
-				result.status = status
-				result.error = toolErr
+				result.status = ToolCallStatusSucceeded
+				result.error = ""
 
 				toolChan <- ToolCall{
 					ToolName:  currentToolCall.name,
 					ToolInput: toolInput,
 					Id:        currentToolCall.id,
 					Result:    cachedResult,
-					Status:    status,
-					Error:     toolErr,
+					Status:    ToolCallStatusSucceeded,
+					Error:     "",
 				}
 				break
 			}
@@ -992,7 +991,12 @@ func processStreamingResponseReader(
 			}
 			result.status = status
 			result.error = toolErr
-			executedToolResults[contentSignature] = toolResult
+			// Cache only successful results. Caching failures would make an
+			// identical retry (after the underlying state changed) replay the
+			// stale error instead of re-executing the tool.
+			if status == ToolCallStatusSucceeded {
+				executedToolResults[contentSignature] = toolResult
+			}
 
 			break
 		}
