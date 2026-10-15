@@ -494,6 +494,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("Pin freshness gate: compare every tracked pin against its upstream ref")
     print(f"Repository: {os.environ.get('GITHUB_REPOSITORY', MANIFEST_REPO_URL)}")
     print(f"Escape hatch: pin-drift-allowed label = {args.allow_drift}")
+    if not any(c.ident == "submodule:frontend" for c in components):
+        print(
+            "note: 'frontend' is tracked in-tree (not a submodule); "
+            "there is no pin to compare."
+        )
     print(render_table(results))
     print()
 
