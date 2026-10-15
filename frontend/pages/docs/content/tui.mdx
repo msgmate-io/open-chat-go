@@ -1,0 +1,68 @@
+---
+title: Terminal UI (TUI)
+path: tui
+description: Chat with Open Chat from the terminal using the built-in TUI client.
+order: 54
+adminOnly: false
+section: Clients
+---
+
+Open Chat Go ships a full-screen terminal client. It connects to one or more
+Open Chat servers, keeps you signed in on the device, and lets you chat with
+your default bot without leaving the shell.
+
+## Launching
+
+```bash
+open-chat tui
+```
+
+If your build bundles the TUI, the command extracts and runs the embedded
+binary. Otherwise it looks for an `open-chat-tui` executable on `PATH`, next to
+the `open-chat` binary, or in `~/.cargo/bin`. Set `OPEN_CHAT_TUI_BIN` to point at
+a specific binary:
+
+```bash
+OPEN_CHAT_TUI_BIN="$PWD/target/release/open-chat-tui" open-chat tui
+```
+
+## Using it
+
+- Move with the arrow keys or `j`/`k`, confirm with `Enter`.
+- **Servers** — add, edit, delete and switch between Open Chat servers. A local
+  server (`http://127.0.0.1:1984`) is available by default.
+- **Sign in** — either through **Browser Login**, which opens the Open Chat CLI
+  authorization page and polls until the device is approved, or by pasting a
+  personal access token (`ocat_…`) under **Authorize via API key**.
+- **Chat** — messages go to your default bot; the conversation renders in the
+  same terminal session.
+
+## Configuration
+
+Servers and tokens are stored in a device-scoped JSON file under the platform's
+user config directory (for example
+`~/.config/open-chat-go/tui/config.json` on Linux). Tokens are written with
+`0600` permissions on Unix, so the device stays authorized until the token
+expires. Override the location with `OPEN_CHAT_TUI_CONFIG_DIR`.
+
+```json
+{
+  "servers": [
+    { "name": "msgmate.io", "url": "https://msgmate.io", "token": "…" },
+    { "name": "local", "url": "http://127.0.0.1:1984" }
+  ],
+  "active": "msgmate.io",
+  "default_bot": "bot"
+}
+```
+
+Useful flags:
+
+```bash
+open-chat tui --where      # print the config file path
+open-chat tui --version
+```
+
+The TUI talks to the regular HTTP API (version probe, `user/self`, the CLI
+browser-auth endpoints, chats and messages), so anything that works in a browser
+session works from the terminal too.

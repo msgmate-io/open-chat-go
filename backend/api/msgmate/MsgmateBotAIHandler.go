@@ -352,6 +352,16 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		log.Printf("Found interaction_complete tools: %v", interactionCompleteTools)
 	}
 
+	// A turn triggered by a confirmable-action execution is a "post-confirmation
+	// continuation". The triggering message is an event row carrying
+	// event_type=confirmable_action_execute.
+	postConfirmationContinuation := false
+	if message.Content.MetaData != nil {
+		if eventType, ok := (*message.Content.MetaData)["event_type"].(string); ok && eventType == "confirmable_action_execute" {
+			postConfirmationContinuation = true
+		}
+	}
+
 	// Stream chat completion
 	chunks, usage, toolCalls, errs := streamChatCompletion(
 		endpoint,
@@ -368,7 +378,11 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		GetGlobalMsgmateHandler(),
 		samplingParams,
 		providerRetryOptions,
-		providerRequestMeta{ChatUUID: message.Content.ChatUUID, TrackUsage: trackUsage},
+		providerRequestMeta{
+			ChatUUID:                     message.Content.ChatUUID,
+			TrackUsage:                   trackUsage,
+			PostConfirmationContinuation: postConfirmationContinuation,
+		},
 	)
 
 	// Process the streaming response

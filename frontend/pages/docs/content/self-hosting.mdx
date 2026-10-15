@@ -89,8 +89,8 @@ through your orchestrator's secret store rather than committing them.
 ## Bootstrap configuration
 
 In addition to flags, the server can be configured through `open-chat.json`
-(bootstrap users/bots) and the SSH bootstrap options listed above. Precedence is
-environment variable / flag first, then the configuration file.
+(bootstrap users and bots). Precedence is environment variable / flag first,
+then the configuration file.
 
 Bootstrap users accept an optional `two_factor_secret` (base32 TOTP secret) and
 `two_factor_recovery_codes`, letting deployments enforce 2FA from the start.
