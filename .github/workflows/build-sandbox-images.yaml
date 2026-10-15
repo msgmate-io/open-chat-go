@@ -5,7 +5,9 @@ name: Build Sandbox Images
 # image is also produced by the sandbox benchmark/reusable workflows; this
 # workflow is the canonical publisher for the Odoo template image that
 # `integrations.docker_sandbox.odoo_sandbox_image` points at
-# (ghcr.io/<repo>:sandbox-odoo-latest).
+# (ghcr.io/<repo>:sandbox-odoo-latest) and for the OpenCode-free `minimal`
+# template image the native msgmate coder auto_sandbox uses
+# (ghcr.io/<repo>:sandbox-minimal-latest, ci#465).
 #
 # Only manually dispatched (needs the private integration checkouts). Like every
 # other operational change it must be run explicitly, with DRY_RUN=true first
@@ -15,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       template:
-        description: Sandbox template to build (odoo, coding, android or vnc)
+        description: Sandbox template to build (odoo, coding, android, vnc or minimal)
         required: false
         default: odoo
       dry_run:
