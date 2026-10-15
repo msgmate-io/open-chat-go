@@ -17,6 +17,7 @@ export type {
   ChatUISendPayload,
   ChatUIToolCall,
   ChatUIThoughtsProps,
+  ChatUIStatusIndicatorProps,
 } from "./types";
 export {
   registerChatUIExtension,
