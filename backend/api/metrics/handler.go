@@ -2,4 +2,4 @@ package metrics
 
 type MetricsHandler struct{}
 
-var VERSION = "0.0.696"
+var VERSION = "0.0.697"
