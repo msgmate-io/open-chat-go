@@ -11,7 +11,17 @@ export {
   FileAttachmentDisplay,
   FileAttachmentsList,
 } from "./FileAttachment"
-export { FileUpload, FileAttachButton, AttachFileMenuItem, UploadedFilesPreview } from "./FileUpload"
+export {
+  FileUpload,
+  FileAttachButton,
+  AttachFileMenuItem,
+  AttachImageMenuItem,
+  FilePickerInput,
+  UploadedFilesPreview,
+  IMAGE_UPLOAD_ACCEPT,
+  FILE_UPLOAD_ACCEPT,
+  type UploadedFileRecord,
+} from "./FileUpload"
 export { GuestAccountCard } from "./GuestAccountCard"
 export { LoadingSpinner } from "./loading-spinner"
 export { MessageInput, CancelResponseButton } from "./MessageInput"
