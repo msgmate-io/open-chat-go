@@ -351,7 +351,7 @@ export function ConfirmableActionWidget({
           <span className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             Confirm
           </span>
-          <code className="shrink-0 break-all text-xs">{action.target_tool_name}</code>
+          <code className="min-w-0 break-all text-xs">{action.target_tool_name}</code>
           {commandText ? (
             <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
               {commandText}
@@ -389,8 +389,8 @@ export function ConfirmableActionWidget({
               <>
                 <Collapsible id={`confirmable-action-input-${action.action_id}`}>
                   <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/30">
-                    <span className="font-medium">Proposed params</span>
-                    <span className="ml-2 truncate text-right">{inputPreview}</span>
+                    <span className="shrink-0 font-medium">Proposed params</span>
+                    <span className="ml-2 min-w-0 flex-1 truncate text-right">{inputPreview}</span>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="CollapsibleContent transition-all duration-300">
                     <pre className="scrollbar-hidden mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/30 p-2 text-xs leading-5">
@@ -433,8 +433,8 @@ export function ConfirmableActionWidget({
             {isExecuted ? (
               <Collapsible id={`confirmable-action-result-${action.action_id}`}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted/30">
-                  <span className="font-medium"><Check className="mr-1 inline size-3" />Execution result</span>
-                  <span className="ml-2 truncate text-right">{resultPreview}</span>
+                  <span className="shrink-0 font-medium"><Check className="mr-1 inline size-3" />Execution result</span>
+                  <span className="ml-2 min-w-0 flex-1 truncate text-right">{resultPreview}</span>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="CollapsibleContent transition-all duration-300">
                   {action.result !== undefined && action.result !== null ? (
@@ -451,7 +451,7 @@ export function ConfirmableActionWidget({
             ) : null}
 
             {isPending ? (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" size="sm" onClick={executeAction} disabled={busy || !parsedInput || executionBlocked}>
                   {busy ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
                   {action.confirm_label || "Confirm and execute"}
