@@ -386,6 +386,15 @@ jobs:
       # key is configured by default; other providers need their own secret.
       SANDBOX_OPENCODE_PROVIDER: ${{ inputs.opencode_provider }}
       SANDBOX_OPENCODE_MODEL: ${{ inputs.opencode_model }}
+      # The native-coder benchmark bots ship a DeepInfra provider in their shared
+      # test configs (the provider the private extended suite has credentials
+      # for). This public suite has no DeepInfra key, so retarget just those bots
+      # to the OpenRouter provider this suite does have, mirroring the other
+      # non-opencode benchmarks. REPLACE_BACKEND gates the override on the bot's
+      # current backend so the openrouter vision/k8s/playwright bots are kept.
+      SANDBOX_INTERACTION_BACKEND: openrouter
+      SANDBOX_INTERACTION_MODEL: ${{ inputs.opencode_model }}
+      SANDBOX_INTERACTION_REPLACE_BACKEND: deepinfra
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
