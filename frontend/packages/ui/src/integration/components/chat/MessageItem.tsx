@@ -708,6 +708,8 @@ export function BotMessageItem({
   showToolbar = true,
   showBotIdentity = true,
   interactionState,
+  shellless = false,
+  renderExtras = true,
 }: {
   message: {
     uuid: string;
@@ -743,6 +745,10 @@ export function BotMessageItem({
   showToolbar?: boolean;
   showBotIdentity?: boolean;
   interactionState?: string | null;
+  /** Render only the message content (no shell/header); used by grouped bubbles. */
+  shellless?: boolean;
+  /** Render the per-message integration extras (default true). */
+  renderExtras?: boolean;
 }) {
   const metaFinished = message?.meta_data?.finished;
   const attachments = mapAttachments(message);
@@ -852,23 +858,8 @@ export function BotMessageItem({
   const canRegenerate = Boolean(chatUUID && rerunSourceMessageUUID);
   const showMessageActions = showToolbar && (canCopyMessage || canRegenerate) && !hideMessageActions;
 
-  return (
-    <BotMessageShell
-      key={message.uuid}
-      senderLabel={chat?.partner?.name ?? "Assistant"}
-      senderMeta={senderMeta}
-      avatarSrc={logoUrl}
-      showIdentity={showBotIdentity}
-      showAvatar={showBotIdentity && !hideBotAvatar}
-      avatarFooter={showMessageActions ? (
-        <BotMessageActionsMenu
-          onCopy={handleCopy}
-          onRegenerate={handleRegenerate}
-          canCopy={canCopyMessage}
-          canRegenerate={canRegenerate}
-        />
-      ) : null}
-    >
+  const content = (
+    <>
       {isQueuePending &&
         !metaFinished &&
         normalizedMessageText === "" &&
@@ -1011,16 +1002,160 @@ export function BotMessageItem({
         <MessageMarkdown>{normalizedMessageText}</MessageMarkdown>
       )}
       <FileAttachmentsList attachments={attachments} />
-      <ChatUIMessageExtras
-        toolCalls={toolCalls}
-        meta={(message.meta_data ?? {}) as Record<string, unknown>}
-        chatUUID={chatUUID}
-        messageUUID={message.uuid}
-        interactionState={interactionState}
-        onMutate={() => {
-          void revalidateChatData(chatUUID);
-        }}
-      />
+      {renderExtras ? (
+        <ChatUIMessageExtras
+          toolCalls={toolCalls}
+          meta={(message.meta_data ?? {}) as Record<string, unknown>}
+          chatUUID={chatUUID}
+          messageUUID={message.uuid}
+          interactionState={interactionState}
+          onMutate={() => {
+            void revalidateChatData(chatUUID);
+          }}
+        />
+      ) : null}
+    </>
+  );
+
+  if (shellless) {
+    return content;
+  }
+
+  return (
+    <BotMessageShell
+      key={message.uuid}
+      senderLabel={chat?.partner?.name ?? "Assistant"}
+      senderMeta={senderMeta}
+      avatarSrc={logoUrl}
+      showIdentity={showBotIdentity}
+      showAvatar={showBotIdentity && !hideBotAvatar}
+      avatarFooter={showMessageActions ? (
+        <BotMessageActionsMenu
+          onCopy={handleCopy}
+          onRegenerate={handleRegenerate}
+          canCopy={canCopyMessage}
+          canRegenerate={canRegenerate}
+        />
+      ) : null}
+    >
+      {content}
+    </BotMessageShell>
+  );
+}
+
+/**
+ * Groups consecutive assistant messages into a single bubble: one sender header
+ * and one bubble for what was a run of separate bot turns. Each message keeps
+ * its own body (thoughts, tool calls, confirm widgets, text) rendered in the
+ * original time order, separated by a hairline, and only the last one renders
+ * the per-message integration extras so repeated cards are not stacked.
+ */
+export function BotMessageGroup({
+  messages,
+  chat,
+  chatUUID,
+  rerunSourceMessageUUID,
+  showToolbar = true,
+  showBotIdentity = true,
+  interactionState,
+}: {
+  messages: Array<Parameters<typeof BotMessageItem>[0]["message"]>;
+  chat: Parameters<typeof BotMessageItem>[0]["chat"];
+  chatUUID?: string;
+  rerunSourceMessageUUID?: string;
+  showToolbar?: boolean;
+  showBotIdentity?: boolean;
+  interactionState?: string | null;
+}) {
+  const first = messages[0];
+  const last = messages[messages.length - 1];
+  const uiExtension = resolveChatUIExtensionForChat({
+    chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+    chat,
+    toolCalls: last?.tool_calls || [],
+  });
+  const hideBotAvatar = Boolean(uiExtension?.hideBotAvatar);
+  const hideMessageActions = Boolean(uiExtension?.hideMessageActions);
+  const combinedText = useMemo(
+    () =>
+      messages
+        .map((message) => {
+          const extraction = extractThoughtsFromThinkTags(message.text);
+          return extraction.thoughts.length > 0 ? extraction.cleanText : message.text || "";
+        })
+        .filter((text) => text.trim().length > 0)
+        .join("\n\n"),
+    [messages],
+  );
+  const senderMeta = useMemo(() => formatRelativeTime(last?.send_at), [last?.send_at]);
+  const canCopyMessage = combinedText.trim().length > 0;
+  const canRegenerate = Boolean(chatUUID && rerunSourceMessageUUID);
+  const showMessageActions = showToolbar && (canCopyMessage || canRegenerate) && !hideMessageActions;
+
+  const handleCopy = () => {
+    if (combinedText) {
+      navigator.clipboard.writeText(combinedText);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!chatUUID || !rerunSourceMessageUUID) {
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/chats/${chatUUID}/messages/${rerunSourceMessageUUID}/rerun`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to rerun response");
+      }
+      await revalidateChatData(chatUUID);
+    } catch (error) {
+      console.error("Failed to rerun message:", error);
+    }
+  };
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  return (
+    <BotMessageShell
+      key={`group_${first?.uuid ?? "bot"}`}
+      senderLabel={chat?.partner?.name ?? "Assistant"}
+      senderMeta={senderMeta}
+      avatarSrc={logoUrl}
+      showIdentity={showBotIdentity}
+      showAvatar={showBotIdentity && !hideBotAvatar}
+      avatarFooter={showMessageActions ? (
+        <BotMessageActionsMenu
+          onCopy={handleCopy}
+          onRegenerate={handleRegenerate}
+          canCopy={canCopyMessage}
+          canRegenerate={canRegenerate}
+        />
+      ) : null}
+    >
+      {messages.map((message, index) => (
+        <div
+          key={message.uuid}
+          className={index > 0 ? "mt-3 border-t border-border/40 pt-3" : undefined}
+        >
+          <BotMessageItem
+            message={message}
+            chat={chat}
+            chatUUID={chatUUID}
+            rerunSourceMessageUUID={rerunSourceMessageUUID}
+            showToolbar={showToolbar}
+            showBotIdentity={false}
+            interactionState={interactionState}
+            shellless
+            renderExtras={index === messages.length - 1}
+          />
+        </div>
+      ))}
     </BotMessageShell>
   );
 }
