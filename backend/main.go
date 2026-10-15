@@ -1015,5 +1015,3 @@ func integrationCLICommands(builtin ...*ufcli.Command) []*ufcli.Command {
 	}
 	return commands
 }
-
-// ci cache warm test (reverted in the next commit)
