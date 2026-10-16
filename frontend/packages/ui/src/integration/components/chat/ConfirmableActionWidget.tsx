@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
@@ -20,7 +20,7 @@ import { ToolValueText } from "./ToolCallDetail";
 export type ConfirmableAction = {
   action_id: string;
   target_tool_name: string;
-  status?: "pending" | "executed" | "failed" | "rejected";
+  status?: "pending" | "executed" | "failed" | "rejected" | "cancelled";
   input?: Record<string, unknown>;
   title?: string;
   description?: string;
@@ -80,6 +80,8 @@ function confirmStatusLabel(status: ConfirmableAction["status"]): string {
       return "failed";
     case "rejected":
       return "rejected";
+    case "cancelled":
+      return "cancelled";
     default:
       return "confirm";
   }
@@ -92,6 +94,7 @@ function confirmStatusClasses(status: ConfirmableAction["status"]): string {
     case "failed":
       return "border-rose-500/30 text-rose-700";
     case "rejected":
+    case "cancelled":
       return "border-border text-muted-foreground";
     default:
       return "border-amber-500/30 text-amber-700";
@@ -140,18 +143,32 @@ export function ConfirmableActionWidget({
   messageUUID,
   action,
   executionBlockedReason,
+  autoExpand,
   onExecuted,
 }: {
   chatUUID: string;
   messageUUID: string;
   action: ConfirmableAction;
   executionBlockedReason?: string;
+  /**
+   * When true, expand the widget because it is the latest blocking
+   * (unconfirmed) action in the chat. The user can still collapse it manually;
+   * it is only force-opened when it becomes the latest blocking action.
+   */
+  autoExpand?: boolean;
   onExecuted?: () => void;
 }) {
-  const [inputText, setInputText] = useState(JSON.stringify(action.input ?? {}, null, 2));
+  const [inputText] = useState(JSON.stringify(action.input ?? {}, null, 2));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState((action.status ?? "pending") === "pending");
+  const [open, setOpen] = useState(autoExpand ?? (action.status ?? "pending") === "pending");
+  const autoExpandRef = useRef(autoExpand);
+  useEffect(() => {
+    if (autoExpand === true && autoExpandRef.current !== true) {
+      setOpen(true);
+    }
+    autoExpandRef.current = autoExpand;
+  }, [autoExpand]);
   const [continueAfterExecute, setContinueAfterExecute] = useState(Boolean(action.continue_after_execute));
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [unlockPassphrase, setUnlockPassphrase] = useState("");
@@ -393,31 +410,15 @@ export function ConfirmableActionWidget({
                     <span className="ml-2 min-w-0 flex-1 truncate text-right">{inputPreview}</span>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                    <pre className="scrollbar-hidden mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/30 p-2 text-xs leading-5">
-                      {inputText}
-                    </pre>
+                    <div className="mt-1 rounded-md border border-border/60 bg-muted/30 p-2">
+                      <ToolValueText value={parsedInput ?? action.input ?? {}} />
+                    </div>
                   </CollapsibleContent>
                 </Collapsible>
 
                 {executionBlocked ? (
                   <Text type={TextTypes.Body7} color="destructive">{executionBlockedReason}</Text>
                 ) : null}
-
-                <textarea
-                  className="min-h-16 w-full rounded-md border border-border/70 bg-background p-2 font-mono text-xs"
-                  value={inputText}
-                  onChange={(event) => setInputText(event.target.value)}
-                  disabled={!isPending || busy || executionBlocked}
-                />
-
-                <label className="flex items-center gap-2">
-                  <Checkbox
-                    checked={continueAfterExecute}
-                    onCheckedChange={(checked) => setContinueAfterExecute(checked === true)}
-                    disabled={!isPending || busy || executionBlocked}
-                  />
-                  <Text type={TextTypes.Body7} color="muted">Continue interaction after execution</Text>
-                </label>
               </>
             ) : null}
 
@@ -451,14 +452,26 @@ export function ConfirmableActionWidget({
             ) : null}
 
             {isPending ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" onClick={executeAction} disabled={busy || !parsedInput || executionBlocked}>
-                  {busy ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
-                  {action.confirm_label || "Confirm and execute"}
-                </Button>
-                <Button type="button" size="sm" variant="outline" onClick={rejectAction} disabled={busy || executionBlocked}>
-                  Reject
-                </Button>
+              <div className="flex items-center gap-2">
+                <label className="flex min-w-0 items-center gap-1.5">
+                  <Checkbox
+                    checked={continueAfterExecute}
+                    onCheckedChange={(checked) => setContinueAfterExecute(checked === true)}
+                    disabled={busy || executionBlocked}
+                  />
+                  <Text type={TextTypes.Body7} color="muted" className="truncate text-[11px]">
+                    Continue after execution
+                  </Text>
+                </label>
+                <div className="ml-auto flex shrink-0 items-center gap-2">
+                  <Button type="button" size="sm" onClick={executeAction} disabled={busy || !parsedInput || executionBlocked}>
+                    {busy ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
+                    {action.confirm_label || "Confirm and execute"}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={rejectAction} disabled={busy || executionBlocked}>
+                    Reject
+                  </Button>
+                </div>
               </div>
             ) : null}
           </div>
