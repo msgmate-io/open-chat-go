@@ -580,6 +580,23 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	openAiMessages := []map[string]interface{}{}
 	currentMessageIncluded := false
 
+	// A non-conversational lifecycle event (for example a confirmable-action
+	// execution) is not a user turn. Its display text must not be injected as a
+	// synthetic user message after the tool result, otherwise a mock/replay
+	// provider that looks for the tool result before the next user turn re-issues
+	// the confirmed tool call and loops. Detect it here so the current-message
+	// append below can be skipped.
+	triggerNonConversational := false
+	if message.Content.DataType == "event" {
+		triggerNonConversational = true
+	}
+	if message.Content.MetaData != nil {
+		if eventType, ok := (*message.Content.MetaData)["event_type"].(string); ok &&
+			eventType == "confirmable_action_execute" {
+			triggerNonConversational = true
+		}
+	}
+
 	// Add system prompt
 	openAiMessages = append(openAiMessages, map[string]interface{}{"role": "system", "content": systemPrompt})
 
@@ -699,7 +716,7 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	}
 
 	// Add current message if not already included
-	if !currentMessageIncluded {
+	if !currentMessageIncluded && !triggerNonConversational {
 		var attachments []interface{}
 		if message.Content.Attachments != nil {
 			// Convert FileAttachment slice to interface{} slice
