@@ -43,6 +43,32 @@ var browserTokenRoutes = []browserTokenRoute{
 	{Method: http.MethodPost, Pattern: "/mcp", Scope: database.ScopeInteractionsMCP},
 }
 
+// coderTUITokenRoutes describes the routes the short-lived `coder-tui`
+// audience token may call. The msgmate_coder integration mints that token for
+// the Open-Chat TUI it forwards into a per-chat coding sandbox, so the TUI can
+// attach to and chat in the caller's bound session. Unlike the browser
+// allowlist it includes the message-send route (and the default-bot lookup the
+// TUI uses to fall back to creating a chat); it is still default-deny, so a
+// leaked sandbox config can only reach these routes as the minting user.
+var coderTUITokenRoutes = []browserTokenRoute{
+	{Method: http.MethodGet, Pattern: "/user/self", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/chats/list", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/list", Scope: ""},
+	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/send", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/contacts/default-bot", Scope: ""},
+}
+
+// mcpInteractionTokenRoutes describes the routes the read-only `mcp-interaction`
+// audience token may call. The opencode integration mints that token for the
+// built-in `open-chat-opencode-mcp` preset, so the sandboxed agent can attach to
+// this deployment's own interaction-history MCP server; it must not reach the
+// wider owner/admin API surface. It is default-deny apart from the single MCP
+// endpoint it needs.
+var mcpInteractionTokenRoutes = []browserTokenRoute{
+	{Method: http.MethodPost, Pattern: "/mcp", Scope: database.ScopeInteractionsMCP},
+}
+
 func normalizeBrowserRoutePath(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -85,8 +111,28 @@ func browserRoutePatternMatches(pattern, path string) bool {
 // deny). The returned scope is the scope the token must carry; empty means
 // no specific scope is required.
 func matchBrowserTokenRoute(method, path string) (scope string, ok bool) {
+	return matchTokenRouteList(browserTokenRoutes, method, path)
+}
+
+// matchRestrictedTokenRoute dispatches a restricted (audience-bound) token to
+// the allowlist for its audience. Unknown audiences are default-deny.
+func matchRestrictedTokenRoute(audience, method, path string) (scope string, ok bool) {
+	switch strings.TrimSpace(audience) {
+	case database.AudienceBrowserAPI:
+		return matchTokenRouteList(browserTokenRoutes, method, path)
+	case database.AudienceCoderTUI:
+		return matchTokenRouteList(coderTUITokenRoutes, method, path)
+	case database.AudienceMCPInteraction:
+		return matchTokenRouteList(mcpInteractionTokenRoutes, method, path)
+	default:
+		return "", false
+	}
+}
+
+// matchTokenRouteList matches a request against one audience's route allowlist.
+func matchTokenRouteList(routes []browserTokenRoute, method, path string) (scope string, ok bool) {
 	normalized := normalizeBrowserRoutePath(path)
-	for _, route := range browserTokenRoutes {
+	for _, route := range routes {
 		if route.Method != method {
 			continue
 		}

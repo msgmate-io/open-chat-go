@@ -166,6 +166,39 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+// confirmableTurnPrompt builds the human-readable fallback text for a turn that
+// paused on one or more confirmable actions. It is persisted instead of an
+// empty assistant message so the turn does not render as a bare empty bubble
+// for consumers that do not resolve the chat UI extension.
+func confirmableTurnPrompt(actions []interface{}) string {
+	names := make([]string, 0, len(actions))
+	seen := map[string]struct{}{}
+	for _, rawAction := range actions {
+		action, ok := rawAction.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := action["target_tool_name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name, _ = action["source_tool_name"].(string)
+			name = strings.TrimSpace(name)
+		}
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, "`"+name+"`")
+	}
+	if len(names) == 0 {
+		return "Waiting for your confirmation to continue."
+	}
+	return fmt.Sprintf("Waiting for your confirmation to run %s.", strings.Join(names, ", "))
+}
+
 // runtimeSelectorPayloadType is the discriminator a tool result carries to be
 // surfaced as a runtime-selector widget. The git integration's
 // git_propose_interaction_runtime tool emits exactly this shape; if another
@@ -301,6 +334,16 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		return aih.ProcessCommand(ctx, command, message)
 	}
 
+	// Make the generation cancellable independently of the asynq task: the
+	// chat interrupt endpoint can then abort an in-flight provider request and
+	// tool loop through the chat-scoped registry (a stop must not depend on the
+	// queue cancellation, which the parked-confirmation path already completed).
+	generationCtx, cancelGeneration := context.WithCancel(ctx)
+	defer cancelGeneration()
+	releaseGeneration := TrackActiveChatGeneration(message.Content.ChatUUID, cancelGeneration)
+	defer releaseGeneration()
+	ctx = generationCtx
+
 	// Load the chat and its current configuration
 	err, chat := aih.botContext.Client.GetChat(message.Content.ChatUUID)
 	if err != nil {
@@ -393,6 +436,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 
 	// Stream chat completion
 	chunks, usage, toolCalls, errs := streamChatCompletion(
+		ctx,
 		endpoint,
 		model,
 		backend,
@@ -536,6 +580,23 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	openAiMessages := []map[string]interface{}{}
 	currentMessageIncluded := false
 
+	// A non-conversational lifecycle event (for example a confirmable-action
+	// execution) is not a user turn. Its display text must not be injected as a
+	// synthetic user message after the tool result, otherwise a mock/replay
+	// provider that looks for the tool result before the next user turn re-issues
+	// the confirmed tool call and loops. Detect it here so the current-message
+	// append below can be skipped.
+	triggerNonConversational := false
+	if message.Content.DataType == "event" {
+		triggerNonConversational = true
+	}
+	if message.Content.MetaData != nil {
+		if eventType, ok := (*message.Content.MetaData)["event_type"].(string); ok &&
+			eventType == "confirmable_action_execute" {
+			triggerNonConversational = true
+		}
+	}
+
 	// Add system prompt
 	openAiMessages = append(openAiMessages, map[string]interface{}{"role": "system", "content": systemPrompt})
 
@@ -655,7 +716,7 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	}
 
 	// Add current message if not already included
-	if !currentMessageIncluded {
+	if !currentMessageIncluded && !triggerNonConversational {
 		var attachments []interface{}
 		if message.Content.Attachments != nil {
 			// Convert FileAttachment slice to interface{} slice
@@ -1118,6 +1179,14 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
 			metadata["confirmable_actions"] = confirmableActions
+			// A turn that pauses on a confirmable action has no assistant text of
+			// its own. Persisting it as an empty message leaves a bare bubble for
+			// any consumer that does not resolve the chat UI extension (and its
+			// inline confirm widget), so give it a short, human-readable prompt
+			// instead.
+			if strings.TrimSpace(text) == "" {
+				text = confirmableTurnPrompt(confirmableActions)
+			}
 		}
 		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 			metadata["runtime_selectors"] = runtimeSelectors
@@ -1547,7 +1616,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 }
 
 // executeTool executes a single tool
-func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage, partialSessionID string) error {
+func (aih *AIHandlerImpl) executeTool(ctx context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage, partialSessionID string) error {
 	// Find the tool in the tool map
 	tool, exists := toolMap[toolName]
 	if !exists {
@@ -1563,7 +1632,15 @@ func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMa
 	}
 
 	// Execute the tool
-	result, err := tool.RunTool(toolCall.ToolInput)
+	var (
+		result string
+		err    error
+	)
+	if contextTool, ok := tool.(ContextTool); ok {
+		result, err = contextTool.RunToolContext(ctx, toolCall.ToolInput)
+	} else {
+		result, err = tool.RunTool(toolCall.ToolInput)
+	}
 	if err != nil {
 		return fmt.Errorf("error executing tool %s: %w", toolName, err)
 	}

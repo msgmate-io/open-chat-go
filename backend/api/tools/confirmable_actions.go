@@ -659,7 +659,10 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			},
 		}
 		eventRequestedMetaBytes, _ := json.Marshal(eventRequestedMeta)
-		eventRequestedText := ""
+		// Persist a short human-readable text instead of an empty string: a
+		// consumer that does not render the confirmable-action lifecycle inline
+		// would otherwise show this row as a bare empty bubble.
+		eventRequestedText := fmt.Sprintf("Approved `%s`; running it now.", targetToolName)
 		eventRequestedMessage := database.Message{
 			ChatId:     chat.ID,
 			SenderId:   humanUserID,

@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -42,6 +43,7 @@ func runToolLoopOnce(t *testing.T, def tooldefs.ToolDefinition) *toolCallResult 
 	usageChan := make(chan *TokenUsage, 4)
 	toolChan := make(chan ToolCall, 16)
 	result, err := processStreamingResponseReader(
+		context.Background(),
 		reader,
 		map[string]Tool{def.Name: tool},
 		map[string]string{},
