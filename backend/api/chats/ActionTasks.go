@@ -36,6 +36,12 @@ type ActionTaskAction struct {
 	TargetToolName string `json:"target_tool_name,omitempty"`
 	DangerLevel    string `json:"danger_level,omitempty"`
 	Reason         string `json:"reason,omitempty"`
+	// Input carries the full proposed tool parameters so the action-stack
+	// preview renders the same edit text/tool args/context as the inline chat
+	// widget. Without it the preview degraded to "No params" (ci#489).
+	Input                map[string]interface{} `json:"input,omitempty"`
+	ConfirmLabel         string                 `json:"confirm_label,omitempty"`
+	ContinueAfterExecute bool                   `json:"continue_after_execute,omitempty"`
 }
 
 // ActionTaskPartner is the compact partner identity returned with a task.
