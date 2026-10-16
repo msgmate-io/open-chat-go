@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -93,6 +94,7 @@ func TestProcessStreamingResponseReaderStopsAfterFirstConfirmableBatchedToolCall
 	toolChan := make(chan ToolCall, 8)
 
 	result, err := processStreamingResponseReader(
+		context.Background(),
 		bufio.NewReader(strings.NewReader(sse)),
 		toolMap,
 		map[string]string{},
@@ -156,6 +158,7 @@ func TestProcessStreamingResponseReaderKeepsNonConfirmableBatchBehavior(t *testi
 	toolChan := make(chan ToolCall, 8)
 
 	result, err := processStreamingResponseReader(
+		context.Background(),
 		bufio.NewReader(strings.NewReader(sse)),
 		toolMap,
 		map[string]string{},
