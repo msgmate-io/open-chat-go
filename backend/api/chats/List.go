@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type ListedChat struct {
@@ -148,16 +150,10 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build the base query. Admins may request scope=all to inspect every chat
-	// ("see all" mode); everyone else only sees their own chats.
-	query := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
-	if user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
-		query = DB
-	}
-
 	// Restricted browser tokens may only see interaction chats, regardless of the
-	// requested chat_types filter.
-	if database.IsBrowserToken(r.Context()) {
+	// requested chat_types filter. Validate before building any query.
+	browserToken := database.IsBrowserToken(r.Context())
+	if browserToken {
 		if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
 			for _, chatType := range strings.Split(chatTypesParam, ",") {
 				if strings.TrimSpace(chatType) != "interaction" {
@@ -166,76 +162,6 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
-	} else if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
-		// Handle chat_types filter
-		chatTypes := strings.Split(chatTypesParam, ",")
-		if len(chatTypes) > 0 {
-
-			// Check if we need wildcard matching for namespaced chat types
-			hasIntegration := false
-			hasInteraction := false
-			for _, chatType := range chatTypes {
-				if chatType == "integration" {
-					hasIntegration = true
-				}
-				if chatType == "interaction" {
-					hasInteraction = true
-				}
-			}
-
-			// Build the query conditions
-			if hasIntegration && hasInteraction {
-				query = query.Where(
-					"chat_type IN ? OR chat_type LIKE ? OR chat_type LIKE ?",
-					chatTypes,
-					"integration:%",
-					"interaction:%",
-				)
-			} else if hasIntegration {
-				query = query.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "integration:%")
-			} else if hasInteraction {
-				query = query.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "interaction:%")
-			} else {
-				// Use the original exact matching
-				query = query.Where("chat_type IN ?", chatTypes)
-			}
-		}
-	}
-
-	// Filter by tag/category. Multiple tags use AND semantics: a chat must
-	// carry every requested tag. Tags are stored as a JSON array, so a quoted
-	// substring match on the serialized value matches whole tag names only.
-	if tagsParam := strings.TrimSpace(r.URL.Query().Get("tags")); tagsParam != "" {
-		for _, tag := range strings.Split(tagsParam, ",") {
-			tag = strings.TrimSpace(tag)
-			if tag == "" {
-				continue
-			}
-			query = query.Where("CAST(tags AS TEXT) LIKE ?", "%\""+tag+"\"%")
-		}
-	}
-
-	// Exclude by tag/category. A chat carrying any excluded tag is hidden, so
-	// `exclude_tags=automation,trigger` drops automation- and trigger-generated
-	// chats. COALESCE keeps chats with no tags (NULL) in the result.
-	if excludeParam := strings.TrimSpace(r.URL.Query().Get("exclude_tags")); excludeParam != "" {
-		for _, tag := range strings.Split(excludeParam, ",") {
-			tag = strings.TrimSpace(tag)
-			if tag == "" {
-				continue
-			}
-			query = query.Where("COALESCE(CAST(tags AS TEXT), '') NOT LIKE ?", "%\""+tag+"\"%")
-		}
-	}
-
-	// Free-text search over chat titles. Titles live in the chat settings JSON
-	// blob; CAST(... AS TEXT) keeps this portable across SQLite and Postgres.
-	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
-		titleSubquery := DB.Model(&database.ChatSettings{}).
-			Select("chat_id").
-			Where("CAST(config_data AS TEXT) LIKE ?", "%"+search+"%")
-		query = query.Where("id IN (?)", titleSubquery)
 	}
 
 	// Optional inclusive time range over the chat's latest activity.
@@ -249,12 +175,103 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid time_to (expected RFC3339)", http.StatusBadRequest)
 		return
 	}
-	if timeFrom != nil {
-		query = query.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at >= ?", *timeFrom))
+
+	// newFilteredQuery builds a fresh, unpaginated query carrying the caller's
+	// visibility scope and every active filter. It is called twice: once for the
+	// paginated page and once for the pinned top-up. GORM mutates the statement
+	// in place when the pagination scope applies LIMIT/OFFSET/ORDER, so the
+	// pinned top-up must NOT reuse the already-paginated query (doing so silently
+	// capped the top-up at one page of pins and older pins still disappeared,
+	// ci#512).
+	newFilteredQuery := func() *gorm.DB {
+		q := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+		if user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
+			q = DB
+		}
+
+		if browserToken {
+			q = q.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
+		} else if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
+			// Handle chat_types filter
+			chatTypes := strings.Split(chatTypesParam, ",")
+			if len(chatTypes) > 0 {
+				// Check if we need wildcard matching for namespaced chat types
+				hasIntegration := false
+				hasInteraction := false
+				for _, chatType := range chatTypes {
+					if chatType == "integration" {
+						hasIntegration = true
+					}
+					if chatType == "interaction" {
+						hasInteraction = true
+					}
+				}
+
+				// Build the query conditions
+				if hasIntegration && hasInteraction {
+					q = q.Where(
+						"chat_type IN ? OR chat_type LIKE ? OR chat_type LIKE ?",
+						chatTypes,
+						"integration:%",
+						"interaction:%",
+					)
+				} else if hasIntegration {
+					q = q.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "integration:%")
+				} else if hasInteraction {
+					q = q.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "interaction:%")
+				} else {
+					// Use the original exact matching
+					q = q.Where("chat_type IN ?", chatTypes)
+				}
+			}
+		}
+
+		// Filter by tag/category. Multiple tags use AND semantics: a chat must
+		// carry every requested tag. Tags are stored as a JSON array, so a quoted
+		// substring match on the serialized value matches whole tag names only.
+		if tagsParam := strings.TrimSpace(r.URL.Query().Get("tags")); tagsParam != "" {
+			for _, tag := range strings.Split(tagsParam, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag == "" {
+					continue
+				}
+				q = q.Where("CAST(tags AS TEXT) LIKE ?", "%\""+tag+"\"%")
+			}
+		}
+
+		// Exclude by tag/category. A chat carrying any excluded tag is hidden, so
+		// `exclude_tags=automation,trigger` drops automation- and trigger-generated
+		// chats. COALESCE keeps chats with no tags (NULL) in the result.
+		if excludeParam := strings.TrimSpace(r.URL.Query().Get("exclude_tags")); excludeParam != "" {
+			for _, tag := range strings.Split(excludeParam, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag == "" {
+					continue
+				}
+				q = q.Where("COALESCE(CAST(tags AS TEXT), '') NOT LIKE ?", "%\""+tag+"\"%")
+			}
+		}
+
+		// Free-text search over chat titles. Titles live in the chat settings JSON
+		// blob; CAST(... AS TEXT) keeps this portable across SQLite and Postgres.
+		if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
+			titleSubquery := DB.Model(&database.ChatSettings{}).
+				Select("chat_id").
+				Where("CAST(config_data AS TEXT) LIKE ?", "%"+search+"%")
+			q = q.Where("id IN (?)", titleSubquery)
+		}
+
+		if timeFrom != nil {
+			q = q.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at >= ?", *timeFrom))
+		}
+		if timeTo != nil {
+			q = q.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at <= ?", *timeTo))
+		}
+
+		return q
 	}
-	if timeTo != nil {
-		query = query.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at <= ?", *timeTo))
-	}
+
+	query := newFilteredQuery()
 
 	// Apply pagination and preloads. The count must run against the filtered
 	// query so TotalPages reflects the active filters.
@@ -289,10 +306,11 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// a pin that already appears in the page is not returned twice.
 	if pagination.Page <= 1 {
 		pinnedChats := []database.Chat{}
-		pinnedErr := query.
+		pinnedErr := newFilteredQuery().
 			Where("id IN (?)", DB.Model(&database.ChatPin{}).
 				Select("chat_id").
 				Where("user_id = ?", user.ID)).
+			Order("id DESC").
 			Preload("User1").
 			Preload("User2").
 			Preload("SharedConfig").
