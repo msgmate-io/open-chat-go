@@ -13,9 +13,10 @@ import {
   LoadingSpinner,
   Text,
   TextTypes,
+  extractConfirmableActionsFromMeta,
+  mergeConfirmableAction,
   revalidateChatData,
   type ChatUIToolCall,
-  type ConfirmableAction,
 } from "@open-chat-go/ui";
 import { cn, fetcher } from "@/lib/utils";
 import { AdminActionTasksWidget } from "@/components/chat/AdminActionTasksWidget";
@@ -28,6 +29,9 @@ type ActionTaskAction = {
   target_tool_name?: string;
   danger_level?: string;
   reason?: string;
+  input?: Record<string, unknown>;
+  confirm_label?: string;
+  continue_after_execute?: boolean;
 };
 
 type ActionTaskPartner = {
@@ -220,6 +224,10 @@ function TaskCard({
   const confirmableActions = task.actions.filter(
     (action) => action.kind === "confirmable_action" && action.action_id && action.target_tool_name,
   );
+  // The action-tasks summary drops the proposed params; the full proposal is in
+  // the message meta_data. Merge it back by action_id so the preview renders the
+  // edit text/tool args/context exactly like the inline chat widget (ci#489).
+  const metaConfirmableActions = extractConfirmableActionsFromMeta(task.message_meta);
   const hasInteractionConfirmation = task.actions.some(
     (action) => action.kind === "interaction_confirmation",
   );
@@ -257,24 +265,21 @@ function TaskCard({
           </Text>
         ) : null}
 
-        {confirmableActions.map((action) => (
-          <ConfirmableActionWidget
-            key={`${task.task_key}-${action.action_id}`}
-            chatUUID={task.chat_uuid}
-            messageUUID={task.message_uuid}
-            action={
-              {
-                action_id: action.action_id as string,
-                target_tool_name: action.target_tool_name as string,
-                title: action.title,
-                description: action.description,
-                danger_level: action.danger_level,
-                status: "pending",
-              } as ConfirmableAction
-            }
-            onExecuted={() => onResolved(task)}
-          />
-        ))}
+        {confirmableActions.map((action) => {
+          const widgetAction = mergeConfirmableAction(action, metaConfirmableActions);
+          if (!widgetAction) {
+            return null;
+          }
+          return (
+            <ConfirmableActionWidget
+              key={`${task.task_key}-${widgetAction.action_id}`}
+              chatUUID={task.chat_uuid}
+              messageUUID={task.message_uuid}
+              action={widgetAction}
+              onExecuted={() => onResolved(task)}
+            />
+          );
+        })}
 
         <ChatUIMessageExtras
           toolCalls={task.tool_calls ?? []}
