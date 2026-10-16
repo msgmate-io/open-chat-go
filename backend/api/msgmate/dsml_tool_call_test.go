@@ -144,11 +144,155 @@ func TestProcessStreamingResponseReaderReportsMalformedDSML(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected a clear error for an unrecoverable DSML block")
 	}
-	if !strings.Contains(err.Error(), "DSML") {
-		t.Fatalf("expected the error to mention DSML, got: %v", err)
+	if !strings.Contains(err.Error(), "tool-call") {
+		t.Fatalf("expected the error to mention the inline tool-call block, got: %v", err)
 	}
 	if tool.runCount != 0 {
 		t.Fatalf("no tool must run for a malformed block, got %d", tool.runCount)
+	}
+}
+
+// anthropicTestContent assembles an Anthropic/XML inline function-call block.
+func anthropicTestContent(name string, params ...[2]string) string {
+	var b strings.Builder
+	b.WriteString("<function_calls>\n")
+	b.WriteString("<invoke name=\"" + name + "\">\n")
+	for _, p := range params {
+		b.WriteString("<parameter name=\"" + p[0] + "\">" + p[1] + "</parameter>\n")
+	}
+	b.WriteString("</invoke>\n")
+	b.WriteString("</function_calls>")
+	return b.String()
+}
+
+// TestProcessStreamingResponseReaderRecoversAnthropicToolCall covers the second
+// inline serialization: a model that writes the call as an Anthropic/XML
+// function-call block instead of the structured tool_calls field. The parser
+// must recover and run it rather than storing the raw XML as assistant text.
+func TestProcessStreamingResponseReaderRecoversAnthropicToolCall(t *testing.T) {
+	tool := &recordingNonConfirmableTool{BaseTool: &BaseTool{ToolName: "coder_edit"}}
+	toolMap := map[string]Tool{"coder_edit": tool}
+
+	content := anthropicTestContent("coder_edit",
+		[2]string{"path", "notes.txt"},
+		[2]string{"new_string", "a &lt; b"},
+	)
+	sse := dsmlTestSSE(content)
+
+	chunkChan := make(chan string, 8)
+	usageChan := make(chan *TokenUsage, 2)
+	toolChan := make(chan ToolCall, 8)
+
+	result, err := processStreamingResponseReader(
+		context.Background(),
+		bufio.NewReader(strings.NewReader(sse)),
+		toolMap,
+		map[string]string{},
+		chunkChan,
+		usageChan,
+		toolChan,
+	)
+	if err != nil {
+		t.Fatalf("Anthropic inline tool call should be recovered, got error: %v", err)
+	}
+	if !result.usedTool || result.toolName != "coder_edit" {
+		t.Fatalf("expected a recovered coder_edit call, got usedTool=%v name=%q", result.usedTool, result.toolName)
+	}
+	if result.aiResponse != "" {
+		t.Fatalf("the raw inline fragment must not be stored as assistant text, got %q", result.aiResponse)
+	}
+	if tool.runCount != 1 {
+		t.Fatalf("expected the recovered tool to run once, got %d", tool.runCount)
+	}
+	var gotInput map[string]string
+	if err := json.Unmarshal([]byte(tool.lastInput), &gotInput); err != nil {
+		t.Fatalf("tool input is not valid JSON: %v (%q)", err, tool.lastInput)
+	}
+	if gotInput["path"] != "notes.txt" || gotInput["new_string"] != "a < b" {
+		t.Fatalf("expected decoded parameters in tool input, got %#v", gotInput)
+	}
+}
+
+// TestParseAnthropicToolCalls covers parameter decoding, multiple invokes and
+// the toolMap filter.
+func TestParseAnthropicToolCalls(t *testing.T) {
+	toolMap := map[string]Tool{
+		"coder_edit": &recordingNonConfirmableTool{BaseTool: &BaseTool{ToolName: "coder_edit"}},
+		"coder_grep": &recordingNonConfirmableTool{BaseTool: &BaseTool{ToolName: "coder_grep"}},
+	}
+	content := "<function_calls>\n" +
+		"<invoke name=\"coder_edit\"><parameter name=\"path\">a&amp;b.txt</parameter></invoke>\n" +
+		"<invoke name=\"not_a_tool\"><parameter name=\"x\">1</parameter></invoke>\n" +
+		"<invoke name=\"coder_grep\"><parameter name=\"pattern\">TODO</parameter><parameter name=\"paths\">/workspace</parameter></invoke>\n" +
+		"</function_calls>"
+
+	calls := parseAnthropicToolCalls(content, toolMap)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 recoverable calls (unknown dropped), got %d: %+v", len(calls), calls)
+	}
+	var first map[string]string
+	if err := json.Unmarshal([]byte(calls[0].Arguments), &first); err != nil {
+		t.Fatalf("first call arguments are not JSON: %v", err)
+	}
+	if calls[0].ToolName != "coder_edit" || first["path"] != "a&b.txt" {
+		t.Fatalf("unexpected first call: %+v (args=%v)", calls[0], first)
+	}
+	var second map[string]string
+	if err := json.Unmarshal([]byte(calls[1].Arguments), &second); err != nil {
+		t.Fatalf("second call arguments are not JSON: %v", err)
+	}
+	if calls[1].ToolName != "coder_grep" || second["pattern"] != "TODO" || second["paths"] != "/workspace" {
+		t.Fatalf("unexpected second call: %+v (args=%v)", calls[1], second)
+	}
+}
+
+// TestStreamChatCompletionRetriesMalformedInlineToolCall guards that an
+// intermittent, unrecoverable inline tool-call block is retried once instead of
+// abandoning the task (ci#428).
+func TestStreamChatCompletionRetriesMalformedInlineToolCall(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if requests.Add(1) == 1 {
+			// Unrecoverable: control tokens but no function name / JSON payload.
+			_, _ = io.WriteString(w, dsmlTestSSE(dsmlTestToken("tool_calls_begin")+"\n"+dsmlTestToken("tool_call_begin")))
+			return
+		}
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+
+	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
+		server.URL, "some-model", "litellm", 4, 3,
+		[]map[string]interface{}{{"role": "user", "content": "hi"}},
+		nil, map[string]Tool{}, "test-key", nil, nil, nil, SamplingParams{}, ProviderRetryOptions{},
+		providerRequestMeta{ChatUUID: "chat-1"},
+	)
+
+	var content strings.Builder
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for c := range chunks {
+			content.WriteString(c)
+		}
+	}()
+	for range usage {
+	}
+	for range toolCalls {
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("malformed inline tool call retry should recover, got: %v", err)
+	}
+	<-drained
+
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("expected 2 provider requests (malformed + one retry), got %d", got)
+	}
+	if content.String() != "ok" {
+		t.Fatalf("expected the retry to stream ok, got %q", content.String())
 	}
 }
 
