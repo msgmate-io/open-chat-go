@@ -765,24 +765,29 @@ func trimMessagesForContextRetry(messages []map[string]interface{}) ([]map[strin
 		return messages, false
 	}
 
-	hasLeadingSystemMessage := false
-	if len(messages) > 0 {
-		role, _ := messages[0]["role"].(string)
-		hasLeadingSystemMessage = role == "system"
+	// Preserve every leading system message, not just the first: a compacted
+	// session summary is injected as a second system message right after the
+	// primary system prompt (ci#394), and dropping it here would silently lose
+	// the compacted context the agent is relying on.
+	leadingSystem := 0
+	for leadingSystem < len(messages) {
+		role, _ := messages[leadingSystem]["role"].(string)
+		if role != "system" {
+			break
+		}
+		leadingSystem++
 	}
 
 	tailStart := len(messages) - DefaultContextRetryTailMessages
-	if hasLeadingSystemMessage && tailStart < 1 {
-		tailStart = 1
+	if tailStart < leadingSystem {
+		tailStart = leadingSystem
 	}
-	if !hasLeadingSystemMessage && tailStart < 0 {
-		tailStart = 0
+	if tailStart <= 0 {
+		return messages, false
 	}
 
-	trimmed := make([]map[string]interface{}, 0, DefaultContextRetryTailMessages+1)
-	if hasLeadingSystemMessage {
-		trimmed = append(trimmed, messages[0])
-	}
+	trimmed := make([]map[string]interface{}, 0, leadingSystem+DefaultContextRetryTailMessages)
+	trimmed = append(trimmed, messages[:leadingSystem]...)
 	trimmed = append(trimmed, messages[tailStart:]...)
 
 	if len(trimmed) >= len(messages) {
