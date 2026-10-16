@@ -167,6 +167,26 @@ func TestReportJSONShape(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("unmarshal report: %v", err)
 	}
+	if decoded.Drive.Phase != "ci514-drive-v2" {
+		t.Fatalf("drive record must mark the phase-4/phase-6 increment: %q", decoded.Drive.Phase)
+	}
+	for _, phase := range decoded.Drive.Phases {
+		if phase.ID == "phase_4_longtail" && phase.State != "shipped" {
+			t.Fatalf("phase_4_longtail must be shipped now: %q", phase.State)
+		}
+		if phase.ID == "phase_6_github_wait" && phase.State != "shipped" {
+			t.Fatalf("phase_6_github_wait must be shipped now: %q", phase.State)
+		}
+	}
+	shipped := map[string]bool{}
+	for _, category := range decoded.Drive.Categories {
+		shipped[category.Category] = category.Shipped
+	}
+	for _, category := range []string{"integration_clis", "github_wait"} {
+		if !shipped[category] {
+			t.Fatalf("drive record must mark %s shipped", category)
+		}
+	}
 	if len(decoded.Phases) == 0 {
 		t.Fatalf("the report must expose the phase gates: %s", encoded)
 	}
