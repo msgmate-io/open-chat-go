@@ -702,7 +702,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 				},
 			}
 			eventFailedMetaBytes, _ := json.Marshal(eventFailedMeta)
-			eventFailedText := fmt.Sprintf("Confirmed action `%s` failed.", targetToolName)
+			eventFailedText := confirmableActionFailureText(targetToolName, execErr)
 			eventFailedMessage := database.Message{
 				ChatId:     chat.ID,
 				SenderId:   botUserID,
@@ -788,4 +788,28 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	response.UpdatedAction = selectedAction
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// confirmableActionErrorLimit caps the failure reason appended to the visible
+// event text so a pathological error (eg a huge stack trace) cannot flood the
+// chat; the full error is still preserved in the message metadata.
+const confirmableActionErrorLimit = 2000
+
+// confirmableActionFailureText renders the chat-visible text for a failed
+// confirmable-action execution. It includes the underlying error so renderers
+// that only display the message text still explain why the action failed
+// (ci#525); the error is still stored verbatim in the message metadata.
+func confirmableActionFailureText(targetToolName string, execErr error) string {
+	base := fmt.Sprintf("Confirmed action `%s` failed.", targetToolName)
+	if execErr == nil {
+		return base
+	}
+	reason := strings.TrimSpace(execErr.Error())
+	if reason == "" {
+		return base
+	}
+	if len(reason) > confirmableActionErrorLimit {
+		reason = reason[:confirmableActionErrorLimit] + "…"
+	}
+	return base + "\n\n" + reason
 }
