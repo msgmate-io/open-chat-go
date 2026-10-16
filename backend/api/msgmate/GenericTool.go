@@ -2,12 +2,20 @@ package msgmate
 
 import (
 	tooldefs "backend/api/msgmate/tools"
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 )
 
 type ToolDefinition = tooldefs.ToolDefinition
+
+// ToolRuntimeContextKey is the private init-map key through which the core
+// hands the generation context to an in-process external tool. Tools ignore
+// unknown init keys, so this is backward compatible; a tool that wants to
+// honour cancellation (eg the native coder's workspace tools, which proxy to
+// the integration over HTTP) reads it and threads it into its requests.
+const ToolRuntimeContextKey = "_ctx"
 
 // GenericTool is a simplified tool implementation that uses the ToolDefinition
 type GenericTool struct {
@@ -21,6 +29,25 @@ func (t *GenericTool) RunTool(input interface{}) (string, error) {
 		initData = map[string]interface{}{}
 	}
 	return t.Definition.RunFunction(input, initData)
+}
+
+// RunToolContext runs the tool with the generation context available to the
+// underlying run function via the ToolRuntimeContextKey init entry, so an
+// already-dispatched tool body can abort when the user stops the response.
+func (t *GenericTool) RunToolContext(ctx context.Context, input interface{}) (string, error) {
+	if ctx == nil {
+		return t.RunTool(input)
+	}
+	initData, ok := t.ToolInit.(map[string]interface{})
+	if !ok || initData == nil {
+		initData = map[string]interface{}{}
+	}
+	enriched := make(map[string]interface{}, len(initData)+1)
+	for key, value := range initData {
+		enriched[key] = value
+	}
+	enriched[ToolRuntimeContextKey] = ctx
+	return t.Definition.RunFunction(input, enriched)
 }
 
 // ResolveConfirmation delegates to the definition's code-defined resolver when

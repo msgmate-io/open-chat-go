@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,7 @@ func TestStreamChatCompletionRetriesTransientPreStreamError(t *testing.T) {
 	}
 
 	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
 		server.URL, "some-model", "litellm", 4, 3,
 		[]map[string]interface{}{{"role": "user", "content": "hi"}},
 		nil, map[string]Tool{}, "test-key", nil, nil, nil, SamplingParams{}, retryOpts,
@@ -88,6 +90,7 @@ func TestStreamChatCompletionSingleAttemptWhenDisabled(t *testing.T) {
 	retryOpts := providerRetryOptionsFromConfig(map[string]interface{}{"provider_retry": false})
 
 	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
 		server.URL, "some-model", "litellm", 4, 3,
 		[]map[string]interface{}{{"role": "user", "content": "hi"}},
 		nil, map[string]Tool{}, "test-key", nil, nil, nil, SamplingParams{}, retryOpts,
