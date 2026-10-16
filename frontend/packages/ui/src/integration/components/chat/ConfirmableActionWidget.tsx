@@ -452,7 +452,7 @@ export function ConfirmableActionWidget({
             ) : null}
 
             {isPending ? (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-nowrap items-center gap-2">
                 <label className="flex min-w-0 items-center gap-1.5">
                   <Checkbox
                     checked={continueAfterExecute}
@@ -464,11 +464,11 @@ export function ConfirmableActionWidget({
                   </Text>
                 </label>
                 <div className="ml-auto flex shrink-0 items-center gap-2">
-                  <Button type="button" size="sm" onClick={executeAction} disabled={busy || !parsedInput || executionBlocked}>
+                  <Button type="button" size="sm" className="whitespace-nowrap" onClick={executeAction} disabled={busy || !parsedInput || executionBlocked}>
                     {busy ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
                     {action.confirm_label || "Confirm and execute"}
                   </Button>
-                  <Button type="button" size="sm" variant="outline" onClick={rejectAction} disabled={busy || executionBlocked}>
+                  <Button type="button" size="sm" variant="outline" className="whitespace-nowrap" onClick={rejectAction} disabled={busy || executionBlocked}>
                     Reject
                   </Button>
                 </div>
