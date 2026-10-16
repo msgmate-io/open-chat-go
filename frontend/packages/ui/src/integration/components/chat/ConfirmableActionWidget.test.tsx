@@ -80,4 +80,24 @@ describe("ConfirmableActionWidget phase rendering", () => {
     expect(html).toContain(">rejected<");
     expect(html).not.toContain("Confirm and execute");
   });
+
+  it("labels a cancelled action and drops the execute controls", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmableActionWidget {...baseProps} action={makeAction({ status: "cancelled" })} />,
+    );
+
+    expect(html).toContain(">cancelled<");
+    expect(html).not.toContain("Confirm and execute");
+    expect(html).not.toContain("Reject");
+  });
+
+  it("keeps the compact checkbox, execute and reject controls in one row", () => {
+    const html = renderToStaticMarkup(<ConfirmableActionWidget {...baseProps} action={makeAction()} />);
+
+    // The controls share a single non-wrapping row inside the widget body.
+    expect(html).toContain("Continue after execution");
+    expect(html).toContain("ml-auto flex shrink-0 items-center gap-2");
+    // The raw editable JSON textarea is no longer rendered.
+    expect(html).not.toContain("<textarea");
+  });
 });
