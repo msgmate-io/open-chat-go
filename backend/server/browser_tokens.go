@@ -59,6 +59,16 @@ var coderTUITokenRoutes = []browserTokenRoute{
 	{Method: http.MethodGet, Pattern: "/contacts/default-bot", Scope: ""},
 }
 
+// mcpInteractionTokenRoutes describes the routes the read-only `mcp-interaction`
+// audience token may call. The opencode integration mints that token for the
+// built-in `open-chat-opencode-mcp` preset, so the sandboxed agent can attach to
+// this deployment's own interaction-history MCP server; it must not reach the
+// wider owner/admin API surface. It is default-deny apart from the single MCP
+// endpoint it needs.
+var mcpInteractionTokenRoutes = []browserTokenRoute{
+	{Method: http.MethodPost, Pattern: "/mcp", Scope: database.ScopeInteractionsMCP},
+}
+
 func normalizeBrowserRoutePath(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -112,6 +122,8 @@ func matchRestrictedTokenRoute(audience, method, path string) (scope string, ok 
 		return matchTokenRouteList(browserTokenRoutes, method, path)
 	case database.AudienceCoderTUI:
 		return matchTokenRouteList(coderTUITokenRoutes, method, path)
+	case database.AudienceMCPInteraction:
+		return matchTokenRouteList(mcpInteractionTokenRoutes, method, path)
 	default:
 		return "", false
 	}
