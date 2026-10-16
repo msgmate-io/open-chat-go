@@ -447,6 +447,16 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("PUT /bots/{identifier}/config", botsHandler.SaveConfig)
 	v1PrivateApis.HandleFunc("DELETE /bots/{identifier}", botsHandler.Delete)
 	v1PrivateApis.HandleFunc("POST /bots/{identifier}/interactions", botsHandler.CreateInteraction)
+
+	// Trusted agent dispatch/management surface. A coding/lead/admin agent (or
+	// the hive-mind integration acting for it) starts and manages other agents
+	// from inside Open-Chat without the GitHub workflow. The acting user is the
+	// session principal, or its owner when the caller is an automated bot.
+	v1PrivateApis.HandleFunc("POST /agents/dispatch", botsHandler.AgentDispatch)
+	v1PrivateApis.HandleFunc("GET /agents/interactions", botsHandler.AgentList)
+	v1PrivateApis.HandleFunc("GET /agents/interactions/{chat_uuid}", botsHandler.AgentGet)
+	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/continue", botsHandler.AgentContinue)
+	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/stop", botsHandler.AgentStop)
 	v1PrivateApis.HandleFunc("POST /models", modelsHandler.Create)
 	v1PrivateApis.HandleFunc("PATCH /models/{model_uuid}", modelsHandler.Patch)
 	v1PrivateApis.HandleFunc("DELETE /models/{model_uuid}", modelsHandler.Delete)
