@@ -93,7 +93,26 @@ type AgentInteractionView struct {
 	LatestMessageFinished *bool      `json:"latest_message_finished,omitempty"`
 	LatestMessageAt       *time.Time `json:"latest_message_at,omitempty"`
 	AutoContinue          bool       `json:"auto_continue,omitempty"`
+	// LastAgentText is a short snippet of the agent's most recent reply, so a
+	// listing shows what each agent produced (plan/PR/status) at a glance.
+	LastAgentText string `json:"last_agent_text,omitempty"`
 }
+
+// AgentTranscriptMessage is one entry in a managed interaction's recent
+// transcript, so a lead agent can read what another agent produced.
+type AgentTranscriptMessage struct {
+	UUID      string `json:"uuid"`
+	Role      string `json:"role"`
+	Text      string `json:"text"`
+	DataType  string `json:"data_type,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	Finished  bool   `json:"finished,omitempty"`
+	Error     bool   `json:"error,omitempty"`
+}
+
+// agentTranscriptSnippetLimit is how much of the latest agent reply is included
+// in the list view.
+const agentTranscriptSnippetLimit = 500
 
 // AgentDispatch starts an interaction with a named bot as the acting user,
 // carrying the workflow-equivalent options. The options are recorded on the
@@ -275,8 +294,13 @@ func (h *BotsHandler) AgentGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
 	}
+	limit := 20
+	if value, convErr := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("messages"))); convErr == nil && value > 0 && value <= 100 {
+		limit = value
+	}
 	respondAgentJSON(w, http.StatusOK, map[string]interface{}{
-		"row": agentInteractionView(DB, inspector, actingUser, chat),
+		"row":      agentInteractionView(DB, inspector, actingUser, chat),
+		"messages": recentInteractionMessages(DB, chat, actingUser.ID, limit),
 	})
 }
 
@@ -411,6 +435,7 @@ func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *d
 	if bot := automatedParticipant(chat); bot != nil {
 		view.Bot = userDisplayName(*bot)
 		view.BotUUID = bot.UUID
+		view.LastAgentText = latestAgentText(DB, chat.ID, bot.ID)
 	}
 	if chat.LatestMessage != nil {
 		t := chat.LatestMessage.CreatedAt
@@ -433,6 +458,68 @@ func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *d
 		}
 	}
 	return view
+}
+
+// latestAgentText returns a short snippet of the agent's most recent reply so a
+// listing shows what each agent produced.
+func latestAgentText(DB *gorm.DB, chatID, botUserID uint) string {
+	var message database.Message
+	err := DB.Where("chat_id = ? AND sender_id = ? AND (data_type = ? OR data_type = ?)", chatID, botUserID, "text", "").
+		Order("created_at desc").First(&message).Error
+	if err != nil || message.Text == nil {
+		return ""
+	}
+	text := strings.TrimSpace(*message.Text)
+	if len(text) > agentTranscriptSnippetLimit {
+		text = text[:agentTranscriptSnippetLimit] + "…"
+	}
+	return text
+}
+
+// recentInteractionMessages returns the most recent messages of an interaction
+// (oldest first) as a compact transcript for a watching lead agent.
+func recentInteractionMessages(DB *gorm.DB, chat database.Chat, actingUserID uint, limit int) []AgentTranscriptMessage {
+	if limit <= 0 {
+		limit = 20
+	}
+	var rows []database.Message
+	if err := DB.Where("chat_id = ? AND deleted_at IS NULL", chat.ID).
+		Order("created_at desc").Limit(limit).Find(&rows).Error; err != nil {
+		return []AgentTranscriptMessage{}
+	}
+	out := make([]AgentTranscriptMessage, 0, len(rows))
+	for i := len(rows) - 1; i >= 0; i-- {
+		message := rows[i]
+		entry := AgentTranscriptMessage{
+			UUID:      message.UUID,
+			Role:      "agent",
+			DataType:  message.DataType,
+			CreatedAt: message.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if message.SenderId == actingUserID {
+			entry.Role = "user"
+		}
+		if message.Text != nil {
+			entry.Text = *message.Text
+		}
+		if meta := decodeMessageMeta(message.MetaData); meta != nil {
+			entry.Finished, _ = meta["finished"].(bool)
+			entry.Error, _ = meta["error"].(bool)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func decodeMessageMeta(raw database.JSONRaw) map[string]interface{} {
+	if len(raw) == 0 {
+		return nil
+	}
+	meta := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil
+	}
+	return meta
 }
 
 // findActingInteraction loads an interaction chat the acting user participates in.
