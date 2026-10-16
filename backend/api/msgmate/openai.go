@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -317,6 +318,7 @@ func streamChatCompletion(
 		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
 		emptyContinuationRetried := false
+		malformedInlineToolCallRetried := false
 		var toolCallResult *toolCallResult
 		var err error
 
@@ -411,6 +413,15 @@ func streamChatCompletion(
 						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
 					)
 				}
+			}
+			// An inline tool-call block from which no call could be recovered is
+			// intermittent provider corruption; retry the round once so the
+			// model can re-emit a well-formed call instead of abandoning the
+			// task (ci#428).
+			if err != nil && ctx.Err() == nil && errors.Is(err, errMalformedInlineToolCall) && !malformedInlineToolCallRetried {
+				malformedInlineToolCallRetried = true
+				log.Printf("Model emitted an unrecoverable inline tool-call block; retrying once")
+				continue
 			}
 			if err != nil {
 				errChan <- err
@@ -1139,9 +1150,7 @@ func processStreamingResponseReader(
 	if !result.usedTool && inlineToolCallDetected {
 		recovered := parseInlineToolCalls(result.aiResponse, toolMap)
 		if len(recovered) == 0 {
-			return result, fmt.Errorf(
-				"model returned a malformed inline tool-call block in the assistant content and no tool call could be recovered",
-			)
+			return result, errMalformedInlineToolCall
 		}
 		for i, call := range recovered {
 			processParsedToolCall(
