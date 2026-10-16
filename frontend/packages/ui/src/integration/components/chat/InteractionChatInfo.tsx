@@ -205,17 +205,19 @@ export function InteractionChatInfo({
             {partnerInitial}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {chatTitle
-                ? chatTitle
-                : `${partner?.name || "Bot"} ${isInteractionChat ? "interaction" : "conversation"}`}
-            </p>
-            {hideModelDisplay ? null : (
-              <BotDisplay
-                selectedModel={config.model}
-                className="max-w-[14rem] rounded-lg border-border/60 bg-card/80 px-2 py-0.5 text-xs shadow-none md:max-w-[18rem] md:px-2.5 md:py-1 md:text-[13px]"
-              />
-            )}
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-semibold text-foreground">
+                {chatTitle
+                  ? chatTitle
+                  : `${partner?.name || "Bot"} ${isInteractionChat ? "interaction" : "conversation"}`}
+              </p>
+              {hideModelDisplay ? null : (
+                <BotDisplay
+                  selectedModel={config.model}
+                  className="max-w-[8rem] shrink-0 rounded-md border-border/60 bg-muted/30 px-1.5 py-0.5 text-[11px] font-medium shadow-none sm:max-w-[12rem]"
+                />
+              )}
+            </div>
           </div>
           {statusBadge ? (
             <Badge
