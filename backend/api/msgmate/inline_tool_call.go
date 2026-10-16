@@ -2,9 +2,17 @@ package msgmate
 
 import (
 	"encoding/json"
+	"errors"
 	"html"
 	"regexp"
 	"strings"
+)
+
+// errMalformedInlineToolCall marks an assistant turn that carried an inline
+// tool-call block from which no call could be recovered. The streaming loop may
+// retry such a turn once, since the emission is intermittent provider output.
+var errMalformedInlineToolCall = errors.New(
+	"model returned a malformed inline tool-call block in the assistant content and no tool call could be recovered",
 )
 
 // Some providers/proxies do not map a model's tool call onto the structured
