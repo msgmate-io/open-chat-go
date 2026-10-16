@@ -96,8 +96,49 @@ describe("ConfirmableActionWidget phase rendering", () => {
 
     // The controls share a single non-wrapping row inside the widget body.
     expect(html).toContain("Continue after execution");
+    expect(html).toContain("flex flex-nowrap items-center gap-2");
     expect(html).toContain("ml-auto flex shrink-0 items-center gap-2");
     // The raw editable JSON textarea is no longer rendered.
     expect(html).not.toContain("<textarea");
+  });
+
+  it("auto-expands the latest unconfirmed (blocking) action", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmableActionWidget {...baseProps} action={makeAction()} autoExpand />,
+    );
+
+    // autoExpand opens the body so the blocking controls are immediately usable.
+    expect(html).toContain("Confirm and execute");
+    expect(html).toContain("Reject");
+    expect(html).toContain("Proposed params");
+  });
+
+  it("keeps a non-latest pending action collapsed until the user expands it", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmableActionWidget {...baseProps} action={makeAction()} autoExpand={false} />,
+    );
+
+    // The collapsed header still names the tool, but the body (and its
+    // execute/reject controls) is not rendered until the user expands it.
+    expect(html).toContain("coder_bash");
+    expect(html).not.toContain("Confirm and execute");
+    expect(html).not.toContain("Reject");
+  });
+
+  it("shows the structured edit preview for coder file actions", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmableActionWidget
+        {...baseProps}
+        action={makeAction({
+          target_tool_name: "coder_edit",
+          input: { path: "src/app.ts", old_string: "before", new_string: "after" },
+        })}
+      />,
+    );
+
+    // The structured diff preview renders for the file action.
+    expect(html).toContain("edit src/app.ts");
+    expect(html).toContain("bg-red-500/10");
+    expect(html).toContain("bg-emerald-500/10");
   });
 });
