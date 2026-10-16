@@ -82,10 +82,9 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	botContext := &msgmate.BotContext{
-		Client:       ocClient,
-		BotUser:      botUser,
-		WSHandler:    wsHandler,
-		ChatCanceler: msgmate.NewChatCanceler(),
+		Client:    ocClient,
+		BotUser:   botUser,
+		WSHandler: wsHandler,
 	}
 
 	message := wsapi.NewMessage{Type: "new_message"}
@@ -138,8 +137,8 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	}
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
-		if errors.Is(err, context.Canceled) {
-			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(err)}
+		if isBotReplyCancellation(err, ctx) {
+			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(context.Canceled)}
 			_ = writeResult(task, failure)
 			persistTaskResult(deps.DB, task, failure)
 			return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
@@ -167,9 +166,33 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		log.Printf("tool_init disposal failed for chat %s: %v", payload.ChatUUID, disposeErr)
 	}
 
+	// A stop that lands after the generation finished but before the task
+	// settled must not be recorded as a success: returning SkipRetry keeps a
+	// cancelled task from being retried (and re-running the generation).
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(context.Canceled)}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
+	}
+
 	success := ToolExecutionResult{Success: true, Result: "bot reply generated"}
 	persistTaskResult(deps.DB, task, success)
 	return writeResult(task, success)
+}
+
+// isBotReplyCancellation reports whether a bot reply error is a user/queue
+// cancellation rather than a generation failure. It checks both the wrapped
+// error and the task context so a provider request aborted by the stop signal
+// is never mistaken for a retryable failure that would re-run the generation.
+func isBotReplyCancellation(err error, ctx context.Context) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	return false
 }
 
 func shouldDisposeToolInitForChat(chat database.Chat) bool {

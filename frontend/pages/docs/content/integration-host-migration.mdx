@@ -106,7 +106,11 @@ tools without importing the core. At the core boundary a small conversion
    count dropped from 349 to 226 and its `backend/...` dependency count from 11
    to 0. The REST API tool integration (`rest_api_tool`) followed: 338 to 227
    packages and 6 to 0 `backend/...` packages. The Go client (`go_client`) never
-   imported `backend/...` (238 packages, 0) and needed no change.
+   imported `backend/...` (238 packages, 0) and needed no change. The
+   default-profile batch (`hive_mind`, `builders_toolbox`, `stats_and_usage`,
+   `docker_sandbox`) followed, then `tailscale` (745 to 652 packages) and
+   `kubernetes` (1021 to 960 packages), then the public/full-only batch
+   (`ssh`, `voice`, `email`, `notifications`).
 
 ## Migration status
 
@@ -119,6 +123,12 @@ Migrated onto `Host` so far (transitive `go list -deps` delta, `full` profile):
 | `hive_mind` | 335 → 226 | 4 → 0 |
 | `builders_toolbox` | 335 → 226 | 4 → 0 |
 | `stats_and_usage` | 335 → 226 | 4 → 0 |
+| `tailscale` | 745 → 652 | 2 → 0 |
+| `kubernetes` | 1021 → 960 | 3 → 0 |
+| `ssh` | 350 → 251 | 4 → 0 |
+| `voice` | 422 → 319 | 4 → 0 |
+| `email` | 336 → 230 | 4 → 0 |
+| `notifications` | 336 → 228 | 4 → 0 |
 | `docker_sandbox` | 706 → 706 | 4 → 0 direct¹ |
 | `go_client` | 238 → 238 | 0 → 0 |
 
@@ -129,16 +139,37 @@ closure** is off `backend/...`.
 
 Still importing `backend/...` directly (candidates for follow-up increments):
 
-- **Base types only** (`database.Model`/`User`/`JSONRaw` → local projections):
-  `tailscale` (also needs `IsAutomated` on the request user), `tui` (no imports).
-- **Read-only core-table projections** (like the MCP/`stats_and_usage` pattern):
-  `kubernetes` (`users`, `chats`, `shared_chat_configs`, tool-init manager),
-  `matrix`, `stats_and_usage` (done).
-- **Needs business-logic moves / non-Host capabilities**: `git`
-  (`backend/api/websocket`, `backend/api/msgmate`), `signal`/`slack`
-  (`backend/api/msgmate`), `tvault` (`backend/secretstore`), `msgmate_coder`
-  (`backend` root, `backend/webtools`, `backend/api/...`), `docker_sandbox`
-  (done), `opencode` (`backend/chatstate`, `backend/api/websocket`).
+- **Chat-backend / websocket registration** (`backend/api/msgmate`,
+  `backend/api/websocket`, `backend/chatstate`): `matrix` (also needs user
+  creation), `signal`, `slack`, `git`, `opencode`.
+- **Secret store** (`backend/secretstore`): `tvault`.
+- **Read-only core-table projections** (like the MCP/`stats_and_usage`/`kubernetes`
+  pattern): none left — `kubernetes` (done) replicated the `users`, `chats`,
+  `shared_chat_configs` and `tool_init_data` read paths locally.
+- **Business-logic moves / non-Host capabilities**: `internal_automations`
+  (`backend/workqueue`, `server/util.GetAsynqClient`, global DB, bot-runtime
+  and chat/message tables), `account_management` (`backend/api/user`,
+  account-state/email-verification write helpers, `backend/workqueue`), `admin`
+  (`backend/api/msgmate`, `backend/integrationsettings`, `backend/servicecontrol`
+  and many read/write helpers), `msgmate_coder` (`backend` root,
+  `backend/webtools`, `backend/api/...`).
+- `tui` has no `backend/...` imports (nothing to do).
+
+These remaining edges share one root cause: the core has no stable Host
+capability for the chat-backend/websocket registration (matrix, git, signal,
+slack, opencode) or the secret store (tvault), so decoupling them means moving
+that logic into the integration or designing a new versioned Host capability —
+staged separately per the design doc.
+
+### Host capability additions
+
+Migrating the public/full-only batch required one additive capability: the
+`HTTP` sub-interface gained `DB(r)` (the request-scoped storage handle without
+an authenticated user) so public endpoints (for example the notification
+preview pages) no longer import `backend/server/util.GetDB`. `HostVersion` was
+bumped to `2`; the change is additive and the adapter implements both
+`DB`/`DBAndUser`. Do **not** add integration-specific methods to `Host` — only
+general capabilities like this belong on the surface.
 
 ## Notes and follow-ups
 
