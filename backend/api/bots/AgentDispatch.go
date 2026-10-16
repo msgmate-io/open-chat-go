@@ -328,6 +328,7 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 		SenderId:   actingUser.ID,
 		ReceiverId: bot.ID,
 		Text:       &req.Message,
+		DataType:   "text",
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&message).Error; err != nil {
