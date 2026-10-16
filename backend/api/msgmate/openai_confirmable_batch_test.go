@@ -26,11 +26,15 @@ func (t *recordingConfirmableTool) RunTool(input interface{}) (string, error) {
 // tool executes inline.
 type recordingNonConfirmableTool struct {
 	*BaseTool
-	runCount int
+	runCount  int
+	lastInput string
 }
 
 func (t *recordingNonConfirmableTool) RunTool(input interface{}) (string, error) {
 	t.runCount++
+	if encoded, err := json.Marshal(input); err == nil {
+		t.lastInput = string(encoded)
+	}
 	return "non-confirmable-ran", nil
 }
 
