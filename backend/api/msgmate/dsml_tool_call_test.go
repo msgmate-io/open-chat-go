@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -68,6 +69,7 @@ func TestProcessStreamingResponseReaderRecoversDSMLToolCall(t *testing.T) {
 	toolChan := make(chan ToolCall, 8)
 
 	result, err := processStreamingResponseReader(
+		context.Background(),
 		bufio.NewReader(strings.NewReader(sse)),
 		toolMap,
 		map[string]string{},
@@ -131,6 +133,7 @@ func TestProcessStreamingResponseReaderReportsMalformedDSML(t *testing.T) {
 	toolChan := make(chan ToolCall, 8)
 
 	_, err := processStreamingResponseReader(
+		context.Background(),
 		bufio.NewReader(strings.NewReader(sse)),
 		toolMap,
 		map[string]string{},
@@ -168,6 +171,7 @@ func TestStreamChatCompletionRetriesEmptyPostConfirmationContinuation(t *testing
 	}))
 
 	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
 		server.URL, "some-model", "litellm", 4, 3,
 		[]map[string]interface{}{{"role": "user", "content": "hi"}},
 		nil, map[string]Tool{}, "test-key", nil, nil, nil, SamplingParams{}, ProviderRetryOptions{},
@@ -213,6 +217,7 @@ func TestStreamChatCompletionDoesNotRetryEmptyNormalTurn(t *testing.T) {
 	}))
 
 	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
 		server.URL, "some-model", "litellm", 4, 3,
 		[]map[string]interface{}{{"role": "user", "content": "hi"}},
 		nil, map[string]Tool{}, "test-key", nil, nil, nil, SamplingParams{}, ProviderRetryOptions{},
