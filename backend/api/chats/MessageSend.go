@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -549,6 +550,16 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 			} else if !handled {
 				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 				return
+			}
+
+			// A native bot pauses on its first confirmable tool call, which
+			// already completed the queue task, so the cancellation above is a
+			// no-op. Void any parked proposal as well so stopping the response is
+			// authoritative and the action can no longer be executed.
+			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
+				log.Printf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+			} else if cancelled > 0 {
+				log.Printf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
 			}
 		} else {
 			ch.MessageHandler.SendMessage(
