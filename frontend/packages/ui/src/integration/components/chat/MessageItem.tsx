@@ -426,10 +426,10 @@ function ToolCallCard({
   );
 }
 
-// TurnThoughtBlock renders one reasoning block the agent produced, in place in
-// the ordered turn sequence (ci#569), so the user can follow what the agent was
-// thinking between its tool calls. A block that is still being produced keeps a
-// pulsing marker.
+// TurnThoughtBlockView renders one reasoning block the agent produced, in place
+// in the ordered turn sequence (ci#569), so the user can follow what the agent
+// was thinking between its tool calls. A block that is still being produced keeps
+// a pulsing marker.
 function TurnThoughtBlockView({ text, durationMs, streaming }: TurnThoughtBlock) {
   const duration = durationMs !== undefined ? formatToolDuration(durationMs) : "";
   return (
@@ -455,8 +455,45 @@ function TurnThoughtBlockView({ text, durationMs, streaming }: TurnThoughtBlock)
   );
 }
 
+// TurnNarrationBlockView renders a block of assistant *narration* that the model
+// emitted before a tool call ("Now let me check the migration."). Unlike a
+// reasoning block it is user-visible prose, so it renders as normal message text
+// rather than a quiet thought box — that is what makes a long tool-using turn
+// readable instead of a wall of call rows (ci#569).
+function TurnNarrationBlockView({ text, streaming }: TurnThoughtBlock) {
+  return (
+    <div
+      data-testid="turn-narration"
+      className="flex items-start gap-1.5 px-0.5 text-sm leading-6"
+    >
+      <span className="min-w-0 flex-1 break-words">
+        <MessageMarkdown>{text}</MessageMarkdown>
+      </span>
+      {streaming ? (
+        <span className="mt-2 size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500" aria-hidden="true" />
+      ) : null}
+    </div>
+  );
+}
+
+// NoReasoningNote is shown when a finished turn dispatched tool calls without
+// emitting any reasoning or narration at all. Rather than leaving the reader to
+// wonder why the transcript is a bare stack of call rows, it says so explicitly
+// (ci#569) — the agent produced no "thinking out loud" for these calls.
+function NoReasoningNote({ toolCallCount }: { toolCallCount: number }) {
+  return (
+    <p
+      data-testid="turn-no-reasoning"
+      className="px-0.5 text-xs italic text-muted-foreground"
+    >
+      {toolCallCount === 1 ? "This call ran" : `These ${toolCallCount} calls ran`} without any
+      reasoning or commentary from the agent.
+    </p>
+  );
+}
+
 // TurnSequence renders an assistant turn as its ordered blocks: the reasoning
-// the agent produced, the tool call it then dispatched, the next reasoning
+// and narration the agent produced, the tool call it then dispatched, the next
 // block, and so on (ci#569). It replaces the separate "thoughts above, tool
 // calls below" layout for turns the backend reported a timeline for.
 function TurnSequence({
@@ -464,12 +501,21 @@ function TurnSequence({
   thoughtBlocks,
   toolCalls,
   header,
+  showNarration = true,
   defaultOpen = false,
 }: {
   messageUUID: string;
   thoughtBlocks: TurnThoughtBlock[];
   toolCalls: MessageToolCall[];
   header: React.ReactNode;
+  /**
+   * Render the timeline's assistant-narration blocks. False while the turn is
+   * still running: the live message body already streams that text, so showing
+   * the timeline copy too would print it twice. The reasoning blocks are always
+   * rendered (the body carries only the *current* bit of text, not the earlier
+   * blocks the agent already produced).
+   */
+  showNarration?: boolean;
   defaultOpen?: boolean;
 }) {
   const blocks = useMemo<TurnBlock[]>(
@@ -494,6 +540,10 @@ function TurnSequence({
                 toolCall={block.call as MessageToolCall}
                 index={block.index}
               />
+            ) : block.kind === "text" ? (
+              showNarration ? (
+                <TurnNarrationBlockView key={`${messageUUID}-narration-${blockIndex}`} {...block} />
+              ) : null
             ) : (
               <TurnThoughtBlockView key={`${messageUUID}-thought-${blockIndex}`} {...block} />
             ),
@@ -969,23 +1019,32 @@ export function BotMessageItem({
   const isQueuePending = isQueuePendingMessage(message);
   const toolCalls = (message?.tool_calls || []) as MessageToolCall[];
   const toolCallLabel = toolCalls.length === 1 ? "1 tool call" : `${toolCalls.length} tool calls`;
-  const thoughtCountLabel = plural(timelineThoughts.length, "thought");
+  // The timeline mixes two kinds of block: the model's reasoning ("thought")
+  // and its user-visible narration between calls ("text"). Both make the turn
+  // readable, so the header reports them separately instead of lumping the
+  // prose in as "thoughts" (ci#569).
+  const thoughtBlockCount = timelineThoughts.filter((block) => block.kind === "thought").length;
+  const narrationBlockCount = timelineThoughts.length - thoughtBlockCount;
+  const timelineParts: string[] = [];
+  if (thoughtBlockCount > 0) timelineParts.push(plural(thoughtBlockCount, "thought"));
+  if (narrationBlockCount > 0) timelineParts.push(plural(narrationBlockCount, "commentary", "commentary"));
+  const timelineLabel = timelineParts.join(" · ");
   // The header of the ordered sequence summarises what the turn did without
   // hiding it: the blocks are rendered open, the header is the collapse handle.
   const turnSequenceHeader =
     toolCalls.length > 0 ? (
       metaFinished ? (
         <>
-          {timelineThoughts.length > 0 ? `${thoughtCountLabel} · ` : ""}
+          {timelineLabel ? `${timelineLabel} · ` : ""}
           {toolCallLabel}
         </>
       ) : (
         <ShinyText>
-          {timelineThoughts.length > 0 ? "Thinking" : "Calling tools"} ({toolCallLabel})
+          {timelineLabel ? "Thinking" : "Calling tools"} ({toolCallLabel})
         </ShinyText>
       )
     ) : metaFinished ? (
-      `${thoughtCountLabel}`
+      `${timelineLabel}`
     ) : (
       <ShinyText>Thinking…</ShinyText>
     );
@@ -1078,6 +1137,11 @@ export function BotMessageItem({
           thoughtBlocks={timelineThoughts}
           toolCalls={toolCalls}
           header={turnSequenceHeader}
+          // While the turn streams, its current narration *is* the message body
+          // below, so the timeline renders only the reasoning blocks; once the
+          // turn finished the body keeps just the tail text, so the recorded
+          // narration is rendered inline in the sequence (ci#569).
+          showNarration={Boolean(metaFinished)}
           defaultOpen
         />
       ) : null}
@@ -1135,11 +1199,19 @@ export function BotMessageItem({
       ) : null}
 
       {!CustomMessageBody && metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
-        <ToolCallsGroup
-          messageUUID={message.uuid}
-          toolCalls={toolCalls}
-          header={toolCalls.length === 1 ? <>Tool call</> : <>Tool calls ({toolCalls.length}x)</>}
-        />
+        <>
+          {/* A finished turn that ran tools without reporting any reasoning or
+              narration says so, instead of leaving a bare stack of call rows
+              that reads like the agent did nothing but call tools (ci#569). */}
+          {thinkingSteps.length === 0 && nonEmptyThoughts.length === 0 ? (
+            <NoReasoningNote toolCallCount={toolCalls.length} />
+          ) : null}
+          <ToolCallsGroup
+            messageUUID={message.uuid}
+            toolCalls={toolCalls}
+            header={toolCalls.length === 1 ? <>Tool call</> : <>Tool calls ({toolCalls.length}x)</>}
+          />
+        </>
       )}
 
       {!inlineConfirmableActions && chatUUID && message.uuid && confirmableActions.length > 0
