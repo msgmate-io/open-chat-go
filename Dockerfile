@@ -40,6 +40,21 @@ RUN mkdir -p /workspace/frontend/dist/client \
 
 FROM ${FRONTEND_STAGE} AS frontend_selected
 
+# Module-manifest-only view of the integration checkouts (ci#513).
+#
+# The integration sources are staged here and reduced to their go.mod/go.sum
+# files; `basebuilder` copies only this before generating the workspace and
+# running `go mod download`. That keeps the module-graph download layer (and
+# the /gomodcache layer it stashes, which `cache-to mode=max` re-exports into
+# the registry build cache) keyed on manifest changes instead of on every
+# integration source change. Measured before the change: the download step ran
+# in ~35s on every PR, and the registry cache export of the invalidated
+# module-cache layer accounted for ~110s of the build's "preparing build cache
+# for export" tail.
+FROM docker.io/library/alpine:${ALPINE_VERSION} AS manifests
+COPY clients/ /clients/
+RUN find /clients -type f ! -name go.mod ! -name go.sum -delete
+
 FROM docker.io/library/golang:${GOLANG_VERSION}-alpine AS basebuilder
 
 ARG INTEGRATION_PROFILE=core-only
@@ -74,17 +89,25 @@ COPY integrations.lock.json /integrations.lock.json
 COPY development/ /development/
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --break-system-packages /development/build-tools
-COPY clients/ /clients/
-# Copy only the module manifests before the source so the (expensive) module
-# download layer is keyed solely on the go.mod/go.sum files and survives every
-# source-only change. The full source is copied right after it.
+COPY --from=manifests /clients /clients
 COPY backend/go.mod backend/go.sum ./
 # Generate the workspace for this profile and download the entire module graph
 # as a *normal* layer stashed at /gomodcache. Unlike a `type=cache` mount this
-# layer is exported by the registry cache (mode=max), so the ~240s
-# `go mod download` is paid once per module-graph change instead of every run.
+# layer is exported by the registry cache (mode=max), so the `go mod download`
+# is paid once per module-graph change instead of every run.
+#
+# Only module manifests are present at this point (the `manifests` stage
+# stripped everything else), so this layer -- and the /gomodcache layer it
+# stashes, which mode=max re-exports to GHCR -- is keyed on go.mod/go.sum
+# content alone and now survives every ordinary source-only change. Previously
+# a full `COPY clients/` sat in front of it, so any integration source edit
+# invalidated the download, the (large) module-cache layer and its registry
+# export on every PR.
 RUN openchat-integrations resolve --profile "${INTEGRATION_PROFILE}" \
     && GOWORK=/backend/go.work GOMODCACHE=/gomodcache go mod download
+# The full integration sources and the backend source are copied only *after*
+# the module graph above, so neither invalidates it.
+COPY clients/ /clients/
 COPY backend/ ./
 
 FROM basebuilder AS builder
