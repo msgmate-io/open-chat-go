@@ -18,16 +18,21 @@ import { Icon } from "../icon"
 import { ShareChatModal } from "./ShareChatModal"
 import { useIsSmallScreen } from "../../hooks/use-mobile"
 import { fetcher as apiFetch } from "../../integration/lib/utils"
+import { isChatListKey, normalizeCacheKey } from "../../integration/lib/chat-cache"
+import { applyPinnedToChatListValue } from "./chat-list-helpers"
 
 const normalizeTag = (tag: string) => tag.trim().toLowerCase()
 
+// The chat list is fetched through `useSWRInfinite` (ci#579), so its cache key
+// carries SWR's `$inf$` marker and the cached value is an array of pages. Match
+// list keys through the shared helper and patch both the aggregated array and
+// the single-page entries.
 const invalidateChatCaches = (chatUUID?: string) =>
   mutate(
     (key) =>
-      typeof key === "string" &&
-      (key.startsWith("/api/v1/chats/list") ||
-        key === "/api/v1/chats/tags" ||
-        (chatUUID ? key === `/api/v1/chats/${chatUUID}` : false)),
+      isChatListKey(key) ||
+      normalizeCacheKey(key) === "/api/v1/chats/tags" ||
+      (chatUUID ? normalizeCacheKey(key) === `/api/v1/chats/${chatUUID}` : false),
     undefined,
     { revalidate: true }
   )
@@ -170,20 +175,11 @@ export function ChatSettings({
     setPinSaving(true)
     // Optimistically reflect the new pin state in every cached chat list so the
     // list reorders immediately (native refetches can lag behind the write).
+    // The paginated list caches pages, so the patch is applied through the
+    // shape-aware helper (ci#579).
     void mutate(
-      (key) =>
-        typeof key === "string" && key.startsWith("/api/v1/chats/list"),
-      (current: any) => {
-        if (!current || !Array.isArray(current.rows)) {
-          return current
-        }
-        return {
-          ...current,
-          rows: current.rows.map((row: any) =>
-            row?.uuid === chat.uuid ? { ...row, pinned: nextPinned } : row
-          ),
-        }
-      },
+      isChatListKey,
+      (current) => applyPinnedToChatListValue(current, chat.uuid, nextPinned),
       { revalidate: false }
     )
     try {
