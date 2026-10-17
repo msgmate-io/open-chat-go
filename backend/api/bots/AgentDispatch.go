@@ -354,6 +354,9 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Message string `json:"message"`
+		// ResumeAutoContinue clears a terminal auto-continuation stop (e.g.
+		// needs_human / budget_exhausted) so the nudged agent self-drives again.
+		ResumeAutoContinue bool `json:"resume_auto_continue,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -373,6 +376,17 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 	if bot == nil {
 		http.Error(w, "Interaction has no automated participant", http.StatusConflict)
 		return
+	}
+
+	// Resume the self-driving loop before sending the nudge so the resumed turn
+	// (and the turns after it) are not immediately latched off.
+	autoContinueResumed := false
+	if req.ResumeAutoContinue {
+		if resumeErr := chats.ResumeAutoContinueForChat(DB, chat.ID); resumeErr != nil {
+			http.Error(w, "Failed to resume auto-continue", http.StatusInternalServerError)
+			return
+		}
+		autoContinueResumed = true
 	}
 
 	message := database.Message{
@@ -402,9 +416,10 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondAgentJSON(w, http.StatusOK, map[string]interface{}{
-		"success":      true,
-		"chat_uuid":    chat.UUID,
-		"message_uuid": message.UUID,
+		"success":               true,
+		"chat_uuid":             chat.UUID,
+		"message_uuid":          message.UUID,
+		"auto_continue_resumed": autoContinueResumed,
 	})
 }
 
