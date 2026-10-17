@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { navigate } from "vike/client/router";
 import {
   Badge,
@@ -95,6 +95,29 @@ export default function Page() {
   const [activeAuthenticated, setActiveAuthenticated] = useState<boolean | null>(null);
   const objectUrls = useRef<string[]>([]);
 
+  // Confirm the active server's real session. The share sheet can open before
+  // the WebView session cookie commits (or while the runtime proxy is still
+  // warming up), so a single miss does not mean "signed out" — retry a few
+  // times, and never downgrade an already-confirmed session on a transient
+  // miss. This is what keeps a server that was authenticated moments ago from
+  // reading "No auth" on the share screen.
+  const probeActiveSession = useCallback(async (): Promise<boolean> => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const response = await fetch("/api/v1/user/self", { credentials: "include" });
+        if (response.ok) {
+          setActiveAuthenticated(true);
+          return true;
+        }
+      } catch {
+        // Ignore and retry; the runtime may still be starting.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+    }
+    setActiveAuthenticated((prev) => (prev === true ? true : false));
+    return false;
+  }, []);
+
   useEffect(() => {
     if (!isMobileAppRuntime()) {
       navigate("/chat/new");
@@ -118,9 +141,25 @@ export default function Page() {
     setAuthSelection(resolveMobileServerAuthSelection(readMobileAppConfig()));
 
     void prepareItems(result.items);
+    void probeActiveSession();
     void loadBots();
 
+    // The share sheet can resume after the sign-in WebView or a server switch;
+    // re-probe and re-read the config whenever the page regains focus.
+    const recheck = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      setAuthSelection(resolveMobileServerAuthSelection(readMobileAppConfig()));
+      void probeActiveSession();
+      void loadBots();
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+
     return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
       objectUrls.current.forEach((url) => URL.revokeObjectURL(url));
       objectUrls.current = [];
     };
@@ -206,15 +245,10 @@ export default function Page() {
   const loadBots = async () => {
     setIsLoadingBots(true);
     try {
-      const [selfResponse, contactsResponse, botsResponse] = await Promise.all([
-        fetch("/api/v1/user/self", { credentials: "include" }),
+      const [contactsResponse, botsResponse] = await Promise.all([
         fetch("/api/v1/contacts/list?limit=200&page=1", { credentials: "include" }),
         fetch("/api/v1/bots/list?include_public=true&limit=200&page=1", { credentials: "include" }),
       ]);
-
-      // Confirm the real session for the active server instead of trusting a UI
-      // hint: this reflects an authentication that persists across app restarts.
-      setActiveAuthenticated(selfResponse.ok);
 
       const contacts: ContactsResponse = contactsResponse.ok ? await contactsResponse.json() : { rows: [] };
       const bots: BotsResponse = botsResponse.ok ? await botsResponse.json() : { rows: [] };
@@ -252,7 +286,6 @@ export default function Page() {
 
       setBotContacts(Array.from(byToken.values()).sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
-      setActiveAuthenticated(false);
       setBotContacts([]);
     } finally {
       setIsLoadingBots(false);

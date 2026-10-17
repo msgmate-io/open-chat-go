@@ -35,6 +35,15 @@ type ConfirmableActionExecuteResponse struct {
 	UpdatedAction        map[string]interface{} `json:"updated_action,omitempty"`
 }
 
+// ConfirmableActionRejectRequest is the body of a confirm-actions reject call.
+// ContinueAfterReject defaults to true: rejecting an action resumes the
+// interaction so the model can acknowledge the rejection and propose an
+// alternative, instead of leaving the chat hanging with no reply.
+type ConfirmableActionRejectRequest struct {
+	Reason              string `json:"reason,omitempty"`
+	ContinueAfterReject *bool  `json:"continue_after_reject,omitempty"`
+}
+
 func getToolInitForChat(DB *gorm.DB, chat database.Chat, toolName string) map[string]interface{} {
 	return database.NewToolInitDataManager(DB).ResolveToolInitData(chat, toolName)
 }
@@ -208,12 +217,14 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 	}
 
 	reason := ""
+	continueAfterReject := true
 	if r.Body != nil {
-		var req struct {
-			Reason string `json:"reason,omitempty"`
-		}
+		var req ConfirmableActionRejectRequest
 		if decErr := json.NewDecoder(r.Body).Decode(&req); decErr == nil {
 			reason = strings.TrimSpace(req.Reason)
+			if req.ContinueAfterReject != nil {
+				continueAfterReject = *req.ContinueAfterReject
+			}
 		}
 	}
 
@@ -279,10 +290,18 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	rejectionText := fmt.Sprintf("Rejected action `%s`.", targetToolName)
+	eventText := fmt.Sprintf("Rejected action `%s`.", targetToolName)
+	reasonSuffix := ""
 	if reason != "" {
-		rejectionText = fmt.Sprintf("Rejected action `%s`: %s", targetToolName, reason)
+		eventText = fmt.Sprintf("Rejected action `%s`: %s", targetToolName, reason)
+		reasonSuffix = ": " + reason
 	}
+	// The tool result the model sees on the continuation turn must steer it away
+	// from blindly retrying the rejected action.
+	toolResultText := fmt.Sprintf(
+		"The user rejected the proposed action `%s`%s. Do not retry it; acknowledge the rejection and ask how to proceed or propose an alternative.",
+		targetToolName, reasonSuffix,
+	)
 
 	selectedAction["status"] = "rejected"
 	selectedAction["rejected_by"] = user.UUID
@@ -293,11 +312,12 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 	messageMeta["confirmable_actions"] = actionsRaw
 	updatedMetaBytes, _ := json.Marshal(messageMeta)
 
+	rejectionMessageUUID := ""
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
 			return err
 		}
-		if err := markSourceMessageToolCallRejected(tx, sourceMessage, actionID, rejectionText); err != nil {
+		if err := markSourceMessageToolCallRejected(tx, sourceMessage, actionID, toolResultText); err != nil {
 			return err
 		}
 		eventMeta := map[string]interface{}{
@@ -319,11 +339,14 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 			SenderId:   humanUserID,
 			ReceiverId: botUserID,
 			DataType:   "event",
-			Text:       &rejectionText,
+			Text:       &eventText,
 			MetaData:   database.JSONRaw(eventMetaBytes),
 		}
 		if err := tx.Create(&eventMessage).Error; err != nil {
 			return err
+		}
+		if continueAfterReject {
+			rejectionMessageUUID = eventMessage.UUID
 		}
 		return tx.Model(&chat).Update("latest_message_id", eventMessage.ID).Error
 	})
@@ -332,11 +355,31 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Resume the interaction so the model observes the rejection (recorded as the
+	// tool-call result) and can respond with a clear acknowledgement and
+	// alternative, rather than the chat being left with no reply.
+	continuationQueued := false
+	if continueAfterReject && rejectionMessageUUID != "" {
+		queueClient, clientErr := util.GetAsynqClient(r)
+		queueInspector, inspectorErr := util.GetAsynqInspector(r)
+		if clientErr == nil && inspectorErr == nil {
+			if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+				ChatUUID:    chatUUID,
+				MessageUUID: rejectionMessageUUID,
+				BotUserID:   botUserID,
+			}); enqueueErr == nil {
+				continuationQueued = true
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":   true,
-		"status":    "rejected",
-		"action_id": actionID,
+		"success":               true,
+		"status":                "rejected",
+		"action_id":             actionID,
+		"continue_after_reject": continueAfterReject,
+		"continuation_queued":   continuationQueued,
 	})
 }
 
@@ -616,7 +659,10 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 			},
 		}
 		eventRequestedMetaBytes, _ := json.Marshal(eventRequestedMeta)
-		eventRequestedText := ""
+		// Persist a short human-readable text instead of an empty string: a
+		// consumer that does not render the confirmable-action lifecycle inline
+		// would otherwise show this row as a bare empty bubble.
+		eventRequestedText := fmt.Sprintf("Approved `%s`; running it now.", targetToolName)
 		eventRequestedMessage := database.Message{
 			ChatId:     chat.ID,
 			SenderId:   humanUserID,
@@ -656,7 +702,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 				},
 			}
 			eventFailedMetaBytes, _ := json.Marshal(eventFailedMeta)
-			eventFailedText := fmt.Sprintf("Confirmed action `%s` failed.", targetToolName)
+			eventFailedText := confirmableFailureText(targetToolName, execErr)
 			eventFailedMessage := database.Message{
 				ChatId:     chat.ID,
 				SenderId:   botUserID,
@@ -742,4 +788,32 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	response.UpdatedAction = selectedAction
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// confirmableFailureText builds the user-visible text for a failed confirmable
+// action. It includes the underlying tool error so the chat explains *why* the
+// action failed instead of showing a bare "failed" bubble; the untruncated error
+// is still recorded in the message metadata.
+func confirmableFailureText(toolName string, execErr error) string {
+	text := fmt.Sprintf("Confirmed action `%s` failed.", toolName)
+	if execErr == nil {
+		return text
+	}
+	reason := strings.TrimSpace(execErr.Error())
+	if reason == "" {
+		return text
+	}
+	return fmt.Sprintf("Confirmed action `%s` failed.\n\n%s", toolName, clipConfirmableError(reason))
+}
+
+// clipConfirmableError bounds the failure reason embedded in the chat text so a
+// pathological tool error cannot bloat the message. The metadata keeps the full
+// error.
+func clipConfirmableError(reason string) string {
+	const maxConfirmableErrorRunes = 4000
+	runes := []rune(reason)
+	if len(runes) <= maxConfirmableErrorRunes {
+		return reason
+	}
+	return string(runes[:maxConfirmableErrorRunes]) + "\n… (truncated)"
 }

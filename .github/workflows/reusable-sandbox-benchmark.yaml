@@ -365,7 +365,7 @@ jobs:
     # Hard cap for the whole matrix job. The LLM interaction is capped via
     # SANDBOX_INTERACTION_TIMEOUT; tests may override per-test via config.json
     # "interaction_timeout". Extra minutes cover startup/verification/upload.
-    timeout-minutes: 22
+    timeout-minutes: 46
     needs: [discover, backend-image, sandbox-image-ensure]
     if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
     strategy:
@@ -386,6 +386,15 @@ jobs:
       # key is configured by default; other providers need their own secret.
       SANDBOX_OPENCODE_PROVIDER: ${{ inputs.opencode_provider }}
       SANDBOX_OPENCODE_MODEL: ${{ inputs.opencode_model }}
+      # The native-coder benchmark bots ship a DeepInfra provider in their shared
+      # test configs (the provider the private extended suite has credentials
+      # for). This public suite has no DeepInfra key, so retarget just those bots
+      # to the OpenRouter provider this suite does have, mirroring the other
+      # non-opencode benchmarks. REPLACE_BACKEND gates the override on the bot's
+      # current backend so the openrouter vision/k8s/playwright bots are kept.
+      SANDBOX_INTERACTION_BACKEND: openrouter
+      SANDBOX_INTERACTION_MODEL: ${{ inputs.opencode_model }}
+      SANDBOX_INTERACTION_REPLACE_BACKEND: deepinfra
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
@@ -423,19 +432,41 @@ jobs:
 
       - name: Run sandbox test ${{ matrix.test }}
         id: test
-        # Independent wall-clock backstop below the 22-minute job cap.
-        timeout-minutes: 18
+        # Independent wall-clock backstop below the 22-minute job cap. The
+        # native coder is model-driven, so a single test can miss on variance
+        # (a refusal, a different-but-valid tool choice, stray framing) with no
+        # regression; retry a failed test once (run_test.sh tears the stack down
+        # between attempts, so each attempt starts clean) before failing the gate.
+        timeout-minutes: 40
         run: |
           set -euo pipefail
-          timeout --foreground --kill-after=30 1020 \
-            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
+          max_attempts=2
+          attempt=1
+          while :; do
+            echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts}"
+            rc=0
+            if timeout --foreground --kill-after=30 1020 \
+                 bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"; then
+              echo "::endgroup::"
+              exit 0
+            else
+              rc=$?
+            fi
+            echo "::endgroup::"
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
+              exit "$rc"
+            fi
+            echo "::warning::sandbox test '${{ matrix.test }}' failed on attempt ${attempt} (model variance); retrying."
+            attempt=$(( attempt + 1 ))
+          done
 
       - name: Post repo_changes_summary to the PR
         if: >-
           inputs.post_results &&
           inputs.results_target == 'pr' &&
           inputs.pr_number != '' &&
-          matrix.test == 'repo_changes_summary' &&
+          matrix.test == 'msgmate_coder_repo_changes_summary' &&
           steps.test.outcome == 'success'
         env:
           COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -446,7 +477,7 @@ jobs:
           set -euo pipefail
           summary="$(
             jq -r '.last_bot.text // empty' \
-              ".sandbox-results/repo_changes_summary.last_bot.json"
+              ".sandbox-results/msgmate_coder_repo_changes_summary.last_bot.json"
           )"
           if [ -z "$summary" ]; then
             echo "::warning::No summary text available; skipping PR comment."

@@ -3,7 +3,9 @@ package msgmate
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +29,11 @@ type ToolCall struct {
 	Result    string
 	Status    string
 	Error     string
+	// StartedAtUnixMs is when execution of the call began (unix milliseconds),
+	// and DurationMs is how long it took. They let the chat UI show a live timer
+	// while a call runs and its duration once it completes (ci#569).
+	StartedAtUnixMs int64
+	DurationMs      int64
 }
 
 const (
@@ -38,6 +45,18 @@ const (
 	DefaultToolCallMaxFailed          = 3
 	DefaultContextRetryTailMessages   = 14
 	DefaultToolResultMaxCharsForModel = 12000
+
+	// Context-window retry (ci#394 gap 7). When a provider rejects a request for
+	// exceeding the context window the tool loop trims the history and retries.
+	// A single cut is often not enough for a long session and a cut that lands
+	// inside a tool-call/tool-result pair yields a request the provider rejects
+	// outright, so the retry shrinks in rounds down to a floor, repairing the
+	// tool pairing after every cut and finally falling back to truncating
+	// oversized message contents when the message count cannot be reduced
+	// further.
+	contextRetryShrinkRounds      = 4
+	contextRetryTailFloorMessages = 4
+	contextRetryMaxMessageChars   = 4000
 )
 
 type ToolCallsResult struct {
@@ -237,6 +256,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 //  2. usage: a channel for usage information (if any occur)
 //  3. errs: a channel for errors (if any occur)
 func streamChatCompletion(
+	ctx context.Context,
 	host string,
 	model string,
 	backend string,
@@ -314,10 +334,20 @@ func streamChatCompletion(
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
+		emptyContinuationRetried := false
+		malformedInlineToolCallRetried := false
 		var toolCallResult *toolCallResult
 		var err error
 
 		for {
+			// A stop signal aborts the whole tool loop: once the context is
+			// cancelled neither the provider request nor any further tool body
+			// may run, so the already-dispatched turn cannot keep emitting
+			// results after the user pressed stop.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				errChan <- ctxErr
+				return
+			}
 			if totalToolCalls >= toolCallMaxTotal {
 				errChan <- fmt.Errorf("exceeded maximum number of tool calls (%d)", toolCallMaxTotal)
 				return
@@ -335,13 +365,18 @@ func streamChatCompletion(
 			for {
 				attempts++
 				toolCallResult, err = processStreamingRequest(
-					host, model, backend, currentMessages, tools, toolMap, apiKey,
+					ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 					executedToolResults,
 					chunkChan, usageChan, toolChan, errChan,
 					samplingParams,
 					providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts},
 				)
 				if err == nil {
+					break
+				}
+				// A cancelled context is terminal: never retry (which would
+				// re-run the generation after a stop).
+				if ctx.Err() != nil {
 					break
 				}
 				// Never retry mid-stream failures (they may have already
@@ -362,30 +397,64 @@ func streamChatCompletion(
 				if retryOpts.OnRetryAttempt != nil {
 					retryOpts.OnRetryAttempt(attempts, maxAttempts, err, retryAt)
 				}
-				time.Sleep(delay)
+				// Wait for the backoff, but abandon it immediately if the user
+				// stops the response.
+				select {
+				case <-ctx.Done():
+				case <-time.After(delay):
+				}
+				if ctx.Err() != nil {
+					err = ctx.Err()
+					break
+				}
 			}
 			// Record how many attempts were made so the final error message
 			// can describe the retries.
 			if preErr, ok := err.(*ProviderRequestError); ok {
 				preErr.Attempts = attempts
 			}
-			if err != nil && isContextWindowExceededError(err) {
-				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
-				if trimmed {
+			if err != nil && ctx.Err() == nil && isContextWindowExceededError(err) {
+				// Progressive shrink (ci#394 gap 7). Each round cuts a larger
+				// tail (never the leading system messages, so an injected
+				// compaction summary survives) and repairs the tool-call /
+				// tool-result pairing so the retried request stays valid; when
+				// the message count can no longer be reduced, oversized message
+				// contents are truncated instead.
+				for round := 0; round <= contextRetryShrinkRounds; round++ {
+					shrunkMessages, shrunk := shrinkMessagesForContextRetry(currentMessages, round)
+					if !shrunk {
+						shrunkMessages, shrunk = shrinkOversizedContextMessages(currentMessages, contextRetryMaxMessageChars)
+					}
+					if !shrunk {
+						break
+					}
 					log.Printf(
-						"Context window exceeded; retrying with trimmed history (%d -> %d messages)",
+						"Context window exceeded; retrying with trimmed history (%d -> %d messages, round %d)",
 						len(currentMessages),
-						len(trimmedMessages),
+						len(shrunkMessages),
+						round,
 					)
-					currentMessages = trimmedMessages
+					currentMessages = shrunkMessages
 					toolCallResult, err = processStreamingRequest(
-						host, model, backend, currentMessages, tools, toolMap, apiKey,
+						ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
 						samplingParams,
 						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
 					)
+					if err == nil || ctx.Err() != nil || !isContextWindowExceededError(err) {
+						break
+					}
 				}
+			}
+			// An inline tool-call block from which no call could be recovered is
+			// intermittent provider corruption; retry the round once so the
+			// model can re-emit a well-formed call instead of abandoning the
+			// task (ci#428).
+			if err != nil && ctx.Err() == nil && errors.Is(err, errMalformedInlineToolCall) && !malformedInlineToolCallRetried {
+				malformedInlineToolCallRetried = true
+				log.Printf("Model emitted an unrecoverable inline tool-call block; retrying once")
+				continue
 			}
 			if err != nil {
 				errChan <- err
@@ -401,6 +470,18 @@ func streamChatCompletion(
 			if toolCallResult.err != nil {
 				log.Printf("Error: %v", toolCallResult.err)
 				return
+			}
+
+			// A post-confirmation continuation that produces neither text nor a
+			// tool call is useless and is often a truncated provider emission;
+			// retry it once before giving up so an intermittent blip does not
+			// silently abandon the remaining task steps (ci#428).
+			if aiResponseComplete && meta.PostConfirmationContinuation && !emptyContinuationRetried &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" {
+				emptyContinuationRetried = true
+				aiResponseComplete = false
+				log.Printf("Post-confirmation continuation produced an empty assistant message; retrying once")
+				continue
 			}
 
 			// If AI response is complete and no more tools are being called, execute completion tools
@@ -579,6 +660,7 @@ type toolCallResult struct {
 }
 
 func processStreamingRequest(
+	ctx context.Context,
 	host, model, backend string,
 	messages []map[string]interface{},
 	tools []interface{},
@@ -597,7 +679,7 @@ func processStreamingRequest(
 		if err != nil {
 			return nil, err
 		}
-		return processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+		return processStreamingResponseReader(ctx, reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 	}
 
 	normalizedMessages := normalizeMessagesForBackend(messages, backend)
@@ -645,7 +727,7 @@ func processStreamingRequest(
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
 	if err != nil {
 		reportOutcome(0, fmt.Errorf("failed to create request: %w", err), nil, nil)
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -677,7 +759,7 @@ func processStreamingRequest(
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	result, streamErr := processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+	result, streamErr := processStreamingResponseReader(ctx, reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 
 	var usage *TokenUsage
 	var response map[string]interface{}
@@ -747,36 +829,302 @@ func isContextWindowExceededError(err error) bool {
 		strings.Contains(errLower, "context length")
 }
 
+// trimMessagesForContextRetry trims the oldest turns once the provider has
+// rejected a request for exceeding the context window. It preserves every
+// leading system message (so an injected compaction summary survives) and
+// returns false when the history cannot be reduced further.
 func trimMessagesForContextRetry(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
-	if len(messages) <= DefaultContextRetryTailMessages {
+	return shrinkMessagesForContextRetry(messages, 0)
+}
+
+// contextRetryTailForRound halves the retained tail on every successive shrink
+// round, down to a floor that still leaves the model enough recent turns to
+// continue the work.
+func contextRetryTailForRound(round int) int {
+	tail := DefaultContextRetryTailMessages
+	for i := 0; i < round; i++ {
+		tail /= 2
+		if tail <= contextRetryTailFloorMessages {
+			return contextRetryTailFloorMessages
+		}
+	}
+	return tail
+}
+
+// shrinkMessagesForContextRetry cuts the history back to round's tail size,
+// keeping the leading system messages, and repairs the tool-call/tool-result
+// pairing of the result. It reports false when the message count cannot be
+// reduced (round 0), or when the cut would leave the history shorter than the
+// caller can retry with.
+func shrinkMessagesForContextRetry(messages []map[string]interface{}, round int) ([]map[string]interface{}, bool) {
+	if round < 0 {
+		round = 0
+	}
+	tail := contextRetryTailForRound(round)
+	if len(messages) <= tail {
 		return messages, false
 	}
 
-	hasLeadingSystemMessage := false
-	if len(messages) > 0 {
-		role, _ := messages[0]["role"].(string)
-		hasLeadingSystemMessage = role == "system"
+	leadingSystem := leadingSystemMessageCount(messages)
+	tailStart := len(messages) - tail
+	if tailStart < leadingSystem {
+		tailStart = leadingSystem
+	}
+	if tailStart <= 0 {
+		return messages, false
 	}
 
-	tailStart := len(messages) - DefaultContextRetryTailMessages
-	if hasLeadingSystemMessage && tailStart < 1 {
-		tailStart = 1
-	}
-	if !hasLeadingSystemMessage && tailStart < 0 {
-		tailStart = 0
-	}
-
-	trimmed := make([]map[string]interface{}, 0, DefaultContextRetryTailMessages+1)
-	if hasLeadingSystemMessage {
-		trimmed = append(trimmed, messages[0])
-	}
+	trimmed := make([]map[string]interface{}, 0, leadingSystem+tail)
+	trimmed = append(trimmed, messages[:leadingSystem]...)
 	trimmed = append(trimmed, messages[tailStart:]...)
 
-	if len(trimmed) >= len(messages) {
+	// A cut can land inside an assistant tool_calls message and its tool
+	// results; the provider rejects such a history outright, so repair the
+	// pairing before retrying with it.
+	repaired, _ := repairToolCallPairing(trimmed)
+
+	if len(repaired) >= len(messages) {
 		return messages, false
 	}
+	if !hasConversationalTurn(repaired) {
+		return messages, false
+	}
+	return repaired, true
+}
 
-	return trimmed, true
+// leadingSystemMessageCount counts the leading system messages of a request.
+func leadingSystemMessageCount(messages []map[string]interface{}) int {
+	count := 0
+	for count < len(messages) {
+		role, _ := messages[count]["role"].(string)
+		if role != "system" {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+// hasConversationalTurn reports whether a message list still carries at least
+// one non-system turn to answer.
+func hasConversationalTurn(messages []map[string]interface{}) bool {
+	for _, message := range messages {
+		if role, _ := message["role"].(string); role != "system" {
+			return true
+		}
+	}
+	return false
+}
+
+// toolCallIDsOf returns the tool-call ids declared by an assistant message,
+// tolerating both the []map[string]interface{} shape the loop builds and the
+// []interface{} shape a decoded request carries.
+func toolCallIDsOf(message map[string]interface{}) []string {
+	raw, ok := message["tool_calls"]
+	if !ok {
+		return nil
+	}
+	ids := make([]string, 0, 2)
+	appendCall := func(call map[string]interface{}) {
+		id, _ := call["id"].(string)
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	switch calls := raw.(type) {
+	case []map[string]interface{}:
+		for _, call := range calls {
+			appendCall(call)
+		}
+	case []interface{}:
+		for _, entry := range calls {
+			if call, ok := entry.(map[string]interface{}); ok {
+				appendCall(call)
+			}
+		}
+	}
+	return ids
+}
+
+// toolCallIDOf returns the tool_call_id a tool-result message answers.
+func toolCallIDOf(message map[string]interface{}) string {
+	id, _ := message["tool_call_id"].(string)
+	return strings.TrimSpace(id)
+}
+
+// repairToolCallPairing makes a message list acceptable to an OpenAI-compatible
+// provider after an arbitrary cut:
+//
+//   - a declared tool call with no tool result anywhere in the list is removed
+//     from its assistant message (an unanswered call is a hard provider error),
+//   - an assistant message left with neither tool calls nor content is dropped,
+//   - a tool result whose id was never declared *before* it (an orphaned result
+//     from a mid-pair cut) is dropped.
+//
+// It returns the repaired list and whether anything changed. When nothing
+// changed the original slice is returned unchanged.
+func repairToolCallPairing(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
+	answered := map[string]bool{}
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		if role != "tool" {
+			continue
+		}
+		if id := toolCallIDOf(message); id != "" {
+			answered[id] = true
+		}
+	}
+
+	changed := false
+	declared := map[string]bool{}
+	out := make([]map[string]interface{}, 0, len(messages))
+
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		switch role {
+		case "assistant":
+			ids := toolCallIDsOf(message)
+			if len(ids) == 0 {
+				out = append(out, message)
+				continue
+			}
+			unanswered := false
+			for _, id := range ids {
+				if !answered[id] {
+					unanswered = true
+					break
+				}
+			}
+			if !unanswered {
+				for _, id := range ids {
+					declared[id] = true
+				}
+				out = append(out, message)
+				continue
+			}
+			// At least one declared call is unanswered: keep the answered ones.
+			changed = true
+			kept := keepAnsweredToolCalls(message["tool_calls"], answered)
+			if len(kept) == 0 {
+				if !messageHasContent(message) {
+					continue // drop the empty assistant tool-call shell
+				}
+				stripped := make(map[string]interface{}, len(message))
+				for key, value := range message {
+					if key == "tool_calls" {
+						continue
+					}
+					stripped[key] = value
+				}
+				out = append(out, stripped)
+				continue
+			}
+			clone := make(map[string]interface{}, len(message))
+			for key, value := range message {
+				clone[key] = value
+			}
+			clone["tool_calls"] = kept
+			for _, call := range kept {
+				if id, _ := call["id"].(string); strings.TrimSpace(id) != "" {
+					declared[strings.TrimSpace(id)] = true
+				}
+			}
+			out = append(out, clone)
+		case "tool":
+			id := toolCallIDOf(message)
+			if id == "" || !declared[id] {
+				changed = true
+				continue
+			}
+			out = append(out, message)
+		default:
+			out = append(out, message)
+		}
+	}
+
+	if !changed {
+		return messages, false
+	}
+	return out, true
+}
+
+// keepAnsweredToolCalls filters a message's tool_calls to the ones that have a
+// matching tool result, preserving the original ordering and value shape.
+func keepAnsweredToolCalls(raw interface{}, answered map[string]bool) []map[string]interface{} {
+	kept := make([]map[string]interface{}, 0, 2)
+	appendCall := func(call map[string]interface{}) {
+		id, _ := call["id"].(string)
+		if answered[strings.TrimSpace(id)] {
+			kept = append(kept, call)
+		}
+	}
+	switch calls := raw.(type) {
+	case []map[string]interface{}:
+		for _, call := range calls {
+			appendCall(call)
+		}
+	case []interface{}:
+		for _, entry := range calls {
+			if call, ok := entry.(map[string]interface{}); ok {
+				appendCall(call)
+			}
+		}
+	}
+	return kept
+}
+
+// messageHasContent reports whether a message carries non-empty content.
+func messageHasContent(message map[string]interface{}) bool {
+	switch content := message["content"].(type) {
+	case string:
+		return strings.TrimSpace(content) != ""
+	case []map[string]interface{}:
+		return len(content) > 0
+	case []interface{}:
+		return len(content) > 0
+	}
+	return false
+}
+
+// shrinkOversizedContextMessages is the last-resort context fallback: when the
+// message count can no longer be reduced (for example a very long session whose
+// history is already only a few huge tool results), truncate the oversized
+// string contents instead. Leading system messages are never touched, so an
+// injected compaction summary survives intact.
+func shrinkOversizedContextMessages(messages []map[string]interface{}, maxChars int) ([]map[string]interface{}, bool) {
+	if maxChars <= 0 {
+		return messages, false
+	}
+	changed := false
+	out := make([]map[string]interface{}, len(messages))
+	copy(out, messages)
+	for i, message := range out {
+		if role, _ := message["role"].(string); role == "system" {
+			continue
+		}
+		content, ok := message["content"].(string)
+		if !ok || len(content) <= maxChars {
+			continue
+		}
+		notice := fmt.Sprintf("\n\n[context retry: content truncated from %d to %d chars to fit the model context]", len(content), maxChars)
+		clone := make(map[string]interface{}, len(message))
+		for key, value := range message {
+			clone[key] = value
+		}
+		clone["content"] = content[:maxChars] + notice
+		out[i] = clone
+		changed = true
+	}
+	if !changed {
+		return messages, false
+	}
+	// A cut can also leave an orphaned tool result behind, so keep the retry
+	// request valid.
+	repaired, _ := repairToolCallPairing(out)
+	if !hasConversationalTurn(repaired) {
+		return messages, false
+	}
+	return repaired, true
 }
 
 func truncateToolResultForModel(result string) string {
@@ -793,7 +1141,165 @@ func truncateToolResultForModel(result string) string {
 	return result[:maxContentLen] + notice
 }
 
+// processParsedToolCall executes or surfaces a single fully parsed tool call,
+// whether it came from a structured streaming delta or was recovered from a
+// DeepSeek DSML block in the assistant content. It mirrors the structured
+// path's confirmation/caching semantics and records the outcome on result. The
+// caller is responsible for stopping the enclosing batch once result.stopAfterTool
+// is set.
+func processParsedToolCall(
+	ctx context.Context,
+	id string,
+	name string,
+	arguments string,
+	toolMap map[string]Tool,
+	executedToolResults map[string]string,
+	result *toolCallResult,
+	toolChan chan<- ToolCall,
+) {
+	if name == "" || arguments == "" {
+		return
+	}
+
+	// The stop button cancels the generation context; never dispatch a tool
+	// body after that, even if the provider stream still delivered the call.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		log.Printf("Skipping tool %s: generation cancelled", name)
+		return
+	}
+
+	tool, exists := toolMap[name]
+	if !exists {
+		log.Printf("Warning: Tool '%s' not found in toolMap", name)
+		return
+	}
+
+	toolInput, parseErr := tool.ParseArguments(arguments)
+	if parseErr != nil {
+		return
+	}
+
+	fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", name)
+	fmt.Printf("Tool ID: %s\n", id)
+	fmt.Printf("Arguments: %s\n", arguments)
+
+	contentSignature := fmt.Sprintf("%s:%s", name, strings.TrimSpace(arguments))
+	if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
+		// Only successful calls are cached, so a cache hit is a repeat of a call
+		// that already succeeded. Failures are deliberately not cached: the state
+		// may change between two identical calls (e.g. a coding workspace becomes
+		// selected after the first read failed), and replaying a stale error would
+		// trap the model in a failure loop instead of letting it recover.
+		log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
+
+		result.usedTool = true
+		result.id = id
+		result.toolName = name
+		result.arguments = arguments
+		result.result = cachedResult
+		result.status = ToolCallStatusSucceeded
+		result.error = ""
+
+		toolChan <- ToolCall{
+			ToolName:  name,
+			ToolInput: toolInput,
+			Id:        id,
+			Result:    cachedResult,
+			Status:    ToolCallStatusSucceeded,
+			Error:     "",
+			// A cache hit is also a completed call: report a zero-length
+			// duration so the UI can render its timing row (ci#569).
+			StartedAtUnixMs: time.Now().UnixMilli(),
+		}
+		return
+	}
+
+	result.usedTool = true
+	result.id = id
+	result.toolName = name
+	result.arguments = arguments
+
+	startedAtUnixMs := time.Now().UnixMilli()
+	toolChan <- ToolCall{
+		ToolName:        name,
+		ToolInput:       toolInput,
+		Id:              id,
+		Result:          "",
+		Status:          ToolCallStatusOngoing,
+		StartedAtUnixMs: startedAtUnixMs,
+	}
+
+	var toolResult string
+	status := ToolCallStatusSucceeded
+	toolErr := ""
+	requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
+	switch {
+	case requiresConfirmation:
+		continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
+		toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
+		status = ToolCallStatusPendingConfirmation
+
+		modelResult := toolResult
+		if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
+			modelResult = blockMessage
+		}
+		result.result = modelResult
+		if tool.GetStopOnFirstConfirmableToolCall() {
+			result.stopAfterTool = true
+		}
+	case resolvedResult != "":
+		// A code-defined resolver (eg coder_ask in an autonomous session)
+		// decided the call must not be confirmed and supplied the answer
+		// itself; use it as the tool result and continue instead of pausing
+		// for the user.
+		toolResult = resolvedResult
+		result.result = resolvedResult
+		status = ToolCallStatusSucceeded
+	default:
+		var (
+			executedResult string
+			runErr         error
+		)
+		if contextTool, ok := tool.(ContextTool); ok {
+			executedResult, runErr = contextTool.RunToolContext(ctx, toolInput)
+		} else {
+			executedResult, runErr = tool.RunTool(toolInput)
+		}
+		if runErr != nil {
+			log.Printf("Error executing tool %s: %v", name, runErr)
+			toolResult = buildToolErrorPlaceholder(name, runErr)
+			result.result = toolResult
+			status = ToolCallStatusFailed
+			toolErr = runErr.Error()
+		} else {
+			toolResult = executedResult
+			result.result = executedResult
+			status = ToolCallStatusSucceeded
+		}
+	}
+
+	toolChan <- ToolCall{
+		ToolName:        name,
+		ToolInput:       toolInput,
+		Id:              id,
+		Result:          toolResult,
+		Status:          status,
+		Error:           toolErr,
+		StartedAtUnixMs: startedAtUnixMs,
+		DurationMs:      time.Since(time.UnixMilli(startedAtUnixMs)).Milliseconds(),
+	}
+	result.status = status
+	result.error = toolErr
+	// Cache only successful results. Caching failures would make an identical
+	// retry (after the underlying state changed) replay the stale error instead
+	// of re-executing the tool.
+	if status == ToolCallStatusSucceeded {
+		executedToolResults[contentSignature] = toolResult
+	}
+}
+
 func processStreamingResponseReader(
+	ctx context.Context,
 	reader *bufio.Reader,
 	toolMap map[string]Tool,
 	executedToolResults map[string]string,
@@ -809,8 +1315,18 @@ func processStreamingResponseReader(
 		arguments string
 	}
 	var aiResponseBuilder strings.Builder
+	// inlineToolCallDetected records that the model emitted an inline tool-call
+	// block (DeepSeek DSML or Anthropic/XML) in the content. Such content is
+	// never user-facing: it is withheld from the client stream and recovered
+	// (or reported) at the end.
+	inlineToolCallDetected := false
 
 	for {
+		// A stop aborts the reader immediately: don't keep consuming the
+		// provider stream (or dispatch its tool calls) after cancellation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		line, err := reader.ReadString('\n')
 		if err == io.EOF {
 			break
@@ -853,7 +1369,14 @@ func processStreamingResponseReader(
 		delta := chunk.Choices[0].Delta
 
 		if delta.Content != "" {
-			chunkChan <- delta.Content
+			if !inlineToolCallDetected && containsInlineToolCall(delta.Content) {
+				inlineToolCallDetected = true
+			}
+			// Never forward inline DSML tool-call fragments as assistant text;
+			// they are recovered (or reported) after the stream ends.
+			if !inlineToolCallDetected {
+				chunkChan <- delta.Content
+			}
 			aiResponseBuilder.WriteString(delta.Content)
 		}
 
@@ -893,112 +1416,62 @@ func processStreamingResponseReader(
 				continue
 			}
 
-			tool, exists := toolMap[currentToolCall.name]
-			if !exists {
-				log.Printf("Warning: Tool '%s' not found in toolMap", currentToolCall.name)
-				continue
-			}
+			processParsedToolCall(
+				ctx,
+				currentToolCall.id,
+				currentToolCall.name,
+				currentToolCall.arguments,
+				toolMap,
+				executedToolResults,
+				result,
+				toolChan,
+			)
+			break
+		}
 
-			toolInput, parseErr := tool.ParseArguments(currentToolCall.arguments)
-			if parseErr != nil {
-				continue
-			}
-
-			fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", currentToolCall.name)
-			fmt.Printf("Tool ID: %s\n", currentToolCall.id)
-			fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
-
-			contentSignature := fmt.Sprintf("%s:%s", currentToolCall.name, strings.TrimSpace(currentToolCall.arguments))
-			if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
-				log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior result", contentSignature)
-
-				status := ToolCallStatusSucceeded
-				toolErr := ""
-				if strings.Contains(strings.ToLower(cachedResult), " failed with error:") {
-					status = ToolCallStatusFailed
-					toolErr = "duplicate tool call reused prior failure result"
-				}
-
-				result.usedTool = true
-				result.id = currentToolCall.id
-				result.toolName = currentToolCall.name
-				result.arguments = currentToolCall.arguments
-				result.result = cachedResult
-				result.status = status
-				result.error = toolErr
-
-				toolChan <- ToolCall{
-					ToolName:  currentToolCall.name,
-					ToolInput: toolInput,
-					Id:        currentToolCall.id,
-					Result:    cachedResult,
-					Status:    status,
-					Error:     toolErr,
-				}
-				break
-			}
-
-			result.usedTool = true
-			result.id = currentToolCall.id
-			result.toolName = currentToolCall.name
-			result.arguments = currentToolCall.arguments
-
-			toolChan <- ToolCall{
-				ToolName:  currentToolCall.name,
-				ToolInput: toolInput,
-				Id:        currentToolCall.id,
-				Result:    "",
-				Status:    ToolCallStatusOngoing,
-			}
-
-			var toolResult string
-			status := ToolCallStatusSucceeded
-			toolErr := ""
-			if tool.GetRequiresConfirmation() {
-				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
-				toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
-				status = ToolCallStatusPendingConfirmation
-
-				modelResult := toolResult
-				if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
-					modelResult = blockMessage
-				}
-				result.result = modelResult
-				if tool.GetStopOnFirstConfirmableToolCall() {
-					result.stopAfterTool = true
-				}
-			} else {
-				executedResult, runErr := tool.RunTool(toolInput)
-				if runErr != nil {
-					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
-					toolResult = buildToolErrorPlaceholder(currentToolCall.name, runErr)
-					result.result = toolResult
-					status = ToolCallStatusFailed
-					toolErr = runErr.Error()
-				} else {
-					toolResult = executedResult
-					result.result = toolResult
-					status = ToolCallStatusSucceeded
-				}
-			}
-
-			toolChan <- ToolCall{
-				ToolName:  currentToolCall.name,
-				ToolInput: toolInput,
-				Id:        currentToolCall.id,
-				Result:    toolResult,
-				Status:    status,
-				Error:     toolErr,
-			}
-			result.status = status
-			result.error = toolErr
-			executedToolResults[contentSignature] = toolResult
-
+		// StopOnFirstConfirmableToolCall means the model must resolve this
+		// confirmable action before any further tool call in the same assistant
+		// turn is surfaced. Without this we would keep reading the response and
+		// turn every batched confirmable call into its own confirmable action,
+		// so all of them get approved and re-applied on already-mutated state.
+		// Drop the rest of the batch instead; the model re-issues the remaining
+		// calls one at a time.
+		if result.stopAfterTool {
+			log.Printf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
 			break
 		}
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
+
+	// Recover an inline tool-call block (DeepSeek DSML or Anthropic/XML) that
+	// the provider did not map onto the structured tool_calls field. Without
+	// this the raw fragment was stored as the assistant text and the tool loop
+	// finished silently, abandoning the rest of a multi-step task (ci#428).
+	if !result.usedTool && inlineToolCallDetected {
+		recovered := parseInlineToolCalls(result.aiResponse, toolMap)
+		if len(recovered) == 0 {
+			return result, errMalformedInlineToolCall
+		}
+		for i, call := range recovered {
+			processParsedToolCall(
+				ctx,
+				fmt.Sprintf("inline-call-%d", i+1),
+				call.ToolName,
+				call.Arguments,
+				toolMap,
+				executedToolResults,
+				result,
+				toolChan,
+			)
+			if result.stopAfterTool {
+				break
+			}
+		}
+		// The raw inline fragment is not user-facing assistant text.
+		result.aiResponse = ""
+	}
+
 	return result, nil
 }
 

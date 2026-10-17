@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -1385,6 +1386,42 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	response, err := createBotInteraction(DB, queueClient, queueInspector, user, runtime, req, requestBaseURL(r))
+	if err != nil {
+		writeCreateInteractionError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// errInteractionMessageRequired is returned by createBotInteraction when the
+// interaction carries no first message. Callers map it to HTTP 400.
+var errInteractionMessageRequired = errors.New("message is required")
+
+// createBotInteraction is the reusable core of POST /bots/{identifier}/interactions.
+// It builds the effective shared config, creates the interaction chat with its
+// first message (owner-scoped via actingUser), optionally gates it behind a
+// confirmation widget and enqueues the bot reply. It is shared by the
+// user-facing handler and the trusted agent-dispatch surface so both create
+// interactions through one code path.
+func createBotInteraction(
+	DB *gorm.DB,
+	queueClient *asynq.Client,
+	queueInspector *asynq.Inspector,
+	actingUser *database.User,
+	runtime database.BotRuntimeConfig,
+	req CreateBotInteractionRequest,
+	baseURL string,
+) (BotInteractionResponse, error) {
+	if actingUser == nil {
+		return BotInteractionResponse{}, errors.New("acting user is required")
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		return BotInteractionResponse{}, errInteractionMessageRequired
+	}
+
 	effectiveConfig := decodeSharedConfig(runtime.DefaultSharedConfig)
 	effectiveConfig = applyInteractionConfigOverrides(effectiveConfig, req.ConfigOverrides, req.ToolInit)
 	// A bot may default every interaction to require explicit user confirmation
@@ -1393,24 +1430,23 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	// confirmation always wins; the config key is consumed here so it is not
 	// forwarded to the chat backend as shared config.
 	requireConfirmation := req.RequireConfirmation || consumeRequireConfirmationDefault(effectiveConfig)
-	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, effectiveConfig)
+	// The management-scope declaration is a bot-only key consumed here too so it
+	// is never forwarded to the chat backend as shared config (ci#540 follow-up).
+	consumeAgentScopeTagsDefault(effectiveConfig)
+	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, effectiveConfig)
 	if defaultsErr != nil {
-		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
-		return
+		return BotInteractionResponse{}, fmt.Errorf("failed to apply integration shared config defaults: %w", defaultsErr)
 	}
 	effectiveConfig = withDefaultsConfig
-	if err := validateAndAttachDynamicToolsForUser(DB, user, effectiveConfig); err != nil {
-		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
-		return
+	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
+		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid tools/tool_init: %v", err)}
 	}
-	if err := validateAndAttachMCPIntegrationsForUser(DB, user, effectiveConfig); err != nil {
-		http.Error(w, fmt.Sprintf("invalid integrations: %v", err), http.StatusBadRequest)
-		return
+	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, effectiveConfig); err != nil {
+		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid integrations: %v", err)}
 	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
-		http.Error(w, "Failed to process config", http.StatusBadRequest)
-		return
+		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
 	}
 
 	tags := database.NormalizeChatTags(req.Tags)
@@ -1418,10 +1454,10 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	var message database.Message
 	var share database.SharedChatInstance
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if user.ID < runtime.BotUserId {
-			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction", Tags: tags}
+		if actingUser.ID < runtime.BotUserId {
+			chat = database.Chat{User1Id: actingUser.ID, User2Id: runtime.BotUserId, ChatType: "interaction", Tags: tags}
 		} else {
-			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: user.ID, ChatType: "interaction", Tags: tags}
+			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: actingUser.ID, ChatType: "interaction", Tags: tags}
 		}
 		if err := tx.Create(&chat).Error; err != nil {
 			return err
@@ -1437,7 +1473,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 
 		message = database.Message{
 			ChatId:     chat.ID,
-			SenderId:   user.ID,
+			SenderId:   actingUser.ID,
 			ReceiverId: runtime.BotUserId,
 			Text:       &req.Message,
 		}
@@ -1449,7 +1485,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 					DisplayName: attachment.DisplayName,
 				}
 			}
-			enriched, attachErr := chats.EnrichAndShareAttachments(tx, user.ID, runtime.BotUserId, chatAttachments)
+			enriched, attachErr := chats.EnrichAndShareAttachments(tx, actingUser.ID, runtime.BotUserId, chatAttachments)
 			if attachErr != nil {
 				return attachErr
 			}
@@ -1468,7 +1504,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 				tx,
 				chat,
 				runtime.BotUserId,
-				user.ID,
+				actingUser.ID,
 				runtime.UUID,
 				message,
 				"Start coding interaction?",
@@ -1484,7 +1520,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if req.AutoShare {
-			createdShare, shareErr := ensureOwnedChatShare(tx, chat.ID, user.ID)
+			createdShare, shareErr := ensureOwnedChatShare(tx, chat.ID, actingUser.ID)
 			if shareErr != nil {
 				return shareErr
 			}
@@ -1493,15 +1529,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			http.Error(w, "Invalid file attachment", http.StatusBadRequest)
-		case errors.Is(err, chats.ErrAttachmentNotOwned):
-			http.Error(w, "Access denied to file attachment", http.StatusForbidden)
-		default:
-			http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
-		}
-		return
+		return BotInteractionResponse{}, err
 	}
 
 	if !requireConfirmation {
@@ -1510,8 +1538,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			MessageUUID: message.UUID,
 			BotUserID:   runtime.BotUserId,
 		}); enqueueErr != nil {
-			http.Error(w, "Failed to enqueue bot reply", http.StatusInternalServerError)
-			return
+			return BotInteractionResponse{}, fmt.Errorf("failed to enqueue bot reply: %w", enqueueErr)
 		}
 	}
 
@@ -1522,14 +1549,35 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			ChatUUID:      chat.UUID,
 			ChatShareUUID: share.ChatShareUUID,
 		}
-		baseURL := requestBaseURL(r)
 		if baseURL != "" {
 			response.SharedInteractionURL = baseURL + "/interaction/" + share.ChatShareUUID
 		}
 	}
+	return response, nil
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+// interactionConfigError marks a client-supplied config/tool_init problem so the
+// HTTP layer can answer 400 instead of 500.
+type interactionConfigError struct{ message string }
+
+func (e *interactionConfigError) Error() string { return e.message }
+
+// writeCreateInteractionError maps a createBotInteraction error to the same HTTP
+// responses the original CreateInteraction handler produced.
+func writeCreateInteractionError(w http.ResponseWriter, err error) {
+	var configErr *interactionConfigError
+	switch {
+	case errors.Is(err, errInteractionMessageRequired):
+		http.Error(w, "message is required", http.StatusBadRequest)
+	case errors.As(err, &configErr):
+		http.Error(w, configErr.message, http.StatusBadRequest)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		http.Error(w, "Invalid file attachment", http.StatusBadRequest)
+	case errors.Is(err, chats.ErrAttachmentNotOwned):
+		http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+	default:
+		http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+	}
 }
 
 // requireConfirmationConfigKey is the default_shared_config key that makes a bot
@@ -1558,4 +1606,15 @@ func consumeRequireConfirmationDefault(config map[string]interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// consumeAgentScopeTagsDefault removes the default_shared_config.agent_scope_tags
+// key so a bot's management-scope declaration is never forwarded to the chat
+// backend as shared config. The key only governs the trusted /api/v1/agents
+// management gate (ci#540 follow-up).
+func consumeAgentScopeTagsDefault(config map[string]interface{}) {
+	if config == nil {
+		return
+	}
+	delete(config, agentScopeTagsConfigKey)
 }

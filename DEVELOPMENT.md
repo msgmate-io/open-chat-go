@@ -8,6 +8,37 @@ You should always try to call and test endpoints you implement while you are imp
 
 You should only implement actual integration tests if asked, or suggest to implement them if you really think appropriate.
 
+### Pull-request CI labels and deployment policy
+
+PR CI (`.github/workflows/run-pr-ci-tests-and-deployments.yaml`) is driven
+entirely by labels applied to the pull request when it is opened: `test`,
+`build`, `e2e`, `sandbox-test`, `test-core-only`, `ai-test-mock`,
+`ai-test-real` and `deploy` (`release-android` only on an explicit Android
+request; `slow-android-build-test` only on an explicit maintainer request).
+Two of them stand apart: `deploy` and `sandbox-test` spin up a deployment and
+run the expensive post-deploy suites, so they touch an environment.
+
+Policy:
+
+- Use `deploy` and `sandbox-test` **only on dedicated consolidation PRs
+  targeting `main`** (the `chore/consolidate-*` PRs) — the single place where a
+  batch of ready changes is verified as a whole. Feature, bugfix, docs and
+  chore PRs carry the ordinary code-change labels only.
+- A same-repository PR targeting `main` is the CI-environment case: its
+  deploy/test gate uses the **unprotected** `msgmate-io-ci` GitHub environment,
+  so the full suite — including the post-deploy sandbox and real-AI suites —
+  runs without an admin confirmation.
+- Every other PR keeps the protected `msgmate-io-pr-deployment` environment and
+  therefore needs an explicit maintainer approval before it deploys (and before
+  its post-deploy suites can run).
+- Production promotion (`main` → `production`) always keeps the
+  admin-protected `msgmate-io-production` environment.
+- Maintainers may make rare, deliberate exceptions (for example to validate an
+  infrastructure change); the risk is theirs and they should say so on the PR.
+
+Never wait for or poll CI, deployments or approvals from an agent turn; report
+what is pending instead.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git
@@ -102,6 +133,67 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
+
+### Native coding-agent sandboxes
+
+The native `msgmate_coder` coding agents can run each chat in a **fully
+isolated, per-chat coding sandbox** instead of a shared bootstrap workspace.
+The chat-init `coder_select_workspace` `auto_sandbox` option provisions the
+sandbox through the sandbox integration, which owns the Docker and Kubernetes
+backends; on Kubernetes it is an ephemeral privileged pod with its own
+persistent workspace and state PVCs, so the checkout survives restarts and stays
+**continuable** across messages for its TTL. A periodic reaper tears the backing
+pod and PVCs down when the sandbox expires.
+
+The sandbox target is selectable three ways, per field, with precedence
+**chat-init input → per-agent shared config → deployment env**:
+
+- chat-init: `sandbox_backend`, `sandbox_template`, `sandbox_image`,
+  `sandbox_workspace_size`;
+- per-agent shared config: `coder_sandbox_backend`, `coder_sandbox_template`,
+  `coder_sandbox_image`, `coder_sandbox_workspace_size`;
+- deployment env: `OCI_MSGMATE_CODER_TEMP_SANDBOX_BACKEND` and its
+  `_TEMPLATE` / `_IMAGE` / `_WORKSPACE_SIZE` counterparts.
+
+When no backend is configured (or no sandbox integration is present), the
+legacy first-enabled-SSH-server behavior is kept, so existing deployments are
+unaffected. The OpenCode-based coding bots remain the default/backup route and
+are not modified by the native sandbox flow.
+
+The capability parity of the native coder against the OpenCode bot suite (per
+bot, per capability, with the explicitly accepted fallbacks) is recorded in
+[`docs/native-coder-parity.md`](../docs/native-coder-parity.md).
+
+### Native coding-agent provider concurrency control
+
+Under full-throttle development (many native agents at once) a shared provider
+key (typically OpenRouter) answers **HTTP 402 "This request would exceed your
+available credits given your current in-flight requests"** — a per-key
+*in-flight* cap, not an account-credit cap (ci#620). The native `msgmate_coder`
+runtime therefore admits every provider request through a **per-key in-flight
+limit**: additional requests queue (up to the queue timeout) and succeed instead
+of 402ing, the current in-flight/queue counts are exposed, requests over the cap
+that *do* get rejected with 402/429 fail over to a configured fallback
+provider/secondary key, and the runtime keeps metrics (in-flight, 402/429 rate,
+queue wait, saturation events) so the development loop can self-throttle.
+
+The default in-flight cap is 3 — the development-loop controller's
+`MAX_CONCURRENT` default (ci#592) — and is bounded by the pooled sandbox bound
+`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL` (ci#602) when that is smaller. The
+per-agent keys (`coder_provider_max_concurrency`,
+`coder_provider_queue_timeout_ms`, `coder_provider_fallback_on_saturation`,
+`coder_provider_fallback_backend`/`_model`/`_endpoint`/`_api_key_env`,
+`coder_provider_fallbacks`) mirror the deployment env
+(`OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY`, `..._QUEUE_TIMEOUT_MS`,
+`..._FALLBACK_ON_SATURATION`, `..._FALLBACKS`). A fallback of a known provider
+with no explicit key env resolves `<PROVIDER_API_KEY>_FALLBACK`, so an operator
+only has to export one extra variable to shed load onto a second key. No key —
+primary or secondary — is ever exposed: the admission identity and every status
+snapshot carry only a truncated hash. `coder_context` reports the in-flight
+count and cap, and the admin-only
+`GET /api/v1/integrations/msgmate_coder/provider/status` route reports the
+per-key metrics for the loop. The full reference lives in the
+`msgmate_coder` integration README.
 
 ### Custom integration profiles
 

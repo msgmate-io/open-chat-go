@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -329,7 +330,20 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	// Emit the interaction-completed notification once an automated agent's
 	// final reply is persisted. Best-effort and detached so notification
 	// delivery (network I/O) never delays message persistence.
-	go maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+	//
+	// The in-product auto-continuation loop (ci#537) runs first: when it
+	// schedules the next turn the interaction is not actually complete yet, so
+	// the completion notification must not fire. The queue handles are
+	// resolved here (not inside the goroutine) so the detached work never
+	// touches the request after the handler returned.
+	autoContinueClient, _ := util.GetAsynqClient(r)
+	autoContinueInspector, _ := util.GetAsynqInspector(r)
+	go func() {
+		if maybeAutoContinueInteraction(context.Background(), DB, autoContinueClient, autoContinueInspector, chat, *user, receiver, message) {
+			return
+		}
+		maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -549,6 +563,22 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 			} else if !handled {
 				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 				return
+			}
+
+			// A native bot pauses on its first confirmable tool call, which
+			// already completed the queue task, so the cancellation above is a
+			// no-op. Void any parked proposal as well so stopping the response is
+			// authoritative and the action can no longer be executed.
+			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
+				log.Printf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+			} else if cancelled > 0 {
+				log.Printf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
+			}
+
+			// An interrupt also ends a self-driving interaction: a scheduled
+			// auto-continuation must not resume a chat the user stopped.
+			if stopErr := StopAutoContinueForChat(DB, chat.ID, "interrupted_by_user"); stopErr != nil {
+				log.Printf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
 			}
 		} else {
 			ch.MessageHandler.SendMessage(

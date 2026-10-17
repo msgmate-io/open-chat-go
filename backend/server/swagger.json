@@ -4411,6 +4411,9 @@
                         "$ref": "#/definitions/chats.ListedChat"
                     }
                 },
+                "total": {
+                    "type": "integer"
+                },
                 "total_pages": {
                     "type": "integer"
                 }
@@ -4479,6 +4482,26 @@
                 }
             }
         },
+        "chats.PublicFollowUp": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "string"
+                },
+                "chat_share_uuid": {
+                    "type": "string"
+                },
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "interaction_url": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
         "chats.PublicInteractionChat": {
             "type": "object",
             "properties": {
@@ -4489,6 +4512,9 @@
                     "type": "string"
                 },
                 "config": {},
+                "follow_up": {
+                    "$ref": "#/definitions/chats.PublicFollowUp"
+                },
                 "interaction_details": {
                     "type": "object",
                     "additionalProperties": true

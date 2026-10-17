@@ -21,6 +21,12 @@ type InteractionStatusResponse struct {
 	LatestMessageUUID     string `json:"latest_message_uuid,omitempty"`
 	LatestMessageFinished *bool  `json:"latest_message_finished,omitempty"`
 	Source                string `json:"source"`
+	// AutoContinue reports the in-product auto-continuation loop (ci#537): the
+	// interaction keeps producing turns by itself until the agent stops it.
+	AutoContinue           bool   `json:"auto_continue,omitempty"`
+	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
+	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
+	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
@@ -134,6 +140,13 @@ func (h *ChatsHandler) GetSharedInteractionStatus(w http.ResponseWriter, r *http
 // message, but a newer user message may sit on top of it).
 const confirmationScanLimit = 5
 
+// ResolveInteractionStatus exposes the deterministic interaction-state resolver
+// to other core packages (the trusted agent-dispatch surface) so a dispatched
+// agent's live state is computed by the same logic the chat status endpoint uses.
+func ResolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat database.Chat) (InteractionStatusResponse, error) {
+	return resolveInteractionStatus(DB, inspector, chat)
+}
+
 func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat database.Chat) (InteractionStatusResponse, error) {
 	response := InteractionStatusResponse{
 		ChatUUID: chat.UUID,
@@ -141,6 +154,7 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		State:    string(chatstate.StateIdle),
 		Source:   "none",
 	}
+	response = populateAutoContinueStatus(DB, chat, response)
 
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
@@ -292,13 +306,18 @@ func pendingActionsForMessage(message database.Message) []ActionTaskAction {
 						continue
 					}
 					if status, _ := action["status"].(string); status == "pending" {
+						actionInput, _ := action["input"].(map[string]interface{})
+						continueAfterExecute, _ := action["continue_after_execute"].(bool)
 						actions = append(actions, ActionTaskAction{
-							Kind:           ActionTaskKindConfirmableAction,
-							ActionId:       actionTaskStringField(action, "action_id"),
-							Title:          actionTaskStringField(action, "title"),
-							Description:    actionTaskStringField(action, "description"),
-							TargetToolName: actionTaskStringField(action, "target_tool_name"),
-							DangerLevel:    actionTaskStringField(action, "danger_level"),
+							Kind:                 ActionTaskKindConfirmableAction,
+							ActionId:             actionTaskStringField(action, "action_id"),
+							Title:                actionTaskStringField(action, "title"),
+							Description:          actionTaskStringField(action, "description"),
+							TargetToolName:       actionTaskStringField(action, "target_tool_name"),
+							DangerLevel:          actionTaskStringField(action, "danger_level"),
+							Input:                actionInput,
+							ConfirmLabel:         actionTaskStringField(action, "confirm_label"),
+							ContinueAfterExecute: continueAfterExecute,
 						})
 					}
 				}

@@ -67,6 +67,25 @@ interface InteractionChatInfoProps {
   showMobileHeaderControls?: boolean;
   leftPannelCollapsed?: boolean;
   onToggleSidebar?: () => void;
+  /**
+   * Hide the model chip in the header. Integration details panels that render
+   * the model in their own card (eg the msgmate coder) set this so the model is
+   * shown in one place instead of duplicated in the header.
+   */
+  hideModelDisplay?: boolean;
+  /**
+   * Extra items rendered in the header overflow menu. Integrations use this to
+   * surface their own actions (eg "Configure msgmate coder") without forking the
+   * shared interaction header.
+   */
+  extraMenuItems?: React.ReactNode;
+  /**
+   * Actions rendered as a compact, right-aligned row at the bottom of the header
+   * card. Integrations use this to float small controls on the chat header (eg
+   * the msgmate coder's workspace shell and Open-Chat TUI launchers) without
+   * forking the shared interaction header.
+   */
+  headerActions?: React.ReactNode;
 }
 
 type ChatStatusLike = { is_active?: boolean; state?: string } | null | undefined;
@@ -115,6 +134,9 @@ export function InteractionChatInfo({
   isSharedView = false,
   leftPannelCollapsed = false,
   onToggleSidebar,
+  hideModelDisplay = false,
+  extraMenuItems,
+  headerActions,
 }: InteractionChatInfoProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
@@ -123,6 +145,10 @@ export function InteractionChatInfo({
   const config = chat?.config ?? {};
   const partner = chat?.partner;
   const partnerInitial = partner?.name?.charAt(0)?.toUpperCase() ?? "B";
+  // A user-visible chat title (set manually or by the internal_automations
+  // integration) takes precedence over the bot name in the header, mirroring
+  // how the chat list labels the row.
+  const chatTitle = (chat?.settings?.title || "").trim();
   const { data: toolsData } = useSWR<ToolsResponse>("/api/v1/tools?page=1&page_size=200", fetcher);
   const toolsByName = useMemo(() => {
     const rows = toolsData?.rows ?? [];
@@ -179,13 +205,19 @@ export function InteractionChatInfo({
             {partnerInitial}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {partner?.name || "Bot"} {isInteractionChat ? "interaction" : "conversation"}
-            </p>
-            <BotDisplay
-              selectedModel={config.model}
-              className="max-w-[14rem] rounded-lg border-border/60 bg-card/80 px-2 py-0.5 text-xs shadow-none md:max-w-[18rem] md:px-2.5 md:py-1 md:text-[13px]"
-            />
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-semibold text-foreground">
+                {chatTitle
+                  ? chatTitle
+                  : `${partner?.name || "Bot"} ${isInteractionChat ? "interaction" : "conversation"}`}
+              </p>
+              {hideModelDisplay ? null : (
+                <BotDisplay
+                  selectedModel={config.model}
+                  className="max-w-[8rem] shrink-0 rounded-md border-border/60 bg-muted/30 px-1.5 py-0.5 text-[11px] font-medium shadow-none sm:max-w-[12rem]"
+                />
+              )}
+            </div>
           </div>
           {statusBadge ? (
             <Badge
@@ -213,6 +245,7 @@ export function InteractionChatInfo({
                   View tool init
                 </DropdownMenuItem>
               ) : null}
+              {extraMenuItems}
               <DropdownMenuItem
                 onClick={() => setIsExpanded((prev) => !prev)}
                 aria-expanded={isExpanded}
@@ -222,6 +255,10 @@ export function InteractionChatInfo({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {headerActions ? (
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-1">{headerActions}</div>
+        ) : null}
 
         {isExpanded && (
           <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">

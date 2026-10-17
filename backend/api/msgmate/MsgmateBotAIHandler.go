@@ -166,6 +166,39 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+// confirmableTurnPrompt builds the human-readable fallback text for a turn that
+// paused on one or more confirmable actions. It is persisted instead of an
+// empty assistant message so the turn does not render as a bare empty bubble
+// for consumers that do not resolve the chat UI extension.
+func confirmableTurnPrompt(actions []interface{}) string {
+	names := make([]string, 0, len(actions))
+	seen := map[string]struct{}{}
+	for _, rawAction := range actions {
+		action, ok := rawAction.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := action["target_tool_name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name, _ = action["source_tool_name"].(string)
+			name = strings.TrimSpace(name)
+		}
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, "`"+name+"`")
+	}
+	if len(names) == 0 {
+		return "Waiting for your confirmation to continue."
+	}
+	return fmt.Sprintf("Waiting for your confirmation to run %s.", strings.Join(names, ", "))
+}
+
 // runtimeSelectorPayloadType is the discriminator a tool result carries to be
 // surfaced as a runtime-selector widget. The git integration's
 // git_propose_interaction_runtime tool emits exactly this shape; if another
@@ -220,6 +253,24 @@ func collectRuntimeSelectors(toolCalls []interface{}) []interface{} {
 	return selectors
 }
 
+// trustedRuntimeSelfHost returns the base URL an in-process tool execution can
+// use to call back into the backend API. It mirrors the confirmable-action
+// executor's toolRuntimeSelfHost: the bot client normally carries the
+// configured backend host, but a tool-backed bot reply must still be able to
+// address the API when that host is unset, so fall back to the configured
+// self host (HOST/PORT) instead of leaving api_host empty.
+func trustedRuntimeSelfHost() string {
+	host := strings.TrimSpace(os.Getenv("HOST"))
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		port = "1984"
+	}
+	return fmt.Sprintf("http://%s:%s", host, port)
+}
+
 func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) map[string]interface{} {
 	runtime := map[string]interface{}{
 		"chat_uuid":     strings.TrimSpace(chatUUID),
@@ -227,8 +278,14 @@ func trustedToolRuntime(aih *AIHandlerImpl, chatUUID string, senderUUID string) 
 		"bot_user_id":   aih.botContext.BotUser.ID,
 		"bot_user_uuid": strings.TrimSpace(aih.botContext.BotUser.UUID),
 	}
+	// api_host is always populated so runtime-aware tools (eg the native
+	// coder's hive-mind tools) never fail with "missing api_host/session_id in
+	// tool init" even when the bot client has no host configured.
+	runtime["api_host"] = trustedRuntimeSelfHost()
 	if aih.botContext != nil && aih.botContext.Client != nil {
-		runtime["api_host"] = strings.TrimSpace(aih.botContext.Client.GetHost())
+		if host := strings.TrimSpace(aih.botContext.Client.GetHost()); host != "" {
+			runtime["api_host"] = host
+		}
 		runtime["session_id"] = strings.TrimSpace(aih.botContext.Client.GetSessionId())
 	}
 	return runtime
@@ -277,6 +334,16 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		return aih.ProcessCommand(ctx, command, message)
 	}
 
+	// Make the generation cancellable independently of the asynq task: the
+	// chat interrupt endpoint can then abort an in-flight provider request and
+	// tool loop through the chat-scoped registry (a stop must not depend on the
+	// queue cancellation, which the parked-confirmation path already completed).
+	generationCtx, cancelGeneration := context.WithCancel(ctx)
+	defer cancelGeneration()
+	releaseGeneration := TrackActiveChatGeneration(message.Content.ChatUUID, cancelGeneration)
+	defer releaseGeneration()
+	ctx = generationCtx
+
 	// Load the chat and its current configuration
 	err, chat := aih.botContext.Client.GetChat(message.Content.ChatUUID)
 	if err != nil {
@@ -303,6 +370,10 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
+	// context_summary is a compacted summary of earlier turns persisted by the
+	// native coder agent (msgmate_coder/coder_compact, ci#394). It is injected
+	// as a leading system message so the dropped history survives in context.
+	contextSummary := mapGetOrDefault[string](configMap, "context_summary", "")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
 	samplingParams := samplingParamsFromConfig(configMap)
 	providerRetryOptions := providerRetryOptionsFromConfig(configMap)
@@ -337,6 +408,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 
 	// Build OpenAI messages
 	openAiMessages := aih.buildOpenAIMessages(paginatedMessages, message, systemPrompt, backend)
+	openAiMessages = injectContextSummary(openAiMessages, contextSummary)
 
 	// Setup tools
 	toolsData, toolMap, interactionStartTools, interactionCompleteTools := aih.setupTools(message, tools, toolInit, dynamicTools, mcpTools)
@@ -352,8 +424,19 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		log.Printf("Found interaction_complete tools: %v", interactionCompleteTools)
 	}
 
+	// A turn triggered by a confirmable-action execution is a "post-confirmation
+	// continuation". The triggering message is an event row carrying
+	// event_type=confirmable_action_execute.
+	postConfirmationContinuation := false
+	if message.Content.MetaData != nil {
+		if eventType, ok := (*message.Content.MetaData)["event_type"].(string); ok && eventType == "confirmable_action_execute" {
+			postConfirmationContinuation = true
+		}
+	}
+
 	// Stream chat completion
 	chunks, usage, toolCalls, errs := streamChatCompletion(
+		ctx,
 		endpoint,
 		model,
 		backend,
@@ -368,7 +451,11 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		GetGlobalMsgmateHandler(),
 		samplingParams,
 		providerRetryOptions,
-		providerRequestMeta{ChatUUID: message.Content.ChatUUID, TrackUsage: trackUsage},
+		providerRequestMeta{
+			ChatUUID:                     message.Content.ChatUUID,
+			TrackUsage:                   trackUsage,
+			PostConfirmationContinuation: postConfirmationContinuation,
+		},
 	)
 
 	// Process the streaming response
@@ -493,6 +580,23 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	openAiMessages := []map[string]interface{}{}
 	currentMessageIncluded := false
 
+	// A non-conversational lifecycle event (for example a confirmable-action
+	// execution) is not a user turn. Its display text must not be injected as a
+	// synthetic user message after the tool result, otherwise a mock/replay
+	// provider that looks for the tool result before the next user turn re-issues
+	// the confirmed tool call and loops. Detect it here so the current-message
+	// append below can be skipped.
+	triggerNonConversational := false
+	if message.Content.DataType == "event" {
+		triggerNonConversational = true
+	}
+	if message.Content.MetaData != nil {
+		if eventType, ok := (*message.Content.MetaData)["event_type"].(string); ok &&
+			eventType == "confirmable_action_execute" {
+			triggerNonConversational = true
+		}
+	}
+
 	// Add system prompt
 	openAiMessages = append(openAiMessages, map[string]interface{}{"role": "system", "content": systemPrompt})
 
@@ -612,7 +716,7 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	}
 
 	// Add current message if not already included
-	if !currentMessageIncluded {
+	if !currentMessageIncluded && !triggerNonConversational {
 		var attachments []interface{}
 		if message.Content.Attachments != nil {
 			// Convert FileAttachment slice to interface{} slice
@@ -633,6 +737,31 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 	}
 
 	return openAiMessages
+}
+
+// injectContextSummary inserts a compacted session summary as a leading system
+// message, immediately after the primary system prompt, so earlier turns that
+// have aged out of the context window survive in the model context. It is a
+// no-op when summary is empty.
+func injectContextSummary(messages []map[string]interface{}, summary string) []map[string]interface{} {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return messages
+	}
+	entry := map[string]interface{}{
+		"role":    "system",
+		"content": "Session summary (compacted context from earlier turns):\n" + summary,
+	}
+	if len(messages) == 0 {
+		return []map[string]interface{}{entry}
+	}
+	if role, _ := messages[0]["role"].(string); role == "system" {
+		out := make([]map[string]interface{}, 0, len(messages)+1)
+		out = append(out, messages[0], entry)
+		out = append(out, messages[1:]...)
+		return out
+	}
+	return append([]map[string]interface{}{entry}, messages...)
 }
 
 // processMessageAttachments processes attachments for historical messages
@@ -761,18 +890,23 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 			toolsData = append(toolsData, tool.ConstructTool())
 			toolMap[toolName] = tool
 			toolMap[tool.GetToolFunctionName()] = tool
-			if tool.GetRequiresInit() {
-				initData, ok := toolInit[toolName]
-				if !ok {
-					initData, ok = toolInit[actualToolName]
-				}
-				if ok {
-					log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
-				} else {
-					log.Printf("Tool init data not found for tool %s (toolName: %s)", tool.GetToolName(), toolName)
-					tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
-				}
+			// Inject the trusted runtime into every tool the loop runs, not
+			// only those that declare RequiresInit. Tool-backed bots (eg the
+			// native coder) expose integration tools such as the hive-mind
+			// lookup/observe/state/influence tools that forward their call to
+			// the backend API and read api_host/session_id from init, but may
+			// not ship an init schema. An explicit tool_init entry still wins
+			// for api_host; the trusted session_id and _runtime are always
+			// attached so runtime-aware tools never start with an empty scope.
+			initData, ok := toolInit[toolName]
+			if !ok {
+				initData, ok = toolInit[actualToolName]
+			}
+			if ok {
+				log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+				tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
+			} else {
+				tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
 			}
 		}
 	}
@@ -791,6 +925,15 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	const thinkEndTag = "</think>"
 	var hadToolCall bool
 	var currentBuffer strings.Builder
+	// The turn timeline (ci#569) records the assistant's reasoning blocks in
+	// order together with how many of them had already been emitted when each
+	// tool call was dispatched, so the chat UI can render the thoughts between
+	// the tool calls instead of showing only opaque call rows.
+	timeline := newTurnTimeline()
+	// thoughtDurations maps a reasoning block to the time the model spent
+	// producing it, so a block extracted from the assistant text can still be
+	// reported with its duration.
+	thoughtDurations := map[string]int64{}
 	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
 	var partialSeq int64
 	nextPartialSeq := func() int64 {
@@ -873,12 +1016,44 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			currentThoughtStep.Reset()
 			return
 		}
+		durationMs := duration.Milliseconds()
+		if durationMs < 0 {
+			durationMs = 0
+		}
+		thoughtDurations[stepText] = durationMs
+		timeline.addThought(stepText, durationMs)
 		appendThoughtEntries([]string{stepText})
 		thinkingSteps = append(thinkingSteps, map[string]string{
 			"text":     stepText,
 			"duration": duration.Round(time.Millisecond).String(),
 		})
 		currentThoughtStep.Reset()
+	}
+
+	// finalizePendingTimelineThought records a reasoning block that is still
+	// open (no closing think tag yet) before a tool call is registered, so the
+	// thought that led to the call is not lost or rendered after it.
+	finalizePendingTimelineThought := func() {
+		stepText := strings.TrimSpace(currentThoughtStep.String())
+		if stepText == "" {
+			return
+		}
+		timeline.addThought(stepText, thoughtDurations[stepText])
+		appendThoughtEntries([]string{stepText})
+		currentThoughtStep.Reset()
+	}
+
+	// partialTimeline attaches the ordered reasoning timeline to a partial
+	// message's meta data, including the block that is still streaming so the
+	// UI can render it while it arrives (ci#569).
+	partialTimeline := func(meta map[string]interface{}) map[string]interface{} {
+		if meta == nil {
+			meta = map[string]interface{}{}
+		}
+		if snapshot := timeline.snapshotWithStreaming(strings.TrimSpace(currentThoughtStep.String())); len(snapshot) > 0 {
+			meta["timeline"] = snapshot
+		}
+		return meta
 	}
 
 	extractThinkSections := func(raw string) (string, []string) {
@@ -933,13 +1108,6 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		return strings.TrimSpace(clean), thoughts
 	}
 
-	streamFailureReason := func(streamErr error) string {
-		if isContextWindowExceededError(streamErr) {
-			return "context_window_exceeded"
-		}
-		return "upstream_provider_error"
-	}
-
 	// Helper function to send final message and cleanup
 	sendFinalMessage := func(isCancelled bool, streamErr error) {
 		// If we're still thinking when finishing, add the final thinking time
@@ -957,38 +1125,57 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				reasoningEntries = append(reasoningEntries, "Response paused.")
 			}
 		}
+		var streamFailure GenerationFailureClassification
 		if streamErr != nil {
 			text = strings.TrimSpace(text)
-			failureReason := streamFailureReason(streamErr)
-			providerGuidance := "This can happen if your provider tokens/credits are exhausted or if the provider is having a temporary outage."
-			reasoningEntry := "Response stopped due to an upstream provider error (possible token/credit exhaustion or temporary provider outage)."
-			if failureReason == "context_window_exceeded" {
-				providerGuidance = "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+			streamFailure = ClassifyGenerationFailure(streamErr)
+			reasoningEntry := ""
+			switch streamFailure.Reason {
+			case FailureReasonContextWindow:
+				guidance := "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
 				reasoningEntry = "Response stopped because the model context window was exceeded."
-			}
-			providerSummary, providerAttempts := describeProviderFailure(streamErr)
-			if failureReason == "upstream_provider_error" && providerSummary != "" {
-				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s.", providerSummary)
-				if providerAttempts > 1 {
-					providerGuidance = fmt.Sprintf(
-						"The AI provider failed on all %d attempts (last error: %s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits. You can retry in a moment or switch to a different model or provider.",
-						providerAttempts, providerSummary)
-				} else {
-					providerGuidance = fmt.Sprintf(
-						"The AI provider returned an error (%s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits.",
-						providerSummary,
-					)
-				}
-				reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s (attempts: %d).", providerSummary, providerAttempts)
 				if text == "" {
-					text = fmt.Sprintf("I could not generate a reply: my AI provider request failed. %s Please try again in a moment or switch to another model.", providerGuidance)
+					text = "I ran into an error while generating a reply. " + guidance + " Please try again in a moment."
 				} else {
-					text += "\n\n" + providerGuidance
+					text += "\n\nI ran into an error while finishing this reply. " + guidance
 				}
-			} else if text == "" {
-				text = "I ran into an error while generating a reply. " + providerGuidance + " Please try again in a moment."
-			} else {
-				text += "\n\nI ran into an error while finishing this reply. " + providerGuidance
+			case FailureReasonProviderError:
+				summary := streamFailure.ProviderSummary
+				attempts := streamFailure.ProviderAttempts
+				var guidance string
+				if attempts > 1 {
+					guidance = fmt.Sprintf(
+						"The AI provider failed on all %d attempts (last error: %s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits. You can retry in a moment or switch to a different model or provider.",
+						attempts, summary)
+					reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s (attempts: %d).", summary, attempts)
+				} else {
+					guidance = fmt.Sprintf(
+						"The AI provider returned an error (%s). This error is coming from the AI provider itself, not from OpenChat - it may be rate limiting, an outage, or exhausted tokens/credits.",
+						summary,
+					)
+					reasoningEntry = fmt.Sprintf("Response stopped by the AI provider: %s.", summary)
+				}
+				if text == "" {
+					text = fmt.Sprintf("I could not generate a reply: my AI provider request failed. %s Please try again in a moment or switch to another model.", guidance)
+				} else {
+					text += "\n\n" + guidance
+				}
+			case FailureReasonTransientNetwork:
+				guidance := "This looks like a temporary network problem reaching the AI provider."
+				reasoningEntry = "Response stopped due to a transient network error reaching the AI provider."
+				if text == "" {
+					text = "I can't reach my AI provider right now. " + guidance + " Please try again in a moment."
+				} else {
+					text += "\n\nI ran into a problem finishing this reply. " + guidance
+				}
+			default:
+				detail := TruncateFailureDetail(streamErr.Error())
+				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
+				if text == "" {
+					text = fmt.Sprintf("I hit an internal error while generating this reply: %s", detail)
+				} else {
+					text += fmt.Sprintf("\n\nI hit an internal error while finishing this reply: %s", detail)
+				}
 			}
 			if reasoning {
 				reasoningEntries = append(reasoningEntries, reasoningEntry)
@@ -1007,14 +1194,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			metadata["backend"] = backend
 		}
 		if streamErr != nil {
-			failureReason := streamFailureReason(streamErr)
 			metadata["error"] = true
-			metadata["failure_reason"] = failureReason
+			metadata["failure_reason"] = streamFailure.Reason
 			metadata["error_detail"] = streamErr.Error()
+			if streamFailure.ProviderSummary != "" {
+				metadata["provider_error"] = streamFailure.ProviderSummary
+			}
 			if code, body, attempts, isProviderErr := providerErrorInfo(streamErr); isProviderErr {
 				metadata["error_code"] = code
 				if summary, providerName := extractProviderErrorDetail(code, body); summary != "" {
-					metadata["provider_error"] = summary
+					if _, exists := metadata["provider_error"]; !exists {
+						metadata["provider_error"] = summary
+					}
 					if providerName != "" {
 						metadata["provider_name"] = providerName
 					}
@@ -1022,11 +1213,21 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if attempts > 1 {
 					metadata["provider_retry_attempts"] = attempts
 				}
+			} else if streamFailure.ProviderAttempts > 1 {
+				metadata["provider_retry_attempts"] = streamFailure.ProviderAttempts
 			}
 		}
 		confirmableActions := collectConfirmableActions(allToolCalls)
 		if len(confirmableActions) > 0 {
 			metadata["confirmable_actions"] = confirmableActions
+			// A turn that pauses on a confirmable action has no assistant text of
+			// its own. Persisting it as an empty message leaves a bare bubble for
+			// any consumer that does not resolve the chat UI extension (and its
+			// inline confirm widget), so give it a short, human-readable prompt
+			// instead.
+			if strings.TrimSpace(text) == "" {
+				text = confirmableTurnPrompt(confirmableActions)
+			}
 		}
 		if runtimeSelectors := collectRuntimeSelectors(allToolCalls); len(runtimeSelectors) > 0 {
 			metadata["runtime_selectors"] = runtimeSelectors
@@ -1039,6 +1240,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if len(thinkingSteps) > 0 {
 				metadata["thinking_steps"] = thinkingSteps
 			}
+		}
+		// The ordered reasoning timeline is what the chat UI renders between the
+		// tool calls (ci#569). A block that was still open when the turn ended is
+		// recorded as a finished block (with an unknown duration).
+		if pending := strings.TrimSpace(currentThoughtStep.String()); pending != "" {
+			timeline.addThought(pending, thoughtDurations[pending])
+			currentThoughtStep.Reset()
+		}
+		if snapshot := timeline.snapshot(); len(snapshot) > 0 {
+			metadata["timeline"] = snapshot
 		}
 
 		if len(reasoningEntries) > 0 {
@@ -1073,6 +1284,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if reasoning {
 			thinkingElapsed := currentThinkingDuration()
 			seq := nextPartialSeq()
+			meta := partialTimeline(map[string]interface{}{
+				"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
+				"total_time":    totalTime.Round(time.Millisecond).String(),
+				"partial_phase": "responding",
+			})
 			aih.botContext.WSHandler.MessageHandler.SendMessage(
 				aih.botContext.WSHandler,
 				message.Content.SenderUUID,
@@ -1083,11 +1299,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					seq,
 					chunk,
 					[]string{""},
-					&map[string]interface{}{
-						"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
-						"total_time":    totalTime.Round(time.Millisecond).String(),
-						"partial_phase": "responding",
-					},
+					&meta,
 					nil,
 					nil,
 				),
@@ -1097,6 +1309,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 
 		seq := nextPartialSeq()
+		meta := partialTimeline(map[string]interface{}{
+			"total_time":    totalTime.Round(time.Millisecond).String(),
+			"partial_phase": "responding",
+		})
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -1107,10 +1323,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				seq,
 				chunk,
 				[]string{},
-				&map[string]interface{}{
-					"total_time":    totalTime.Round(time.Millisecond).String(),
-					"partial_phase": "responding",
-				},
+				&meta,
 				nil,
 				nil,
 			),
@@ -1127,6 +1340,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		totalTime := time.Since(startTime)
 		thinkingElapsed := currentThinkingDuration()
 		seq := nextPartialSeq()
+		meta := partialTimeline(map[string]interface{}{
+			"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
+			"total_time":    totalTime.Round(time.Millisecond).String(),
+			"partial_phase": "thinking",
+		})
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -1137,11 +1355,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				seq,
 				"",
 				[]string{chunk},
-				&map[string]interface{}{
-					"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
-					"total_time":    totalTime.Round(time.Millisecond).String(),
-					"partial_phase": "thinking",
-				},
+				&meta,
 				nil,
 				nil,
 			),
@@ -1231,11 +1445,22 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if !hadToolCall {
 					hadToolCall = true
 					_, extractedThoughts := extractThinkSections(fullText.String())
+					for _, thought := range extractedThoughts {
+						trimmed := strings.TrimSpace(thought)
+						if trimmed == "" {
+							continue
+						}
+						timeline.addThought(trimmed, thoughtDurations[trimmed])
+					}
 					appendThoughtEntries(extractedThoughts)
 					fullText.Reset()
 					currentBuffer.Reset()
 				}
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
+
+				// A reasoning block that is still streaming when the call is
+				// dispatched belongs *before* it in the timeline.
+				finalizePendingTimelineThought()
 
 				toolStatus := strings.TrimSpace(toolCall.Status)
 				if toolStatus == "" {
@@ -1254,13 +1479,31 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					"arguments": toolCall.ToolInput,
 					"result":    toolCall.Result,
 					"status":    toolStatus,
+					// timeline_index is the number of reasoning blocks emitted
+					// before this call was dispatched, so the chat UI can render
+					// the thought the agent produced right before it (ci#569).
+					"timeline_index": timeline.index(),
 				}
 				if strings.TrimSpace(toolCall.Error) != "" {
 					toolCallRepr["error"] = toolCall.Error
 				}
+				// Per-call timing (ci#569): started_at lets the UI run a live
+				// timer while the call is ongoing, duration_ms renders the final
+				// elapsed time once it completed.
+				if toolCall.StartedAtUnixMs > 0 {
+					toolCallRepr["started_at"] = toolCall.StartedAtUnixMs
+				}
+				if toolCall.DurationMs > 0 {
+					toolCallRepr["duration_ms"] = toolCall.DurationMs
+				}
 
 				if tool, found := NewToolByName(toolCall.ToolName); found {
-					if tool.GetRequiresConfirmation() {
+					// Only report a static confirmation requirement for a call
+					// that actually paused. A code-defined resolver may have
+					// auto-resolved the call (eg coder_ask in an autonomous
+					// session), in which case its result is a normal succeeded
+					// tool output and must not render as a pending confirmation.
+					if toolStatus == ToolCallStatusPendingConfirmation && tool.GetRequiresConfirmation() {
 						toolCallRepr["requires_confirmation"] = true
 					}
 					if confirmationMeta, ok := parseConfirmActionPayload(toolCall.Result); ok {
@@ -1285,6 +1528,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					}
 					if existing["id"] == toolCall.Id {
 						for key, value := range toolCallRepr {
+							// Keep the position the call was first dispatched at.
+							if key == "timeline_index" {
+								continue
+							}
 							existing[key] = value
 						}
 						allToolCalls[i] = existing
@@ -1297,12 +1544,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 
 				totalTime := time.Since(startTime)
-				partialMeta := map[string]interface{}{
+				partialMeta := partialTimeline(map[string]interface{}{
 					"total_time":       totalTime.Round(time.Millisecond).String(),
 					"tool_call":        toolCall.ToolName,
 					"tool_call_status": toolStatus,
 					"partial_phase":    "tool_call",
-				}
+				})
 				if strings.TrimSpace(toolCall.Error) != "" {
 					partialMeta["tool_call_error"] = toolCall.Error
 				}
@@ -1451,7 +1698,7 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 }
 
 // executeTool executes a single tool
-func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage, partialSessionID string) error {
+func (aih *AIHandlerImpl) executeTool(ctx context.Context, toolName string, toolMap map[string]Tool, message wsapi.NewMessage, partialSessionID string) error {
 	// Find the tool in the tool map
 	tool, exists := toolMap[toolName]
 	if !exists {
@@ -1467,7 +1714,15 @@ func (aih *AIHandlerImpl) executeTool(_ context.Context, toolName string, toolMa
 	}
 
 	// Execute the tool
-	result, err := tool.RunTool(toolCall.ToolInput)
+	var (
+		result string
+		err    error
+	)
+	if contextTool, ok := tool.(ContextTool); ok {
+		result, err = contextTool.RunToolContext(ctx, toolCall.ToolInput)
+	} else {
+		result, err = tool.RunTool(toolCall.ToolInput)
+	}
 	if err != nil {
 		return fmt.Errorf("error executing tool %s: %w", toolName, err)
 	}

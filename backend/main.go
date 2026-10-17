@@ -19,6 +19,8 @@ import (
 
 	ufcli "github.com/urfave/cli/v3"
 
+	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
+
 	goyaml "go.yaml.in/yaml/v3"
 	"golang.org/x/term"
 )
@@ -943,8 +945,10 @@ func main() {
 	}
 
 	rootCmd := &ufcli.Command{
-		Name:  "open-chat",
-		Usage: "Open Chat command line interface",
+		Name:                          "open-chat",
+		Usage:                         "Open Chat command line interface",
+		Version:                       cmd.BuildVersion(),
+		CustomRootCommandHelpTemplate: cmd.RootHelpTemplate(),
 		Flags: []ufcli.Flag{
 			&ufcli.StringFlag{
 				Name:    "config",
@@ -972,22 +976,42 @@ func main() {
 				Sources: ufcli.EnvVars("OPEN_CHAT_SECRET_PASSWORD_FILE"),
 			},
 		},
-		Commands: []*ufcli.Command{
+		Commands: integrationCLICommands(
 			cmd.RunCli(),
+			cmd.ConfigCli(),
 			cmd.ServerCli(),
 			cmd.WorkerCli(),
-			cmd.ClientCli(),
 			cmd.InstallCli(),
 			cmd.UninstallCli(),
 			cmd.StatusCli(),
 			cmd.SecretCli(),
 			cmd.ServiceRunCli(),
-		},
+		),
 	}
+
+	ufcli.VersionPrinter = cmd.PrintVersion
 
 	if err := rootCmd.Run(context.Background(), os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// ci cache warm test (reverted in the next commit)
+// integrationCLICommands appends the top-level subcommands contributed by
+// compiled-in integrations (e.g. `client` from go_client, `tui` from tui) to
+// the built-in commands. Integrations own their command implementations; the
+// core only wires whichever ones the build profile includes.
+func integrationCLICommands(builtin ...*ufcli.Command) []*ufcli.Command {
+	commands := append([]*ufcli.Command(nil), builtin...)
+	for _, ref := range extiface.CLICommands() {
+		scoped := ref.Command
+		command := scoped.Command()
+		if command == nil {
+			continue
+		}
+		if strings.TrimSpace(command.Name) == "" {
+			command.Name = scoped.Name
+		}
+		commands = append(commands, command)
+	}
+	return commands
+}

@@ -1,0 +1,250 @@
+---
+title: Decoupling Integrations Behind the Host Interface
+path: integration-host-migration
+description: How to migrate an integration off direct backend/... imports onto the stable, versioned Host capability surface.
+order: 35
+section: Platform
+---
+
+## Why
+
+Add-on integrations currently import core `backend/...` packages directly
+(`backend/database`, `backend/runtimecfg`, `backend/server/util`,
+`backend/api/...`, …). That makes an integration's compile inputs depend on the
+whole core, which blocks per-integration prebuilds and grows every integration's
+dependency graph for no benefit.
+
+The first incremental step is a **stable, versioned `Host` interface** in
+`clients/go_integration_interface/integrationinterface` that integrations consume
+instead of importing `backend/...`. The core satisfies it with an adapter
+(`backend/integrationhost`) installed once at server startup.
+
+## The surface
+
+`integrationinterface.Host` (versioned via `HostVersion`) deliberately stays
+small and ORM/framework free — no `fs.FS`, `http.ServeMux` or `gorm.DB` in the
+interface itself:
+
+| Accessor | Replaces |
+| --- | --- |
+| `host.Config().All()` / `.Get(key)` | `backend/runtimecfg` lookups |
+| `host.Logger().Infof/Warnf/Errorf/Debugf` | ad-hoc logging |
+| `host.HTTP().DBAndUser(r)` | `backend/server/util.GetDBAndUser` |
+| `host.HTTP().OptionalUser(r)` | `backend/server/util.GetOptionalUser` |
+| `storage.Handle()` (from `HTTP().DBAndUser`) | the raw persistence handle (`*gorm.DB`) |
+| `storage.Global()` (from `host.Storage()`) | `backend/database.GetGlobalDB` |
+| `host.Chat().HasActiveGeneration/.CancelActiveGeneration` | `backend/api/msgmate` generation registry |
+| `host.Workspace()` (`CanonicalKey/Acquire/Status`) | `backend/workspacelease` |
+| `host.Web()` (`Fetch/Search/DefaultSearchLimit`) | `backend/webtools` |
+| `host.Tokens()` (`GenerateRaw/MintScoped/PruneMismatched`) | `backend/database` access-token helpers |
+| `host.Tools()` (`DiscoverMCPTools/GetToolInitData`) | `backend/api/msgmate` MCP snapshot, `backend/database` tool-init manager |
+| `integrationinterface.RegisterChatBackend(spec)` | `backend/api/msgmate.RegisterChatBackend` + `backend/chatstate` registration |
+
+`HostVersion` 3 adds `Storage.Global`, `Chat`, `Workspace`, `Web`, `Tokens` and
+`Tools`. External chat backends are declared with
+`integrationinterface.RegisterChatBackend(ChatBackendSpec{...})` from package
+init (no Host required); the core adapter drains the registry after installing
+the Host and wires the declared backend/state-provider/interrupt-handler into
+the core chat-backend and chat-state registries.
+
+`Storage.Handle()` returns `interface{}` on purpose: the ORM is a third-party
+dependency owned by the caller, so the interface module does not depend on gorm
+and the boundary does not leak core types.
+
+A callable tool definition is expressed with the stable
+`github.com/msgmate-io/go-tool-interface/toolinterface.Definition` type
+(re-exported as `integrationinterface.Definition.ToolDefinitions`) instead of
+the core's `backend/api/msgmate/tools.ToolDefinition`. It carries the full
+`InputSchema` JSON schema precisely so an integration can build model-callable
+tools without importing the core. At the core boundary a small conversion
+(`toolDefinitionFromIntegration`) maps it back onto the core type.
+
+## Migration recipe
+
+1. **Read the Host once per request/bootstrap.** Call
+   `integrationinterface.RequireHost()` (or `GetHost()` when the host may be
+   absent, e.g. standalone tooling).
+
+   ```go
+   func dbAndUser(r *http.Request) (*gorm.DB, integrationinterface.User, error) {
+       storage, user, err := integrationinterface.RequireHost().HTTP().DBAndUser(r)
+       if err != nil {
+           return nil, nil, err
+       }
+       db, _ := storage.Handle().(*gorm.DB)
+       return db, user, nil
+   }
+   ```
+
+2. **Replace runtime-config lookups** with `host.Config()`. The returned
+   `Value{Value, Sensitive}` mirrors `runtimecfg.Value`, and `Get`/`All` are
+   resolved live, so `runtimecfg.SetAll` in tests still drives the adapter.
+
+   ```go
+   base := integrationinterface.RequireHost().Config()
+   publicURL, _ := base.Get("PUBLIC_BASE_URL")
+   ```
+
+3. **Own your models.** Move integration-owned gorm structs into the integration
+   package (keep the table name, tags and indexes identical) and register them
+   through `Definition.ModelProviders`. Integration code type-asserts
+   `Storage.Handle()` to `*gorm.DB` and queries its own models. The core keeps
+   its own copy of any shared model it still needs internally; the table is
+   migrated once by the integration.
+
+4. **Move integration-specific business logic into the integration** (for
+   example the MCP JSON-RPC client that previously lived in `backend/api/msgmate`)
+   so the core package is only referenced through the Host. Do **not** add
+   integration-specific methods to `Host` — that would re-couple the surface.
+
+   When the core still needs that logic for its own features (for example to
+   build bot tool snapshots), have the integration expose it over
+   integration-owned types (`toolinterface.Definition`, the integration's own
+   models, `integrationinterface.User`) and convert at the core boundary in a
+   thin wrapper. The core keeps its own copy of any shared model it still
+   queries internally; the integration owns the migration of the table.
+
+5. **Request-scoped identity** comes back as `integrationinterface.User`
+   (`ID() uint`, `Username()`, `Email()`, `IsAdmin()`), so replace `user.ID`
+   field access with `user.ID()`.
+
+6. **Build and measure.** From the backend workspace:
+
+   ```bash
+   go build ./...
+   grep -rn '"backend/' clients/integrations/<name> --include='*.go'   # should be empty
+   go list -deps github.com/msgmate-io/<integration> | grep -c '^backend/'
+   ```
+
+   The MCP integration (`mcp`) was migrated first: its transitive dependency
+   count dropped from 349 to 226 and its `backend/...` dependency count from 11
+   to 0. The REST API tool integration (`rest_api_tool`) followed: 338 to 227
+   packages and 6 to 0 `backend/...` packages. The Go client (`go_client`) never
+   imported `backend/...` (238 packages, 0) and needed no change. The
+   default-profile batch (`hive_mind`, `builders_toolbox`, `stats_and_usage`,
+   `docker_sandbox`) followed, then `tailscale` (745 to 652 packages) and
+   `kubernetes` (1021 to 960 packages), then the public/full-only batch
+   (`ssh`, `voice`, `email`, `notifications`).
+
+## Migration status
+
+Measured with `go list -deps` (and `-deps -test` for the test-only column) from
+the integration `main` revisions pinned in `integrations.lock.json`, in a Go
+workspace that uses `backend/` plus every integration module (`full` profile):
+
+| integration | packages | `backend/...` | test-only `backend/...` |
+| --- | --- | --- | --- |
+| `mcp` | 349 → 227 | 11 → 0 | 13 |
+| `rest_api_tool` | 338 → 228 | 6 → 0 | 0 |
+| `hive_mind` | 335 → 227 | 4 → 0 | 0 |
+| `builders_toolbox` | 335 → 227 | 4 → 0 | 13 |
+| `stats_and_usage` | 335 → 227 | 4 → 0 | 13 |
+| `tailscale` | 745 → 653 | 2 → 0 | 0 |
+| `kubernetes` | 1021 → 961 | 3 → 0 | 13 |
+| `ssh` | 350 → 252 | 4 → 0 | 13 |
+| `voice` | 422 → 320 | 4 → 0 | 0 |
+| `email` | 336 → 231 | 4 → 0 | 13 |
+| `notifications` | 336 → 229 | 4 → 0 | 13 |
+| `docker_sandbox` | 706 → 635 | 4 → 0 direct¹ | 2 |
+| `opencode` | 362 → 253 | 12 → 0 | 13 |
+| `msgmate_coder` | 361 → 245 | 11 → 0 | 13 |
+| `go_client` | 238 → 239 | 0 → 0 | 0 |
+| `tui` | 268 → 269 | 0 → 0 | 0 |
+
+¹ `docker_sandbox`'s own imports are clean; its transitive count is held up by
+the integrations it depends on that still import `backend/...`.
+
+**Read the test-only column carefully.** A migrated integration whose *test*
+package still imports `backend/...` is fully decoupled in the compiled artifact.
+Test imports do not enter the shipped dependency graph — that is exactly why the
+recipe below lets test packages keep importing `backend/database` and
+`backend/integrationhost` — so the production column is the one that matters for
+per-integration prebuilds. The test-only column is measured with
+`go list -deps -test` and is informational: it is what the Go-test CI job pays
+when it compiles the integration's tests.
+
+### Still coupled in the compiled artifact (8)
+
+| integration | `backend/...` | core packages still imported |
+| --- | --- | --- |
+| `admin` | 15 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `integrationhost`, `integrationsettings`, `runtimecfg`, `server/util`, `servicecontrol`, `webtools`, `workqueue`, `workspacelease` |
+| `git` | 13 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `integrationhost`, `runtimecfg`, `server/util`, `webtools`, `workqueue`, `workspacelease` |
+| `matrix` | 11 | `api/chats`, `api/contacts`, `api/msgmate`, `api/msgmate/tools`, `api/websocket`, `chatstate`, `database`, `runtimecfg`, `server/util`, `webtools`, `workqueue` |
+| `signal` | 11 | same set as `matrix` |
+| `slack` | 11 | same set as `matrix` |
+| `account_management` | 8 | `api`, `api/user`, `api/websocket`, `database`, `runtimecfg`, `secretstore`, `server/util`, `workqueue` |
+| `internal_automations` | 5 | `api/websocket`, `database`, `runtimecfg`, `server/util`, `workqueue` |
+| `tvault` | 5 | `api/websocket`, `database`, `runtimecfg`, `secretstore`, `server/util` |
+
+These eight fall into exactly three groups, each blocked on one missing stable
+capability rather than on per-integration work:
+
+1. **Chat-backend / websocket registration** (`matrix`, `signal`, `slack`, `git`,
+   `admin`): they call `msgmate.RegisterChatBackend` / `chatstate` directly,
+   plus chat/contact/message tables. The **generic** form of this already exists
+   — `integrationinterface.RegisterChatBackend(ChatBackendSpec)` from package
+   init (HostVersion 3) — so these are mechanical migrations, not new surface.
+2. **Secret store** (`tvault`): it *implements* the core `secretstore.Provider`
+   and registers itself there. Decoupling needs a versioned Host capability for
+   the secret store (provider registration + seal/unseal), the one genuinely new
+   sub-interface in this list.
+3. **Business-logic moves** (`internal_automations`, `account_management`,
+   `admin`): `workqueue`, `server/util.GetAsynqClient`, the global DB, user
+   creation and account-state/email-verification write helpers. These are not
+   capability gaps but logic that has to move into the integration (or a Host
+   capability for the queue), which is why they are staged last.
+
+Per the design doc, the remaining edges must not be closed by adding
+integration-specific methods to `Host`; only general capabilities belong there.
+
+### Migration recipe additions (learned in this pass)
+
+- Keep test-only `backend/...` imports, but make them explicit: the artifact is
+  decoupled as soon as the production packages are, so the follow-up measurement
+  is `go list -deps <module>` (no `-test`) — then `grep -c '^backend/'`.
+- The measurement is only meaningful with a correct workspace: `GOWORK` must be
+  set to a `go.work` that `use`s `backend/` plus the integration modules, and the
+  module pattern passed to `go list` is resolved through that workspace, not from
+  the directory the checkouts happen to live in. Use
+  `backend/scripts/integration_dep_surface.py` to reproduce the table above.
+- `msgmate_coder_integration_wt*`, `msgmate_coder_ask_wt`,
+  `msgmate_coder_task_hardening` and `msgmate_coder_trust` all declare the
+  *same* module path (`github.com/msgmate-io/msgmate-coder-integration`). They
+  are worktree copies and must not be added to the same `go.work`
+  simultaneously, or `go` reports “module appears multiple times in workspace”;
+  measure the canonical checkout only.
+
+### Host capability additions
+
+Migrating the public/full-only batch required one additive capability: the
+`HTTP` sub-interface gained `DB(r)` (the request-scoped storage handle without
+an authenticated user) so public endpoints (for example the notification
+preview pages) no longer import `backend/server/util.GetDB`. `HostVersion` was
+bumped to `2`; the change is additive and the adapter implements both
+`DB`/`DBAndUser`. Do **not** add integration-specific methods to `Host` — only
+general capabilities like this belong on the surface.
+
+Migrating the coded integrations (`opencode`, `msgmate_coder`) required the
+generic capabilities listed in the surface table above: `Storage.Global` and
+the `Chat`, `Workspace`, `Web`, `Tokens` and `Tools` sub-interfaces.
+`HostVersion` was bumped to `3`. External chat backends are declared with
+`integrationinterface.RegisterChatBackend` from package init, so registration
+does not depend on Host installation order; the core adapter drains the
+registry in `integrationhost.Install`.
+
+## Notes and follow-ups
+
+- The core still owns the pieces shared with its own features (for example the
+  MCP helpers used to build bot tool snapshots). Fully removing those edges
+  requires moving that business logic into the integration and is staged
+  separately per the design doc.
+- Unit tests that need a real database may keep importing `backend/database` and
+  `backend/integrationhost`; test-only imports do not affect the compiled
+  integration artifact's dependency graph. Because integration-owned models are
+  no longer in the core migration list, a test package that migrates the schema
+  itself must register them first:
+  `database.RegisterExternalModels(integrations.AdditionalModels()...)` before
+  `database.SetupDatabase` (see `backend/api/bots/testmain_test.go`), mirroring
+  `backend/cmd/server.go`.
+- `HostVersion` must be bumped whenever `Host` or one of its sub-interfaces
+  changes so integrations can gate behaviour on the version they observe.

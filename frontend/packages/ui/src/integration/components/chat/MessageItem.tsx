@@ -1,4 +1,5 @@
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import logoUrl from "../../assets/logo.png?inline";
 import Prism from "prismjs";
 import { useEffect, useMemo, useState } from "react";
@@ -27,17 +28,44 @@ import {
   DropdownMenuTrigger,
   FileAttachmentsList,
   Icon,
+  LoadingSpinner,
   PendingMessageItem,
   ShinyText,
   UserMessageShell,
 } from "@open-chat-go/ui";
 import { ConfirmableActionWidget, type ConfirmableAction } from "./ConfirmableActionWidget";
 import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
+import { ToolValueText } from "./ToolCallDetail";
+import {
+  formatToolDuration,
+  isCompletedToolStatus,
+  plural,
+  resolveToolCallStatus,
+  toolCallDurationMs,
+  toolCallStartedAtMs,
+  toolCallSummary,
+  toolDisplayLabel,
+  toolResultPreview,
+  toolStatusBadgeClasses,
+  toolStatusDotClasses,
+  toolStatusLabel,
+  type ToolCallLike,
+  type ToolCallStatus,
+} from "./toolCallSummary";
+import {
+  buildTurnBlocks,
+  parseTurnTimeline,
+  type TurnBlock,
+  type TurnThoughtBlock,
+} from "./turnTimeline";
+import { resolveChatUIExtensionForChat } from "./chat-ui/registry";
 import {
   ProviderRetryEventWidget,
   resolveProviderRetryEvent,
 } from "./ProviderRetryEventWidget";
 import { revalidateChatData } from "../../lib/chat-cache";
+import { latestPendingConfirmableActionId } from "../../lib/confirmable-actions";
+import { isQueuePendingMessage, resolveStatusIndicator } from "../../lib/status-indicator";
 import { MoreHorizontal } from "lucide-react";
 
 export { PendingMessageItem, ShinyText };
@@ -156,6 +184,7 @@ export function MessageMarkdown({ children }: { children: string | null | undefi
   return (
     <MessageMarkdownErrorBoundary>
       <Markdown
+        remarkPlugins={[remarkGfm]}
         components={{
           blockquote: ({ children, ...props }) => (
             <blockquote {...props}>{children}</blockquote>
@@ -171,6 +200,16 @@ export function MessageMarkdown({ children }: { children: string | null | undefi
           p: ({ children }) => <p>{children}</p>,
           code: ({ children, ...props }) => <CodeBlock {...props}>{children}</CodeBlock>,
           pre: ({ children, ...props }) => <CodeWrapper {...props}>{children}</CodeWrapper>,
+          table: ({ children, ...props }) => (
+            <div className="my-3 overflow-x-auto">
+              <table className="chat-markdown-table" {...props}>{children}</table>
+            </div>
+          ),
+          thead: ({ children, ...props }) => <thead {...props}>{children}</thead>,
+          tbody: ({ children, ...props }) => <tbody {...props}>{children}</tbody>,
+          tr: ({ children, ...props }) => <tr {...props}>{children}</tr>,
+          th: ({ children, ...props }) => <th {...props}>{children}</th>,
+          td: ({ children, ...props }) => <td {...props}>{children}</td>,
         }}
       >
         {children || ""}
@@ -194,72 +233,9 @@ function wrapInBlockquote(children: React.ReactNode) {
   return <blockquote className="my-2 text-sm">{children}</blockquote>;
 }
 
-type MessageToolCall = {
-  id?: string;
-  name?: string;
-  arguments?: unknown;
-  result?: unknown;
-  status?: string;
-  error?: string;
-};
-
-type ToolCallStatus = "ongoing" | "succeeded" | "failed" | "pending_confirmation";
-
-function resolveToolCallStatus(toolCall: MessageToolCall): ToolCallStatus {
-  const rawStatus = typeof toolCall?.status === "string" ? toolCall.status.trim().toLowerCase() : "";
-  if (rawStatus === "ongoing") return "ongoing";
-  if (rawStatus === "succeeded") return "succeeded";
-  if (rawStatus === "failed") return "failed";
-  if (rawStatus === "pending_confirmation") return "pending_confirmation";
-
-  const errorText = typeof toolCall?.error === "string" ? toolCall.error.trim() : "";
-  if (errorText) {
-    return "failed";
-  }
-
-  if (typeof toolCall?.result === "string") {
-    const normalized = toolCall.result.trim().toLowerCase();
-    if (normalized.includes(" failed with error:")) {
-      return "failed";
-    }
-    if (normalized.includes("\"type\":\"confirm-action\"")) {
-      return "pending_confirmation";
-    }
-    if (normalized.length > 0) {
-      return "succeeded";
-    }
-  }
-
-  if (hasRenderableValue(toolCall?.result)) {
-    return "succeeded";
-  }
-
-  return "ongoing";
-}
-
-function toolStatusClasses(status: ToolCallStatus): string {
-  if (status === "succeeded") {
-    return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
-  }
-  if (status === "failed") {
-    return "bg-rose-500/10 text-rose-700 border-rose-500/30";
-  }
-  if (status === "pending_confirmation") {
-    return "bg-amber-500/10 text-amber-700 border-amber-500/30";
-  }
-  return "bg-sky-500/10 text-sky-700 border-sky-500/30";
-}
-
-function toolStatusLabel(status: ToolCallStatus): string {
-  if (status === "succeeded") return "Succeeded";
-  if (status === "failed") return "Failed";
-  if (status === "pending_confirmation") return "Needs confirmation";
-  return "Ongoing";
-}
-
-function isCompletedToolStatus(status: ToolCallStatus): boolean {
-  return status === "succeeded" || status === "failed";
-}
+// The core rows render the same tool-call shape the shared summary helpers
+// consume; keep the alias so the surrounding call sites stay unchanged.
+type MessageToolCall = ToolCallLike;
 
 function safeJSONStringify(value: unknown, pretty = false): string {
   try {
@@ -317,7 +293,6 @@ function ToolCallLineSection({
   }
 
   const preview = toolValuePreview(value);
-  const pretty = typeof value === "string" ? value : safeJSONStringify(value, true);
 
   return (
     <Collapsible id={id}>
@@ -326,9 +301,204 @@ function ToolCallLineSection({
         <span className="ml-2 truncate text-right">{preview}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-        <pre className="scrollbar-hidden mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/30 p-2 text-xs leading-5">
-          {pretty}
-        </pre>
+        <div className="mt-1">
+          <ToolValueText value={value} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+// ToolCallTiming shows a per-tool-call time affordance (ci#569): a live timer
+// that ticks up while the call is running, and the recorded duration once it
+// completed. It renders nothing when the backend reported no timing, so older
+// messages are unchanged.
+function ToolCallTiming({ toolCall, status }: { toolCall: ToolCallLike; status: ToolCallStatus }) {
+  const startedAt = toolCallStartedAtMs(toolCall);
+  const duration = toolCallDurationMs(toolCall);
+  const [now, setNow] = useState(() => Date.now());
+  // The timer only runs while the call is actually ongoing; a finished call
+  // freezes into its recorded duration.
+  const isLive = status === "ongoing" && duration === undefined && startedAt !== undefined;
+
+  useEffect(() => {
+    if (!isLive) {
+      return;
+    }
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isLive]);
+
+  let label = "";
+  if (duration !== undefined) {
+    label = formatToolDuration(duration);
+  } else if (startedAt !== undefined) {
+    // The start stamp comes from the server, so a client clock that is behind
+    // must not render a negative elapsed time.
+    label = formatToolDuration(Math.max(0, now - startedAt));
+  }
+  if (!label) {
+    return null;
+  }
+
+  return (
+    <span
+      data-testid="tool-call-timing"
+      className="shrink-0 tabular-nums text-[10px] text-muted-foreground"
+      title={isLive ? "Elapsed time" : "Duration"}
+      aria-label={isLive ? `Running for ${label}` : `Took ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+// ToolCallCard renders one tool call: a status dot, the friendly tool label, the
+// per-tool parameter summary, a short result preview, the call's timing and the
+// status badge, with the detailed parameters/result/error one click away. It is
+// the single row used both by the summarised tool-call group and by the ordered
+// turn sequence (thoughts between the calls).
+function ToolCallCard({
+  messageUUID,
+  toolCall,
+  index,
+}: {
+  messageUUID: string;
+  toolCall: MessageToolCall;
+  index: number;
+}) {
+  const status = resolveToolCallStatus(toolCall);
+  const cardId = `${messageUUID}-tool-call-${index}`;
+  const label = toolDisplayLabel(toolCall?.name);
+  const summary = toolCallSummary(toolCall);
+  const preview = toolResultPreview(toolCall);
+
+  return (
+    <Collapsible defaultOpen={!isCompletedToolStatus(status)} id={`tool-call-card-${cardId}`}>
+      <div className="overflow-hidden rounded-lg border border-border/70 bg-card/60">
+        <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/30">
+          <span
+            className={cn("size-1.5 shrink-0 rounded-full", toolStatusDotClasses(status))}
+            aria-hidden="true"
+          />
+          <span className="shrink-0 font-medium">{label}</span>
+          {summary ? (
+            <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+              {summary}
+            </span>
+          ) : null}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {preview ? (
+              <span className="hidden text-[10px] text-muted-foreground sm:inline">{preview}</span>
+            ) : null}
+            <ToolCallTiming toolCall={toolCall} status={status} />
+            <span
+              className={cn(
+                "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                toolStatusBadgeClasses(status)
+              )}
+            >
+              {toolStatusLabel(status)}
+            </span>
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+          <div className="space-y-1 border-t border-border/60 px-2 py-2">
+            <ToolCallLineSection
+              id={`tool-call-params-${messageUUID}-${index}`}
+              label="Parameters"
+              value={toolCall?.arguments}
+            />
+            <ToolCallLineSection
+              id={`tool-call-result-${messageUUID}-${index}`}
+              label="Result"
+              value={toolCall?.result}
+            />
+            <ToolCallLineSection
+              id={`tool-call-error-${messageUUID}-${index}`}
+              label="Error"
+              value={toolCall?.error}
+            />
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
+}
+
+// TurnThoughtBlock renders one reasoning block the agent produced, in place in
+// the ordered turn sequence (ci#569), so the user can follow what the agent was
+// thinking between its tool calls. A block that is still being produced keeps a
+// pulsing marker.
+function TurnThoughtBlockView({ text, durationMs, streaming }: TurnThoughtBlock) {
+  const duration = durationMs !== undefined ? formatToolDuration(durationMs) : "";
+  return (
+    <div
+      data-testid="turn-thought"
+      className="rounded-lg border border-dashed border-border/70 bg-muted/15 px-2.5 py-1.5"
+    >
+      <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            streaming ? "animate-pulse bg-sky-500" : "bg-muted-foreground/40"
+          )}
+          aria-hidden="true"
+        />
+        <span>{streaming ? "Thinking" : "Thought"}</span>
+        {duration ? <span className="normal-case tabular-nums tracking-normal">{duration}</span> : null}
+      </div>
+      <div className="scrollbar-hidden max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+// TurnSequence renders an assistant turn as its ordered blocks: the reasoning
+// the agent produced, the tool call it then dispatched, the next reasoning
+// block, and so on (ci#569). It replaces the separate "thoughts above, tool
+// calls below" layout for turns the backend reported a timeline for.
+function TurnSequence({
+  messageUUID,
+  thoughtBlocks,
+  toolCalls,
+  header,
+  defaultOpen = false,
+}: {
+  messageUUID: string;
+  thoughtBlocks: TurnThoughtBlock[];
+  toolCalls: MessageToolCall[];
+  header: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const blocks = useMemo<TurnBlock[]>(
+    () => buildTurnBlocks({ timeline: thoughtBlocks, toolCalls }),
+    [thoughtBlocks, toolCalls],
+  );
+
+  if (blocks.length === 0) {
+    return null;
+  }
+
+  return (
+    <Collapsible defaultOpen={defaultOpen} id={`turn-sequence-${messageUUID}`}>
+      <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">{header}</CollapsibleTrigger>
+      <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+        <div className="space-y-2" data-testid="turn-sequence">
+          {blocks.map((block, blockIndex) =>
+            block.kind === "tool_call" ? (
+              <ToolCallCard
+                key={`${messageUUID}-tool-call-${block.index}`}
+                messageUUID={messageUUID}
+                toolCall={block.call as MessageToolCall}
+                index={block.index}
+              />
+            ) : (
+              <TurnThoughtBlockView key={`${messageUUID}-thought-${blockIndex}`} {...block} />
+            ),
+          )}
+        </div>
       </CollapsibleContent>
     </Collapsible>
   );
@@ -354,54 +524,14 @@ function ToolCallsGroup({
       <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">{header}</CollapsibleTrigger>
       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
         <div className="space-y-2">
-          {toolCalls.map((toolCall, index) => {
-            const toolName = typeof toolCall?.name === "string" ? toolCall.name.trim() : "";
-            const status = resolveToolCallStatus(toolCall);
-            const cardId = `${messageUUID}-tool-call-${index}`;
-            return (
-              <Collapsible
-                key={cardId}
-                defaultOpen={!isCompletedToolStatus(status)}
-                id={`tool-call-card-${cardId}`}
-              >
-                <div className="rounded-lg border border-border/70 bg-card/60 p-2">
-                  <CollapsibleTrigger className="flex w-full items-start gap-2 text-left text-sm hover:opacity-90">
-                    <span className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Tool
-                    </span>
-                    <code className="break-all text-xs">{toolName || "unknown_tool"}</code>
-                    <span
-                      className={cn(
-                        "ml-auto rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                        toolStatusClasses(status)
-                      )}
-                    >
-                      {toolStatusLabel(status)}
-                    </span>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                    <div className="mt-2 space-y-1">
-                      <ToolCallLineSection
-                        id={`tool-call-params-${messageUUID}-${index}`}
-                        label="Params"
-                        value={toolCall?.arguments}
-                      />
-                      <ToolCallLineSection
-                        id={`tool-call-result-${messageUUID}-${index}`}
-                        label="Response"
-                        value={toolCall?.result}
-                      />
-                      <ToolCallLineSection
-                        id={`tool-call-error-${messageUUID}-${index}`}
-                        label="Error"
-                        value={toolCall?.error}
-                      />
-                    </div>
-                  </CollapsibleContent>
-                </div>
-              </Collapsible>
-            );
-          })}
+          {toolCalls.map((toolCall, index) => (
+            <ToolCallCard
+              key={`${messageUUID}-tool-call-${index}`}
+              messageUUID={messageUUID}
+              toolCall={toolCall}
+              index={index}
+            />
+          ))}
         </div>
       </CollapsibleContent>
     </Collapsible>
@@ -512,7 +642,14 @@ function ConfirmableEventIndicator({
   const event = message.meta_data?.confirmable_action_execution as Record<string, unknown> | undefined;
   const phase = (message.meta_data?.event_phase as string | undefined) || "completed";
   const targetTool = String(event?.target_tool_name || "tool");
-  const action = phase === "requested" ? "Execution requested" : phase === "failed" ? "Execution failed" : "Execution completed";
+  const action =
+    phase === "requested"
+      ? "Execution requested"
+      : phase === "failed"
+        ? "Execution failed"
+        : phase === "rejected"
+          ? "Execution rejected"
+          : "Execution completed";
   const text = typeof message.text === "string" ? message.text.trim() : "";
   const looksJSON = (text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"));
   return (
@@ -688,6 +825,8 @@ export function BotMessageItem({
   showToolbar = true,
   showBotIdentity = true,
   interactionState,
+  shellless = false,
+  renderExtras = true,
 }: {
   message: {
     uuid: string;
@@ -716,13 +855,17 @@ export function BotMessageItem({
       backend?: string;
     };
   };
-  chat: { partner?: { name?: string } };
+  chat: { partner?: { name?: string }; config?: { chat_backend?: string; backend?: string } };
   chatUUID?: string;
   rerunSourceMessageUUID?: string;
   selfIsSender?: boolean;
   showToolbar?: boolean;
   showBotIdentity?: boolean;
   interactionState?: string | null;
+  /** Render only the message content (no shell/header); used by grouped bubbles. */
+  shellless?: boolean;
+  /** Render the per-message integration extras (default true). */
+  renderExtras?: boolean;
 }) {
   const metaFinished = message?.meta_data?.finished;
   const attachments = mapAttachments(message);
@@ -731,6 +874,21 @@ export function BotMessageItem({
   const providerRetryEvent = resolveProviderRetryEvent(message.meta_data as Record<string, unknown> | undefined);
   const thinkTagExtraction = useMemo(() => extractThoughtsFromThinkTags(message.text), [message.text]);
   const normalizedMessageText = thinkTagExtraction.thoughts.length > 0 ? thinkTagExtraction.cleanText : (message.text || "");
+
+  // The chat UI extension is resolved here (not just for the message body) so
+  // an extension that renders its confirmable actions inline can also suppress
+  // the confirmation lifecycle messages. Those event messages duplicate the
+  // inline confirm/execute widget the extension renders on the source message,
+  // so they are hidden when the extension opts in.
+  const uiExtension = resolveChatUIExtensionForChat({
+    chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+    chat,
+    toolCalls: message?.tool_calls || [],
+  });
+  const inlineConfirmableActions = Boolean(uiExtension?.inlineConfirmableActions);
+  if (inlineConfirmableActions && isConfirmableEvent) {
+    return null;
+  }
 
   const handleCopy = () => {
     if (normalizedMessageText) {
@@ -786,6 +944,9 @@ export function BotMessageItem({
   const confirmableActions = (message.meta_data?.confirmable_actions || fallbackConfirmableActions).filter(
     (action) => !!action?.action_id && !!action?.target_tool_name
   );
+  // The latest still-unconfirmed action is the one blocking the chat, so its
+  // widget auto-expands (the user may still collapse it manually).
+  const lastPendingActionId = latestPendingConfirmableActionId(confirmableActions);
   const thinkingSteps = (message?.meta_data?.thinking_steps || [])
     .map((step) => ({
       text: typeof step?.text === "string" ? step.text.trim() : "",
@@ -796,47 +957,93 @@ export function BotMessageItem({
     .map((thought) => (typeof thought === "string" ? thought.trim() : ""))
     .filter((thought) => thought.length > 0)
     .filter((thought, index, allThoughts) => allThoughts.indexOf(thought) === index);
+  const timelineThoughts = useMemo(
+    () => parseTurnTimeline(message?.meta_data as Record<string, unknown> | undefined),
+    [message.meta_data],
+  );
+  // A turn the backend reported an ordered timeline for is rendered as its
+  // sequence of reasoning blocks and tool calls (ci#569). Extensions that
+  // provide their own message body keep rendering their own rows.
+  const usesTurnSequence = timelineThoughts.length > 0 && !uiExtension?.MessageBody;
   const isPartialMessageUUID = typeof message.uuid === "string" && message.uuid.startsWith("partial_");
-  const isQueuedMessageUUID = typeof message.uuid === "string" && message.uuid.startsWith("queued_");
-  const isQueuePending = message?.meta_data?.queue_state === "queued" || isQueuedMessageUUID;
+  const isQueuePending = isQueuePendingMessage(message);
   const toolCalls = (message?.tool_calls || []) as MessageToolCall[];
+  const toolCallLabel = toolCalls.length === 1 ? "1 tool call" : `${toolCalls.length} tool calls`;
+  const thoughtCountLabel = plural(timelineThoughts.length, "thought");
+  // The header of the ordered sequence summarises what the turn did without
+  // hiding it: the blocks are rendered open, the header is the collapse handle.
+  const turnSequenceHeader =
+    toolCalls.length > 0 ? (
+      metaFinished ? (
+        <>
+          {timelineThoughts.length > 0 ? `${thoughtCountLabel} · ` : ""}
+          {toolCallLabel}
+        </>
+      ) : (
+        <ShinyText>
+          {timelineThoughts.length > 0 ? "Thinking" : "Calling tools"} ({toolCallLabel})
+        </ShinyText>
+      )
+    ) : metaFinished ? (
+      `${thoughtCountLabel}`
+    ) : (
+      <ShinyText>Thinking…</ShinyText>
+    );
+  // An integration (keyed on the chat's chat_backend) may supply a custom
+  // message body that renders the assistant text and its tool calls inline, in
+  // order. When present it replaces the default summarised tool-call block and
+  // the markdown body. When the extension also sets `inlineConfirmableActions`
+  // it renders the confirmable-action widgets itself and the core suppresses
+  // its own widgets, the confirm hint and the lifecycle event bubbles.
+  const CustomMessageBody = uiExtension?.MessageBody;
+  const CustomThoughts = uiExtension?.Thoughts;
+  const CustomStatusIndicator = uiExtension?.StatusIndicator;
+  const hideBotAvatar = Boolean(uiExtension?.hideBotAvatar);
+  const hideMessageActions = Boolean(uiExtension?.hideMessageActions);
+  // While an empty, in-flight turn has nothing to render yet, show the queued /
+  // booting placeholder. An integration can supply a compact replacement
+  // (`StatusIndicator`); the core default stays for everything else.
+  const statusIndicator = resolveStatusIndicator({
+    finished: Boolean(metaFinished),
+    queuePending: isQueuePending,
+    hasText: normalizedMessageText.length > 0,
+    hasThoughts: nonEmptyThoughts.length > 0,
+    toolCallCount: message?.tool_calls?.length ?? 0,
+  });
   const executionBlockedReason = isPartialMessageUUID
     ? "Action is still syncing. Wait for the final message to appear, then execute."
     : undefined;
   const canCopyMessage = normalizedMessageText.trim().length > 0;
   const canRegenerate = Boolean(chatUUID && rerunSourceMessageUUID);
-  const showMessageActions = showToolbar && (canCopyMessage || canRegenerate);
+  const showMessageActions = showToolbar && (canCopyMessage || canRegenerate) && !hideMessageActions;
+  // Once a turn has started producing content but is not finished yet, show a
+  // small animated "working" footer at the bottom of the bubble so the running
+  // state is visible without scrolling back to the top placeholder.
+  const showWorkingFooter = !metaFinished && !isQueuePending && statusIndicator === null;
 
-  return (
-    <BotMessageShell
-      key={message.uuid}
-      senderLabel={chat?.partner?.name ?? "Assistant"}
-      senderMeta={senderMeta}
-      avatarSrc={logoUrl}
-      showIdentity={showBotIdentity}
-      avatarFooter={showMessageActions ? (
-        <BotMessageActionsMenu
-          onCopy={handleCopy}
-          onRegenerate={handleRegenerate}
-          canCopy={canCopyMessage}
-          canRegenerate={canRegenerate}
-        />
-      ) : null}
-    >
-      {isQueuePending &&
-        !metaFinished &&
-        normalizedMessageText === "" &&
-        nonEmptyThoughts.length === 0 &&
-        (message?.tool_calls?.length ?? 0) === 0 && <BootingIndicator label="Msgmate Agent Queued" />}
+  const content = (
+    <>
+      {statusIndicator
+        ? CustomStatusIndicator
+          ? (
+              <CustomStatusIndicator kind={statusIndicator.kind} label={statusIndicator.label} />
+            )
+          : (
+              <BootingIndicator label={statusIndicator.label} />
+            )
+        : null}
 
-      {!isQueuePending &&
-        !metaFinished &&
-        normalizedMessageText === "" &&
-        nonEmptyThoughts.length === 0 &&
-        (message?.tool_calls?.length ?? 0) === 0 && <BootingIndicator label="Msgmate Booting" />}
-
-      {!metaFinished &&
-        nonEmptyThoughts.length > 0 && (
+      {!metaFinished && nonEmptyThoughts.length > 0 && !usesTurnSequence ? (
+        CustomThoughts ? (
+          <CustomThoughts
+            messageUUID={message.uuid}
+            thoughts={nonEmptyThoughts}
+            steps={thinkingSteps}
+            thinkingTime={message?.meta_data?.thinking_time}
+            isGenerating
+            isFinished={false}
+          />
+        ) : (
           <Collapsible open id={`thoughts-${message.uuid}`}>
             <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
               <ShinyText>Thinking… ({message?.meta_data?.thinking_time})</ShinyText>
@@ -847,9 +1054,10 @@ export function BotMessageItem({
               ))}
             </CollapsibleContent>
           </Collapsible>
-        )}
+        )
+      ) : null}
 
-      {!metaFinished && toolCalls.length > 0 && (
+      {!CustomMessageBody && !metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
@@ -864,8 +1072,28 @@ export function BotMessageItem({
         />
       )}
 
-      {metaFinished && thinkingSteps.length > 0
-        ? thinkingSteps.map((step, index) => (
+      {usesTurnSequence ? (
+        <TurnSequence
+          messageUUID={message.uuid}
+          thoughtBlocks={timelineThoughts}
+          toolCalls={toolCalls}
+          header={turnSequenceHeader}
+          defaultOpen
+        />
+      ) : null}
+
+      {metaFinished && !usesTurnSequence && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
+        CustomThoughts ? (
+          <CustomThoughts
+            messageUUID={message.uuid}
+            thoughts={nonEmptyThoughts}
+            steps={thinkingSteps}
+            thinkingTime={message?.meta_data?.thinking_time}
+            isGenerating={false}
+            isFinished
+          />
+        ) : thinkingSteps.length > 0 ? (
+          thinkingSteps.map((step, index) => (
             <Collapsible key={`${message.uuid}-thinking-step-${index}`} id={`thought-step-${message.uuid}-${index}`}>
               <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
                 Thought {index + 1}{step.duration ? ` (${step.duration})` : ""}
@@ -875,20 +1103,38 @@ export function BotMessageItem({
               </CollapsibleContent>
             </Collapsible>
           ))
-        : metaFinished && nonEmptyThoughts.length > 0 && (
-            <Collapsible id={`thoughts-${message.uuid}`}>
-              <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
-                Thoughts{message?.meta_data?.thinking_time ? ` for ${message?.meta_data?.thinking_time}` : ""}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                {nonEmptyThoughts.map((thought, index) => (
-                  <div key={index}>{wrapInBlockquote(thought)}</div>
-                ))}
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+        ) : (
+          <Collapsible id={`thoughts-${message.uuid}`}>
+            <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">
+              Thoughts{message?.meta_data?.thinking_time ? ` for ${message?.meta_data?.thinking_time}` : ""}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="CollapsibleContent transition-all duration-300">
+              {nonEmptyThoughts.map((thought, index) => (
+                <div key={index}>{wrapInBlockquote(thought)}</div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        )
+      ) : null}
 
-      {metaFinished && toolCalls.length > 0 && (
+      {CustomMessageBody ? (
+        <CustomMessageBody
+          messageUUID={message.uuid}
+          text={normalizedMessageText}
+          toolCalls={toolCalls}
+          meta={(message.meta_data ?? {}) as Record<string, unknown>}
+          isGenerating={!metaFinished}
+          interactionState={interactionState}
+          chatUUID={chatUUID}
+          confirmableActions={confirmableActions}
+          executionBlockedReason={executionBlockedReason}
+          onMutate={() => {
+            void revalidateChatData(chatUUID);
+          }}
+        />
+      ) : null}
+
+      {!CustomMessageBody && metaFinished && toolCalls.length > 0 && !usesTurnSequence && (
         <ToolCallsGroup
           messageUUID={message.uuid}
           toolCalls={toolCalls}
@@ -896,7 +1142,7 @@ export function BotMessageItem({
         />
       )}
 
-      {chatUUID && message.uuid && confirmableActions.length > 0
+      {!inlineConfirmableActions && chatUUID && message.uuid && confirmableActions.length > 0
         ? confirmableActions.map((action) => (
             <ConfirmableActionWidget
               key={`${message.uuid}-${action.action_id}`}
@@ -904,6 +1150,7 @@ export function BotMessageItem({
               messageUUID={message.uuid}
               action={action}
               executionBlockedReason={executionBlockedReason}
+              autoExpand={action.action_id === lastPendingActionId}
               onExecuted={() => {
                 void revalidateChatData(chatUUID);
               }}
@@ -911,7 +1158,8 @@ export function BotMessageItem({
           ))
         : null}
 
-      {!isConfirmableEvent &&
+      {!inlineConfirmableActions &&
+      !isConfirmableEvent &&
       !message.text?.trim() &&
       confirmableActions.length > 0 &&
       nonEmptyThoughts.length === 0 ? (
@@ -922,20 +1170,174 @@ export function BotMessageItem({
         <ConfirmableEventIndicator message={message} />
       ) : providerRetryEvent ? (
         <ProviderRetryEventWidget event={providerRetryEvent} />
-      ) : (
+      ) : CustomMessageBody ? null : (
         <MessageMarkdown>{normalizedMessageText}</MessageMarkdown>
       )}
       <FileAttachmentsList attachments={attachments} />
-      <ChatUIMessageExtras
-        toolCalls={toolCalls}
-        meta={(message.meta_data ?? {}) as Record<string, unknown>}
-        chatUUID={chatUUID}
-        messageUUID={message.uuid}
-        interactionState={interactionState}
-        onMutate={() => {
-          void revalidateChatData(chatUUID);
-        }}
-      />
+      {renderExtras ? (
+        <ChatUIMessageExtras
+          toolCalls={toolCalls}
+          meta={(message.meta_data ?? {}) as Record<string, unknown>}
+          chatUUID={chatUUID}
+          messageUUID={message.uuid}
+          interactionState={interactionState}
+          onMutate={() => {
+            void revalidateChatData(chatUUID);
+          }}
+        />
+      ) : null}
+      {showWorkingFooter ? (
+        <div
+          className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
+          <LoadingSpinner size={12} />
+          <ShinyText>Working…</ShinyText>
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (shellless) {
+    return content;
+  }
+
+  return (
+    <BotMessageShell
+      key={message.uuid}
+      senderLabel={chat?.partner?.name ?? "Assistant"}
+      senderMeta={senderMeta}
+      avatarSrc={logoUrl}
+      showIdentity={showBotIdentity}
+      showAvatar={showBotIdentity && !hideBotAvatar}
+      avatarFooter={showMessageActions ? (
+        <BotMessageActionsMenu
+          onCopy={handleCopy}
+          onRegenerate={handleRegenerate}
+          canCopy={canCopyMessage}
+          canRegenerate={canRegenerate}
+        />
+      ) : null}
+    >
+      {content}
+    </BotMessageShell>
+  );
+}
+
+/**
+ * Groups consecutive assistant messages into a single bubble: one sender header
+ * and one bubble for what was a run of separate bot turns. Each message keeps
+ * its own body (thoughts, tool calls, confirm widgets, text) rendered in the
+ * original time order, separated by a hairline, and only the last one renders
+ * the per-message integration extras so repeated cards are not stacked.
+ */
+export function BotMessageGroup({
+  messages,
+  chat,
+  chatUUID,
+  rerunSourceMessageUUID,
+  showToolbar = true,
+  showBotIdentity = true,
+  interactionState,
+}: {
+  messages: Array<Parameters<typeof BotMessageItem>[0]["message"]>;
+  chat: Parameters<typeof BotMessageItem>[0]["chat"];
+  chatUUID?: string;
+  rerunSourceMessageUUID?: string;
+  showToolbar?: boolean;
+  showBotIdentity?: boolean;
+  interactionState?: string | null;
+}) {
+  const first = messages[0];
+  const last = messages[messages.length - 1];
+  const uiExtension = resolveChatUIExtensionForChat({
+    chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+    chat,
+    toolCalls: last?.tool_calls || [],
+  });
+  const hideBotAvatar = Boolean(uiExtension?.hideBotAvatar);
+  const hideMessageActions = Boolean(uiExtension?.hideMessageActions);
+  const combinedText = useMemo(
+    () =>
+      messages
+        .map((message) => {
+          const extraction = extractThoughtsFromThinkTags(message.text);
+          return extraction.thoughts.length > 0 ? extraction.cleanText : message.text || "";
+        })
+        .filter((text) => text.trim().length > 0)
+        .join("\n\n"),
+    [messages],
+  );
+  const senderMeta = useMemo(() => formatRelativeTime(last?.send_at), [last?.send_at]);
+  const canCopyMessage = combinedText.trim().length > 0;
+  const canRegenerate = Boolean(chatUUID && rerunSourceMessageUUID);
+  const showMessageActions = showToolbar && (canCopyMessage || canRegenerate) && !hideMessageActions;
+
+  const handleCopy = () => {
+    if (combinedText) {
+      navigator.clipboard.writeText(combinedText);
+    }
+  };
+
+  const handleRegenerate = async () => {
+    if (!chatUUID || !rerunSourceMessageUUID) {
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/chats/${chatUUID}/messages/${rerunSourceMessageUUID}/rerun`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to rerun response");
+      }
+      await revalidateChatData(chatUUID);
+    } catch (error) {
+      console.error("Failed to rerun message:", error);
+    }
+  };
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  return (
+    <BotMessageShell
+      key={`group_${first?.uuid ?? "bot"}`}
+      senderLabel={chat?.partner?.name ?? "Assistant"}
+      senderMeta={senderMeta}
+      avatarSrc={logoUrl}
+      showIdentity={showBotIdentity}
+      showAvatar={showBotIdentity && !hideBotAvatar}
+      avatarFooter={showMessageActions ? (
+        <BotMessageActionsMenu
+          onCopy={handleCopy}
+          onRegenerate={handleRegenerate}
+          canCopy={canCopyMessage}
+          canRegenerate={canRegenerate}
+        />
+      ) : null}
+    >
+      {messages.map((message, index) => (
+        <div
+          key={message.uuid}
+          className={index > 0 ? "mt-3 border-t border-border/40 pt-3" : undefined}
+        >
+          <BotMessageItem
+            message={message}
+            chat={chat}
+            chatUUID={chatUUID}
+            rerunSourceMessageUUID={rerunSourceMessageUUID}
+            showToolbar={showToolbar}
+            showBotIdentity={false}
+            interactionState={interactionState}
+            shellless
+            renderExtras={index === messages.length - 1}
+          />
+        </div>
+      ))}
     </BotMessageShell>
   );
 }

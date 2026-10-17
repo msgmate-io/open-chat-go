@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -147,5 +148,81 @@ func TestMCPDoRequest_NotificationAllowsEmptyBody(t *testing.T) {
 	_, _, err := mcpDoRequest(config, map[string]interface{}{}, "notifications/initialized", map[string]interface{}{}, nil)
 	if err != nil {
 		t.Fatalf("expected empty notification response to be accepted, got error: %v", err)
+	}
+}
+
+func TestMCPFunctionName_SanitizesColons(t *testing.T) {
+	cases := map[string]struct{ integration, remote, want string }{
+		"plain":                {"opencode-mcp", "list_interactions", "mcp_opencode-mcp_list_interactions"},
+		"colon in remote name": {"server", "ns:tool", "mcp_server_ns_tool"},
+		"dot in remote name":   {"server", "tool.name", "mcp_server_tool_name"},
+		"slashes and spaces":   {"a/b", "c d", "mcp_a_b_c_d"},
+	}
+	for name, tc := range cases {
+		if got := mcpFunctionName(tc.integration, tc.remote); got != tc.want {
+			t.Fatalf("%s: mcpFunctionName(%q, %q) = %q, want %q", name, tc.integration, tc.remote, got, tc.want)
+		}
+	}
+}
+
+func TestMCPToolDescription_ExposesRemoteAndCallableNames(t *testing.T) {
+	description := mcpToolDescription(
+		"List interactions.",
+		"mcp:opencode-mcp:openchat_list_interactions",
+		"opencode-mcp",
+		"openchat_list_interactions",
+		"mcp_opencode-mcp_openchat_list_interactions",
+	)
+	for _, want := range []string{
+		"List interactions.",
+		"mcp:opencode-mcp:openchat_list_interactions",
+		"openchat_list_interactions",
+		"mcp_opencode-mcp_openchat_list_interactions",
+	} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("description %q does not mention %q", description, want)
+		}
+	}
+}
+
+func TestNewMCPToolFromSnapshot_AdvertisesCallableFunctionName(t *testing.T) {
+	const namespaced = "mcp:opencode-mcp:openchat_list_interactions"
+	snapshot := map[string]interface{}{
+		namespaced: map[string]interface{}{
+			"name":             namespaced,
+			"integration_name": "opencode-mcp",
+			"remote_tool_name": "openchat_list_interactions",
+			"description":      "List interactions.",
+			"input_schema":     map[string]interface{}{"type": "object"},
+			"config":           map[string]interface{}{"url": "https://mcp.example.com/mcp"},
+			"auth_data":        map[string]interface{}{},
+		},
+	}
+
+	tool, found, err := NewMCPToolFromSnapshot(namespaced, snapshot)
+	if err != nil {
+		t.Fatalf("NewMCPToolFromSnapshot: %v", err)
+	}
+	if !found || tool == nil {
+		t.Fatalf("expected tool %q to be found", namespaced)
+	}
+
+	constructed, ok := tool.ConstructTool().(map[string]interface{})
+	if !ok {
+		t.Fatalf("ConstructTool did not return a map")
+	}
+	function, ok := constructed["function"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("ConstructTool missing function object")
+	}
+	if got := function["name"]; got != "mcp_opencode-mcp_openchat_list_interactions" {
+		t.Fatalf("provider function name = %v, want sanitized name", got)
+	}
+	desc, _ := function["description"].(string)
+	if !strings.Contains(desc, namespaced) {
+		t.Fatalf("function description %q must surface the remote name %q", desc, namespaced)
+	}
+	if !strings.Contains(desc, "mcp_opencode-mcp_openchat_list_interactions") {
+		t.Fatalf("function description %q must surface the callable name", desc)
 	}
 }

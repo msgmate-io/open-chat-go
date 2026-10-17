@@ -486,7 +486,7 @@ func NewMCPToolFromSnapshot(toolName string, mcpToolsRaw interface{}) (Tool, boo
 	def := ToolDefinition{
 		Name:         toolName,
 		FunctionName: functionName,
-		Description:  strings.TrimSpace(description),
+		Description:  mcpToolDescription(description, toolName, integrationName, remoteToolName, functionName),
 		InputType:    map[string]interface{}{},
 		InputSchema:  inputSchema,
 		Parameters:   map[string]interface{}{},
@@ -554,4 +554,27 @@ func mcpFunctionName(integrationName string, remoteToolName string) string {
 		return trimmed[:64]
 	}
 	return trimmed
+}
+
+// mcpToolDescription augments an MCP tool's own description with the Open-Chat
+// naming so the model can map the documented remote name (`mcp:<server>:<tool>`)
+// to the sanitized, callable provider function name (`mcp_<server>_<tool>`).
+// The provider only ever receives the sanitized function name, so without this
+// the model sees an `mcp_...` function while the docs talk about `mcp:...` and
+// wrongly concludes the MCP tool does not exist (ci#450).
+func mcpToolDescription(description, namespacedName, integrationName, remoteToolName, functionName string) string {
+	var b strings.Builder
+	if base := strings.TrimSpace(description); base != "" {
+		b.WriteString(base)
+		b.WriteString("\n\n")
+	}
+	fmt.Fprintf(&b, "Open-Chat MCP tool %q from server %q", namespacedName, integrationName)
+	if remoteToolName != "" {
+		fmt.Fprintf(&b, " (remote tool name %q)", remoteToolName)
+	}
+	b.WriteString(".")
+	if functionName != "" {
+		fmt.Fprintf(&b, " It is exposed to you as the callable function %q; use that name to call it.", functionName)
+	}
+	return b.String()
 }

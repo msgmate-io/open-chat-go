@@ -1,3 +1,23 @@
+/* Stable app-shell classes. The pre-hydration bootstrap script in
+   pages/+Head.tsx sets `data-openchat-runtime` before the first paint, so these
+   rules pick the native (overflow-hidden) or web (overflow-auto) shell without
+   the app re-rendering from the desktop layout first. */
+.oc-app-root {
+  min-height: 0;
+}
+
+html[data-openchat-runtime="mobile"] .oc-app-root {
+  overflow: hidden;
+}
+
+.oc-app-content {
+  overflow: auto;
+}
+
+html[data-openchat-runtime="mobile"] .oc-app-content {
+  overflow: hidden;
+}
+
 @media (max-width: 640px) {
   .mobile-page-transition {
     will-change: transform, opacity;
