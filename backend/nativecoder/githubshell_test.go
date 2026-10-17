@@ -239,6 +239,151 @@ func TestTranslateGitHubShellCommandPullRequestVerbs(t *testing.T) {
 	}
 }
 
+func TestTranslateGitHubShellCommandRunVerbs(t *testing.T) {
+	cases := []struct {
+		name      string
+		command   string
+		tool      string
+		assertion func(t *testing.T, call GitHubToolCall)
+	}{
+		{
+			name:    "run list",
+			command: "gh run list --repo msgmate-io/open-chat-go --limit 25 --status in_progress --json databaseId,conclusion",
+			tool:    GitHubToolRunList,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				if call.Arguments["repo"] != "msgmate-io/open-chat-go" {
+					t.Fatalf("repo = %v", call.Arguments["repo"])
+				}
+				if call.Arguments["status"] != "in_progress" {
+					t.Fatalf("status = %v", call.Arguments["status"])
+				}
+				if call.Arguments["limit"] != 25 {
+					t.Fatalf("limit = %v", call.Arguments["limit"])
+				}
+				fields, ok := call.Arguments["fields"].([]string)
+				if !ok || len(fields) != 2 {
+					t.Fatalf("fields = %v", call.Arguments["fields"])
+				}
+			},
+		},
+		{
+			name:    "run list short flags",
+			command: "gh run list -R msgmate-io/open-chat-go-ci --workflow ci.yml --branch dev -L 5",
+			tool:    GitHubToolRunList,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				if call.Arguments["repo"] != "msgmate-io/open-chat-go-ci" {
+					t.Fatalf("repo = %v", call.Arguments["repo"])
+				}
+				if call.Arguments["workflow"] != "ci.yml" || call.Arguments["branch"] != "dev" {
+					t.Fatalf("args = %v", call.Arguments)
+				}
+				if call.Arguments["limit"] != 5 {
+					t.Fatalf("limit = %v", call.Arguments["limit"])
+				}
+			},
+		},
+		{
+			name:    "run view",
+			command: "gh run view 123456789 --repo msgmate-io/open-chat-go --json status,jobs",
+			tool:    GitHubToolRunView,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				if call.Arguments["run_id"] != "123456789" {
+					t.Fatalf("run_id = %v", call.Arguments["run_id"])
+				}
+				if _, logFailed := call.Arguments["log_failed"]; logFailed {
+					t.Fatal("a plain view must not ask for the failed logs")
+				}
+			},
+		},
+		{
+			name:    "run view folds log-failed and exit-status into the view",
+			command: "gh run view 55 --log-failed --exit-status",
+			tool:    GitHubToolRunView,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				if call.Arguments["log_failed"] != true || call.Arguments["exit_status"] != true {
+					t.Fatalf("args = %v", call.Arguments)
+				}
+			},
+		},
+		{
+			name:    "run view without an id reads the latest run",
+			command: "gh run view --json conclusion",
+			tool:    GitHubToolRunView,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				if call.Arguments["run_id"] != "latest" {
+					t.Fatalf("run_id = %v", call.Arguments["run_id"])
+				}
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			translation := TranslateGitHubShellCommand(testCase.command)
+			if !translation.Translated || translation.Call == nil {
+				t.Fatalf("expected translation, got residual: %s", translation.Reason)
+			}
+			if translation.Call.Tool != testCase.tool {
+				t.Fatalf("tool = %s, want %s", translation.Call.Tool, testCase.tool)
+			}
+			if translation.Call.Mutating || translation.Call.Admin {
+				t.Fatalf("a run read must stay read-only: %+v", *translation.Call)
+			}
+			testCase.assertion(t, *translation.Call)
+		})
+	}
+}
+
+func TestTranslateGitHubShellCommandKeepsRunWaitOnTheResidual(t *testing.T) {
+	// Blocking/polling shapes belong to the typed github_await surface, and a
+	// run verb the bridge does not model must never be silently dropped.
+	residuals := []string{
+		"gh run watch 123",
+		"gh run list --watch",
+		"gh run view 123 --watch",
+		"gh run rerun 123",
+		"gh run download 123",
+		"gh run cancel 123",
+		"gh run",
+	}
+	for _, command := range residuals {
+		translation := TranslateGitHubShellCommand(command)
+		if translation.Translated {
+			t.Fatalf("%q must stay on the guarded residual, got %+v", command, translation.Call)
+		}
+		if !translation.Residual || strings.TrimSpace(translation.Reason) == "" {
+			t.Fatalf("%q must be flagged residual with a reason", command)
+		}
+	}
+}
+
+func TestMeasureGitHubShellTranslationCountsRunReads(t *testing.T) {
+	// ci#960: `gh run list` / `gh run view` are expressible now, so a shell
+	// record made only of those reads translates completely and leaves no
+	// residual behind.
+	report := MeasureGitHubShellTranslation([]BashCallSample{
+		{Tool: "coder_bash", Arguments: `{"command":"gh run list --repo msgmate-io/open-chat-go --limit 10"}`},
+		{Tool: "coder_bash", Arguments: `{"commands":["gh run view 123456789 --json status,jobs","gh run view 12 --log-failed"]}`},
+	})
+	if report.GitHubCommands != 3 || report.TranslatedCommands != 3 {
+		t.Fatalf("github=%d translated=%d, want 3/3", report.GitHubCommands, report.TranslatedCommands)
+	}
+	if report.ResidualCommands != 0 {
+		t.Fatalf("run reads must leave no residual: %+v", report)
+	}
+	if report.TranslationRatio != 1 {
+		t.Fatalf("translation ratio = %v, want 1", report.TranslationRatio)
+	}
+}
+
+func TestMeasureGitHubShellTranslationRunWatchStaysResidual(t *testing.T) {
+	report := MeasureGitHubShellTranslation([]BashCallSample{
+		{Tool: "coder_bash", Arguments: `{"command":"gh run list --watch"}`},
+	})
+	if report.TranslatedCommands != 0 || report.ResidualCommands != 1 {
+		t.Fatalf("a polling shape must stay residual: %+v", report)
+	}
+}
+
 func TestTranslateGitHubShellCommandAuthAndAPI(t *testing.T) {
 	translation := TranslateGitHubShellCommand("gh auth status")
 	if !translation.Translated || translation.Call.Tool != GitHubToolAuthStatus {
