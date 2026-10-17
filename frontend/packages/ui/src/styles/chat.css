@@ -132,6 +132,28 @@
     @apply pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 rounded-3xl border-2 border-dashed border-primary bg-background/85 text-sm font-medium text-primary backdrop-blur-sm;
   }
 
+  /* Secondary line of the dropzone: the accepted types and the per-file cap,
+     so the rules are visible at the moment of the drop rather than only after
+     a rejection. */
+  .message-composer-dropzone-hint {
+    @apply text-xs font-normal text-muted-foreground;
+  }
+
+  /* Inline rejection surface for dropped/picked files. Stays in the composer
+     (above the staged attachments) so a multi-file drop can attach the valid
+     files and still explain the ones it skipped. */
+  .message-composer-errors {
+    @apply flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive;
+  }
+
+  .message-composer-error-list {
+    @apply min-w-0 flex-1 list-disc space-y-0.5 pl-4;
+  }
+
+  .message-composer-error-item {
+    @apply break-words;
+  }
+
   /* On small/native screens the row gutters and bubble padding shrink so the
      transcript keeps as much horizontal room as possible; desktop keeps the
      roomier spacing. `min-w-0`/`max-w-full` plus the markdown wrapping rules
