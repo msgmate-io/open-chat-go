@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
   FileAttachmentsList,
   Icon,
+  LoadingSpinner,
   PendingMessageItem,
   ShinyText,
   UserMessageShell,
@@ -35,6 +36,17 @@ import {
 import { ConfirmableActionWidget, type ConfirmableAction } from "./ConfirmableActionWidget";
 import { ChatUIMessageExtras } from "./ChatUIMessageExtras";
 import { ToolValueText } from "./ToolCallDetail";
+import {
+  isCompletedToolStatus,
+  resolveToolCallStatus,
+  toolCallSummary,
+  toolDisplayLabel,
+  toolResultPreview,
+  toolStatusBadgeClasses,
+  toolStatusDotClasses,
+  toolStatusLabel,
+  type ToolCallLike,
+} from "./toolCallSummary";
 import { resolveChatUIExtensionForChat } from "./chat-ui/registry";
 import {
   ProviderRetryEventWidget,
@@ -210,72 +222,9 @@ function wrapInBlockquote(children: React.ReactNode) {
   return <blockquote className="my-2 text-sm">{children}</blockquote>;
 }
 
-type MessageToolCall = {
-  id?: string;
-  name?: string;
-  arguments?: unknown;
-  result?: unknown;
-  status?: string;
-  error?: string;
-};
-
-type ToolCallStatus = "ongoing" | "succeeded" | "failed" | "pending_confirmation";
-
-function resolveToolCallStatus(toolCall: MessageToolCall): ToolCallStatus {
-  const rawStatus = typeof toolCall?.status === "string" ? toolCall.status.trim().toLowerCase() : "";
-  if (rawStatus === "ongoing") return "ongoing";
-  if (rawStatus === "succeeded") return "succeeded";
-  if (rawStatus === "failed") return "failed";
-  if (rawStatus === "pending_confirmation") return "pending_confirmation";
-
-  const errorText = typeof toolCall?.error === "string" ? toolCall.error.trim() : "";
-  if (errorText) {
-    return "failed";
-  }
-
-  if (typeof toolCall?.result === "string") {
-    const normalized = toolCall.result.trim().toLowerCase();
-    if (normalized.includes(" failed with error:")) {
-      return "failed";
-    }
-    if (normalized.includes("\"type\":\"confirm-action\"")) {
-      return "pending_confirmation";
-    }
-    if (normalized.length > 0) {
-      return "succeeded";
-    }
-  }
-
-  if (hasRenderableValue(toolCall?.result)) {
-    return "succeeded";
-  }
-
-  return "ongoing";
-}
-
-function toolStatusClasses(status: ToolCallStatus): string {
-  if (status === "succeeded") {
-    return "bg-emerald-500/10 text-emerald-700 border-emerald-500/30";
-  }
-  if (status === "failed") {
-    return "bg-rose-500/10 text-rose-700 border-rose-500/30";
-  }
-  if (status === "pending_confirmation") {
-    return "bg-amber-500/10 text-amber-700 border-amber-500/30";
-  }
-  return "bg-sky-500/10 text-sky-700 border-sky-500/30";
-}
-
-function toolStatusLabel(status: ToolCallStatus): string {
-  if (status === "succeeded") return "Succeeded";
-  if (status === "failed") return "Failed";
-  if (status === "pending_confirmation") return "Needs confirmation";
-  return "Ongoing";
-}
-
-function isCompletedToolStatus(status: ToolCallStatus): boolean {
-  return status === "succeeded" || status === "failed";
-}
+// The core rows render the same tool-call shape the shared summary helpers
+// consume; keep the alias so the surrounding call sites stay unchanged.
+type MessageToolCall = ToolCallLike;
 
 function safeJSONStringify(value: unknown, pretty = false): string {
   try {
@@ -370,40 +319,53 @@ function ToolCallsGroup({
       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
         <div className="space-y-2">
           {toolCalls.map((toolCall, index) => {
-            const toolName = typeof toolCall?.name === "string" ? toolCall.name.trim() : "";
             const status = resolveToolCallStatus(toolCall);
             const cardId = `${messageUUID}-tool-call-${index}`;
+            const label = toolDisplayLabel(toolCall?.name);
+            const summary = toolCallSummary(toolCall);
+            const preview = toolResultPreview(toolCall);
             return (
               <Collapsible
                 key={cardId}
                 defaultOpen={!isCompletedToolStatus(status)}
                 id={`tool-call-card-${cardId}`}
               >
-                <div className="rounded-lg border border-border/70 bg-card/60 p-2">
-                  <CollapsibleTrigger className="flex w-full items-start gap-2 text-left text-sm hover:opacity-90">
-                    <span className="mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      Tool
-                    </span>
-                    <code className="break-all text-xs">{toolName || "unknown_tool"}</code>
+                <div className="overflow-hidden rounded-lg border border-border/70 bg-card/60">
+                  <CollapsibleTrigger className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/30">
                     <span
-                      className={cn(
-                        "ml-auto rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                        toolStatusClasses(status)
-                      )}
-                    >
-                      {toolStatusLabel(status)}
+                      className={cn("size-1.5 shrink-0 rounded-full", toolStatusDotClasses(status))}
+                      aria-hidden="true"
+                    />
+                    <span className="shrink-0 font-medium">{label}</span>
+                    {summary ? (
+                      <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+                        {summary}
+                      </span>
+                    ) : null}
+                    <span className="ml-auto flex shrink-0 items-center gap-1">
+                      {preview ? (
+                        <span className="hidden text-[10px] text-muted-foreground sm:inline">{preview}</span>
+                      ) : null}
+                      <span
+                        className={cn(
+                          "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                          toolStatusBadgeClasses(status)
+                        )}
+                      >
+                        {toolStatusLabel(status)}
+                      </span>
                     </span>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="CollapsibleContent transition-all duration-300">
-                    <div className="mt-2 space-y-1">
+                    <div className="space-y-1 border-t border-border/60 px-2 py-2">
                       <ToolCallLineSection
                         id={`tool-call-params-${messageUUID}-${index}`}
-                        label="Params"
+                        label="Parameters"
                         value={toolCall?.arguments}
                       />
                       <ToolCallLineSection
                         id={`tool-call-result-${messageUUID}-${index}`}
-                        label="Response"
+                        label="Result"
                         value={toolCall?.result}
                       />
                       <ToolCallLineSection
@@ -872,6 +834,10 @@ export function BotMessageItem({
   const canCopyMessage = normalizedMessageText.trim().length > 0;
   const canRegenerate = Boolean(chatUUID && rerunSourceMessageUUID);
   const showMessageActions = showToolbar && (canCopyMessage || canRegenerate) && !hideMessageActions;
+  // Once a turn has started producing content but is not finished yet, show a
+  // small animated "working" footer at the bottom of the bubble so the running
+  // state is visible without scrolling back to the top placeholder.
+  const showWorkingFooter = !metaFinished && !isQueuePending && statusIndicator === null;
 
   const content = (
     <>
@@ -1027,6 +993,16 @@ export function BotMessageItem({
             void revalidateChatData(chatUUID);
           }}
         />
+      ) : null}
+      {showWorkingFooter ? (
+        <div
+          className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
+          <LoadingSpinner size={12} />
+          <ShinyText>Working…</ShinyText>
+        </div>
       ) : null}
     </>
   );
