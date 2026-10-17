@@ -8,6 +8,7 @@ import (
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,6 +94,12 @@ type AgentInteractionView struct {
 	LatestMessageFinished *bool      `json:"latest_message_finished,omitempty"`
 	LatestMessageAt       *time.Time `json:"latest_message_at,omitempty"`
 	AutoContinue          bool       `json:"auto_continue,omitempty"`
+	// AutoContinueTurns / AutoContinueMax / AutoContinueStopReason report the
+	// in-product auto-continuation loop's progress (ci#537): how many turns it
+	// already scheduled, its budget and why it stopped (when it did).
+	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
+	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
+	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
 	// LastAgentText is a short snippet of the agent's most recent reply, so a
 	// listing shows what each agent produced (plan/PR/status) at a glance.
 	LastAgentText string `json:"last_agent_text,omitempty"`
@@ -414,6 +421,11 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 		if count, cancelErr := chats.CancelPendingConfirmableActionsForChat(DB, chat.ID, actingUser.UUID); cancelErr == nil {
 			cancelled = count
 		}
+		// Stopping a managed interaction also ends its self-driving loop, so a
+		// scheduled auto-continuation cannot resume the agent afterwards.
+		if stopErr := chats.StopAutoContinueForChat(DB, chat.ID, "stopped_by_agent_manager"); stopErr != nil {
+			log.Printf("agent stop: failed to stop the auto-continuation loop for chat %s: %v", chat.UUID, stopErr)
+		}
 	}
 
 	respondAgentJSON(w, http.StatusOK, map[string]interface{}{
@@ -456,6 +468,12 @@ func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *d
 		if dispatch, ok := config["agent_dispatch"].(map[string]interface{}); ok {
 			view.AutoContinue, _ = dispatch["auto_continue"].(bool)
 		}
+	}
+	if status := chats.AutoContinueStatusForChat(DB, chat); status.Enabled {
+		view.AutoContinue = true
+		view.AutoContinueTurns = status.Turns
+		view.AutoContinueMax = status.Max
+		view.AutoContinueStopReason = status.StopReason
 	}
 	return view
 }
