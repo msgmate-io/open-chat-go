@@ -3,6 +3,7 @@ package chats
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -204,5 +205,88 @@ func TestListPinnedTopUpNotCappedByPageSize(t *testing.T) {
 		if !row.Pinned {
 			t.Fatalf("expected pinned chat %s to be flagged pinned", uuid)
 		}
+	}
+}
+
+// TestListCarriesPinsInFirstSmallBatch guards the ci#579 increment that fetches
+// the chat list in small incremental batches (limit=5, newest first): the pins
+// must travel with the batch the sidebar paints first, and the pinned top-up
+// must stay outside the offset windows of the later batches. Otherwise the
+// frontend's page-merge would either hide a pin or have to resolve overlapping
+// rows for no reason.
+func TestListCarriesPinsInFirstSmallBatch(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "list-pin-batch-owner@example.com", false)
+	bot := createUserForChatsTest(t, DB, "list-pin-batch-bot@example.com", false)
+
+	const pinnedCount = 3
+	pinnedUUIDs := make([]string, 0, pinnedCount)
+	for i := 0; i < pinnedCount; i++ {
+		chat := createChatOfType(t, DB, owner, bot, "conversation")
+		if err := setChatPin(DB, chat.ID, owner.ID, true); err != nil {
+			t.Fatalf("failed to pin chat: %v", err)
+		}
+		pinnedUUIDs = append(pinnedUUIDs, chat.UUID)
+	}
+	// Enough newer chats that a limit=5 batch is fully occupied by non-pins.
+	for i := 0; i < 8; i++ {
+		createChatOfType(t, DB, owner, bot, "conversation")
+	}
+
+	requestBatch := func(page int) ListedChatsPage {
+		req := httptest.NewRequest("GET", "/api/v1/chats/list?page="+strconv.Itoa(page)+"&limit=5", nil)
+		req = withActionTasksUser(req, DB, owner)
+		rr := httptest.NewRecorder()
+		h := &ChatsHandler{}
+		h.List(rr, req)
+		return decodeListedChats(t, rr)
+	}
+
+	// The first batch is the one the sidebar paints first: it must carry every
+	// pin, or a pinned chat would be invisible until the user loads more.
+	first := requestBatch(1)
+	for _, uuid := range pinnedUUIDs {
+		row := listedChatByUUID(first, uuid)
+		if row == nil {
+			t.Fatalf("pinned chat %s missing from the first batch of a ci#579 incremental fetch", uuid)
+		}
+		if !row.Pinned {
+			t.Fatalf("expected pinned chat %s to be flagged pinned in the first batch", uuid)
+		}
+	}
+	if first.Total < pinnedCount {
+		t.Fatalf("expected total to include the pins, got %d", first.Total)
+	}
+
+	// A pin must never be duplicated inside one batch, otherwise the merged list
+	// would render the same chat twice.
+	seenInFirst := map[string]int{}
+	for _, row := range first.Rows {
+		seenInFirst[row.UUID]++
+	}
+	for _, uuid := range pinnedUUIDs {
+		if seenInFirst[uuid] != 1 {
+			t.Fatalf("expected pinned chat %s exactly once in the first batch, got %d", uuid, seenInFirst[uuid])
+		}
+	}
+
+	// Deeper batches are plain offset windows of the ordered history. They must
+	// stay consistent (each chat once) so merging the batches cannot drop or
+	// duplicate a row; the pins themselves only ride along with batch one.
+	second := requestBatch(2)
+	seenInSecond := map[string]int{}
+	for _, row := range second.Rows {
+		seenInSecond[row.UUID]++
+	}
+	for uuid, count := range seenInSecond {
+		if count != 1 {
+			t.Fatalf("expected chat %s exactly once in batch 2, got %d", uuid, count)
+		}
+	}
+	if second.Total != first.Total {
+		t.Fatalf("expected a stable total across batches, got %d then %d", first.Total, second.Total)
+	}
+	if len(second.Rows) == 0 {
+		t.Fatal("expected batch 2 to still carry older chats")
 	}
 }

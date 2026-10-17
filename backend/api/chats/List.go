@@ -304,10 +304,12 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Pinned chats must stay visible even after they age out of the current
 	// page (ci#512): an old pinned chat that is no longer among the most recent
-	// rows used to silently disappear from the list. On the first page, top the
-	// result up with every pinned chat that still matches the active filters and
-	// merge the ones missing from the page in front of it. Deduplicate by id so
-	// a pin that already appears in the page is not returned twice.
+	// rows used to silently disappear from the list. The first page is topped
+	// up with every pinned chat that still matches the active filters, so the
+	// frontend can fetch the history in small incremental batches (ci#579) and
+	// the pins are always part of the first batch it merges, no matter how deep
+	// the loaded window grows. Deduplicate by id so a pin that already appears
+	// in the page is not returned twice.
 	if pagination.Page <= 1 {
 		pinnedChats := []database.Chat{}
 		pinnedErr := newFilteredQuery().

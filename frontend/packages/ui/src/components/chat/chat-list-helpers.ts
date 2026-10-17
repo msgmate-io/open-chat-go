@@ -1,8 +1,25 @@
 // Pure helpers for the chat list (ci#579). Kept out of the component so the
 // pagination and polling decisions can be unit-tested without a browser.
 
-// Initial number of chats fetched and rendered by the sidebar.
+// Both halves of the sidebar pagination (ci#579):
+// - `CHAT_LIST_FETCH_BATCH_SIZE` is the `limit` of a single list request, so a
+//   long history is loaded in small, incremental batches (newest first).
+// - `CHAT_LIST_PAGE_SIZE` is how many chats are painted before the visible
+//   window starts growing: the first few batches fill it up, so ~20 chats are
+//   on screen immediately without fetching the whole history.
+export const CHAT_LIST_FETCH_BATCH_SIZE = 5
 export const CHAT_LIST_PAGE_SIZE = 20
+
+// Batches that make up the initial painted window.
+export const CHAT_LIST_INITIAL_BATCHES = Math.max(
+  1,
+  Math.ceil(CHAT_LIST_PAGE_SIZE / CHAT_LIST_FETCH_BATCH_SIZE),
+)
+
+// Hard cap mirroring the batch chat-state endpoint (`chatStatesMaxChats` in
+// backend/api/chats/ChatStates.go). The sidebar only asks for the states of the
+// chats it can actually resolve, instead of silently dropping the tail.
+export const CHAT_STATES_MAX_CHATS = 100
 
 // How often the batch chat-state endpoint is polled. While an interaction is
 // actively running (or waiting on the user) the indicator should feel live; when
@@ -59,4 +76,110 @@ export function collectAutomatedChatUuids(
     }
   }
   return uuids
+}
+
+// Truncates the uuids sent to the batch state endpoint to what it can resolve.
+// The set is built from the newest chats first, so the oldest (least
+// interesting) entries are the ones dropped.
+export function chatStatesRequestUuids(
+  uuids: Iterable<string>,
+  max: number = CHAT_STATES_MAX_CHATS,
+): string[] {
+  const out: string[] = []
+  if (max <= 0) {
+    return out
+  }
+  for (const uuid of uuids) {
+    if (out.length >= max) {
+      break
+    }
+    out.push(uuid)
+  }
+  return out
+}
+
+// One page of the paginated chat-list API.
+export type ChatListPage<T> = {
+  rows?: T[]
+  total?: number
+  limit?: number
+  page?: number
+}
+
+// Flattens the pages the sidebar fetched (newest first) into a single row list.
+// The pinned top-up on page one and the offset windows of later pages can
+// overlap, so rows are de-duplicated by uuid while keeping their first
+// (newest) position.
+export function mergeChatPages<T extends { uuid?: string }>(
+  pages: Array<ChatListPage<T>> | undefined,
+): { rows: T[]; total?: number } {
+  if (!pages || pages.length === 0) {
+    return { rows: [], total: undefined }
+  }
+  const seen = new Set<string>()
+  const rows: T[] = []
+  for (const page of pages) {
+    for (const row of page?.rows ?? []) {
+      const uuid = row?.uuid
+      if (uuid) {
+        if (seen.has(uuid)) {
+          continue
+        }
+        seen.add(uuid)
+      }
+      rows.push(row)
+    }
+  }
+  const firstTotal = pages[0]?.total
+  return { rows, total: typeof firstTotal === "number" ? firstTotal : undefined }
+}
+
+// Applies an optimistic pin/unpin to a cached chat-list value, whatever shape
+// it holds: the paginated sidebar (`useSWRInfinite`) caches an array of pages,
+// while other callers cache a single page object. Patching both keeps the
+// optimistic reorder (and the pin icon) immediate without waiting for the
+// refetch, and is a no-op for values of any other shape (ci#579/#512).
+export function applyPinnedToChatListValue<T>(
+  value: T,
+  chatUUID: string,
+  pinned: boolean,
+): T {
+  if (!value) {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map((page) => applyPinnedToChatListValue(page, chatUUID, pinned)) as unknown as T
+  }
+  if (typeof value !== "object") {
+    return value
+  }
+  const page = value as { rows?: Array<{ uuid?: string; pinned?: boolean }> }
+  if (!Array.isArray(page.rows)) {
+    return value
+  }
+  return {
+    ...(value as object),
+    rows: page.rows.map((row) =>
+      row?.uuid === chatUUID ? { ...row, pinned } : row,
+    ),
+  } as T
+}
+
+// Frontend pagination: how many rows are painted for a given number of painted
+// pages. It grows by one page per "load more", so ~20 chats paint first and
+// older rows are appended a page at a time (ci#579).
+export function paintedRowBudget(paintedPages: number): number {
+  return Math.max(paintedPages, 1) * CHAT_LIST_PAGE_SIZE
+}
+
+// How many fetch batches are needed to back `paintedPages` painted pages. The
+// batches are small (`CHAT_LIST_FETCH_BATCH_SIZE`), so a long history is pulled
+// in several incremental requests, newest first (ci#579).
+export function batchesForPaintedPages(
+  paintedPages: number,
+  pageSize: number = CHAT_LIST_PAGE_SIZE,
+  batchSize: number = CHAT_LIST_FETCH_BATCH_SIZE,
+): number {
+  const safeBatchSize = Math.max(batchSize, 1)
+  return Math.max(1, Math.ceil((Math.max(paintedPages, 1) * pageSize) / safeBatchSize))
 }
