@@ -137,6 +137,8 @@ func TranslateGitHubShellCommand(command string) GitHubShellTranslation {
 		call, ok, reason = translateGitHubAuthShell(rest[1:])
 	case "api":
 		call, ok, reason = translateGitHubAPIShell(rest[1:])
+	case "run":
+		call, ok, reason = translateGitHubRunShell(rest[1:])
 	default:
 		reason = "`gh " + rest[0] + "` has no typed equivalent in the phase 1 surface"
 	}
@@ -434,6 +436,58 @@ func translateGitHubAPIShell(args []string) (GitHubToolCall, bool, string) {
 	}
 	setShellArg(call.Arguments, "repo", values["repo"])
 	return call, true, ""
+}
+
+// translateGitHubRunShell maps `gh run list` and `gh run view` onto the typed
+// github_run_list / github_run_view calls, so CI status is read as structured
+// data instead of a scraped table. The wait/poll shapes (`--watch`, `gh run
+// watch`) stay residual on purpose: they belong to the typed github_await
+// surface, never to a shell loop.
+func translateGitHubRunShell(args []string) (GitHubToolCall, bool, string) {
+	if len(args) == 0 {
+		return GitHubToolCall{}, false, "`gh run` without a verb has no typed equivalent"
+	}
+	verb := args[0]
+	rest := args[1:]
+	switch verb {
+	case "list":
+		typed := translateGhRunList(rest)
+		if typed.Watch {
+			return GitHubToolCall{}, false, "`gh run list --watch` blocks and polls; it belongs to the typed github_await surface, not to a shell"
+		}
+		call := newGitHubToolCall(GitHubToolRunList, "lists workflow runs as structured rows instead of a scraped table")
+		setShellArg(call.Arguments, "repo", typed.Repo)
+		setShellArg(call.Arguments, "workflow", typed.Workflow)
+		setShellArg(call.Arguments, "branch", typed.Branch)
+		setShellArg(call.Arguments, "status", typed.Status)
+		if typed.Limit > 0 {
+			call.Arguments["limit"] = typed.Limit
+		}
+		if fields := splitShellCSV(typed.JSONFields); len(fields) > 0 {
+			call.Arguments["fields"] = fields
+		}
+		return call, true, ""
+	case "view":
+		typed := translateGhRunView(rest)
+		if typed.Watch {
+			return GitHubToolCall{}, false, "`gh run view --watch` blocks and polls; it belongs to the typed github_await surface, not to a shell"
+		}
+		call := newGitHubToolCall(GitHubToolRunView, "reads one workflow run, its jobs and its failed logs as structured data")
+		call.Arguments["run_id"] = typed.RunID
+		setShellArg(call.Arguments, "repo", typed.Repo)
+		if fields := splitShellCSV(typed.JSONFields); len(fields) > 0 {
+			call.Arguments["fields"] = fields
+		}
+		if typed.Failed {
+			call.Arguments["log_failed"] = true
+		}
+		if typed.ExitStatus {
+			call.Arguments["exit_status"] = true
+		}
+		return call, true, ""
+	default:
+		return GitHubToolCall{}, false, "`gh run " + verb + "` has no typed equivalent in the phase 1 surface"
+	}
 }
 
 // ghShellWords tokenises a command for the bridge. Unlike the classifier's
