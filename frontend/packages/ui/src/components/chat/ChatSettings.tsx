@@ -77,8 +77,6 @@ export function ChatSettings({
   const [shareOpen, setShareOpen] = useState(false)
   const [editTitleOpen, setEditTitleOpen] = useState(false)
   const pinned = chat?.pinned === true
-  const extraNameChanged =
-    extraName !== chat?.settings?.title && extraName !== ""
 
   useEffect(() => {
     setExtraName(chat?.settings?.title || "")
@@ -160,16 +158,8 @@ export function ChatSettings({
     }
   }
 
-  const onSaveExtraTitle = () => {
-    void persistTitle(extraName.trim())
-  }
-
   const onClearExtraTitle = () => {
     void persistTitle("")
-  }
-
-  const onResetExtraText = () => {
-    setExtraName(chat?.settings?.title || "")
   }
 
   const togglePin = async () => {
@@ -238,12 +228,18 @@ export function ChatSettings({
     }
   }
 
-  const titleSection = compact ? (
+  // The title is always shown as an overflow-safe, truncated row with a pencil
+  // that opens the one-field editor. The old inline input grew with a long title
+  // and pushed the buttons out of the (horizontally scrollable) menu, so the
+  // edit affordance became unreachable; the truncate + edit-above flow keeps the
+  // whole title one tap away on every viewport.
+  const displayTitle = chat?.settings?.title || chat?.partner?.name || "Untitled"
+  const titleSection = (
     <div className="flex items-center justify-between gap-2 px-2 py-1">
       <div className="min-w-0 flex-1">
         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Title</p>
-        <span className="block truncate text-sm text-foreground">
-          {chat?.settings?.title || chat?.partner?.name || "Untitled"}
+        <span className="block truncate text-sm text-foreground" title={displayTitle}>
+          {displayTitle}
         </span>
       </div>
       <Button
@@ -256,76 +252,6 @@ export function ChatSettings({
       >
         <Icon name="pencil" size="sm" />
       </Button>
-    </div>
-  ) : (
-    <div className="flex flex-row items-center gap-1 px-2 py-1">
-      <Input
-        type="text"
-        value={extraName}
-        onChange={(e) => setExtraName(e.target.value)}
-        placeholder="Extra name"
-        className="h-8 bg-background"
-      />
-      {(!extraName || !extraNameChanged) && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          aria-label="Edit chat title"
-        >
-          <Icon name="pencil" size="sm" />
-        </Button>
-      )}
-      {extraName && extraNameChanged && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          aria-label="Save chat title"
-          disabled={savingTitle}
-          onClick={onSaveExtraTitle}
-        >
-          <Icon name="check" size="sm" />
-        </Button>
-      )}
-      {chat?.settings?.title && !extraNameChanged && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          aria-label="Clear saved title"
-          disabled={savingTitle}
-          onClick={onClearExtraTitle}
-        >
-          <Icon name="trash" size="sm" />
-        </Button>
-      )}
-      {!chat?.settings?.title && !extraNameChanged && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          aria-label="No custom title set"
-        >
-          <Icon name="eraser" size="sm" className="text-muted-foreground" />
-        </Button>
-      )}
-      {extraNameChanged && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          aria-label="Reset title changes"
-          onClick={onResetExtraText}
-        >
-          <Icon name="undo" size="sm" />
-        </Button>
-      )}
     </div>
   )
 
@@ -464,7 +390,7 @@ export function ChatSettings({
     </div>
   )
 
-  const editTitleDialog = compact ? (
+  const editTitleDialog = (
     <Dialog open={editTitleOpen} onOpenChange={setEditTitleOpen}>
       <DialogContent
         data-testid="chat-title-modal"
@@ -485,34 +411,50 @@ export function ChatSettings({
           placeholder="Chat title"
           className="h-9 bg-background"
         />
-        <div className="flex justify-end gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            onClick={() => {
-              setExtraName(chat?.settings?.title || "")
-              setEditTitleOpen(false)
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            disabled={savingTitle}
-            onClick={() => {
-              void persistTitle(extraName.trim()).then(() => setEditTitleOpen(false))
-            }}
-          >
-            {savingTitle ? "Saving…" : "Save"}
-          </Button>
+        <div className="flex items-center justify-between gap-1">
+          {chat?.settings?.title ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs text-muted-foreground"
+              disabled={savingTitle}
+              onClick={onClearExtraTitle}
+            >
+              Clear
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => {
+                setExtraName(chat?.settings?.title || "")
+                setEditTitleOpen(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              disabled={savingTitle}
+              onClick={() => {
+                void persistTitle(extraName.trim()).then(() => setEditTitleOpen(false))
+              }}
+            >
+              {savingTitle ? "Saving…" : "Save"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
-  ) : null
+  )
 
   if (compact) {
     return (
@@ -541,6 +483,7 @@ export function ChatSettings({
           {content}
         </DropdownMenuContent>
       </DropdownMenu>
+      {editTitleDialog}
       <ShareChatModal chat={chat} open={shareOpen} setOpen={setShareOpen} />
     </>
   )
