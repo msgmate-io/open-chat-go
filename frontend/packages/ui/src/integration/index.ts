@@ -48,9 +48,13 @@ export {
   resolveToolCallStatus,
   summarizeToolCalls,
   toolCallCategory,
+  toolCallDurationMs,
+  toolCallStartedAtMs,
   toolCallSummary,
+  toolCallTimelineIndex,
   toolDisplayLabel,
   toolResultPreview,
+  formatToolDuration,
   toolStatusBadgeClasses,
   toolStatusDotClasses,
   toolStatusLabel,
@@ -59,6 +63,13 @@ export {
   type ToolCallStatus,
   type ToolCallSummary,
 } from "./components/chat/toolCallSummary";
+export {
+  buildTurnBlocks,
+  parseTurnTimeline,
+  type TurnBlock,
+  type TurnThoughtBlock,
+  type TurnToolCallBlock,
+} from "./components/chat/turnTimeline";
 export { ProviderRetryEventWidget, resolveProviderRetryEvent, type ProviderRetryEvent } from "./components/chat/ProviderRetryEventWidget";
 export { InteractionChatInfo } from "./components/chat/InteractionChatInfo";
 export { MessageInputOptionsMenuItems } from "./components/chat/MessageInputOptionsButton";

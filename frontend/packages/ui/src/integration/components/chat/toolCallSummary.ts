@@ -21,6 +21,15 @@ export interface ToolCallLike {
   result?: unknown;
   status?: string;
   error?: string;
+  /** Unix milliseconds when execution began (ci#569). */
+  started_at?: number | string;
+  /** Total execution time in milliseconds, once the call completed (ci#569). */
+  duration_ms?: number | string;
+  /**
+   * How many reasoning blocks had already been emitted when this call was
+   * dispatched, which places it in the turn's ordered timeline (ci#569).
+   */
+  timeline_index?: number | string;
 }
 
 export type ToolCallCategory = "edit" | "command" | "read" | "workspace" | "other";
@@ -117,6 +126,43 @@ export function resolveToolCallStatus(call: ToolCallLike): ToolCallStatus {
 
 export function isCompletedToolStatus(status: ToolCallStatus): boolean {
   return status === "succeeded" || status === "failed";
+}
+
+/** Unix milliseconds when the call began, if the backend reported it (ci#569). */
+export function toolCallStartedAtMs(call: ToolCallLike): number | undefined {
+  const started = num(call?.started_at);
+  return started !== undefined && started > 0 ? started : undefined;
+}
+
+/** Recorded execution time in milliseconds, if the backend reported it (ci#569). */
+export function toolCallDurationMs(call: ToolCallLike): number | undefined {
+  const duration = num(call?.duration_ms);
+  return duration !== undefined && duration >= 0 ? duration : undefined;
+}
+
+/**
+ * Number of reasoning blocks emitted before the call was dispatched (ci#569).
+ * It places the call in the turn's ordered timeline; older messages (and
+ * backends that do not report it) return undefined.
+ */
+export function toolCallTimelineIndex(call: ToolCallLike): number | undefined {
+  const index = num(call?.timeline_index);
+  return index !== undefined && index >= 0 ? index : undefined;
+}
+
+/**
+ * Human-readable duration: sub-second as "820ms", under a minute as "1.4s",
+ * otherwise "1m 03s". Keeps the tool-call row compact (ci#569).
+ */
+export function formatToolDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const whole = Math.floor(seconds);
+  const minutes = Math.floor(whole / 60);
+  const remainder = whole % 60;
+  return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
 }
 
 export function toolStatusLabel(status: ToolCallStatus): string {
