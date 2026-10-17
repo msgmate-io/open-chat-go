@@ -2407,6 +2407,24 @@ jobs:
           fi
           "$PYTHON" development/scripts/check_pin_freshness.py --root .
 
+      - name: Set up Go for the frozen-workspace build
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      # A pin can be perfectly fresh and still not satisfy its consumers
+      # (ci#600/#601): materialise the pinned tree and build it, so a lock bump
+      # cannot merge a workspace that does not compile.
+      - name: Check the pinned workspace still builds
+        run: |
+          set -euo pipefail
+          PYTHON="python3"
+          if [ -x ".venv/bin/python" ]; then
+            PYTHON=".venv/bin/python"
+          fi
+          "$PYTHON" development/scripts/check_frozen_workspace.py --root .
+
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
