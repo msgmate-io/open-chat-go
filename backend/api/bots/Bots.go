@@ -1430,6 +1430,9 @@ func createBotInteraction(
 	// confirmation always wins; the config key is consumed here so it is not
 	// forwarded to the chat backend as shared config.
 	requireConfirmation := req.RequireConfirmation || consumeRequireConfirmationDefault(effectiveConfig)
+	// The management-scope declaration is a bot-only key consumed here too so it
+	// is never forwarded to the chat backend as shared config (ci#540 follow-up).
+	consumeAgentScopeTagsDefault(effectiveConfig)
 	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, effectiveConfig)
 	if defaultsErr != nil {
 		return BotInteractionResponse{}, fmt.Errorf("failed to apply integration shared config defaults: %w", defaultsErr)
@@ -1603,4 +1606,15 @@ func consumeRequireConfirmationDefault(config map[string]interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// consumeAgentScopeTagsDefault removes the default_shared_config.agent_scope_tags
+// key so a bot's management-scope declaration is never forwarded to the chat
+// backend as shared config. The key only governs the trusted /api/v1/agents
+// management gate (ci#540 follow-up).
+func consumeAgentScopeTagsDefault(config map[string]interface{}) {
+	if config == nil {
+		return
+	}
+	delete(config, agentScopeTagsConfigKey)
 }
