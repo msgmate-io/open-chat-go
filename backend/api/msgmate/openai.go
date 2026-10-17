@@ -29,6 +29,11 @@ type ToolCall struct {
 	Result    string
 	Status    string
 	Error     string
+	// StartedAtUnixMs is when execution of the call began (unix milliseconds),
+	// and DurationMs is how long it took. They let the chat UI show a live timer
+	// while a call runs and its duration once it completes (ci#569).
+	StartedAtUnixMs int64
+	DurationMs      int64
 }
 
 const (
@@ -1196,12 +1201,13 @@ func processParsedToolCall(
 		result.error = ""
 
 		toolChan <- ToolCall{
-			ToolName:  name,
-			ToolInput: toolInput,
-			Id:        id,
-			Result:    cachedResult,
-			Status:    ToolCallStatusSucceeded,
-			Error:     "",
+			ToolName:        name,
+			ToolInput:       toolInput,
+			Id:              id,
+			Result:          cachedResult,
+			Status:          ToolCallStatusSucceeded,
+			Error:           "",
+			StartedAtUnixMs: time.Now().UnixMilli(),
 		}
 		return
 	}
@@ -1211,12 +1217,14 @@ func processParsedToolCall(
 	result.toolName = name
 	result.arguments = arguments
 
+	startedAtUnixMs := time.Now().UnixMilli()
 	toolChan <- ToolCall{
-		ToolName:  name,
-		ToolInput: toolInput,
-		Id:        id,
-		Result:    "",
-		Status:    ToolCallStatusOngoing,
+		ToolName:        name,
+		ToolInput:       toolInput,
+		Id:              id,
+		Result:          "",
+		Status:          ToolCallStatusOngoing,
+		StartedAtUnixMs: startedAtUnixMs,
 	}
 
 	var toolResult string
@@ -1269,12 +1277,14 @@ func processParsedToolCall(
 	}
 
 	toolChan <- ToolCall{
-		ToolName:  name,
-		ToolInput: toolInput,
-		Id:        id,
-		Result:    toolResult,
-		Status:    status,
-		Error:     toolErr,
+		ToolName:        name,
+		ToolInput:       toolInput,
+		Id:              id,
+		Result:          toolResult,
+		Status:          status,
+		Error:           toolErr,
+		StartedAtUnixMs: startedAtUnixMs,
+		DurationMs:      time.Since(time.UnixMilli(startedAtUnixMs)).Milliseconds(),
 	}
 	result.status = status
 	result.error = toolErr
