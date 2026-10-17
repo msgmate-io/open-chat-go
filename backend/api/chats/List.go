@@ -46,7 +46,11 @@ type ListedChatsPage struct {
 	Limit      int          `json:"limit"`
 	Page       int          `json:"page"`
 	TotalPages int          `json:"total_pages"`
-	Rows       []ListedChat `json:"rows"`
+	// Total is the number of chats matching the active filters. The chat list
+	// uses it to decide whether older chats remain to be fetched, so the
+	// "load more" affordance does not rely on a full-page heuristic (ci#579).
+	Total int          `json:"total"`
+	Rows  []ListedChat `json:"rows"`
 }
 
 // parseChatTimeParam parses an optional RFC3339 timestamp query parameter. An
@@ -359,6 +363,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:      pagination.Limit,
 		Page:       pagination.Page,
 		TotalPages: pagination.TotalPages,
+		Total:      int(pagination.TotalRows),
 		Rows:       listedChats,
 	}
 

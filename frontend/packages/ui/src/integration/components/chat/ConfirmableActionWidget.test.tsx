@@ -141,4 +141,35 @@ describe("ConfirmableActionWidget phase rendering", () => {
     expect(html).toContain("bg-red-500/10");
     expect(html).toContain("bg-emerald-500/10");
   });
+
+  it("renders integration extraActions for a pending action and hands over the execute control", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmableActionWidget
+        {...baseProps}
+        action={makeAction()}
+        extraActions={(controls) => (
+          <button type="button" data-busy={String(controls.busy)}>
+            Switch to autonomous
+          </button>
+        )}
+      />,
+    );
+
+    // The integration-provided alternative sits alongside the built-in controls.
+    expect(html).toContain("Switch to autonomous");
+    expect(html).toContain("Confirm and execute");
+    expect(html).toContain('data-busy="false"');
+  });
+
+  it("does not render extraActions once the action has been executed", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmableActionWidget
+        {...baseProps}
+        action={makeAction({ status: "executed", result: { exit_code: 0 } })}
+        extraActions={() => <button type="button">Switch to autonomous</button>}
+      />,
+    );
+
+    expect(html).not.toContain("Switch to autonomous");
+  });
 });
