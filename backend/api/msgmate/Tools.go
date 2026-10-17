@@ -294,15 +294,51 @@ func (t *BaseTool) GetToolParameters() map[string]interface{} {
 
 func (t *BaseTool) GetToolInputSchema() map[string]interface{} {
 	if t.ToolInputSchema != nil {
-		return t.ToolInputSchema
+		return normalizeToolInputSchema(t.ToolInputSchema)
 	}
 
-	return map[string]interface{}{
+	return normalizeToolInputSchema(map[string]interface{}{
 		"type":        "object",
 		"properties":  t.GetToolParameters(),
 		"required":    t.RequiredParams,
 		"description": "The parameters for the tool",
+	})
+}
+
+// normalizeToolInputSchema guarantees a JSON Schema that strict providers
+// accept. OpenRouter rejects a schema whose `"required"` is `null` (as emitted
+// when a tool has no RequiredParams) with
+// `tools.N.function.parameters/required: invalid JSON Schema`, which would
+// otherwise break every coder turn; DeepInfra tolerates it, so the bug only
+// surfaced on the OpenRouter-backed suites. `"properties"` is likewise coerced
+// to an object (never null) and non-string `required` entries are dropped.
+func normalizeToolInputSchema(schema map[string]interface{}) map[string]interface{} {
+	if schema == nil {
+		schema = map[string]interface{}{}
 	}
+	if _, ok := schema["type"].(string); !ok {
+		schema["type"] = "object"
+	}
+	if _, ok := schema["properties"].(map[string]interface{}); !ok {
+		schema["properties"] = map[string]interface{}{}
+	}
+	switch required := schema["required"].(type) {
+	case []string:
+		if required == nil {
+			schema["required"] = []string{}
+		}
+	case []interface{}:
+		names := make([]string, 0, len(required))
+		for _, raw := range required {
+			if name, ok := raw.(string); ok {
+				names = append(names, name)
+			}
+		}
+		schema["required"] = names
+	default:
+		schema["required"] = []string{}
+	}
+	return schema
 }
 
 func (t *BaseTool) GetToolInitSchema() map[string]interface{} {
