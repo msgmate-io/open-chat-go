@@ -12,22 +12,49 @@ const CHAT_LIST_PREFIX = "/api/v1/chats/list";
 const CHAT_STATES_PREFIX = "/api/v1/chats/states";
 const CHAT_ACTION_TASKS_PREFIX = "/api/v1/chats/action-tasks";
 
+// `useSWRInfinite` (the paginated chat list, ci#579) stores its aggregated key
+// as `$inf$<first page key>`. Prefix checks must strip that marker, otherwise
+// invalidating the chat list silently skips the mounted infinite hook and new
+// chats/previews only appear on the next poll.
+const SWR_INFINITE_PREFIX = "$inf$";
+
 const isStringKey = (key: unknown): key is string => typeof key === "string";
 
+// The cache key without SWR's infinite marker, or null for a non-string key.
+export const normalizeCacheKey = (key: unknown): string | null => {
+  if (!isStringKey(key)) {
+    return null;
+  }
+  return key.startsWith(SWR_INFINITE_PREFIX)
+    ? key.slice(SWR_INFINITE_PREFIX.length)
+    : key;
+};
+
+const hasPrefix = (key: unknown, prefix: string): boolean => {
+  const normalized = normalizeCacheKey(key);
+  return normalized !== null && normalized.startsWith(prefix);
+};
+
 export const isChatListKey = (key: unknown): boolean =>
-  isStringKey(key) && key.startsWith(CHAT_LIST_PREFIX);
+  hasPrefix(key, CHAT_LIST_PREFIX);
 
 export const isChatStatesKey = (key: unknown): boolean =>
-  isStringKey(key) && key.startsWith(CHAT_STATES_PREFIX);
+  hasPrefix(key, CHAT_STATES_PREFIX);
 
 export const isActionTasksKey = (key: unknown): boolean =>
-  isStringKey(key) && key.startsWith(CHAT_ACTION_TASKS_PREFIX);
+  hasPrefix(key, CHAT_ACTION_TASKS_PREFIX);
 
 const isChatScopedKey = (chatUUID: string) => {
   const base = `/api/v1/chats/${chatUUID}`;
-  return (key: unknown): boolean =>
-    isStringKey(key) &&
-    (key === base || key.startsWith(`${base}/`) || key.startsWith(`${base}?`));
+  return (key: unknown): boolean => {
+    const normalized = normalizeCacheKey(key);
+    return (
+      normalized !== null &&
+      (normalized === base ||
+        normalized.startsWith(`${base}/`) ||
+        normalized.startsWith(`${base}?`))
+    );
+  };
 };
 
 // Revalidate the chat list (all filter/scope variants) so previews, unread
