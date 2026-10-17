@@ -1,6 +1,7 @@
 package bots
 
 import (
+	"backend/api/chats"
 	"backend/database"
 	"bytes"
 	"context"
@@ -225,6 +226,56 @@ func TestAgentListGetContinueAndStop(t *testing.T) {
 	}
 }
 
+func TestAgentContinueResumesAutoContinue(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.agent.resume@example.com", false)
+	bot := createBotForInteractionTest(t, DB, owner, "resume-agent")
+
+	client, inspector, cleanup := setupAsynqTest(t)
+	defer cleanup()
+	hr := &BotsHandler{}
+
+	rr := agentDispatchRequest(t, DB, owner, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
+		Bot:          bot.UUID,
+		Message:      "start",
+		AutoContinue: true,
+	}, client, inspector, hr.AgentDispatch)
+	if rr.Code != 200 {
+		t.Fatalf("expected dispatch status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var dispatch map[string]interface{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &dispatch)
+	chatUUID, _ := dispatch["chat_uuid"].(string)
+
+	var chat database.Chat
+	if err := DB.Where("uuid = ?", chatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected chat: %v", err)
+	}
+	if err := chats.StopAutoContinueForChat(DB, chat.ID, "needs_human"); err != nil {
+		t.Fatalf("stop loop: %v", err)
+	}
+	if status := chats.AutoContinueStatusForChat(DB, chat); !status.Enabled || status.StopReason != "needs_human" {
+		t.Fatalf("expected a stopped loop, got %+v", status)
+	}
+
+	continueRR := agentDispatchRequest(t, DB, owner, "POST",
+		"/api/v1/agents/interactions/"+chatUUID+"/continue",
+		map[string]string{"chat_uuid": chatUUID},
+		map[string]interface{}{"message": "keep going", "resume_auto_continue": true},
+		client, inspector, hr.AgentContinue)
+	if continueRR.Code != 200 {
+		t.Fatalf("expected continue status 200, got %d: %s", continueRR.Code, continueRR.Body.String())
+	}
+	var continueBody map[string]interface{}
+	_ = json.Unmarshal(continueRR.Body.Bytes(), &continueBody)
+	if resumed, _ := continueBody["auto_continue_resumed"].(bool); !resumed {
+		t.Fatalf("expected auto_continue_resumed=true, got %s", continueRR.Body.String())
+	}
+	if status := chats.AutoContinueStatusForChat(DB, chat); status.StopReason != "" {
+		t.Fatalf("expected the loop to be resumed, got %+v", status)
+	}
+}
+
 func TestAgentDispatchScopesManagementToCaller(t *testing.T) {
 	DB := setupBotsTestDB(t)
 	owner := createUserForBotsTest(t, DB, "owner.agent.scope@example.com", false)
@@ -309,6 +360,150 @@ func TestAgentDispatchScopesManagementToCaller(t *testing.T) {
 		if row.ChatUUID == chatUUID {
 			t.Fatalf("intruder list must not include the lead-dispatched chat %s", chatUUID)
 		}
+	}
+}
+
+// TestAgentScopeTagsWidenAutomatedManagement covers the opt-in team/repo-tag
+// scope (ci#540 follow-up): a bot declaring `agent_scope_tags` in its shared
+// config may manage an interaction whose tags match, even when it neither
+// participates in nor dispatched it; a bot without the key keeps the
+// least-privilege participant-or-dispatcher gate.
+func TestAgentScopeTagsWidenAutomatedManagement(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.agent.scope.tags@example.com", false)
+	leadRuntime, leadUser := createBotRuntimeForTest(t, DB, owner, "tag-lead")
+	workerRuntime, _ := createBotRuntimeForTest(t, DB, owner, "tag-worker")
+	_, intruderUser := createBotRuntimeForTest(t, DB, owner, "tag-intruder")
+
+	// Only the lead opts into the repo-tag scope; the intruder stays scoped to
+	// the default participant-or-dispatcher gate.
+	setBotAgentScopeTags(t, DB, leadRuntime, []string{"repo:open-chat-go"})
+
+	client, inspector, cleanup := setupAsynqTest(t)
+	defer cleanup()
+	hr := &BotsHandler{}
+
+	dispatch := func(tags []string) string {
+		t.Helper()
+		rr := agentDispatchRequest(t, DB, owner, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
+			Bot:     workerRuntime.UUID,
+			Message: "do the work",
+			Tags:    tags,
+		}, client, inspector, hr.AgentDispatch)
+		if rr.Code != 200 {
+			t.Fatalf("expected dispatch status 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var body map[string]interface{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatalf("failed to decode dispatch response: %v", err)
+		}
+		uuid, _ := body["chat_uuid"].(string)
+		if uuid == "" {
+			t.Fatalf("expected chat_uuid in dispatch response: %s", rr.Body.String())
+		}
+		return uuid
+	}
+
+	// The owner (human) dispatches the worker; the lead neither participates in
+	// nor dispatched either interaction.
+	matchingUUID := dispatch([]string{"repo:open-chat-go", "issue:540"})
+	otherUUID := dispatch([]string{"repo:other-project"})
+
+	// The lead's declared scope matches the first interaction's tags, so it may
+	// read it and it shows up in its list.
+	leadGet := agentDispatchRequest(t, DB, &leadUser, "GET", "/api/v1/agents/interactions/"+matchingUUID, map[string]string{"chat_uuid": matchingUUID}, nil, client, inspector, hr.AgentGet)
+	if leadGet.Code != 200 {
+		t.Fatalf("scoped lead: expected get status 200, got %d: %s", leadGet.Code, leadGet.Body.String())
+	}
+	leadList := agentDispatchRequest(t, DB, &leadUser, "GET", "/api/v1/agents/interactions", nil, nil, client, inspector, hr.AgentList)
+	if leadList.Code != 200 {
+		t.Fatalf("scoped lead: expected list status 200, got %d: %s", leadList.Code, leadList.Body.String())
+	}
+	var leadListBody struct {
+		Rows []AgentInteractionView `json:"rows"`
+	}
+	if err := json.Unmarshal(leadList.Body.Bytes(), &leadListBody); err != nil {
+		t.Fatalf("failed to decode scoped lead list: %v", err)
+	}
+	found := false
+	for _, row := range leadListBody.Rows {
+		if row.ChatUUID == matchingUUID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("scoped lead list must include the tag-matching chat %s, got %s", matchingUUID, leadList.Body.String())
+	}
+
+	// A matching tag only widens access to matching interactions.
+	leadOther := agentDispatchRequest(t, DB, &leadUser, "GET", "/api/v1/agents/interactions/"+otherUUID, map[string]string{"chat_uuid": otherUUID}, nil, client, inspector, hr.AgentGet)
+	if leadOther.Code != 404 {
+		t.Fatalf("scoped lead: expected non-matching chat get status 404, got %d: %s", leadOther.Code, leadOther.Body.String())
+	}
+
+	// Absent the key, the scope is not widened: the intruder is still denied.
+	intruderGet := agentDispatchRequest(t, DB, &intruderUser, "GET", "/api/v1/agents/interactions/"+matchingUUID, map[string]string{"chat_uuid": matchingUUID}, nil, client, inspector, hr.AgentGet)
+	if intruderGet.Code != 404 {
+		t.Fatalf("intruder: expected get status 404, got %d: %s", intruderGet.Code, intruderGet.Body.String())
+	}
+}
+
+// TestAgentScopeTagsNotForwardedToInteractionConfig guards that the bot-only
+// `agent_scope_tags` key is consumed when building an interaction's shared
+// config, so a management-scope declaration never reaches the chat backend.
+func TestAgentScopeTagsNotForwardedToInteractionConfig(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.agent.scope.forward@example.com", false)
+	leadRuntime, leadUser := createBotRuntimeForTest(t, DB, owner, "forward-lead")
+	workerRuntime, _ := createBotRuntimeForTest(t, DB, owner, "forward-worker")
+
+	setBotAgentScopeTags(t, DB, leadRuntime, []string{"repo:open-chat-go"})
+
+	client, inspector, cleanup := setupAsynqTest(t)
+	defer cleanup()
+
+	rr := agentDispatchRequest(t, DB, &leadUser, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
+		Bot:     workerRuntime.UUID,
+		Message: "do the work",
+		Tags:    []string{"repo:open-chat-go"},
+	}, client, inspector, (&BotsHandler{}).AgentDispatch)
+	if rr.Code != 200 {
+		t.Fatalf("expected dispatch status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var body map[string]interface{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &body)
+	chatUUID, _ := body["chat_uuid"].(string)
+
+	var chat database.Chat
+	if err := DB.Preload("SharedConfig").Where("uuid = ?", chatUUID).First(&chat).Error; err != nil {
+		t.Fatalf("expected interaction chat to exist: %v", err)
+	}
+	config := map[string]interface{}{}
+	if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
+		t.Fatalf("failed to decode shared config: %v", err)
+	}
+	if _, present := config[agentScopeTagsConfigKey]; present {
+		t.Fatalf("agent_scope_tags must not be forwarded to the interaction shared config, got %v", config)
+	}
+}
+
+// setBotAgentScopeTags records the opt-in `agent_scope_tags` declaration on a
+// bot runtime's default shared config.
+func setBotAgentScopeTags(t *testing.T, DB *gorm.DB, runtime database.BotRuntimeConfig, tags []string) {
+	t.Helper()
+	config := map[string]interface{}{}
+	if len(runtime.DefaultSharedConfig) > 0 {
+		if err := json.Unmarshal(runtime.DefaultSharedConfig, &config); err != nil {
+			t.Fatalf("failed to decode runtime shared config: %v", err)
+		}
+	}
+	config[agentScopeTagsConfigKey] = tags
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("failed to encode runtime shared config: %v", err)
+	}
+	if err := DB.Model(&database.BotRuntimeConfig{}).Where("id = ?", runtime.ID).Update("default_shared_config", encoded).Error; err != nil {
+		t.Fatalf("failed to set agent_scope_tags: %v", err)
 	}
 }
 

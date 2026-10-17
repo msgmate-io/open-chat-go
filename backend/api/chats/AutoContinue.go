@@ -563,6 +563,24 @@ func StopAutoContinueForChat(db *gorm.DB, chatID uint, reason string) error {
 	return saveAutoContinueState(db, chatID, state)
 }
 
+// ResumeAutoContinueForChat clears a terminal loop stop so a stalled/stopped
+// self-driving interaction can self-drive again after a nudge (ci#540
+// `hive_mind_agent_continue`). It only clears the stop latch; the turn counter
+// is left intact so the remaining budget still applies. A chat whose loop was
+// never enabled is untouched.
+func ResumeAutoContinueForChat(db *gorm.DB, chatID uint) error {
+	if db == nil || chatID == 0 {
+		return nil
+	}
+	state := loadAutoContinueState(db, chatID)
+	if !state.Stopped && strings.TrimSpace(state.StopReason) == "" {
+		return nil
+	}
+	state.Stopped = false
+	state.StopReason = ""
+	return saveAutoContinueState(db, chatID, state)
+}
+
 // loadAutoContinueState reads the persisted loop state of a chat.
 func loadAutoContinueState(db *gorm.DB, chatID uint) autoContinueState {
 	state := autoContinueState{}
