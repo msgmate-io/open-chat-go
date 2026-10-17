@@ -160,6 +160,10 @@ legacy first-enabled-SSH-server behavior is kept, so existing deployments are
 unaffected. The OpenCode-based coding bots remain the default/backup route and
 are not modified by the native sandbox flow.
 
+The capability parity of the native coder against the OpenCode bot suite (per
+bot, per capability, with the explicitly accepted fallbacks) is recorded in
+[`docs/native-coder-parity.md`](../docs/native-coder-parity.md).
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
