@@ -534,6 +534,16 @@ func TestAutoContinueStateRoundTrip(t *testing.T) {
 	if state.Turns != 3 {
 		t.Fatalf("stopping must not reset the budget counter, got %d", state.Turns)
 	}
+	if err := ResumeAutoContinueForChat(DB, chat.ID); err != nil {
+		t.Fatalf("resume loop: %v", err)
+	}
+	resumed := loadAutoContinueState(DB, chat.ID)
+	if resumed.Stopped || resumed.StopReason != "" {
+		t.Fatalf("resume must clear the stop latch, got %+v", resumed)
+	}
+	if resumed.Turns != 3 {
+		t.Fatalf("resuming must not reset the budget counter, got %d", resumed.Turns)
+	}
 }
 
 // TestMaybeAutoContinueInteractionSchedulesNextTurn verifies the whole loop
