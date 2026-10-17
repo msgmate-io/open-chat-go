@@ -21,6 +21,12 @@ type InteractionStatusResponse struct {
 	LatestMessageUUID     string `json:"latest_message_uuid,omitempty"`
 	LatestMessageFinished *bool  `json:"latest_message_finished,omitempty"`
 	Source                string `json:"source"`
+	// AutoContinue reports the in-product auto-continuation loop (ci#537): the
+	// interaction keeps producing turns by itself until the agent stops it.
+	AutoContinue           bool   `json:"auto_continue,omitempty"`
+	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
+	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
+	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
@@ -148,6 +154,7 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		State:    string(chatstate.StateIdle),
 		Source:   "none",
 	}
+	response = populateAutoContinueStatus(DB, chat, response)
 
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
