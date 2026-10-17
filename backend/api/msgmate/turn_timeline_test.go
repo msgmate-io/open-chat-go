@@ -71,6 +71,83 @@ func TestTurnTimelineStreamsInProgressThought(t *testing.T) {
 	}
 }
 
+func TestTurnTimelineRecordsAssistantNarration(t *testing.T) {
+	timeline := newTurnTimeline()
+	timeline.addThought("the build log points at a stale import", 900)
+
+	if !timeline.addText("Let me drop the stale import first.") {
+		t.Fatal("narration was not recorded")
+	}
+	// A tool call dispatched right after the narration sits past both entries.
+	if index := timeline.index(); index != 2 {
+		t.Fatalf("index after thought + narration = %d, want 2", index)
+	}
+
+	entries := timeline.snapshot()
+	if len(entries) != 2 {
+		t.Fatalf("snapshot length = %d, want 2", len(entries))
+	}
+	narration := entries[1].(map[string]interface{})
+	if narration["kind"] != timelineKindText {
+		t.Fatalf("narration kind = %#v, want %q", narration["kind"], timelineKindText)
+	}
+	if narration["text"] != "Let me drop the stale import first." {
+		t.Fatalf("unexpected narration text: %#v", narration["text"])
+	}
+	if _, hasDuration := narration["duration_ms"]; hasDuration {
+		t.Fatalf("narration must not carry a duration: %#v", narration)
+	}
+}
+
+func TestTurnTimelineCollapsesDuplicateNarration(t *testing.T) {
+	timeline := newTurnTimeline()
+	if !timeline.addText("same") {
+		t.Fatal("first narration was not recorded")
+	}
+	if timeline.addText("same") {
+		t.Fatal("duplicate narration was recorded twice")
+	}
+	// A different block after it is recorded again.
+	if !timeline.addText("different") {
+		t.Fatal("a distinct narration block must be recorded")
+	}
+	if timeline.addText("") {
+		t.Fatal("empty narration was recorded")
+	}
+	if timeline.len() != 2 {
+		t.Fatalf("timeline length = %d, want 2", timeline.len())
+	}
+}
+
+// A running turn streams the timeline into the partial message. Narration
+// blocks must be part of it: a tool call's timeline_index counts *all* entries,
+// so dropping them would shift every call's position and scramble the ordering.
+func TestTurnTimelineStreamingSnapshotKeepsNarration(t *testing.T) {
+	timeline := newTurnTimeline()
+	timeline.addThought("looking", 10)
+	timeline.addText("I will inspect the file now.")
+
+	entries := timeline.snapshotWithStreaming("")
+	if len(entries) != 2 {
+		t.Fatalf("streamed entries = %d, want 2 (thought + narration)", len(entries))
+	}
+	if kind := entries[0].(map[string]interface{})["kind"]; kind != timelineKindThought {
+		t.Fatalf("first streamed entry kind = %#v, want %q", kind, timelineKindThought)
+	}
+	if kind := entries[1].(map[string]interface{})["kind"]; kind != timelineKindText {
+		t.Fatalf("second streamed entry kind = %#v, want %q", kind, timelineKindText)
+	}
+
+	// A block still being produced is appended after the recorded ones.
+	withStreaming := timeline.snapshotWithStreaming("still writing")
+	if len(withStreaming) != 3 {
+		t.Fatalf("streamed entries with an open block = %d, want 3", len(withStreaming))
+	}
+	if got := withStreaming[2].(map[string]interface{})["streaming"]; got != true {
+		t.Fatalf("the open block must be flagged as streaming: %#v", withStreaming[2])
+	}
+}
+
 func TestTurnTimelineNilIsSafe(t *testing.T) {
 	var timeline *turnTimeline
 	if timeline.index() != 0 || timeline.len() != 0 {
@@ -81,5 +158,8 @@ func TestTurnTimelineNilIsSafe(t *testing.T) {
 	}
 	if timeline.addThought("x", 1) {
 		t.Fatal("nil timeline must not record thoughts")
+	}
+	if timeline.addText("x") {
+		t.Fatal("nil timeline must not record narration")
 	}
 }
