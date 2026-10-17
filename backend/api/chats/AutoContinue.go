@@ -129,8 +129,13 @@ func ResolveAutoContinueConfig(config map[string]interface{}) AutoContinueConfig
 
 	if value, ok := configInt(config, autoContinueMaxKey); ok {
 		resolved.MaxTurns = value
+	} else if value, ok := configInt(dispatch, autoContinueMaxKey); ok {
+		// Honour the budget attached by POST /api/v1/agents/dispatch.
+		resolved.MaxTurns = value
 	}
 	if value, ok := configInt(config, autoContinueDelayKey); ok {
+		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
+	} else if value, ok := configInt(dispatch, autoContinueDelayKey); ok {
 		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
 	}
 	if value := configString(config, autoContinuePromptKey); value != "" {

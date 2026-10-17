@@ -78,9 +78,11 @@ func TestResolveAutoContinueConfigExplicitKeys(t *testing.T) {
 func TestResolveAutoContinueConfigReadsAgentDispatchFallback(t *testing.T) {
 	config := ResolveAutoContinueConfig(map[string]interface{}{
 		"agent_dispatch": map[string]interface{}{
-			"auto_continue":     true,
-			"completion_marker": "<<FINISHED>>",
-			"human_marker":      "<<ASK>>",
+			"auto_continue":               true,
+			"completion_marker":           "<<FINISHED>>",
+			"human_marker":                "<<ASK>>",
+			"auto_continue_max":           7,
+			"auto_continue_delay_seconds": 42,
 		},
 	})
 	if !config.Enabled {
@@ -88,6 +90,12 @@ func TestResolveAutoContinueConfigReadsAgentDispatchFallback(t *testing.T) {
 	}
 	if config.CompletionMarker != "<<FINISHED>>" || config.HumanMarker != "<<ASK>>" {
 		t.Fatalf("dispatch markers not honoured: %q / %q", config.CompletionMarker, config.HumanMarker)
+	}
+	if config.MaxTurns != 7 {
+		t.Fatalf("dispatch budget not honoured: MaxTurns = %d, want 7", config.MaxTurns)
+	}
+	if config.Delay != 42*time.Second {
+		t.Fatalf("dispatch delay not honoured: Delay = %v, want 42s", config.Delay)
 	}
 }
 
