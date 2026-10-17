@@ -3,7 +3,12 @@ import mdx from "@mdx-js/rollup";
 import { defineConfig } from "vite";
 import vike from "vike/plugin";
 import path from "path";
+import { fileURLToPath } from "node:url";
 import remarkGfm from "remark-gfm";
+
+// `__dirname` is unavailable to Vite's native config loader; derive the config
+// directory from the module URL instead so the config stays loader-agnostic.
+const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 const cleanFrontmatterValue = (value: string) =>
   value.trim().replace(/^["']|["']$/g, "");
@@ -79,8 +84,8 @@ export default defineConfig({
     // this project's node_modules tree.
 
     alias: {
-      "@": path.resolve(__dirname, "."),
-      "@open-chat-go/ui": path.resolve(__dirname, "packages/ui/src/index.ts"),
+      "@": path.resolve(configDir, "."),
+      "@open-chat-go/ui": path.resolve(configDir, "packages/ui/src/index.ts"),
     },
   },
   server: {
