@@ -124,6 +124,8 @@ export * from "./lib/mobile-app";
 export * from "./lib/mobile-web";
 export * from "./lib/tool-init-registry";
 export * from "./lib/tool-init";
+export * from "./lib/confirmable-actions";
+export * from "./lib/chat-state";
 
 export * from "./lib/open-chat-run";
 export * from "./lib/terminal-zoom";
