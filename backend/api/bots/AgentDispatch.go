@@ -38,6 +38,12 @@ import (
 // user: the dispatched interaction belongs to the human the agent represents and
 // appears in their chat list. No arbitrary impersonation is possible because the
 // acting user can only ever be the caller or the caller's own owner.
+//
+// Management is additionally scoped per caller: a human manages its own
+// interactions, while an automated caller may only read/continue/stop an
+// interaction it participates in or that it dispatched (ci#540). A dispatch
+// records the dispatching bot as `agent_dispatch.dispatched_by` so a lead agent
+// can steer the agents it started.
 
 // resolveActingUser maps a session principal to the user an agent-management call
 // acts for. A human session acts for itself; an automated (bot) session acts for
@@ -63,20 +69,25 @@ func resolveActingUser(DB *gorm.DB, sessionUser *database.User) (*database.User,
 // workflow-equivalent options so an agent can reproduce what the GitHub
 // trigger-open-chat-coding-interaction workflow does.
 type AgentDispatchRequest struct {
-	Bot                  string                 `json:"bot"`
-	Message              string                 `json:"message"`
-	Tags                 []string               `json:"tags,omitempty"`
-	Autonomous           bool                   `json:"autonomous,omitempty"`
-	ApproveConfirmations bool                   `json:"approve_confirmations,omitempty"`
-	AutoContinue         bool                   `json:"auto_continue,omitempty"`
-	CompletionMarker     string                 `json:"completion_marker,omitempty"`
-	HumanMarker          string                 `json:"human_marker,omitempty"`
-	Workspace            string                 `json:"workspace,omitempty"`
-	Sandbox              string                 `json:"sandbox,omitempty"`
-	ConfigOverrides      map[string]interface{} `json:"config_overrides,omitempty"`
-	ToolInit             map[string]interface{} `json:"tool_init,omitempty"`
-	RequireConfirmation  *bool                  `json:"require_confirmation,omitempty"`
-	AutoShare            bool                   `json:"auto_share,omitempty"`
+	Bot                  string   `json:"bot"`
+	Message              string   `json:"message"`
+	Tags                 []string `json:"tags,omitempty"`
+	Autonomous           bool     `json:"autonomous,omitempty"`
+	ApproveConfirmations bool     `json:"approve_confirmations,omitempty"`
+	AutoContinue         bool     `json:"auto_continue,omitempty"`
+	// AutoContinueMax / AutoContinueDelaySeconds attach the in-product
+	// auto-continuation loop with an explicit budget and quiet period at dispatch
+	// time (ci#537/#540). Zero means "use the loop defaults".
+	AutoContinueMax          int                    `json:"auto_continue_max,omitempty"`
+	AutoContinueDelaySeconds int                    `json:"auto_continue_delay_seconds,omitempty"`
+	CompletionMarker         string                 `json:"completion_marker,omitempty"`
+	HumanMarker              string                 `json:"human_marker,omitempty"`
+	Workspace                string                 `json:"workspace,omitempty"`
+	Sandbox                  string                 `json:"sandbox,omitempty"`
+	ConfigOverrides          map[string]interface{} `json:"config_overrides,omitempty"`
+	ToolInit                 map[string]interface{} `json:"tool_init,omitempty"`
+	RequireConfirmation      *bool                  `json:"require_confirmation,omitempty"`
+	AutoShare                bool                   `json:"auto_share,omitempty"`
 }
 
 // AgentInteractionView is the stable, agent-facing view of a managed interaction.
@@ -171,7 +182,14 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 	if overrides == nil {
 		overrides = map[string]interface{}{}
 	}
-	if meta := agentDispatchMeta(req); len(meta) > 0 {
+	meta := agentDispatchMeta(req)
+	if sessionUser.IsAutomated {
+		// Record which bot dispatched the interaction so a later
+		// continue/stop/get only succeeds for the dispatcher (or the owner) and
+		// not for an unrelated bot acting for the same owner (ci#540 scope).
+		meta["dispatched_by"] = sessionUser.UUID
+	}
+	if len(meta) > 0 {
 		overrides["agent_dispatch"] = meta
 	}
 
@@ -202,7 +220,7 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		Tags:               database.NormalizeChatTags(req.Tags),
 		AutoContinue:       req.AutoContinue,
 	}
-	if loaded, loadErr := findActingInteraction(DB, actingUser, response.ChatUUID); loadErr == nil {
+	if loaded, loadErr := findManageableInteraction(DB, sessionUser, actingUser, response.ChatUUID); loadErr == nil {
 		view = agentInteractionView(DB, queueInspector, actingUser, loaded)
 	}
 
@@ -267,6 +285,9 @@ func (h *BotsHandler) AgentList(w http.ResponseWriter, r *http.Request) {
 	stateFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("state")))
 	views := make([]AgentInteractionView, 0, len(rows))
 	for _, chat := range rows {
+		if !callerMayManageInteraction(DB, sessionUser, actingUser, chat) {
+			continue
+		}
 		view := agentInteractionView(DB, inspector, actingUser, chat)
 		if stateFilter != "" && strings.ToLower(view.State) != stateFilter {
 			continue
@@ -296,7 +317,7 @@ func (h *BotsHandler) AgentGet(w http.ResponseWriter, r *http.Request) {
 	}
 	inspector, _ := util.GetAsynqInspector(r)
 
-	chat, err := findActingInteraction(DB, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
 	if err != nil {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
@@ -343,7 +364,7 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chat, err := findActingInteraction(DB, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
 	if err != nil {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
@@ -402,7 +423,7 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chat, err := findActingInteraction(DB, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
+	chat, err := findManageableInteraction(DB, sessionUser, actingUser, strings.TrimSpace(r.PathValue("chat_uuid")))
 	if err != nil {
 		http.Error(w, "Interaction not found", http.StatusNotFound)
 		return
@@ -540,8 +561,11 @@ func decodeMessageMeta(raw database.JSONRaw) map[string]interface{} {
 	return meta
 }
 
-// findActingInteraction loads an interaction chat the acting user participates in.
-func findActingInteraction(DB *gorm.DB, actingUser *database.User, chatUUID string) (database.Chat, error) {
+// findManageableInteraction loads an interaction chat the acting user
+// participates in and that the session caller is allowed to manage. A human
+// session manages any of its own interactions; an automated caller only the
+// interactions it participates in or dispatched (ci#540 scope).
+func findManageableInteraction(DB *gorm.DB, caller, actingUser *database.User, chatUUID string) (database.Chat, error) {
 	chat := database.Chat{}
 	if strings.TrimSpace(chatUUID) == "" {
 		return chat, gorm.ErrRecordNotFound
@@ -550,7 +574,52 @@ func findActingInteraction(DB *gorm.DB, actingUser *database.User, chatUUID stri
 		Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, actingUser.ID, actingUser.ID).
 		Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%").
 		First(&chat).Error
-	return chat, err
+	if err != nil {
+		return chat, err
+	}
+	if !callerMayManageInteraction(DB, caller, actingUser, chat) {
+		return database.Chat{}, gorm.ErrRecordNotFound
+	}
+	return chat, nil
+}
+
+// callerMayManageInteraction reports whether the session caller may read or
+// steer a managed interaction. The acting user (the caller, or the caller's
+// owner for an automated caller) scope already restricts the visible chats to
+// its own; this is the tighter per-caller gate:
+//
+//   - a human acts on its own interactions without further restriction;
+//   - an automated caller may only manage an interaction it is the automated
+//     participant of, or that it dispatched (recorded as
+//     `agent_dispatch.dispatched_by`), so one owner's unrelated bot cannot
+//     enumerate or stop another agent's chat.
+func callerMayManageInteraction(DB *gorm.DB, caller, actingUser *database.User, chat database.Chat) bool {
+	if caller == nil {
+		return false
+	}
+	if !caller.IsAutomated {
+		return true
+	}
+	if bot := automatedParticipant(chat); bot != nil && bot.ID == caller.ID {
+		return true
+	}
+	return chatDispatchedBy(DB, chat, caller.UUID)
+}
+
+// chatDispatchedBy reports whether the interaction's agent_dispatch metadata
+// records the given bot user UUID as the dispatcher.
+func chatDispatchedBy(DB *gorm.DB, chat database.Chat, botUUID string) bool {
+	botUUID = strings.TrimSpace(botUUID)
+	if botUUID == "" {
+		return false
+	}
+	config := sharedConfigForChat(DB, chat)
+	dispatch, ok := config["agent_dispatch"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	dispatchedBy, _ := dispatch["dispatched_by"].(string)
+	return strings.TrimSpace(dispatchedBy) == botUUID
 }
 
 // automatedParticipant returns the bot participant of a chat, if any.
@@ -608,6 +677,12 @@ func agentDispatchMeta(req AgentDispatchRequest) map[string]interface{} {
 	}
 	if req.AutoContinue {
 		meta["auto_continue"] = true
+	}
+	if req.AutoContinueMax > 0 {
+		meta["auto_continue_max"] = req.AutoContinueMax
+	}
+	if req.AutoContinueDelaySeconds > 0 {
+		meta["auto_continue_delay_seconds"] = req.AutoContinueDelaySeconds
 	}
 	if value := strings.TrimSpace(req.CompletionMarker); value != "" {
 		meta["completion_marker"] = value
