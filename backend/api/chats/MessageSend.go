@@ -302,6 +302,12 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 
 	isAutomatedReceiver := isAutomatedUserFromDB(DB, receiver)
 	if isAutomatedReceiver {
+		// A human prompt restarts the interaction's auto-continuation budget, so
+		// a fresh manual instruction gets a full loop budget again (ci#537).
+		if !user.IsAutomated && strings.HasPrefix(strings.TrimSpace(chat.ChatType), "interaction") {
+			resetAutoContinueCount(DB, chat.ID)
+		}
+
 		queueClient, clientErr := util.GetAsynqClient(r)
 		if clientErr != nil {
 			http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
@@ -331,6 +337,12 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	// final reply is persisted. Best-effort and detached so notification
 	// delivery (network I/O) never delays message persistence.
 	go maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+
+	// In-product auto-continuation (ci#537): when an automated agent's clean
+	// final reply lands on an opted-in interaction with budget left, schedule the
+	// next turn ourselves so the agent keeps working without an external nudge.
+	// Fetches the queue handles synchronously and runs detached.
+	maybeScheduleAutoContinueForMessage(r, DB, chat, *user, receiver, message)
 
 	w.Header().Set("Content-Type", "application/json")
 
