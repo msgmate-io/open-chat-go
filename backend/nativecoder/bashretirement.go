@@ -264,7 +264,7 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "Looking at the environment and at running services: env vars, binaries on PATH, processes, logs, dev servers, outbound HTTP probes.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_4_integration_clis",
-		Shipped:     true,
+		Shipped:     false,
 		Examples: []string{
 			"env",
 			"command -v go",
