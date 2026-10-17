@@ -925,6 +925,15 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	const thinkEndTag = "</think>"
 	var hadToolCall bool
 	var currentBuffer strings.Builder
+	// The turn timeline (ci#569) records the assistant's reasoning blocks in
+	// order together with how many of them had already been emitted when each
+	// tool call was dispatched, so the chat UI can render the thoughts between
+	// the tool calls instead of showing only opaque call rows.
+	timeline := newTurnTimeline()
+	// thoughtDurations maps a reasoning block to the time the model spent
+	// producing it, so a block extracted from the assistant text can still be
+	// reported with its duration.
+	thoughtDurations := map[string]int64{}
 	partialSessionID := fmt.Sprintf("%s-%d", message.Content.ChatUUID, time.Now().UnixNano())
 	var partialSeq int64
 	nextPartialSeq := func() int64 {
@@ -1007,12 +1016,44 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			currentThoughtStep.Reset()
 			return
 		}
+		durationMs := duration.Milliseconds()
+		if durationMs < 0 {
+			durationMs = 0
+		}
+		thoughtDurations[stepText] = durationMs
+		timeline.addThought(stepText, durationMs)
 		appendThoughtEntries([]string{stepText})
 		thinkingSteps = append(thinkingSteps, map[string]string{
 			"text":     stepText,
 			"duration": duration.Round(time.Millisecond).String(),
 		})
 		currentThoughtStep.Reset()
+	}
+
+	// finalizePendingTimelineThought records a reasoning block that is still
+	// open (no closing think tag yet) before a tool call is registered, so the
+	// thought that led to the call is not lost or rendered after it.
+	finalizePendingTimelineThought := func() {
+		stepText := strings.TrimSpace(currentThoughtStep.String())
+		if stepText == "" {
+			return
+		}
+		timeline.addThought(stepText, thoughtDurations[stepText])
+		appendThoughtEntries([]string{stepText})
+		currentThoughtStep.Reset()
+	}
+
+	// partialTimeline attaches the ordered reasoning timeline to a partial
+	// message's meta data, including the block that is still streaming so the
+	// UI can render it while it arrives (ci#569).
+	partialTimeline := func(meta map[string]interface{}) map[string]interface{} {
+		if meta == nil {
+			meta = map[string]interface{}{}
+		}
+		if snapshot := timeline.snapshotWithStreaming(strings.TrimSpace(currentThoughtStep.String())); len(snapshot) > 0 {
+			meta["timeline"] = snapshot
+		}
+		return meta
 	}
 
 	extractThinkSections := func(raw string) (string, []string) {
@@ -1200,6 +1241,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				metadata["thinking_steps"] = thinkingSteps
 			}
 		}
+		// The ordered reasoning timeline is what the chat UI renders between the
+		// tool calls (ci#569). A block that was still open when the turn ended is
+		// recorded as a finished block (with an unknown duration).
+		if pending := strings.TrimSpace(currentThoughtStep.String()); pending != "" {
+			timeline.addThought(pending, thoughtDurations[pending])
+			currentThoughtStep.Reset()
+		}
+		if snapshot := timeline.snapshot(); len(snapshot) > 0 {
+			metadata["timeline"] = snapshot
+		}
 
 		if len(reasoningEntries) > 0 {
 			aih.botContext.Client.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
@@ -1233,6 +1284,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if reasoning {
 			thinkingElapsed := currentThinkingDuration()
 			seq := nextPartialSeq()
+			meta := partialTimeline(map[string]interface{}{
+				"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
+				"total_time":    totalTime.Round(time.Millisecond).String(),
+				"partial_phase": "responding",
+			})
 			aih.botContext.WSHandler.MessageHandler.SendMessage(
 				aih.botContext.WSHandler,
 				message.Content.SenderUUID,
@@ -1243,11 +1299,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					seq,
 					chunk,
 					[]string{""},
-					&map[string]interface{}{
-						"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
-						"total_time":    totalTime.Round(time.Millisecond).String(),
-						"partial_phase": "responding",
-					},
+					&meta,
 					nil,
 					nil,
 				),
@@ -1257,6 +1309,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 
 		seq := nextPartialSeq()
+		meta := partialTimeline(map[string]interface{}{
+			"total_time":    totalTime.Round(time.Millisecond).String(),
+			"partial_phase": "responding",
+		})
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -1267,10 +1323,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				seq,
 				chunk,
 				[]string{},
-				&map[string]interface{}{
-					"total_time":    totalTime.Round(time.Millisecond).String(),
-					"partial_phase": "responding",
-				},
+				&meta,
 				nil,
 				nil,
 			),
@@ -1287,6 +1340,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		totalTime := time.Since(startTime)
 		thinkingElapsed := currentThinkingDuration()
 		seq := nextPartialSeq()
+		meta := partialTimeline(map[string]interface{}{
+			"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
+			"total_time":    totalTime.Round(time.Millisecond).String(),
+			"partial_phase": "thinking",
+		})
 		aih.botContext.WSHandler.MessageHandler.SendMessage(
 			aih.botContext.WSHandler,
 			message.Content.SenderUUID,
@@ -1297,11 +1355,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				seq,
 				"",
 				[]string{chunk},
-				&map[string]interface{}{
-					"thinking_time": thinkingElapsed.Round(time.Millisecond).String(),
-					"total_time":    totalTime.Round(time.Millisecond).String(),
-					"partial_phase": "thinking",
-				},
+				&meta,
 				nil,
 				nil,
 			),
@@ -1391,11 +1445,22 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if !hadToolCall {
 					hadToolCall = true
 					_, extractedThoughts := extractThinkSections(fullText.String())
+					for _, thought := range extractedThoughts {
+						trimmed := strings.TrimSpace(thought)
+						if trimmed == "" {
+							continue
+						}
+						timeline.addThought(trimmed, thoughtDurations[trimmed])
+					}
 					appendThoughtEntries(extractedThoughts)
 					fullText.Reset()
 					currentBuffer.Reset()
 				}
 				fmt.Println("toolCall", toolCall.ToolName, toolCall.ToolInput)
+
+				// A reasoning block that is still streaming when the call is
+				// dispatched belongs *before* it in the timeline.
+				finalizePendingTimelineThought()
 
 				toolStatus := strings.TrimSpace(toolCall.Status)
 				if toolStatus == "" {
@@ -1414,13 +1479,17 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					"arguments": toolCall.ToolInput,
 					"result":    toolCall.Result,
 					"status":    toolStatus,
+					// timeline_index is the number of reasoning blocks emitted
+					// before this call was dispatched, so the chat UI can render
+					// the thought the agent produced right before it (ci#569).
+					"timeline_index": timeline.index(),
 				}
 				if strings.TrimSpace(toolCall.Error) != "" {
 					toolCallRepr["error"] = toolCall.Error
 				}
-				// Per-call timing (ci#569): a live started_at lets the UI run a
-				// timer while the call is ongoing, and duration_ms renders the
-				// final elapsed time once it completes.
+				// Per-call timing (ci#569): started_at lets the UI run a live
+				// timer while the call is ongoing, duration_ms renders the final
+				// elapsed time once it completed.
 				if toolCall.StartedAtUnixMs > 0 {
 					toolCallRepr["started_at"] = toolCall.StartedAtUnixMs
 				}
@@ -1459,6 +1528,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					}
 					if existing["id"] == toolCall.Id {
 						for key, value := range toolCallRepr {
+							// Keep the position the call was first dispatched at.
+							if key == "timeline_index" {
+								continue
+							}
 							existing[key] = value
 						}
 						allToolCalls[i] = existing
@@ -1471,12 +1544,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 
 				totalTime := time.Since(startTime)
-				partialMeta := map[string]interface{}{
+				partialMeta := partialTimeline(map[string]interface{}{
 					"total_time":       totalTime.Round(time.Millisecond).String(),
 					"tool_call":        toolCall.ToolName,
 					"tool_call_status": toolStatus,
 					"partial_phase":    "tool_call",
-				}
+				})
 				if strings.TrimSpace(toolCall.Error) != "" {
 					partialMeta["tool_call_error"] = toolCall.Error
 				}

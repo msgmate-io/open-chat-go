@@ -25,6 +25,11 @@ export interface ToolCallLike {
   started_at?: number | string;
   /** Total execution time in milliseconds, once the call completed (ci#569). */
   duration_ms?: number | string;
+  /**
+   * How many reasoning blocks had already been emitted when this call was
+   * dispatched, which places it in the turn's ordered timeline (ci#569).
+   */
+  timeline_index?: number | string;
 }
 
 export type ToolCallCategory = "edit" | "command" | "read" | "workspace" | "other";
@@ -133,6 +138,16 @@ export function toolCallStartedAtMs(call: ToolCallLike): number | undefined {
 export function toolCallDurationMs(call: ToolCallLike): number | undefined {
   const duration = num(call?.duration_ms);
   return duration !== undefined && duration >= 0 ? duration : undefined;
+}
+
+/**
+ * Number of reasoning blocks emitted before the call was dispatched (ci#569).
+ * It places the call in the turn's ordered timeline; older messages (and
+ * backends that do not report it) return undefined.
+ */
+export function toolCallTimelineIndex(call: ToolCallLike): number | undefined {
+  const index = num(call?.timeline_index);
+  return index !== undefined && index >= 0 ? index : undefined;
 }
 
 /**

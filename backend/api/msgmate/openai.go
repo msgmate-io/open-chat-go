@@ -1201,12 +1201,14 @@ func processParsedToolCall(
 		result.error = ""
 
 		toolChan <- ToolCall{
-			ToolName:        name,
-			ToolInput:       toolInput,
-			Id:              id,
-			Result:          cachedResult,
-			Status:          ToolCallStatusSucceeded,
-			Error:           "",
+			ToolName:  name,
+			ToolInput: toolInput,
+			Id:        id,
+			Result:    cachedResult,
+			Status:    ToolCallStatusSucceeded,
+			Error:     "",
+			// A cache hit is also a completed call: report a zero-length
+			// duration so the UI can render its timing row (ci#569).
 			StartedAtUnixMs: time.Now().UnixMilli(),
 		}
 		return
