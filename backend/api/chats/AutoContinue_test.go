@@ -218,6 +218,237 @@ func TestDecideAutoContinueDisabledProducesNoDecision(t *testing.T) {
 	}
 }
 
+// TestDecideAutoContinueStopsOnTaskCompletedFlag guards the machine-readable
+// completion sentinel (ci#537 hardening): a reply that sets `task_completed`
+// stops the loop exactly like the text marker, and it takes precedence over a
+// still-remaining budget.
+func TestDecideAutoContinueStopsOnTaskCompletedFlag(t *testing.T) {
+	message := finishedMessage(`{"finished":true,"task_completed":true}`)
+	decision := decideAutoContinue(enabledConfig(), autoContinueState{Turns: 1}, message, decodeOrFail(t, message.MetaData), false)
+	if decision.Continue {
+		t.Fatal("a task_completed flag must stop the loop")
+	}
+	if decision.StopReason != "completed" {
+		t.Fatalf("StopReason = %q, want completed", decision.StopReason)
+	}
+
+	// A reply that merely mentions the flag in prose (string, not bool) must
+	// not stop the loop.
+	notFlag := finishedMessage(`{"finished":true,"task_completed":"no"}`)
+	if decision := decideAutoContinue(enabledConfig(), autoContinueState{}, notFlag, decodeOrFail(t, notFlag.MetaData), false); !decision.Continue {
+		t.Fatalf("a non-boolean task_completed must not stop the loop, got %+v", decision)
+	}
+}
+
+// TestDecideAutoContinueRefusesOverlappingContinuation guards the durable
+// no-overlap rule: a continuation already scheduled for this exact bot turn
+// must not be doubled up, while a fresh bot turn clears the outstanding marker.
+func TestDecideAutoContinueRefusesOverlappingContinuation(t *testing.T) {
+	message := finishedMessage(`{"finished":true}`)
+	message.ID = 42
+	outstanding := autoContinueState{Turns: 1, Pending: true, PendingSourceMessageID: 42}
+
+	decision := decideAutoContinue(enabledConfig(), outstanding, message, decodeOrFail(t, message.MetaData), false)
+	if decision.Continue {
+		t.Fatal("an outstanding continuation must not be scheduled twice")
+	}
+	if decision.StopReason != continuationInFlightReason {
+		t.Fatalf("StopReason = %q, want %q", decision.StopReason, continuationInFlightReason)
+	}
+
+	// A newer bot message proves the outstanding continuation ran, so the loop
+	// resumes.
+	fresh := finishedMessage(`{"finished":true}`)
+	fresh.ID = 43
+	if decision := decideAutoContinue(enabledConfig(), outstanding, fresh, decodeOrFail(t, fresh.MetaData), false); !decision.Continue {
+		t.Fatalf("a new bot turn must clear the outstanding marker, got %+v", decision)
+	}
+}
+
+// TestMaybeAutoContinueInteractionIsIdempotentPerTurn guards that the loop
+// advances exactly one turn per completed bot message: re-evaluating the same
+// completion (a duplicate/retried event) is a no-op and never a second prompt.
+func TestMaybeAutoContinueInteractionIsIdempotentPerTurn(t *testing.T) {
+	captured := stubAutoContinueEnqueue(t)
+
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "auto-continue-idem@example.com", false)
+	bot := createBotUserForChatsTest(t, DB, "auto-continue-idem-bot@example.com")
+
+	shared := database.SharedChatConfig{ConfigData: json.RawMessage(`{"auto_continue":true,"auto_continue_delay_seconds":0}`)}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	chat := database.Chat{
+		User1Id:        owner.ID,
+		User2Id:        bot.ID,
+		ChatType:       "interaction",
+		SharedConfigId: &shared.ID,
+	}
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatalf("failed to create chat: %v", err)
+	}
+	chat.SharedConfig = &shared
+
+	message := textMessage("working on it", `{"finished":true}`)
+	message.ChatId = chat.ID
+	message.SenderId = bot.ID
+	message.ReceiverId = owner.ID
+	if err := DB.Create(&message).Error; err != nil {
+		t.Fatalf("failed to create message: %v", err)
+	}
+
+	if forwarded := maybeAutoContinueInteraction(context.Background(), DB, nil, nil, chat, *bot, *owner, message); !forwarded {
+		t.Fatal("expected the first evaluation to continue the loop")
+	}
+	if len(*captured) != 1 {
+		t.Fatalf("expected exactly one scheduled bot reply after the first evaluation, got %d", len(*captured))
+	}
+
+	// A duplicate completion event for the same bot message must not schedule a
+	// second, overlapping continuation and must not latch the loop off.
+	if forwarded := maybeAutoContinueInteraction(context.Background(), DB, nil, nil, chat, *bot, *owner, message); forwarded {
+		t.Fatal("a duplicate completion event must not schedule another turn")
+	}
+	if len(*captured) != 1 {
+		t.Fatalf("expected no additional scheduled bot reply, got %d", len(*captured))
+	}
+	state := loadAutoContinueState(DB, chat.ID)
+	if state.Turns != 1 || state.Stopped {
+		t.Fatalf("a duplicate event must leave the loop continuing, got %+v", state)
+	}
+}
+
+// TestMaybeAutoContinueInteractionResumesAfterOutstandingTurn guards that a
+// genuinely new bot turn clears the outstanding marker and advances the loop,
+// so the no-overlap guard never wedges a healthy interaction.
+func TestMaybeAutoContinueInteractionResumesAfterOutstandingTurn(t *testing.T) {
+	captured := stubAutoContinueEnqueue(t)
+
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "auto-continue-resume@example.com", false)
+	bot := createBotUserForChatsTest(t, DB, "auto-continue-resume-bot@example.com")
+
+	shared := database.SharedChatConfig{ConfigData: json.RawMessage(`{"auto_continue":true,"auto_continue_delay_seconds":0}`)}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	chat := database.Chat{
+		User1Id:        owner.ID,
+		User2Id:        bot.ID,
+		ChatType:       "interaction",
+		SharedConfigId: &shared.ID,
+	}
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatalf("failed to create chat: %v", err)
+	}
+	chat.SharedConfig = &shared
+
+	first := textMessage("step one", `{"finished":true}`)
+	first.ChatId = chat.ID
+	first.SenderId = bot.ID
+	first.ReceiverId = owner.ID
+	if err := DB.Create(&first).Error; err != nil {
+		t.Fatalf("failed to create first message: %v", err)
+	}
+	if forwarded := maybeAutoContinueInteraction(context.Background(), DB, nil, nil, chat, *bot, *owner, first); !forwarded {
+		t.Fatal("expected the first turn to continue")
+	}
+
+	// A new bot turn (the scheduled continuation actually ran) must advance the
+	// loop again.
+	second := textMessage("step two", `{"finished":true}`)
+	second.ChatId = chat.ID
+	second.SenderId = bot.ID
+	second.ReceiverId = owner.ID
+	if err := DB.Create(&second).Error; err != nil {
+		t.Fatalf("failed to create second message: %v", err)
+	}
+	if forwarded := maybeAutoContinueInteraction(context.Background(), DB, nil, nil, chat, *bot, *owner, second); !forwarded {
+		t.Fatal("expected the next bot turn to continue the loop")
+	}
+	if len(*captured) != 2 {
+		t.Fatalf("expected two scheduled bot replies, got %d", len(*captured))
+	}
+	if state := loadAutoContinueState(DB, chat.ID); state.Turns != 2 {
+		t.Fatalf("expected the turn counter to reach 2, got %d", state.Turns)
+	}
+}
+
+// TestMaybeAutoContinueInteractionStopsOnTaskCompletedFlag guards the
+// end-to-end machine-readable completion: the loop stops deterministically and
+// the completion notification is not suppressed.
+func TestMaybeAutoContinueInteractionStopsOnTaskCompletedFlag(t *testing.T) {
+	captured := stubAutoContinueEnqueue(t)
+
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "auto-continue-flag@example.com", false)
+	bot := createBotUserForChatsTest(t, DB, "auto-continue-flag-bot@example.com")
+
+	shared := database.SharedChatConfig{ConfigData: json.RawMessage(`{"auto_continue":true}`)}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	chat := database.Chat{
+		User1Id:        owner.ID,
+		User2Id:        bot.ID,
+		ChatType:       "interaction",
+		SharedConfigId: &shared.ID,
+	}
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatalf("failed to create chat: %v", err)
+	}
+	chat.SharedConfig = &shared
+
+	message := textMessage("all done", `{"finished":true,"task_completed":true}`)
+	message.ChatId = chat.ID
+	message.SenderId = bot.ID
+	message.ReceiverId = owner.ID
+	if err := DB.Create(&message).Error; err != nil {
+		t.Fatalf("failed to create message: %v", err)
+	}
+
+	if forwarded := maybeAutoContinueInteraction(context.Background(), DB, nil, nil, chat, *bot, *owner, message); forwarded {
+		t.Fatal("a task_completed flag must not schedule another turn")
+	}
+	if len(*captured) != 0 {
+		t.Fatalf("expected no scheduled bot reply, got %d", len(*captured))
+	}
+	state := loadAutoContinueState(DB, chat.ID)
+	if !state.Stopped || state.StopReason != "completed" {
+		t.Fatalf("expected the loop to be stopped as completed, got %+v", state)
+	}
+}
+
+// TestAutoContinueBudgetPersistsAcrossTurns guards the per-chat budget: the
+// counter survives in ChatSettings and the loop is exhausted once it reaches the
+// cap, so a restart can never grant unlimited turns.
+func TestAutoContinueBudgetPersistsAcrossTurns(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "auto-continue-budget@example.com", false)
+	bot := createBotUserForChatsTest(t, DB, "auto-continue-budget-bot@example.com")
+	chat := database.Chat{User1Id: owner.ID, User2Id: bot.ID, ChatType: "interaction"}
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatalf("failed to create chat: %v", err)
+	}
+
+	if err := saveAutoContinueState(DB, chat.ID, autoContinueState{Turns: 2, Pending: true, PendingSourceMessageID: 7}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	config := enabledConfig()
+	config.MaxTurns = 2
+	message := finishedMessage(`{"finished":true}`)
+	message.ID = 99
+
+	decision := decideAutoContinue(config, loadAutoContinueState(DB, chat.ID), message, decodeOrFail(t, message.MetaData), false)
+	if decision.Continue {
+		t.Fatal("the loop must not continue past its budget")
+	}
+	if decision.StopReason != autoContinueExhaustedReason {
+		t.Fatalf("StopReason = %q, want %q", decision.StopReason, autoContinueExhaustedReason)
+	}
+}
+
 // TestAutoContinueStatusProjection guards the agent/status-facing projection:
 // only an opted-in interaction reports loop state.
 func TestAutoContinueStatusProjection(t *testing.T) {
