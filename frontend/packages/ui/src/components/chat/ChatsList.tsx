@@ -715,7 +715,11 @@ export function ChatsList({
                     ) : null}
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <DropdownMenuContent
+                align="end"
+                className="max-h-[min(70vh,420px)] w-56 overflow-y-auto overscroll-contain"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+            >
                 <DropdownMenuLabel>Filter chats</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {CHAT_TYPE_ORDER.map((chatType) => (
@@ -742,7 +746,11 @@ export function ChatsList({
                     ) : null}
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <DropdownMenuContent
+                align="end"
+                className="max-h-[min(70vh,420px)] w-60 overflow-y-auto overscroll-contain"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+            >
                 <DropdownMenuLabel>Filter by tag</DropdownMenuLabel>
                 <div className="px-2 pb-1.5">
                     <Text type={TextTypes.Body7} color="muted">
@@ -797,7 +805,11 @@ export function ChatsList({
                     ) : null}
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
+            <DropdownMenuContent
+                align="end"
+                className="max-h-[min(70vh,420px)] w-52 overflow-y-auto overscroll-contain"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+            >
                 <DropdownMenuLabel>Filter by state</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {CHAT_STATE_FILTER_ORDER.map((state) => (
