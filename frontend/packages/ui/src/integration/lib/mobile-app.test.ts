@@ -3,7 +3,9 @@ import {
   isMobileServerAuthenticated,
   isMobileServerAuthenticatedWithProbe,
   probeActiveMobileServerAuthenticated,
+  recordMobileServerAuthProbe,
   resolveMobileServerAuthSelection,
+  resolveMobileServerAuthenticated,
   type MobileAppConfig,
   type MobileServerConfig,
 } from "./mobile-app";
@@ -52,6 +54,48 @@ describe("isMobileServerAuthenticatedWithProbe", () => {
   it("stays false when neither the native hint nor the probe authenticated", () => {
     expect(isMobileServerAuthenticatedWithProbe(server({ id: "ci" }), "ci", false)).toBe(false);
     expect(isMobileServerAuthenticatedWithProbe(null, "ci", true)).toBe(false);
+  });
+});
+
+describe("resolveMobileServerAuthenticated", () => {
+  it("trusts the native positive hint", () => {
+    expect(resolveMobileServerAuthenticated(server({ id: "a", isAuthenticated: true }), {})).toBe(true);
+  });
+
+  it("uses the per-server probe result, not another server's", () => {
+    expect(resolveMobileServerAuthenticated(server({ id: "ci" }), { ci: true })).toBe(true);
+    expect(resolveMobileServerAuthenticated(server({ id: "other" }), { ci: true })).toBe(false);
+  });
+
+  it("stays false when neither the hint nor the probe authenticated", () => {
+    expect(resolveMobileServerAuthenticated(server({ id: "ci" }), {})).toBe(false);
+    expect(resolveMobileServerAuthenticated(server({ id: "ci" }), { ci: false })).toBe(false);
+    expect(resolveMobileServerAuthenticated(null, { ci: true })).toBe(false);
+  });
+});
+
+describe("recordMobileServerAuthProbe", () => {
+  it("records an authenticated result per server without touching the others", () => {
+    const next = recordMobileServerAuthProbe({ other: true }, "ci", true);
+    expect(next).toEqual({ other: true, ci: true });
+  });
+
+  it("keeps a known-authenticated server sticky on a transient failed probe", () => {
+    // A switch/runtime restart can race the probe; the server that was
+    // authenticated seconds ago must not blink back to "No auth".
+    const next = recordMobileServerAuthProbe({ ci: true }, "ci", false);
+    expect(next).toEqual({ ci: true });
+  });
+
+  it("downgrades only once the failed probe is the latest known state", () => {
+    const next = recordMobileServerAuthProbe({}, "ci", false);
+    expect(next).toEqual({ ci: false });
+  });
+
+  it("returns the same reference when nothing changes", () => {
+    const state = { ci: true };
+    expect(recordMobileServerAuthProbe(state, "ci", true)).toBe(state);
+    expect(recordMobileServerAuthProbe(state, "", false)).toBe(state);
   });
 });
 
