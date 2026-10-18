@@ -231,6 +231,63 @@ backend log. Both knobs are configurable per deployment:
 `OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_BASE_DELAY_MS` (default 400 ms,
 exponential up to a 5 s cap).
 
+### Scheduler-capacity failures wait for the node, they are not blips (ci#691)
+
+The ci#688 retry policy above classifies an **unschedulable sandbox pod** as a
+transient failure, but it backed it off on a millisecond scale — three attempts
+within ~1.2 s — which cannot absorb a *node capacity* condition:
+
+```text
+sandbox "coder-7b205aa3-…" is not schedulable: Unschedulable:
+0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate,
+preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+```
+
+The node only frees a sandbox's request when a finished sandbox is reaped or a
+peer agent releases its pod — tens of seconds, not hundreds of milliseconds — so
+the attempt budget was burned on a condition that could not have changed, and
+every agent of a saturated pool did it at the same time. The same finding is what
+the sandbox integration's background credential re-provision path reports
+(`failed to re-provision credentials for sandbox ssh server … after 5m0s`, the
+ci#691 signature; the fail-fast half is
+`msgmate-io/open-chat-go-docker-sandbox-integration#29`, the capacity levers are
+ci#529 / ci#545 / ci#602).
+
+`backend/api/msgmate/sandbox_capacity.go` (with the capacity backoff in
+`api/msgmate/tool_failure_retry.go`) therefore splits the capacity case out of the
+blip case:
+
+- a **scheduler capacity rejection** (`isSandboxCapacityFailure`: `insufficient
+  cpu` / `insufficient memory` / `is not schedulable` / `unschedulable` /
+  `no preemption victims` / `nodes are available`) is retried with a slower,
+  still bounded backoff — a linear ramp from `5s` to a `30s` cap, plus bounded
+  jitter — instead of the ci#688 millisecond backoff;
+- while the node is known to be saturated, the **other** provisioning calls of
+  the fleet are held back for the same window (`awaitSandboxCapacityCooldown`).
+  The cooldown is process-wide, not chat-scoped: node capacity is shared by every
+  interaction the backend serves, so one agent learning that the node is out of
+  room is information the whole fleet can use. It is a wait, never a block — it
+  is bounded by the generation context (a user stop ends it) and capped at one
+  capacity window;
+- the failure that reaches the model is its own message
+  (`buildSandboxCapacityToolErrorPlaceholder`): the sandbox could not be
+  *scheduled* because the node is out of CPU/memory, it does **not** consume the
+  failed-tool budget, and the agent should wait or continue with work that needs
+  no sandbox instead of re-provisioning in a loop;
+- the condition is surfaced separately from a generic transient failure: the tool
+  call carries `sandbox_capacity` alongside `retries`/`budget_exempt`, and the
+  `interaction_complete` payload reports
+  `tool_call_sandbox_capacity_failed_count`, so a saturated node is visible in the
+  transcript instead of only in the backend log.
+
+The capacity backoff base is configurable per deployment with
+`OCI_MSGMATE_CODER_SANDBOX_CAPACITY_RETRY_BASE_DELAY_MS` (default `5000`, the ramp
+is capped at `30s`); the attempt count is the shared
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_ATTEMPTS` of ci#688. This is the application
+half of the fix — it makes the loop wait instead of stampeding — and does not
+replace the capacity levers themselves (node sizing, the right-sized per-chat
+requests of ci#604, the pooled/shared mode of ci#545).
+
 ### Native coding-agent provider concurrency control
 
 Under full-throttle development (many native agents at once) a shared provider
