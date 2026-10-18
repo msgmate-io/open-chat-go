@@ -119,15 +119,17 @@ func botRuntimeSharedConfig(botUserID uint) map[string]interface{} {
 // the recorded terminal reason/counters.
 func ResolveTerminalAssistantText(text string, toolCalls int, cancelled bool, streamErr error, outcome *TurnOutcome) string {
 	trimmed := strings.TrimSpace(text)
+	const pauseMarker = "I paused this response. Send another message when you want me to continue."
 	// A stopped turn keeps whatever it already said and only adds the pause
 	// marker, so the user always sees why the answer ends.
 	if cancelled || errors.Is(streamErr, context.Canceled) {
-		pause := "I paused this response. Send another message when you want me to continue."
-		if trimmed != "" {
-			if strings.Contains(trimmed, pause) {
+		// The caller may already have appended the bare pause marker; that is
+		// not an answer, so a turn that did work still gets the richer summary.
+		if trimmed != "" && trimmed != pauseMarker && !strings.HasSuffix(trimmed, "\n"+pauseMarker) {
+			if strings.Contains(trimmed, pauseMarker) {
 				return trimmed
 			}
-			return trimmed + "\n" + pause
+			return trimmed + "\n" + pauseMarker
 		}
 		if toolCalls > 0 {
 			return fmt.Sprintf(
@@ -135,7 +137,7 @@ func ResolveTerminalAssistantText(text string, toolCalls int, cancelled bool, st
 				toolCalls,
 			)
 		}
-		return pause
+		return pauseMarker
 	}
 	if trimmed != "" {
 		return trimmed

@@ -194,6 +194,21 @@ func TestTerminalTextNeverEmptyOnEveryExitPath(t *testing.T) {
 			wantAny:   []string{"paused this response"},
 		},
 		{
+			name:      "cancel with a tool-less bare pause marker",
+			text:      "I paused this response. Send another message when you want me to continue.",
+			cancelled: true,
+			outcome:   &TurnOutcome{Reason: TurnEndedCancelled},
+			wantAny:   []string{"paused this response"},
+		},
+		{
+			name:      "cancel with tools and only the bare pause marker",
+			text:      "I paused this response. Send another message when you want me to continue.",
+			cancelled: true,
+			toolCalls: 41,
+			outcome:   &TurnOutcome{Reason: TurnEndedCancelled, ToolCalls: 41},
+			wantAny:   []string{"41 tool call(s)"},
+		},
+		{
 			name:      "loop guard (no usable call)",
 			toolCalls: 5,
 			outcome:   &TurnOutcome{Reason: TurnEndedNoUsableCall, ToolCalls: 5},
