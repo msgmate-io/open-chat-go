@@ -876,6 +876,84 @@ Chat extension registrations (message inputs, details views, pre-start selectors
 - `frontend/integrations/extensions.gen.ts` is generated (gitignored). `frontend/scripts/ensure-extensions-gen.mjs` creates an empty placeholder before `npm run dev`/`build`/`install`, and the manager overwrites it with the selected profile's extension imports.
 - Note: the `frontend`/`storybook` containers still run as root, so they own `frontend/node_modules` and `frontend/node_modules/.vite`; when building the frontend on the host afterwards, `chown` that directory first.
 
+### Second CI deployment: `ci2` - monitoring / recovery agent (ci#658)
+
+The `ci` deployment (`msgmate-io-ci`, https://ci.msgmate.io) is a full dev
+environment. ci#658 asks for a **second** deployment, `msgmate-io-ci2`
+(https://ci2.msgmate.io), with a-most the same setup and config - same image and
+release flow, same SQLite volume setup, same resources - differing only in that it
+configures a **small sub-set of coding-bot capability**: an agent that watches and
+monitors the `ci` server and is able to *debug, recover and monitor* it when it
+crashes. `ci2` is therefore the deployment that must **not** be the crashed one,
+and it holds the credentials to reach `ci`. The emergency/monitoring agent is
+started **before** a deployment rolls, or manually from CI when monitoring reports
+`ci` down.
+
+The restricted profile itself (`backend/nativecoder/recoveryagent.go`: tool
+families, probes, triggers, markers, the single-host boundary) and its deployment
+half (`backend/nativecoder/recoverydeployment.go`: the delta below, the rendered
+Helm overlay, the watchdog wiring and the provisioning checklist) are code, and
+both are unit tested. The private chart lives in
+`msgmate-io/open-chat-go-helm-chart`. The values file the overlay is applied on
+top of is `development/helm/backend/values.msgmate-io-ci.yaml` (`msgmate-io-ci`);
+the new one is `development/helm/backend/values.msgmate-io-ci2.yaml`
+(`msgmate-io-ci2`). Production
+(`development/helm/backend/values.msgmate-io-production.yaml`, https://msgmate.io)
+is **never** a valid target and neither the deployment nor the bot can reach it
+(`ValidateDeploymentDelta` + `ValidateRecoveryProfile`).
+
+Recorded delta from `ci` (generated: `RenderDeploymentDeltaTable()`); this is
+exactly what `ValidateDeploymentDelta` enforces at build time:
+
+| values key | kind | ci | ci2 | why |
+|---|---|---|---|---|
+| `deployment.name` | identity | msgmate-io-ci | msgmate-io-ci2 | second deployment, same setup: it must NOT be the crashed one |
+| `ingress.host` | identity | ci.msgmate.io | ci2.msgmate.io | new public host; the recovery bot runs here, it watches ci.msgmate.io |
+| `runtime.PUBLIC_BASE_URL` | identity | https://ci.msgmate.io | https://ci2.msgmate.io | interaction links and capability markers point at ci2, not at the watched host |
+| `ingress.tls.hosts.monitored` | same-as-ci | ci.msgmate.io | ci.msgmate.io | the watched host is an ingress route of the new release |
+| `coder.fullCoderEnabled` | capability | true | false | only a small sub-set of coding bot capability is configured here |
+| `recoveryAgent.enabled` | capability | false | true | the restricted monitoring/diagnose/recover profile is what runs on ci2 |
+| `recoveryAgent.tools` | capability | full coder tool set | coder_bash,coder_read,coder_list,chat_send_message,ssh_exec_command_run_short,service_restart | narrow, prefix-checked subset (see ValidateRecoveryProfile) |
+| `recoveryAgent.maxRecoveryAttempts` | capability | 0 | 2 | bounded restart budget per incident, then escalate to a human |
+| `recoveryAgent.monitors` | capability |  | ci.msgmate.io | exactly the crash target; production is never in this list |
+| `recoveryAgent.credentialRef` | credential-ref |  | ci-recovery-ssh | runtime secret-store reference to reach ci.msgmate.io (never a value) |
+| `watchdog.schedule` | watchdog |  | */5 * * * * | health watchdog that dispatches the recovery agent on a crash |
+| `watchdog.dispatchTrigger` | watchdog |  | monitoring_crash | same trigger the CI job uses when monitoring reports the server down |
+| `image.repository` | same-as-ci | same | same | same image/release flow as ci - the new deployment is not a fork |
+| `persistence.storageClass` | same-as-ci | same | same | same SQLite volume setup, strategy Recreate (see DEVELOPMENT.md) |
+| `resources` | same-as-ci | same | same | an a-most-the-same copy; capacity work is tracked separately |
+
+1. Create the msgmate-io-ci2 release from the msgmate-io-ci values with the msgmate-io-ci values file as base (development/helm/backend/values.msgmate-io-ci.yaml).
+2. Apply the rendered overlay development/helm/backend/values.msgmate-io-ci2.yaml (RenderCI2HelmValues) so name, host and PUBLIC_BASE_URL point at ci2.msgmate.io.
+3. Store the SSH/service credential for ci.msgmate.io in the runtime secret store under ci-recovery-ssh and wire only the reference into the deployment env (never an inline value).
+4. Confirm the image, storage and resource rows are still pinned to the ci values (no fork of the release flow).
+5. Enable the watchdog (*/5 * * * * poll of https://ci.msgmate.io/api/v1/metrics/health) and let a failing check dispatch the recovery agent with trigger monitoring_crash.
+6. Run the recovery agent once manually from CI (trigger manual) against a healthy ci.msgmate.io and confirm every probe reports verbatim output.
+7. Run it once with trigger pre_deploy immediately before the next deployment, so the bot is already attached while the release rolls.
+8. Re-check that neither the deployment nor the bot can reach chat.msgmate.io (ValidateDeploymentDelta + ValidateRecoveryProfile).
+
+
+The complete config record of the new deployment is the rendered overlay
+`backend/nativecoder/testdata/ci2-helm-values.yaml` (`RenderCI2HelmValues`); a unit
+test asserts the committed file equals the render byte for byte, so the deployment
+config can not drift from the code and every change is reviewable in a PR diff. It
+carries **no credential value**: `credentialRef` (`ci-recovery-ssh`) is the runtime
+secret-store reference used to reach `ci`, wired into the deployment env as a
+reference only.
+
+The crash watchdog polls https://ci.msgmate.io/api/v1/metrics/health every 5
+minutes (`*/5 * * * *`). On a failing check it dispatches the recovery agent with
+the same trigger CI uses (`monitoring_crash`) and the profile's recovery role;
+startup paths are `before_deploy` while a release rolls, `manual` from CI,
+`monitoring_crash` from the watchdog and `incident_event` from alert ingestion. The
+bounded restart budget (`maxRecoveryAttempts: 2`) restarts the service at most
+twice per incident and then escalates to a human. The command surface is the
+prefix-checked subset `coder_*`, `github_*`, `hive_mind_*`, `mcp:`, `chat_*`,
+`ssh_*` and `service_*` (`allowedToolPrefixes`).
+
+Provisioning checklist (generated: `RenderCI2ChecklistMarkdown()`):
+
+
 ### Documentation lookup index
 
 The user- and developer-facing documentation lives in the **frontend** docs
