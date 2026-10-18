@@ -955,7 +955,9 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	})
 	database.SetGlobalDB(DB)
 
-	if err := database.SeedModelConfigs(DB); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "seed-model-configs", func() error {
+		return database.SeedModelConfigs(DB)
+	}); err != nil {
 		return err
 	}
 
@@ -993,7 +995,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	adminUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+	adminUser, err := ensureBootstrapUserWithBusyRetry(ctx, "root-credentials", DB, bootstrapUserSpec{
 		Label:            "root-credentials",
 		Credentials:      rootCredentials,
 		IsAdmin:          true,
@@ -1004,7 +1006,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	botUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+	botUser, err := ensureBootstrapUserWithBusyRetry(ctx, "default-bot", DB, bootstrapUserSpec{
 		Label:            "default-bot",
 		Credentials:      c.String("default-bot"),
 		IsAdmin:          false,
@@ -1020,7 +1022,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			continue
 		}
 		extraLabel := fmt.Sprintf("create-extra-user[%d]", i)
-		if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		if _, err := ensureBootstrapUserWithBusyRetry(ctx, extraLabel, DB, bootstrapUserSpec{
 			Label:            extraLabel,
 			Credentials:      extra,
 			IsAdmin:          false,
@@ -1035,7 +1037,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			continue
 		}
 		extraLabel := fmt.Sprintf("create-extra-bot[%d]", i)
-		if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		if _, err := ensureBootstrapUserWithBusyRetry(ctx, extraLabel, DB, bootstrapUserSpec{
 			Label:            extraLabel,
 			Credentials:      extra,
 			IsAdmin:          false,
@@ -1047,23 +1049,34 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	}
 
 	userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
-	if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "bootstrap.users", func() error {
+		return applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug"))
+	}); err != nil {
 		return err
 	}
 
 	botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
 	botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
-	if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "add-bot-from-config", func() error {
+		return applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug"))
+	}); err != nil {
 		return err
 	}
 	integrationBotDecls := integrations.BotBootstrapDeclarations()
 	integrationBotConfigs := make([]botBootstrapConfig, 0, len(integrationBotDecls))
 	for _, decl := range integrationBotDecls {
 		integrationBotConfigs = append(integrationBotConfigs, decl.Config)
-		sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
-		if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
-			return err
+	}
+	if err := runStartupBootstrapDBStep(ctx, "integration-bot-bootstrap", func() error {
+		for _, decl := range integrationBotDecls {
+			sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
+			if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	sshDefaultOwners := append([]string{}, c.StringSlice("add-ssh-default-owner")...)
@@ -1076,7 +1089,9 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	sshKeyGrantSpecs = append(sshKeyGrantSpecs, openChatBootstrap.SSHKeyGrantSpecs...)
 	sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
 	sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
-	if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "add-ssh-from-config", func() error {
+		return applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs)
+	}); err != nil {
 		return err
 	}
 
@@ -1085,11 +1100,15 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	// declared template sandbox in this same startup pass.
 	dockerSandboxDefaultOwners := append([]string{}, openChatBootstrap.DockerSandboxDefaultOwners...)
 	dockerSandboxSpecs := append([]string{}, openChatBootstrap.DockerSandboxSpecs...)
-	if err := applyDockerSandboxBootstrapSources(DB, adminUser.Username, dockerSandboxDefaultOwners, dockerSandboxSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "add-docker-sandboxes-from-config", func() error {
+		return applyDockerSandboxBootstrapSources(DB, adminUser.Username, dockerSandboxDefaultOwners, dockerSandboxSpecs)
+	}); err != nil {
 		return err
 	}
 
-	if err := applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "opencode-bootstrap", func() error {
+		return applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs)
+	}); err != nil {
 		return err
 	}
 
@@ -1099,28 +1118,40 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	gitWorkspaceSpecs := append([]string{}, openChatBootstrap.GitWorkspaceSpecs...)
 	gitWorkspaceGrantSpecs := append([]string{}, openChatBootstrap.GitWorkspaceGrantSpecs...)
 	gitTriggerSpecs := append([]string{}, openChatBootstrap.GitTriggerSpecs...)
-	if err := applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs, gitTriggerSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "git-bootstrap", func() error {
+		return applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs, gitTriggerSpecs)
+	}); err != nil {
 		return err
 	}
 
 	mcpDefaultOwners := append([]string{}, openChatBootstrap.MCPDefaultOwners...)
 	mcpServerSpecs := append([]string{}, openChatBootstrap.MCPServerSpecs...)
-	if err := applyMCPBootstrapSources(DB, adminUser.Username, mcpDefaultOwners, mcpServerSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "mcp-bootstrap", func() error {
+		return applyMCPBootstrapSources(DB, adminUser.Username, mcpDefaultOwners, mcpServerSpecs)
+	}); err != nil {
 		return err
 	}
 
-	if err := applyKubernetesBootstrapSources(DB, adminUser.Username); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "kubernetes-bootstrap", func() error {
+		return applyKubernetesBootstrapSources(DB, adminUser.Username)
+	}); err != nil {
 		return err
 	}
 
 	// Integration-owned bootstrap hooks. New integrations declare
 	// Definition.Bootstrap instead of adding core bootstrap files/build tags.
-	if err := applyIntegrationBootstrapHooks(ctx, DB, adminUser.Username); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "integration-bootstrap-hooks", func() error {
+		return applyIntegrationBootstrapHooks(ctx, DB, adminUser.Username)
+	}); err != nil {
 		return err
 	}
 
-	providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
-	if err != nil {
+	var providerSyncResult database.DefaultBotProviderKeySyncResult
+	if err := runStartupBootstrapDBStep(ctx, "default-bot-provider-key-sync", func() error {
+		var syncErr error
+		providerSyncResult, syncErr = database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
+		return syncErr
+	}); err != nil {
 		return err
 	}
 	log.Printf(
@@ -1131,14 +1162,20 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		providerSyncResult.SkippedUnmanaged,
 		providerSyncResult.SkippedInvalid,
 	)
-	if err := syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "inherit-default-model-access", func() error {
+		return syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs)
+	}); err != nil {
 		return err
 	}
 
-	if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "sync-automated-bot-profiles", func() error {
+		return msgmate.SyncAutomatedBotProfiles(DB)
+	}); err != nil {
 		return err
 	}
-	if err := server.SetupBaseConnections(DB, adminUser.ID, botUser.ID); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "setup-base-connections", func() error {
+		return server.SetupBaseConnections(DB, adminUser.ID, botUser.ID)
+	}); err != nil {
 		return err
 	}
 
