@@ -135,6 +135,29 @@ describe("BotMessageItem running affordances", () => {
     );
   });
 
+  it("shows a still-ongoing call in a finished turn as interrupted, not running (ci#668)", () => {
+    const html = render({
+      uuid: "m-interrupted",
+      text: "paused",
+      meta_data: {
+        finished: true,
+        cancelled: true,
+        timeline: [{ kind: "thought", text: "The command was still running when I stopped." }],
+      },
+      tool_calls: [
+        {
+          name: "coder_bash",
+          arguments: { command: "sleep 300" },
+          status: "ongoing",
+          started_at: Date.now() - 2000,
+          timeline_index: 1,
+        },
+      ],
+    });
+    expect(html).toContain("Interrupted");
+    expect(html).not.toContain(">Ongoing<");
+  });
+
   it("keeps the plain tool-call group for a turn without a timeline", () => {
     const html = render({
       uuid: "m7",
