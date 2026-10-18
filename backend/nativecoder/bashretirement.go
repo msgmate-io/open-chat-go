@@ -456,11 +456,6 @@ var bashRetirementPhases = []BashRetirementPhase{
 	},
 }
 
-// BashRetirementPlanVersion is the plan schema version. It is reported with
-// every coverage run so evidence can be attributed to a plan revision.
-// Bumped to 2 when phase_6_github_wait was added to the plan (ci#514).
-const BashRetirementPlanVersion = 2
-
 // BashRetirementPlanSnapshot returns a deep copy of the plan, so a caller can
 // neither mutate the registry nor observe a mutation of it.
 func BashRetirementPlanSnapshot() BashRetirementPlan {
