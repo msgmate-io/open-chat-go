@@ -1551,6 +1551,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if toolCall.BudgetExempt {
 					toolCallRepr["budget_exempt"] = true
 				}
+				// ci#691: a call whose sandbox the scheduler could not place
+				// for node capacity is marked on its own, so the chat shows a
+				// cluster-capacity condition instead of a generic failure.
+				if toolCall.SandboxCapacity {
+					toolCallRepr["sandbox_capacity"] = true
+				}
 				// Per-call timing (ci#569): started_at lets the UI run a live
 				// timer while the call is ongoing, duration_ms renders the final
 				// elapsed time once it completed. A completed call reports its
