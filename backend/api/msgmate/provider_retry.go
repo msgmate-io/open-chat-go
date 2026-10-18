@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -261,6 +262,7 @@ const (
 	FailureReasonContextWindow    = "context_window_exceeded"
 	FailureReasonProviderError    = "provider_error"
 	FailureReasonTransientNetwork = "transient_network_error"
+	FailureReasonTimeout          = "turn_timeout"
 	FailureReasonInternal         = "internal_error"
 )
 
@@ -281,6 +283,14 @@ type GenerationFailureClassification struct {
 func ClassifyGenerationFailure(err error) GenerationFailureClassification {
 	if err == nil {
 		return GenerationFailureClassification{Reason: FailureReasonInternal}
+	}
+	// A turn deadline (the bot reply task's asynq timeout) is not a provider
+	// fault and not a user stop: report it as its own reason so the chat never
+	// shows a bogus "I paused this response" for a turn that simply ran out of
+	// time (ci#642). The context.Canceled case is handled by the caller as a
+	// genuine stop, so it is deliberately not classified here.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return GenerationFailureClassification{Reason: FailureReasonTimeout}
 	}
 	if isContextWindowExceededError(err) {
 		return GenerationFailureClassification{Reason: FailureReasonContextWindow}

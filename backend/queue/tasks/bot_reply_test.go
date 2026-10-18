@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"backend/api/msgmate"
 )
@@ -51,6 +52,11 @@ func TestBotReplyFailureMessage(t *testing.T) {
 			expected: "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output.",
 		},
 		{
+			name:     "turn deadline reports a timeout, never a pause",
+			err:      context.DeadlineExceeded,
+			expected: "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here.",
+		},
+		{
 			name:     "generic error names the actual error",
 			err:      errors.New("unexpected decoder failure"),
 			expected: "I hit an internal error while generating this reply: unexpected decoder failure",
@@ -75,5 +81,36 @@ func TestBotReplyFailureMessageUnclassifiedDoesNotMentionCreditsOrOutage(t *test
 	}
 	if !strings.Contains(got, "unexpected decoder failure") {
 		t.Fatalf("unclassified errors must name the actual error: %q", got)
+	}
+}
+
+// TestIsBotReplyCancellation distinguishes a genuine user stop from the queue
+// task's own deadline: a deadline is a timeout that must take the failure path
+// (and never render as a user pause), while context.Canceled is a real stop
+// (ci#642).
+func TestIsBotReplyCancellation(t *testing.T) {
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+
+	cases := []struct {
+		name string
+		err  error
+		ctx  context.Context
+		want bool
+	}{
+		{name: "canceled error", err: context.Canceled, ctx: context.Background(), want: true},
+		{name: "canceled context is a stop", err: nil, ctx: cancelCtx, want: true},
+		{name: "deadline error is not a stop", err: context.DeadlineExceeded, ctx: deadlineCtx, want: false},
+		{name: "deadline context is not a stop", err: nil, ctx: deadlineCtx, want: false},
+		{name: "ordinary failure is not a stop", err: errors.New("boom"), ctx: context.Background(), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isBotReplyCancellation(tc.err, tc.ctx); got != tc.want {
+				t.Fatalf("isBotReplyCancellation(%v, ctx) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
