@@ -153,13 +153,6 @@ func (e CIFailureEvent) providerOrDefault() string {
 	return "unknown"
 }
 
-// NormalizeRepo lower-cases a repo slug and drops a `.git` suffix so
-// `Owner/Repo.git` and `owner/repo` are the same target.
-func NormalizeRepo(repo string) string {
-	normalized := strings.ToLower(strings.TrimSpace(repo))
-	return strings.TrimSuffix(normalized, ".git")
-}
-
 // NormalizeBranch lower-cases a branch and strips the `refs/heads/` prefix.
 func NormalizeBranch(branch string) string {
 	normalized := strings.ToLower(strings.TrimSpace(branch))
