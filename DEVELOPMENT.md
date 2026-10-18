@@ -853,6 +853,16 @@ generic integrations overview page.
 4. **Prerendering + Export**: `development/scripts/build_static_frontend.sh` (or the Dockerfile) runs `npm run build` then `openchat-integrations export` copies the prerendered HTML to the integration's `frontend_assets/`.
 5. **Integration Registration**: The integration Go code embeds `frontend_assets` via `//go:embed frontend_assets` and registers the pages in `integrationinterface.Definition.FrontendPages` so the OpenChat backend serves them automatically.
 
+### Private integration documentation pages
+
+Every **private** integration ships a compact, self-contained documentation
+page set (Overview / Configuration / Operations) declared through
+`FrontendDocs`; the pages, assets and `open-chat.json` examples live in the
+integration repository and are never mirrored into this public repo. See
+`frontend/pages/docs/content/integration-development.mdx` ("Private integration
+documentation pages") for the page-map wiring, the `FrontendDocs` block and the
+placeholder-only configuration example rules.
+
 ### Chat extensions (cross-integration chat UI)
 
 Chat extension registrations (message inputs, details views, pre-start selectors) live in the integration repo too. Each page set declares an optional `"extension": "<entry-file>"` in `integration.frontend.json`; when linked, the manager regenerates `frontend/integrations/extensions.gen.ts`, which the public app imports at startup so registrations happen globally (the chat page does not import integration code directly). Cross-integration dependencies must go through the registry lookup (`resolveChatUIExtension("opencode")`), never through cross-repo relative imports.
