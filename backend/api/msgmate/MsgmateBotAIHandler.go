@@ -225,6 +225,10 @@ func parseRuntimeSelectorPayload(raw string) (map[string]interface{}, bool) {
 	if choices, ok := payload["choices"].([]interface{}); !ok || len(choices) == 0 {
 		return nil, false
 	}
+	// Offer (and route to) the native msgmate-coder runtimes by default,
+	// mapping any legacy opencode-era agent name onto its native replacement
+	// (ci#617, ci#621).
+	normalizeRuntimeSelectorPayloadChoices(payload)
 	return payload, true
 }
 
