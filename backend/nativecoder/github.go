@@ -51,6 +51,9 @@ type GitHubAPIClient struct {
 	Repo    string
 	Token   string
 	HTTP    *http.Client
+	// rules caches the base branch's ruleset-required contexts for the lifetime
+	// of the client, ie for one consolidation pass over many PRs (ci#683).
+	rules rulesetCache
 }
 
 // NewGitHubAPIClientFromEnv builds a client from the deployment environment. It
@@ -231,8 +234,15 @@ func (c *GitHubAPIClient) ListOpenPullRequests(ctx context.Context) ([]PullReque
 }
 
 // pullRequestFromREST maps a REST pull request onto the planner's facts,
-// resolving mergeability (REST `mergeable` is null while GitHub computes it)
-// and the combined checks state.
+// resolving mergeability (REST `mergeable` is null while GitHub computes it) and
+// the combined checks state.
+//
+// ci#683: the state is evaluated against the *required* contexts of the base
+// branch's ruleset when those can be read, and every other red check/status is
+// reported as informational. A red non-required status (the informational
+// `private-sandbox-tests` commit status the private suite sets on a PR head) used
+// to be indistinguishable from a required failure here, which is what made the
+// merge path refuse a fully green PR.
 func (c *GitHubAPIClient) pullRequestFromREST(ctx context.Context, row githubPullRequest) PullRequest {
 	pr := PullRequest{
 		Number:           row.Number,
@@ -263,7 +273,20 @@ func (c *GitHubAPIClient) pullRequestFromREST(ctx context.Context, row githubPul
 			pr.MergeStateStatus = MergeStateDirty
 		}
 	}
-	if state, err := c.combinedChecksState(ctx, row.Head.SHA); err == nil {
+	if states, err := c.branchCheckStates(ctx, row.Base.Ref, row.Head.SHA); err == nil && states.Known {
+		if len(states.Required) > 0 {
+			// The ruleset names required contexts: exactly those gate the merge.
+			pr.RequiredChecksKnown = true
+			pr.RequiredChecksState = states.RequiredState
+			pr.FailingRequiredChecks = states.FailingRequired
+			pr.ChecksState = states.RequiredState
+		} else if runs, statuses, err := c.commitChecks(ctx, row.Head.SHA); err == nil {
+			// The ruleset requires nothing (or is absent): every check stays
+			// authoritative, and the red ones are only reported.
+			pr.ChecksState = combinedStateFromFacts(runs, statuses)
+		}
+		pr.InformationalChecks = states.Informational
+	} else if state, err := c.combinedChecksState(ctx, row.Head.SHA); err == nil {
 		pr.ChecksState = state
 	}
 	return pr
@@ -276,41 +299,11 @@ func (c *GitHubAPIClient) combinedChecksState(ctx context.Context, sha string) (
 	if strings.TrimSpace(sha) == "" {
 		return "", fmt.Errorf("empty head sha")
 	}
-	var runs struct {
-		CheckRuns []struct {
-			Status     string `json:"status"`
-			Conclusion string `json:"conclusion"`
-		} `json:"check_runs"`
-	}
-	path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100", c.Repo, url.PathEscape(sha))
-	if err := c.request(ctx, http.MethodGet, path, nil, &runs); err != nil {
+	runs, statuses, err := c.commitChecks(ctx, sha)
+	if err != nil {
 		return "", err
 	}
-	if len(runs.CheckRuns) > 0 {
-		state := "success"
-		for _, run := range runs.CheckRuns {
-			if !strings.EqualFold(run.Status, "completed") {
-				return "pending", nil
-			}
-			switch strings.ToLower(strings.TrimSpace(run.Conclusion)) {
-			case "success", "neutral", "skipped":
-			case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
-				return "failure", nil
-			default:
-				state = "pending"
-			}
-		}
-		return state, nil
-	}
-
-	var status struct {
-		State string `json:"state"`
-	}
-	legacyPath := fmt.Sprintf("/repos/%s/commits/%s/status", c.Repo, url.PathEscape(sha))
-	if err := c.request(ctx, http.MethodGet, legacyPath, nil, &status); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(status.State), nil
+	return combinedStateFromFacts(runs, statuses), nil
 }
 
 // ListOpenConsolidations lists the open consolidation PRs (branch prefix or the
@@ -326,12 +319,13 @@ func (c *GitHubAPIClient) ListOpenConsolidations(ctx context.Context, branchPref
 			continue
 		}
 		out = append(out, ExistingConsolidation{
-			Number:    pr.Number,
-			Branch:    pr.HeadRef,
-			HeadSHA:   pr.HeadSHA,
-			Author:    pr.Author,
-			Green:     checksGreen(pr.ChecksState),
-			CreatedAt: pr.CreatedAt,
+			Number:              pr.Number,
+			Branch:              pr.HeadRef,
+			HeadSHA:             pr.HeadSHA,
+			Author:              pr.Author,
+			Green:               checksGreen(pr.ChecksState),
+			InformationalChecks: append([]string(nil), pr.InformationalChecks...),
+			CreatedAt:           pr.CreatedAt,
 		})
 	}
 	return out, nil

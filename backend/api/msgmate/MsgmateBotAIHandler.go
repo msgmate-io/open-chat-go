@@ -1183,6 +1183,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				} else {
 					text += "\n\n" + guidance
 				}
+			case FailureReasonLeakedCompaction:
+				// The model volunteered its own conversation-compaction
+				// bookkeeping (<analysis>/<summary>) instead of an answer, twice
+				// in a row; the transcript itself is never stored or shown
+				// (ci#562). Everything the turn already did is kept.
+				guidance := "The model lost track of the task and returned its internal work notes instead of an answer, so this reply was stopped. The work already done (tool calls, files, commits) is kept - send another message to continue from here."
+				reasoningEntry = "Response stopped because the model returned its internal work notes instead of an answer."
+				if text == "" {
+					text = guidance
+				} else {
+					text += "\n\n" + guidance
+				}
 			default:
 				detail := TruncateFailureDetail(streamErr.Error())
 				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
@@ -1528,6 +1540,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				}
 				if strings.TrimSpace(toolCall.Error) != "" {
 					toolCallRepr["error"] = toolCall.Error
+				}
+				// ci#688: a call that failed for an environmental reason is
+				// budget-exempt and reports how many retries it needed, so a
+				// saturated sandbox pool is visible in the transcript instead
+				// of only in the backend log.
+				if toolCall.Retries > 0 {
+					toolCallRepr["retries"] = toolCall.Retries
+				}
+				if toolCall.BudgetExempt {
+					toolCallRepr["budget_exempt"] = true
 				}
 				// Per-call timing (ci#569): started_at lets the UI run a live
 				// timer while the call is ongoing, duration_ms renders the final
