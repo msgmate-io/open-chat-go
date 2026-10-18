@@ -195,6 +195,72 @@ count and cap, and the admin-only
 per-key metrics for the loop. The full reference lives in the
 `msgmate_coder` integration README.
 
+### Native coding-agent auto-consolidation (default ON)
+
+A native `msgmate_coder` agent consolidates its **own ready pull requests by
+default** (ci#653): it no longer depends on the scheduled loop controller or a
+human to roll a batch up. The behaviour is driven by the `auto_consolidation`
+block of the agent's shared config, which the core merges into every config that
+declares a native coder agent (a `coder_*` role/sandbox/provider key, a `coder_*`
+tool, or a `coder_select_workspace` tool_init entry) instead of leaving it to
+each agent (or bot template) to opt in:
+
+```yaml
+auto_consolidation:
+  enabled: true            # default ON
+  threshold: 1             # consolidate as soon as >= 1 PR is ready
+  base: main
+  scope: repo              # only this repo's PRs (optionally `repos: [owner/name]`)
+  authors: [self]          # only our bot's PRs unless configured otherwise
+  require_green: true      # never include failing/conflicting/draft PRs
+  labels: [test, build, e2e, test-core-only, ai-test-mock, ai-test-real, sandbox-test, deploy]
+  branch_prefix: chore/consolidate
+  one_open_at_a_time: true # new PRs roll into the NEXT consolidation (ci#652)
+  rollup_issue: true       # maintain a consolidation tracker issue (ci#415)
+```
+
+The block is merged at the same two places the integration shared-config defaults
+are: when a bot's `default_shared_config` is written/updated (and defaults are
+applied to an interaction's effective config) and when a chat is created. Both
+run the integration defaults and then the coder default, so it applies in a
+full build and in `core-only`, where no `msgmate_coder` integration is compiled
+in.
+
+Behaviour (at the shared interaction-completion choke point, next to the
+auto-continuation loop of ci#537 and the post-interaction hook of ci#649):
+
+1. detect the **ready** open PRs in scope — green checks, targeting `main`,
+   non-draft, mergeable, authored by the agent;
+2. open **exactly one** `chore/consolidate-<date>` PR that folds them in, or
+   refresh the one that is already open, and apply the standard label set;
+3. merge it through the existing auto-approve path (ci#538) once every required
+   check is green;
+4. keep exactly one consolidation PR open: later ready PRs roll into the **next**
+   consolidation (ci#652), and `rollup_issue` keeps the tracker issue (ci#415)
+   current.
+
+The pass runs only when a GitHub credential (`OPEN_CHAT_GITHUB_POST_TOKEN`,
+`GITHUB_TOKEN` or `GH_TOKEN`) and a repository (`OPEN_CHAT_GITHUB_REPO`, or the
+per-agent `auto_consolidation_repo` key) are configured; without them it is a
+no-op, so a stock deployment is unaffected. The per-chat pass is rate-limited to
+one run per minute so an auto-continued interaction does not re-run it on every
+turn.
+
+Toggle and rollback (three levels, most specific wins):
+
+- per agent: `"auto_consolidation": {"enabled": false}` in the bot's
+  `default_shared_config` (or `require_confirmation`-style config delta);
+- per fleet: `OCI_MSGMATE_CODER_AUTO_CONSOLIDATION=0` (also `false`/`off`/`no`/
+  `disabled`) suppresses the default for every agent that does not set the key
+  explicitly;
+- `auto_consolidation: {"threshold": N, "authors": ["*"], "one_open_at_a_time":
+  false, ...}` narrows or widens any other field for a single agent.
+
+`deploy` and `sandbox-test` appear in the label set **only** because a
+consolidation PR targeting `main` is the single place where a batch of ready
+changes is verified as a whole (see "Pull-request CI labels and deployment
+policy" above); feature/bugfix/chore PRs keep the ordinary code-change labels.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra

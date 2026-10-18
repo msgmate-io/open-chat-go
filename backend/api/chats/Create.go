@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/chatstate"
 	"backend/database"
+	"backend/nativecoder"
 	"backend/server/util"
 	"backend/workqueue"
 	"encoding/json"
@@ -14,6 +15,16 @@ import (
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
 )
+
+// applySharedConfigDefaults merges the compiled-in integrations' shared-config
+// defaults and then the native coder's default-ON auto-consolidation block
+// (ci#653), so a native `msgmate_coder` agent consolidates its own ready PRs
+// unless the agent (or the deployment kill switch) switches it off. An explicit
+// per-agent value always wins; a non-coder config is never touched.
+func applySharedConfigDefaults(config map[string]interface{}) map[string]interface{} {
+	withDefaults := extiface.ApplySharedConfigDefaults(config)
+	return nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+}
 
 // TODO: should also supply user Id
 type CreateChat struct {
@@ -95,7 +106,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 		if requestSharedConfig == nil {
 			return nil, nil
 		}
-		withDefaults := extiface.ApplySharedConfigDefaults(requestSharedConfig)
+		withDefaults := applySharedConfigDefaults(requestSharedConfig)
 		return withDefaults, nil
 	}
 	var runtime database.BotRuntimeConfig
@@ -103,7 +114,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 		if requestSharedConfig == nil {
 			return nil, nil
 		}
-		withDefaults := extiface.ApplySharedConfigDefaults(requestSharedConfig)
+		withDefaults := applySharedConfigDefaults(requestSharedConfig)
 		return withDefaults, nil
 	}
 	runtimeConfig := map[string]interface{}{}
@@ -122,7 +133,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 		merged := mergeJSONMaps(runtimeConfig, requestSharedConfig)
 		resolved = applyModelConfigBindingForUser(DB, runtime.OwnerUserId, merged)
 	}
-	withDefaults := extiface.ApplySharedConfigDefaults(resolved)
+	withDefaults := applySharedConfigDefaults(resolved)
 	return withDefaults, nil
 }
 
