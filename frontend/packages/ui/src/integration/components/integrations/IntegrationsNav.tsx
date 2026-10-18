@@ -12,7 +12,7 @@ import {
   resolveIntegrationLandingPath,
   togglePinnedPage,
   type IntegrationNavRow,
-  type PinnedIntegrationPage,
+  type PinnedPageInput,
 } from "../../lib/pinned-integrations";
 import { usePinnedIntegrationPages } from "../../lib/use-pinned-integration-pages";
 
@@ -76,7 +76,7 @@ function PinToggle({
   title: string;
   integrationTitle?: string;
   pinned: boolean;
-  onToggle: (page: PinnedIntegrationPage) => void;
+  onToggle: (page: PinnedPageInput) => void;
 }) {
   const label = pinned ? `Unpin ${title}` : `Pin ${title}`;
   return (
@@ -87,7 +87,11 @@ function PinToggle({
       aria-pressed={pinned}
       onClick={(event) => {
         event.stopPropagation();
-        onToggle({ path, title, integrationTitle });
+        onToggle(
+          integrationTitle
+            ? { path, title, integrationTitle }
+            : { path, title },
+        );
       }}
       className={cn(
         "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -130,7 +134,11 @@ function NavRow({
             {label}
           </Text>
           {secondary ? (
-            <Text type={TextTypes.Body7} color="muted" className="block truncate font-mono">
+            <Text
+              type={TextTypes.Body7}
+              color="muted"
+              className="block truncate font-mono"
+            >
               {secondary}
             </Text>
           ) : null}
@@ -152,18 +160,24 @@ export function IntegrationsNav({
 }) {
   const isOverview = integrationName === null;
   const [query, setQuery] = useState("");
-  const { pages: pinnedPages, toggle: togglePin, landingPath } = usePinnedIntegrationPages();
+  const {
+    pages: pinnedPages,
+    toggle: togglePin,
+    landingPath,
+  } = usePinnedIntegrationPages();
 
-  const { data: listData, isLoading: listLoading } = useSWR<IntegrationsResponse>(
-    isOverview ? "/api/v1/integrations/list" : null,
-    fetcher,
-  );
-  const { data: overviewData, isLoading: overviewLoading } = useSWR<IntegrationOverviewResponse>(
-    !isOverview && integrationName
-      ? `/api/v1/integrations/${encodeURIComponent(integrationName)}/overview`
-      : null,
-    fetcher,
-  );
+  const { data: listData, isLoading: listLoading } =
+    useSWR<IntegrationsResponse>(
+      isOverview ? "/api/v1/integrations/list" : null,
+      fetcher,
+    );
+  const { data: overviewData, isLoading: overviewLoading } =
+    useSWR<IntegrationOverviewResponse>(
+      !isOverview && integrationName
+        ? `/api/v1/integrations/${encodeURIComponent(integrationName)}/overview`
+        : null,
+      fetcher,
+    );
 
   const integrations = useMemo(
     () => filterIntegrationRows(listData?.rows ?? [], query),
@@ -174,7 +188,12 @@ export function IntegrationsNav({
     const routes = overviewData?.frontend_routes ?? [];
     const base = integrationName ? `/integrations/${integrationName}` : "";
     return routes
-      .filter((route) => route.kind === "page" && typeof route.route === "string" && !route.route.includes("{"))
+      .filter(
+        (route) =>
+          route.kind === "page" &&
+          typeof route.route === "string" &&
+          !route.route.includes("{"),
+      )
       .filter((route) => {
         if (route.public) return false;
         if (!base) return true;
@@ -187,7 +206,12 @@ export function IntegrationsNav({
     const routes = overviewData?.frontend_routes ?? [];
     const base = integrationName ? `/integrations/${integrationName}` : "";
     return routes
-      .filter((route) => route.kind === "doc" && typeof route.route === "string" && !route.route.includes("{"))
+      .filter(
+        (route) =>
+          route.kind === "doc" &&
+          typeof route.route === "string" &&
+          !route.route.includes("{"),
+      )
       .filter((route) => {
         if (route.public) return false;
         if (!base) return true;
@@ -196,7 +220,9 @@ export function IntegrationsNav({
       .sort((a, b) => {
         const sectionOrder = (a.section || "").localeCompare(b.section || "");
         if (sectionOrder !== 0) return sectionOrder;
-        const orderDiff = (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER);
+        const orderDiff =
+          (a.order ?? Number.MAX_SAFE_INTEGER) -
+          (b.order ?? Number.MAX_SAFE_INTEGER);
         if (orderDiff !== 0) return orderDiff;
         return a.route.localeCompare(b.route);
       });
@@ -215,7 +241,10 @@ export function IntegrationsNav({
         : [],
     [pinnedPages, integrationName, currentPath],
   );
-  const pinnedHerePaths = useMemo(() => new Set(pinnedHere.map((page) => page.path)), [pinnedHere]);
+  const pinnedHerePaths = useMemo(
+    () => new Set(pinnedHere.map((page) => page.path)),
+    [pinnedHere],
+  );
 
   if (isOverview) {
     return (
@@ -260,7 +289,7 @@ export function IntegrationsNav({
                     title={page.title}
                     integrationTitle={page.integrationTitle}
                     pinned
-                    onToggle={(entry) => togglePin(entry, false)}
+                    onToggle={(entry) => togglePin(entry)}
                   />
                 }
                 onSelect={() => navigateTo(page.path)}
@@ -281,7 +310,9 @@ export function IntegrationsNav({
           </div>
         ) : integrations.length === 0 ? (
           <Text type={TextTypes.Body7} color="muted" className="px-1 py-2">
-            {query.trim() ? "No integrations match this filter" : "No integrations available"}
+            {query.trim()
+              ? "No integrations match this filter"
+              : "No integrations available"}
           </Text>
         ) : (
           integrations.map((integration) => (
@@ -314,8 +345,14 @@ export function IntegrationsNav({
       <NavRow
         label="Overview"
         secondary="Integration start page"
-        selected={currentPath === normalizePath(`/integrations/${integrationName}`)}
-        onSelect={() => navigateTo(`/integrations/${encodeURIComponent(integrationName as string)}`)}
+        selected={
+          currentPath === normalizePath(`/integrations/${integrationName}`)
+        }
+        onSelect={() =>
+          navigateTo(
+            `/integrations/${encodeURIComponent(integrationName as string)}`,
+          )
+        }
       />
       <div className="chat-list-divider">
         <Text type={TextTypes.Body7} color="muted" tag="span" bold>
@@ -333,14 +370,16 @@ export function IntegrationsNav({
             <NavRow
               key={`pinned-${page.path}`}
               label={page.title}
-              secondary={shortRoutePath(page.path, integrationName) || undefined}
+              secondary={
+                shortRoutePath(page.path, integrationName) || undefined
+              }
               action={
                 <PinToggle
                   path={page.path}
                   title={page.title}
                   integrationTitle={page.integrationTitle}
                   pinned
-                  onToggle={(entry) => togglePin(entry, false)}
+                  onToggle={(entry) => togglePin(entry)}
                 />
               }
               onSelect={() => navigateTo(page.path)}
@@ -361,12 +400,17 @@ export function IntegrationsNav({
       ) : (
         <>
           {pages
-            .filter((page) => !pinnedHerePaths.has(normalizeIntegrationPath(page.route)))
+            .filter((page) => {
+              const normalized = normalizeIntegrationPath(page.route);
+              return !normalized || !pinnedHerePaths.has(normalized);
+            })
             .map((page) => {
               const secondary = shortRoutePath(page.route, integrationName);
               // Prefer the integration-provided readable title over a derived one.
               const label =
-                page.title?.trim() || page.description?.trim() || routeTitle(page.route, integrationName);
+                page.title?.trim() ||
+                page.description?.trim() ||
+                routeTitle(page.route, integrationName);
               const normalized = normalizeIntegrationPath(page.route);
               return (
                 <NavRow
@@ -379,9 +423,11 @@ export function IntegrationsNav({
                       <PinToggle
                         path={normalized}
                         title={label}
-                        integrationTitle={integrationDisplayTitle(integrationName as string)}
+                        integrationTitle={integrationDisplayTitle(
+                          integrationName as string,
+                        )}
                         pinned={isPagePinned(pinnedPages, normalized)}
-                        onToggle={(entry) => togglePin(entry, !isPagePinned(pinnedPages, normalized))}
+                        onToggle={(entry) => togglePin(entry)}
                       />
                     ) : undefined
                   }
@@ -399,7 +445,11 @@ export function IntegrationsNav({
               {docs.map((doc) => (
                 <NavRow
                   key={doc.route}
-                  label={doc.title?.trim() || doc.description?.trim() || routeTitle(doc.route, integrationName)}
+                  label={
+                    doc.title?.trim() ||
+                    doc.description?.trim() ||
+                    routeTitle(doc.route, integrationName)
+                  }
                   secondary={doc.section?.trim() || undefined}
                   selected={currentPath === normalizePath(doc.route)}
                   onSelect={() => navigateTo(doc.route)}
