@@ -169,6 +169,56 @@ Regression tests: `backend/api/msgmate/turn_final_text_test.go`,
 `backend/nativecoder/toolbudget_test.go` and the snapshot assertion in
 `backend/api/chats/create_test.go`.
 
+### A native interaction that cannot start is reported, never a silent idle (ci#609)
+
+When the sandbox node was saturated, a dispatched native `msgmate_coder`
+interaction could stay `state=idle` with `newest_agent_msg=none` **forever**: no
+bot message, no `Unschedulable: … Insufficient cpu` provisioning error, nothing
+the operator or the external auto-continue dispatcher could act on. The loop just
+printed `[loop] state=idle continuations=0 newest_agent_msg=none finished=false`
+until it gave up, and the dispatched work looked frozen and lost.
+
+The core now detects that condition from durable state and reports it
+(`backend/api/chats/interaction_stall.go`). An interaction is **stalled** when
+
+- it is an interaction chat;
+- **nothing is live** for it - no `bot:reply` task active/pending/scheduled/retry
+  (including a reply queued behind a live turn, ci#656), and no external chat
+  backend reporting a running generation;
+- its newest message is still the prompt (the agent never produced a turn after
+  it) and does not wait on the user (no pending confirmation - a parked
+  confirmation is a decision, never a stall);
+- and that prompt has rested longer than the stall window.
+
+`ResolveInteractionStatus` then annotates the deterministic status with
+`stalled`, `stall_reason` (`stall_no_first_turn`), `stall_age_seconds` and
+`stall_threshold_seconds`, and the trusted agent-dispatch view
+(`GET /api/v1/agents/interactions…`) carries the same fields - so the external
+dispatcher loop can turn an idle-timeout into a failure naming the interaction
+URL instead of stopping silently, and a lead agent can tell a silent freeze from
+healthy idle work.
+
+Reading `GET /api/v1/chats/{chat_uuid}/status` (the endpoint the loop polls)
+also **posts one visible, persisted bot error** for a stalled chat: `finished` +
+`error` metadata with `failure_reason=stall_no_first_turn` and an
+`interaction_stall` detail block. The message states the observed age, the
+resolved window and what to do (re-dispatch, or continue once capacity is free),
+and it makes the interaction resolve as `failed` instead of `idle`. The report is
+idempotent (a `interaction_stall_report` marker on the message), so polling the
+status cannot spam the transcript.
+
+The stall window is resolved with the ci#620 precedence **deployment env →
+per-agent shared config → dispatch metadata → default**:
+
+- `OCI_INTERACTION_STALL_AFTER_SECONDS` (deployment-wide; `0` disables the
+  guard);
+- `interaction_stall_after_seconds` in the agent's shared config (or in its
+  `agent_dispatch` block);
+- default `10m`, matching the window the external dispatcher loop observes
+  before it gives up.
+
+Regression tests: `backend/api/chats/interaction_stall_test.go`.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git

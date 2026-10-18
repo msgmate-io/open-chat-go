@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
@@ -27,6 +28,14 @@ type InteractionStatusResponse struct {
 	AutoContinueTurns      int    `json:"auto_continue_turns,omitempty"`
 	AutoContinueMax        int    `json:"auto_continue_max,omitempty"`
 	AutoContinueStopReason string `json:"auto_continue_stop_reason,omitempty"`
+	// Stalled reports that the interaction never started: nothing is queued or
+	// running for the chat and the newest message is still an unanswered prompt
+	// (ci#609). StallReason names the cause, StallAgeSeconds how long the prompt
+	// rested and StallThresholdSeconds the resolved stall window.
+	Stalled               bool   `json:"stalled,omitempty"`
+	StallReason           string `json:"stall_reason,omitempty"`
+	StallAgeSeconds       int    `json:"stall_age_seconds,omitempty"`
+	StallThresholdSeconds int    `json:"stall_threshold_seconds,omitempty"`
 }
 
 // GetInteractionStatus returns deterministic status for a private interaction chat.
@@ -76,6 +85,13 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		http.Error(w, "Unable to resolve interaction status", http.StatusInternalServerError)
 		return
+	}
+	// ci#609: an interaction that cannot provision must never rest in a silent
+	// idle. The status read is the point an operator (or the dispatcher loop)
+	// looks at, so the stall is surfaced here as a visible, persisted bot error.
+	// It is idempotent: a chat gets at most one stall report.
+	if status.Stalled {
+		ReportInteractionStall(DB, inspector, chat)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -232,6 +248,18 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		return response, nil
 	}
 
+	// ci#609: reaching here means nothing is live for the chat (no queue task, no
+	// running backend, no pending user action) and the newest message is not a
+	// finished agent turn. An interaction in that state is either genuinely
+	// resting or it never started at all - the silent freeze. Distinguish the two
+	// from the newest message's age so a stalled interaction is reported with a
+	// reason instead of looking like a healthy idle chat.
+	if stall := interactionStallFromMessages(DB, chat, time.Now()); stall.Stalled {
+		response.Stalled = true
+		response.StallReason = stall.Reason
+		response.StallAgeSeconds = int(stall.Age / time.Second)
+		response.StallThresholdSeconds = int(stall.Threshold / time.Second)
+	}
 	response.State = string(chatstate.StateIdle)
 	response.IsActive = false
 	return response, nil
@@ -260,11 +288,16 @@ func chatBackendName(DB *gorm.DB, chat database.Chat) (string, bool) {
 	return "", false
 }
 
+// latestMessageForChat returns the chat's most recent message. The id is the
+// tiebreak: a batch of messages persisted in the same transaction (or in the
+// same second) shares created_at, and "the newest message" must still be
+// deterministic for the status/stall resolvers (ci#609).
 func latestMessageForChat(DB *gorm.DB, chatID uint) (database.Message, error) {
 	var message database.Message
 	err := DB.Where("chat_id = ?", chatID).
 		Where("deleted_at IS NULL").
 		Order("created_at DESC").
+		Order("id DESC").
 		First(&message).Error
 	return message, err
 }
