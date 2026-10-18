@@ -1863,7 +1863,9 @@ jobs:
     # Second sandbox layer: the private CI repository runs the extended suite
     # (LITTLE WORLD + rest_api_tool, etc.) in parallel with the public sandbox
     # benchmark above. Results are kept privately in the CI repo; the private
-    # workflow links the report from a PR comment and a commit status.
+    # workflow links the report from a PR comment (and, on a `main` run, from a
+    # commit status -- never on a PR head, so an informational status can never
+    # make GitHub report `mergeable_state: blocked`, ci#683).
     needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, approve-and-dispatch-deploy]
     if: |
       always() &&

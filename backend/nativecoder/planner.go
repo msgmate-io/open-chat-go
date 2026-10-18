@@ -34,18 +34,32 @@ const ConsolidationLabel = "consolidation"
 
 // PullRequest is the subset of the GitHub pull-request facts the planner needs.
 type PullRequest struct {
-	Number           int       `json:"number"`
-	Title            string    `json:"title"`
-	Author           string    `json:"author"`
-	HeadRef          string    `json:"head_ref"`
-	BaseRef          string    `json:"base_ref"`
-	HeadSHA          string    `json:"head_sha"`
-	Draft            bool      `json:"draft"`
-	Mergeable        bool      `json:"mergeable"`
-	MergeStateStatus string    `json:"merge_state_status"`
-	ChecksState      string    `json:"checks_state"`
-	Labels           []string  `json:"labels,omitempty"`
-	CreatedAt        time.Time `json:"created_at,omitempty"`
+	Number           int    `json:"number"`
+	Title            string `json:"title"`
+	Author           string `json:"author"`
+	HeadRef          string `json:"head_ref"`
+	BaseRef          string `json:"base_ref"`
+	HeadSHA          string `json:"head_sha"`
+	Draft            bool   `json:"draft"`
+	Mergeable        bool   `json:"mergeable"`
+	MergeStateStatus string `json:"merge_state_status"`
+	// ChecksState is the state of the *required* checks when RequiredChecksKnown
+	// is set, and otherwise the aggregate state of every check (ci#683).
+	ChecksState string `json:"checks_state"`
+	// RequiredChecksKnown reports that the base branch's required contexts were
+	// resolved, so ChecksState is the state of exactly those contexts.
+	RequiredChecksKnown bool `json:"required_checks_known,omitempty"`
+	// RequiredChecksState is the aggregate state over exactly the required
+	// contexts of the base branch ("success", "failure" or "pending").
+	RequiredChecksState string `json:"required_checks_state,omitempty"`
+	// FailingRequiredChecks names the required contexts that are not green.
+	FailingRequiredChecks []string `json:"failing_required_checks,omitempty"`
+	// InformationalChecks names red checks/statuses the base-branch ruleset does
+	// not require (eg the `private-sandbox-tests` commit status). They are
+	// reported, and they never block a merge.
+	InformationalChecks []string  `json:"informational_checks,omitempty"`
+	Labels              []string  `json:"labels,omitempty"`
+	CreatedAt           time.Time `json:"created_at,omitempty"`
 }
 
 // ExistingConsolidation describes an already open consolidation PR.
@@ -57,6 +71,9 @@ type ExistingConsolidation struct {
 	// Green reports whether every required check on the consolidation PR is
 	// green, ie whether the ci#538 auto-approve path may merge it.
 	Green bool `json:"green"`
+	// InformationalChecks names red checks/statuses the base-branch ruleset does
+	// not require; they are reported and never block the merge (ci#683).
+	InformationalChecks []string `json:"informational_checks,omitempty"`
 	// CreatedAt orders multiple (unexpected) open consolidation PRs: the
 	// oldest stays the live one, the rest are superseded.
 	CreatedAt time.Time `json:"created_at,omitempty"`
@@ -179,6 +196,12 @@ func Plan(policy AutoConsolidationPolicy, facts ConsolidationFacts) Consolidatio
 				"consolidation PR #%d is open: refreshing it and deferring %d ready PR(s) to the next consolidation",
 				existing.Number, len(ready),
 			)
+			if len(existing.InformationalChecks) > 0 {
+				plan.Reason += fmt.Sprintf(
+					"; %d non-required status(es) are red (%s) and never block the merge (ci#683)",
+					len(existing.InformationalChecks), strings.Join(existing.InformationalChecks, ", "),
+				)
+			}
 			return plan
 		}
 		plan.Include = ready
@@ -266,6 +289,17 @@ func evaluateReady(policy AutoConsolidationPolicy, facts ConsolidationFacts, pr 
 		case MergeStateClean, "HAS_HOOKS", "UNSTABLE":
 			// UNSTABLE means checks are failing but GitHub still allows a
 			// merge; require_green below is what rejects it.
+		case MergeStateBlocked:
+			// ci#683: GitHub reports `blocked` for a head carrying **any**
+			// non-success commit status, required or not — the informational
+			// `private-sandbox-tests` status the private suite sets on every PR
+			// head made a fully green PR un-mergeable through the CLI. It is a
+			// legitimate block when a required context is red, which the
+			// require_green gate below rejects; when every required context is
+			// green and the only red checks are informational, accept it.
+			if !informationalStatusOnlyBlock(pr) {
+				return reject(fmt.Sprintf("merge state is %s", state))
+			}
 		case MergeStateUnknown:
 			return reject("mergeability is not known yet")
 		default:
@@ -292,6 +326,32 @@ func checksGreen(state string) bool {
 	default:
 		return false
 	}
+}
+
+// informationalStatusOnlyBlock reports whether a `BLOCKED` merge state is fully
+// explained by checks the base-branch ruleset does *not* require (ci#683).
+//
+// GitHub derives `mergeable_state: blocked` from any non-success status on the
+// head, so the informational `private-sandbox-tests` commit status blocked the
+// agents' merge path although every required context was green and the REST merge
+// endpoint succeeded. Being blocked by an informational status is accepted only
+// with positive evidence: at least one red check must be known to be
+// non-required, and the required checks must be green.
+func informationalStatusOnlyBlock(pr PullRequest) bool {
+	if len(pr.InformationalChecks) == 0 {
+		return false
+	}
+	state := effectiveChecksState(pr)
+	return checksGreen(state)
+}
+
+// effectiveChecksState is the state the merge decision is based on: the required
+// contexts when they are known, otherwise the aggregate state of every check.
+func effectiveChecksState(pr PullRequest) string {
+	if pr.RequiredChecksKnown && strings.TrimSpace(pr.RequiredChecksState) != "" {
+		return pr.RequiredChecksState
+	}
+	return pr.ChecksState
 }
 
 // authorAllowed applies the `authors` allow-list. `self` matches the agent's

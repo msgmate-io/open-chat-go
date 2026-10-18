@@ -284,8 +284,106 @@ func TestPlanRespectsRepoScope(t *testing.T) {
 	}
 }
 
-// TestIsConsolidationBranch guards the branch/label recognition shared with the
-// external loop controller (ci#652) and the ci#538 auto-approve workflow.
+// TestPlanToleratesInformationalStatusOnlyBlock is the ci#683 planner guard: a
+// `BLOCKED` merge state that is fully explained by red *non-required* checks is
+// still ready (the r25 incident blocked the whole ready-PR selection), while a
+// `BLOCKED` state without that evidence stays rejected.
+func TestPlanToleratesInformationalStatusOnlyBlock(t *testing.T) {
+	policy := DefaultAutoConsolidationPolicy()
+
+	informational := PullRequest{
+		Number: 120, Title: "fix: green but blocked by an informational status", Author: "cur1ousdude",
+		BaseRef: "main", Mergeable: true, MergeStateStatus: MergeStateBlocked,
+		ChecksState: "success", RequiredChecksKnown: true, RequiredChecksState: "success",
+		InformationalChecks: []string{"private-sandbox-tests"},
+	}
+	plan := Plan(policy, ConsolidationFacts{
+		Repo: "msgmate-io/open-chat-go", SelfLogin: "cur1ousdude",
+		OpenPRs: []PullRequest{informational},
+	})
+	decision := decisionFor(t, plan, informational.Number)
+	if !decision.Ready {
+		t.Fatalf("a BLOCKED state caused only by an informational status must be ready, got %v", decision.Reasons)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		pr     PullRequest
+		reason string
+	}{
+		{
+			name: "a blocked state without informational evidence stays rejected",
+			pr: PullRequest{
+				Number: 121, Author: "cur1ousdude", BaseRef: "main", Mergeable: true,
+				MergeStateStatus: MergeStateBlocked, ChecksState: "success",
+			},
+			reason: "merge state is BLOCKED",
+		},
+		{
+			name: "a blocked state with red required checks stays rejected",
+			pr: PullRequest{
+				Number: 122, Author: "cur1ousdude", BaseRef: "main", Mergeable: true,
+				MergeStateStatus: MergeStateBlocked, ChecksState: "failure",
+				RequiredChecksKnown: true, RequiredChecksState: "failure",
+				InformationalChecks: []string{"private-sandbox-tests"},
+			},
+			reason: "BLOCKED",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := Plan(policy, ConsolidationFacts{
+				Repo: "msgmate-io/open-chat-go", SelfLogin: "cur1ousdude",
+				OpenPRs: []PullRequest{tc.pr},
+			})
+			decision := decisionFor(t, plan, tc.pr.Number)
+			if decision.Ready {
+				t.Fatalf("expected the PR to be rejected, got ready (reasons %v)", decision.Reasons)
+			}
+			if joined := strings.Join(decision.Reasons, "; "); !strings.Contains(joined, tc.reason) {
+				t.Fatalf("reasons = %q, want it to contain %q", joined, tc.reason)
+			}
+		})
+	}
+}
+
+// TestPlanMergesWithInformationalStatusOnly is the ci#683 consolidation-merge
+// guard: the live consolidation PR is merged when every *required* context is
+// green even though a non-required status is red, and the plan names the
+// informational statuses instead of leaving an unexplained block.
+func TestPlanMergesWithInformationalStatusOnly(t *testing.T) {
+	policy := DefaultAutoConsolidationPolicy()
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+
+	plan := Plan(policy, ConsolidationFacts{
+		Repo: "msgmate-io/open-chat-go", SelfLogin: "cur1ousdude", Now: now,
+		OpenConsolidations: []ExistingConsolidation{
+			{
+				Number: 700, Branch: "chore/consolidate-2026-10-18-r25", Green: true,
+				InformationalChecks: []string{"private-sandbox-tests"},
+				CreatedAt:           now.Add(-time.Hour),
+			},
+		},
+	})
+
+	if !plan.ShouldMerge {
+		t.Fatalf("a green consolidation PR must be merged despite a red informational status: %#v", plan)
+	}
+	if !strings.Contains(plan.Reason, "private-sandbox-tests") || !strings.Contains(plan.Reason, "ci#683") {
+		t.Fatalf("expected the plan reason to name the informational status, got %q", plan.Reason)
+	}
+}
+
+// decisionFor returns the ready decision of one PR in a plan.
+func decisionFor(t *testing.T, plan ConsolidationPlan, number int) ReadyDecision {
+	t.Helper()
+	for _, decision := range plan.Decisions {
+		if decision.Number == number {
+			return decision
+		}
+	}
+	t.Fatalf("expected a decision for PR #%d", number)
+	return ReadyDecision{}
+}
 func TestIsConsolidationBranch(t *testing.T) {
 	policy := DefaultAutoConsolidationPolicy()
 	for _, branch := range []string{"chore/consolidate-2026-10-18", "chore/consolidate-fix", "chore/consolidate"} {

@@ -34,6 +34,13 @@ type ToolCall struct {
 	// while a call runs and its duration once it completes (ci#569).
 	StartedAtUnixMs int64
 	DurationMs      int64
+	// Retries is how many extra attempts the call needed after a transient
+	// environmental failure, and BudgetExempt marks a failed call that was
+	// exempted from the agent's failed-tool budget (ci#688). Both are surfaced
+	// in the message metadata so a bursty sandbox/host condition is visible in
+	// the transcript instead of only in the backend log.
+	Retries      int
+	BudgetExempt bool
 }
 
 // IsTerminalToolCallStatus reports whether a tool-call status means the call
@@ -146,6 +153,27 @@ func buildToolErrorPlaceholder(toolName string, runErr error) string {
 		"Tool %s failed with error: %s. Please continue and provide the best possible response without this tool result.",
 		toolName,
 		runErr.Error(),
+	)
+}
+
+// buildTransientToolErrorPlaceholder builds the model-facing result of a call
+// that failed for an *environmental* reason and already exhausted its retries
+// (ci#688). It tells the model three things it cannot infer from the bare
+// error: the failure was infrastructure rather than its own arguments, it did
+// not consume the failed-tool budget, and retrying after a short wait (or
+// moving on) is the right response instead of abandoning the task.
+func buildTransientToolErrorPlaceholder(toolName string, runErr error, attempts int) string {
+	reason := "unknown error"
+	if runErr != nil {
+		reason = runErr.Error()
+	}
+	return fmt.Sprintf(
+		"Tool %s failed with an environment/infrastructure error after %d attempt(s): %s. "+
+			"This is not caused by your arguments and it does NOT count against your failed-tool budget. "+
+			"Retry the call after a short wait (the underlying sandbox/host condition is usually transient) or continue with another step.",
+		toolName,
+		attempts,
+		reason,
 	)
 }
 
@@ -362,6 +390,11 @@ func streamChatCompletion(
 		currentMessages := messages
 		totalToolCalls := 0
 		failedToolCalls := 0
+		// transientToolFailures counts the calls that failed for an
+		// environmental reason and were therefore exempted from the
+		// failed-tool budget (ci#688). They are reported separately so a
+		// saturated sandbox pool is visible without aborting the turn.
+		transientToolFailures := 0
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
@@ -507,13 +540,32 @@ func streamChatCompletion(
 			// A post-confirmation continuation that produces neither text nor a
 			// tool call is useless and is often a truncated provider emission;
 			// retry it once before giving up so an intermittent blip does not
-			// silently abandon the remaining task steps (ci#428).
-			if aiResponseComplete && meta.PostConfirmationContinuation && !emptyContinuationRetried &&
-				strings.TrimSpace(toolCallResult.aiResponse) == "" {
+			// silently abandon the remaining task steps (ci#428). A round whose
+			// only output was a leaked context-compaction transcript is in the
+			// same class: the transcript was stripped (ci#562), so the turn has
+			// no usable answer either and is worth exactly one retry.
+			if aiResponseComplete && !emptyContinuationRetried &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" &&
+				(meta.PostConfirmationContinuation || toolCallResult.compactionOnly) {
 				emptyContinuationRetried = true
 				aiResponseComplete = false
-				log.Printf("Post-confirmation continuation produced an empty assistant message; retrying once")
+				log.Printf(
+					"Assistant round produced no usable text (post-confirmation continuation: %t, leaked compaction transcript: %t); retrying once",
+					meta.PostConfirmationContinuation,
+					toolCallResult.compactionOnly,
+				)
 				continue
+			}
+
+			// The retry after a leaked transcript produced another transcript:
+			// the round has no answer and nothing left to retry. Report it as a
+			// generation failure so the turn ends with a clear, human-readable
+			// error (the work already done is kept) instead of finishing on an
+			// empty message (ci#562).
+			if aiResponseComplete && toolCallResult.compactionOnly &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" && emptyContinuationRetried {
+				errChan <- errLeakedCompactionTranscript
+				return
 			}
 
 			// If AI response is complete and no more tools are being called, execute completion tools
@@ -576,6 +628,9 @@ func streamChatCompletion(
 							completionData["tool_call_failed_count"] = failedToolCalls
 							completionData["tool_call_max_total"] = toolCallMaxTotal
 							completionData["tool_call_max_failed"] = toolCallMaxFailed
+							// ci#688: transient/environmental failures are
+							// budget-exempt, so report them separately.
+							completionData["tool_call_transient_failed_count"] = transientToolFailures
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
@@ -600,7 +655,7 @@ func streamChatCompletion(
 			appended, updatedMessages := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds)
 			currentMessages = updatedMessages
 			for _, call := range appended {
-				toolCallDetails = append(toolCallDetails, map[string]interface{}{
+				details := map[string]interface{}{
 					"id":        call.id,
 					"name":      call.name,
 					"arguments": call.arguments,
@@ -608,13 +663,24 @@ func streamChatCompletion(
 					"status":    call.status,
 					"error":     call.error,
 					"timestamp": time.Now().Format(time.RFC3339),
-				})
-				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
-				totalToolCalls++
-				if call.status == ToolCallStatusFailed {
-					failedToolCalls++
 				}
+				if call.retries > 0 {
+					details["retries"] = call.retries
+				}
+				if call.budgetExempt {
+					details["budget_exempt"] = true
+				}
+				toolCallDetails = append(toolCallDetails, details)
+				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
 			}
+			totalToolCalls += len(appended)
+			// ci#688: only failures the model can act on consume the
+			// failed-tool budget; a transient environmental failure that
+			// survived its retries is counted separately, so one bursty
+			// sandbox provision cannot abort the interaction.
+			roundFailed, roundTransient := toolCallFailureAccounting(appended)
+			failedToolCalls += roundFailed
+			transientToolFailures += roundTransient
 
 			// A round whose every call was already processed (or that surfaced no
 			// usable call) would otherwise spin without adding anything to the
@@ -650,6 +716,16 @@ type executedToolCall struct {
 	result    string
 	status    string
 	error     string
+	// budgetExempt marks a failed call that must not consume the agent's
+	// failed-tool budget: a transient environmental failure (sandbox
+	// provisioning under load, host resource exhaustion, a connection blip
+	// towards the integration host) that survived the retries of ci#688. It is
+	// still reported to the model as a failed call, and the total tool-call cap
+	// keeps the turn bounded.
+	budgetExempt bool
+	// retries is how many extra attempts the call needed after a transient
+	// failure (0 for the common case).
+	retries int
 }
 
 type toolCallResult struct {
@@ -665,7 +741,11 @@ type toolCallResult struct {
 	error             string
 	err               error
 	aiResponse        string
-	usage             *TokenUsage
+	// compactionOnly records that the round's only output was a leaked
+	// context-compaction transcript, which was stripped and must never be
+	// persisted as the answer; the loop retries such a round once (ci#562).
+	compactionOnly bool
+	usage          *TokenUsage
 	// calls holds every tool call of the round, in the order the model
 	// emitted them (ci#655). The singular id/toolName/result/... fields above
 	// mirror the last call for backwards compatibility.
@@ -1313,6 +1393,11 @@ func processParsedToolCall(
 	var toolResult string
 	status := ToolCallStatusSucceeded
 	toolErr := ""
+	// ci#688: how many extra attempts the call needed after a transient
+	// environmental failure, and whether the (still) failed call is exempt
+	// from the agent's failed-tool budget.
+	toolRetries := 0
+	toolBudgetExempt := false
 	requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
 	switch {
 	case requiresConfirmation:
@@ -1337,18 +1422,30 @@ func processParsedToolCall(
 		result.result = resolvedResult
 		status = ToolCallStatusSucceeded
 	default:
-		var (
-			executedResult string
-			runErr         error
-		)
-		if contextTool, ok := tool.(ContextTool); ok {
-			executedResult, runErr = contextTool.RunToolContext(ctx, toolInput)
-		} else {
-			executedResult, runErr = tool.RunTool(toolInput)
+		// ci#688: a tool body can fail for purely environmental reasons (a
+		// per-chat sandbox that could not be provisioned under high
+		// parallelism, host resource exhaustion, a connection blip towards the
+		// integration host). Such a failure is retried with an exponential
+		// backoff — bounded by the generation context, so a user stop is never
+		// resurrected — and, when it survives the retries, it is reported to
+		// the model as a failed call that does *not* consume the failed-tool
+		// budget. Only failures the model can actually fix count against it.
+		run := func() (string, error) {
+			if contextTool, ok := tool.(ContextTool); ok {
+				return contextTool.RunToolContext(ctx, toolInput)
+			}
+			return tool.RunTool(toolInput)
 		}
+		executedResult, runErr, retries := runToolWithTransientRetry(ctx, name, run)
+		toolRetries = retries
 		if runErr != nil {
-			log.Printf("Error executing tool %s: %v", name, runErr)
-			toolResult = buildToolErrorPlaceholder(name, runErr)
+			log.Printf("Error executing tool %s (after %d attempt(s)): %v", name, retries+1, runErr)
+			toolBudgetExempt = isTransientToolFailure(runErr)
+			if toolBudgetExempt {
+				toolResult = buildTransientToolErrorPlaceholder(name, runErr, retries+1)
+			} else {
+				toolResult = buildToolErrorPlaceholder(name, runErr)
+			}
 			result.result = toolResult
 			status = ToolCallStatusFailed
 			toolErr = runErr.Error()
@@ -1368,16 +1465,20 @@ func processParsedToolCall(
 		Error:           toolErr,
 		StartedAtUnixMs: startedAtUnixMs,
 		DurationMs:      time.Since(time.UnixMilli(startedAtUnixMs)).Milliseconds(),
+		Retries:         toolRetries,
+		BudgetExempt:    toolBudgetExempt,
 	}
 	result.status = status
 	result.error = toolErr
 	result.calls = append(result.calls, executedToolCall{
-		id:        id,
-		name:      name,
-		arguments: arguments,
-		result:    toolResult,
-		status:    status,
-		error:     toolErr,
+		id:           id,
+		name:         name,
+		arguments:    arguments,
+		result:       toolResult,
+		status:       status,
+		error:        toolErr,
+		budgetExempt: toolBudgetExempt,
+		retries:      toolRetries,
 	})
 	// Cache only successful results. Caching failures would make an identical
 	// retry (after the underlying state changed) replay the stale error instead
@@ -1470,15 +1571,26 @@ func processStreamingResponseReader(
 		delta := chunk.Choices[0].Delta
 
 		if delta.Content != "" {
-			if !inlineToolCallDetected && containsInlineToolCall(delta.Content) {
+			aiResponseBuilder.WriteString(delta.Content)
+			accumulated := aiResponseBuilder.String()
+			// Detect against the *accumulated* content: an inline call marker
+			// (DeepSeek DSML, Anthropic/XML or the bracket placeholder some
+			// models emit) can be split across deltas, and a marker recognised
+			// only once it is complete would already have leaked its prefix to
+			// the client and — worse — been stored as the assistant text
+			// (ci#428, ci#562).
+			if !inlineToolCallDetected && containsInlineToolCall(accumulated, toolMap) {
 				inlineToolCallDetected = true
 			}
-			// Never forward inline DSML tool-call fragments as assistant text;
-			// they are recovered (or reported) after the stream ends.
-			if !inlineToolCallDetected {
+			// A leaked context-compaction transcript must not reach the client
+			// either: hold back content from the delta that opens a block (and
+			// any still-ambiguous opening prefix of one, which releases again
+			// as soon as the answer diverges). Prose forwarded before the block
+			// started is genuine and stays.
+			compactionSuspect := compactionBlockRe.MatchString(accumulated) || compactionOutputSuspected(accumulated)
+			if !inlineToolCallDetected && !compactionSuspect {
 				chunkChan <- delta.Content
 			}
-			aiResponseBuilder.WriteString(delta.Content)
 		}
 
 		if len(delta.ToolCalls) == 0 {
@@ -1528,6 +1640,15 @@ func processStreamingResponseReader(
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
+
+	// A leaked context-compaction transcript is model bookkeeping, never a
+	// user-facing answer: strip it so it can never be stored as (or posted as)
+	// the turn's reply, and flag the round when the transcript was its only
+	// output so the tool loop retries once instead of finishing on it (ci#562).
+	if sanitized, onlyBlob := sanitizeCompactionOutput(result.aiResponse); onlyBlob {
+		result.aiResponse = sanitized
+		result.compactionOnly = true
+	}
 
 	// Recover an inline tool-call block (DeepSeek DSML or Anthropic/XML) that
 	// the provider did not map onto the structured tool_calls field. Without
