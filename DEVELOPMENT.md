@@ -129,6 +129,46 @@ upsert, so it must never be fatal:
   interactions and history) and raise it or add retention when it approaches the
   limit.
 
+#### A turn never ends on empty text, and the per-chat tool cap is a snapshot (ci#709)
+
+A native-coder turn that ran dozens of tool calls could end with `state=finished`
+and **no `last_agent_text`** while the bot message carried 60+ tool calls: the
+work was done but never reported, so it looked lost. In parallel, a chat created
+before a cap raise kept aborting at the old cap (100), because the caps were
+copied from the bot's default shared config into the chat at creation time and
+never re-read.
+
+Both halves are now fixed at the turn choke point:
+
+- Every terminal path of the tool loop records a reason and the turn's counters
+  (`backend/api/msgmate/turn_outcome.go`): cap reached, failed-cap reached,
+  provider error, cancel, loop guard (`no usable tool call`) and the confirmable
+  pause. `ResolveTerminalAssistantText` is the last step before the bot message
+  is persisted and guarantees non-empty, human-readable text that states what
+  happened and what to do next - a turn that ran tools always says the work is
+  kept and how to continue, a stop keeps whatever the turn already said and
+  appends the pause marker.
+- A reached cap is a typed `toolCallCapError`. It keeps the historic wording
+  (`exceeded maximum number of tool calls (N)`) so existing matches and the queue
+  task's failure classification keep working, and carries the counters plus the
+  user-facing guidance.
+- The resolved caps, this turn's consumed/remaining counters and the terminal
+  reason are persisted as `tool_call_budget`, `tool_call_usage` and `turn_ended`
+  message metadata, so the budget is inspectable instead of only living in an
+  error string.
+- `backend/nativecoder/toolbudget.go` snapshots the per-chat budget in the chat's
+  shared config at creation (`tool_call_budget`), and every turn resolves the
+  effective caps as the **maximum** declared by the snapshot, the chat's own
+  config, the bot runtime's *current* shared config and the compiled-in default.
+  A cap raise on a bot therefore reaches chats that already exist, a declared
+  budget is never silently lowered, and the snapshot survives a re-attach / a
+  re-provision. The bot's default shared config deliberately stays snapshot-free:
+  it is the live source a raise comes from.
+
+Regression tests: `backend/api/msgmate/turn_final_text_test.go`,
+`backend/nativecoder/toolbudget_test.go` and the snapshot assertion in
+`backend/api/chats/create_test.go`.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git
