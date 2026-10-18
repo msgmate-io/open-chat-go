@@ -21,6 +21,11 @@
 # The PR number comes from the argument, then from GITHUB_EVENT_PATH when the
 # event carries one (a pull_request payload always does). The event file is
 # only ever used to *locate* the PR, never to read its labels.
+#
+# NOTE (ci#659 follow-up): label-driven jobs that run BEFORE `actions/checkout`
+# cannot call this script, so they inline the same curl+jq call in their first
+# step. Keep the two in sync; this file is the canonical implementation for
+# steps that run after a checkout.
 set -euo pipefail
 
 OUT="${1:?usage: resolve-live-pr-labels.sh <output-file> [<pr-number>]}"
