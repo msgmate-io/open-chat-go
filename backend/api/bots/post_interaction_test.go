@@ -73,3 +73,32 @@ func TestComposePostCommentBody(t *testing.T) {
 		t.Fatalf("max_len truncation not applied: %q", body)
 	}
 }
+
+func TestDecodePostActionPlanAutoImplement(t *testing.T) {
+	raw := map[string]interface{}{
+		"kind":                 "plan_auto_implement",
+		"repo":                 "msgmate-io/open-chat-go-ci",
+		"number":               float64(649),
+		"bot":                  "msgmate-coder-repl-bot",
+		"require_confirmation": false,
+	}
+	action, ok := decodePostActionPlanAutoImplement(raw)
+	if !ok || action.Bot != "msgmate-coder-repl-bot" || action.Number != 649 {
+		t.Fatalf("unexpected decode: %#v ok=%v", action, ok)
+	}
+	if action.RequireConfirmation == nil || *action.RequireConfirmation {
+		t.Fatalf("require_confirmation should have decoded to false: %#v", action.RequireConfirmation)
+	}
+}
+
+func TestBuildPlanImplementationPromptCarriesThePlan(t *testing.T) {
+	issue := "https://github.com/msgmate-io/open-chat-go-ci/issues/649"
+	action := postActionPlanAutoImplement{Repo: "msgmate-io/open-chat-go-ci", Number: 649, Issue: &issue, Bot: "b"}
+	prompt := buildPlanImplementationPrompt(action, "step 1: do the thing")
+	if !strings.Contains(prompt, "msgmate-io/open-chat-go-ci") || !strings.Contains(prompt, "649") {
+		t.Fatalf("prompt must carry the repo and issue: %q", prompt)
+	}
+	if !strings.Contains(prompt, "step 1: do the thing") {
+		t.Fatalf("prompt must carry the plan verbatim: %q", prompt)
+	}
+}
