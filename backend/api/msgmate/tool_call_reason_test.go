@@ -81,6 +81,21 @@ func TestGetToolInputSchemaAdvertisesReasonForCoderToolsOnly(t *testing.T) {
 	}
 }
 
+func TestGetToolInputSchemaHandlesNilParameters(t *testing.T) {
+	// coder_list historically has no parameters; normalizeToolInputSchema must
+	// coerce the typed-nil map and withToolCallReasonProperty must not assign
+	// into it (regression: panic assignment to entry in nil map, r40).
+	coder := NewToolFromDefinition(ToolDefinition{Name: "coder_list", FunctionName: "coder_list"})
+	schema := coder.GetToolInputSchema()
+	props, ok := schema["properties"].(map[string]interface{})
+	if !ok || props == nil {
+		t.Fatalf("expected a non-nil properties object, got %#v", schema["properties"])
+	}
+	if _, ok := props["reason"]; !ok {
+		t.Fatalf("coder tool schema missing reason: %#v", props)
+	}
+}
+
 func TestIsCoderToolName(t *testing.T) {
 	if !IsCoderToolName("coder_read") || IsCoderToolName("grep") || IsCoderToolName("") {
 		t.Fatal("unexpected coder tool name classification")

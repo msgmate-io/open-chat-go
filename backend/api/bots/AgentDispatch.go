@@ -725,7 +725,7 @@ func liveInteractionForDedupeKey(
 			continue
 		}
 		view := agentInteractionView(DB, inspector, actingUser, chat)
-		if view.IsActive || view.State == string(chatstate.StateNeedsConfirmation) {
+		if view.IsActive || view.State == string(chatstate.StateNeedsConfirmation) || workqueue.BotReplyHasWork(inspector, chat.UUID) {
 			return chat, true
 		}
 	}
