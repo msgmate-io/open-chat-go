@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"backend/logging"
 	"bufio"
 	"bytes"
 	"context"
@@ -8,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -290,7 +290,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 
 		// Send usage information if present
 		if response.Usage != nil {
-			log.Printf("Token usage - Prompt: %d, Completion: %d, Total: %d",
+			logging.Debugf("Token usage - Prompt: %d, Completion: %d, Total: %d",
 				response.Usage.PromptTokens,
 				response.Usage.CompletionTokens,
 				response.Usage.TotalTokens)
@@ -356,28 +356,28 @@ func streamChatCompletion(
 
 		// Execute interaction_start tools at the beginning
 		if len(interactionStartTools) > 0 {
-			log.Printf("Executing %d interaction_start tools", len(interactionStartTools))
+			logging.Debugf("Executing %d interaction_start tools", len(interactionStartTools))
 			for _, toolName := range interactionStartTools {
 				// Extract the actual tool name after the prefix
 				actualToolName := strings.TrimPrefix(toolName, "interaction_start:")
-				log.Printf("Executing interaction_start tool: %s %s", toolName, actualToolName)
+				logging.Debugf("Executing interaction_start tool: %s %s", toolName, actualToolName)
 
 				// Execute the function using the handler if available
 				if handler != nil {
 					tool, exists := toolMap[toolName]
 					if !exists {
-						log.Printf("Warning: Tool '%s' not found in toolMap", actualToolName)
+						logging.Warnf("Warning: Tool '%s' not found in toolMap", actualToolName)
 						continue
 					}
 
 					toolResult, err := tool.RunTool(map[string]interface{}{})
 					if err != nil {
-						log.Printf("Error executing interaction_start tool %s: %v", actualToolName, err)
+						logging.Errorf("Error executing interaction_start tool %s: %v", actualToolName, err)
 						continue
 					}
-					log.Printf("Successfully executed interaction_start tool %s with result: %v", actualToolName, toolResult)
+					logging.Debugf("Successfully executed interaction_start tool %s with result: %v", actualToolName, toolResult)
 				} else {
-					log.Printf("No handler available, would execute interaction_start tool: %s", actualToolName)
+					logging.Debugf("No handler available, would execute interaction_start tool: %s", actualToolName)
 				}
 			}
 		}
@@ -542,7 +542,7 @@ func streamChatCompletion(
 				}
 				delay := providerRetryBackoffDelay(attempts, retryOpts.BaseBackoff, retryOpts.MaxBackoff)
 				retryAt := time.Now().Add(delay)
-				log.Printf(
+				logging.Debugf(
 					"Provider request failed (attempt %d/%d): %v; retrying in %s",
 					attempts, maxAttempts, err, delay,
 				)
@@ -587,7 +587,7 @@ func streamChatCompletion(
 					if !shrunk {
 						break
 					}
-					log.Printf(
+					logging.Debugf(
 						"Context window exceeded; retrying with trimmed history (%d -> %d messages, round %d)",
 						len(currentMessages),
 						len(shrunkMessages),
@@ -618,7 +618,7 @@ func streamChatCompletion(
 			// task (ci#428).
 			if err != nil && ctx.Err() == nil && errors.Is(err, errMalformedInlineToolCall) && !malformedInlineToolCallRetried {
 				malformedInlineToolCallRetried = true
-				log.Printf("Model emitted an unrecoverable inline tool-call block; retrying once")
+				logging.Debugf("Model emitted an unrecoverable inline tool-call block; retrying once")
 				continue
 			}
 			if err != nil {
@@ -634,7 +634,7 @@ func streamChatCompletion(
 
 			// If we encountered an error, we're done
 			if toolCallResult.err != nil {
-				log.Printf("Error: %v", toolCallResult.err)
+				logging.Errorf("Error: %v", toolCallResult.err)
 				recordOutcome(TurnEndedNoUsableCall)
 				return
 			}
@@ -651,7 +651,7 @@ func streamChatCompletion(
 				(meta.PostConfirmationContinuation || toolCallResult.compactionOnly) {
 				emptyContinuationRetried = true
 				aiResponseComplete = false
-				log.Printf(
+				logging.Debugf(
 					"Assistant round produced no usable text (post-confirmation continuation: %t, leaked compaction transcript: %t); retrying once",
 					meta.PostConfirmationContinuation,
 					toolCallResult.compactionOnly,
@@ -675,17 +675,17 @@ func streamChatCompletion(
 			if aiResponseComplete {
 				// Execute interaction_complete tools before finishing
 				if len(interactionCompleteTools) > 0 {
-					log.Printf("Executing %d interaction_complete tools", len(interactionCompleteTools))
+					logging.Debugf("Executing %d interaction_complete tools", len(interactionCompleteTools))
 					for _, toolName := range interactionCompleteTools {
 						// Extract the actual tool name after the prefix
 						actualToolName := strings.TrimPrefix(toolName, "interaction_complete:")
-						log.Printf("Executing interaction_complete tool: %s", actualToolName)
+						logging.Debugf("Executing interaction_complete tool: %s", actualToolName)
 
 						// Execute the function using the handler if available
 						if handler != nil {
 							tool, exists := toolMap[toolName]
 							if !exists {
-								log.Printf("Warning: Tool '%s' not found in toolMap", actualToolName)
+								logging.Warnf("Warning: Tool '%s' not found in toolMap", actualToolName)
 								continue
 							}
 
@@ -740,12 +740,12 @@ func streamChatCompletion(
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
-								log.Printf("Error executing interaction_complete tool %s: %v", actualToolName, err)
+								logging.Errorf("Error executing interaction_complete tool %s: %v", actualToolName, err)
 								continue
 							}
-							log.Printf("Successfully executed interaction_complete tool %s with result: %v", actualToolName, toolResult)
+							logging.Debugf("Successfully executed interaction_complete tool %s with result: %v", actualToolName, toolResult)
 						} else {
-							log.Printf("No handler available, would execute interaction_complete tool: %s", actualToolName)
+							logging.Debugf("No handler available, would execute interaction_complete tool: %s", actualToolName)
 						}
 					}
 				}
@@ -817,7 +817,7 @@ func streamChatCompletion(
 			}
 
 			if toolCallResult.stopAfterTool {
-				log.Printf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
+				logging.Debugf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
 				recordOutcome(TurnEndedConfirmablePause)
 				return
 			}
@@ -919,7 +919,7 @@ func appendExecutedToolCalls(
 	truncatedResults := 0
 	for _, call := range calls {
 		if call.id != "" && processed[call.id] {
-			log.Printf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", call.id)
+			logging.Warnf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", call.id)
 			continue
 		}
 		if call.id != "" {
@@ -945,7 +945,7 @@ func appendExecutedToolCalls(
 		modelToolResult, cut := truncateToolResultForTool(call.result, call.name, limits)
 		if cut {
 			truncatedResults++
-			log.Printf(
+			logging.Debugf(
 				"Truncated tool result for model context (%d -> %d chars): %s (ci#680 per-tool output budget)",
 				len(call.result),
 				len(modelToolResult),
@@ -1479,13 +1479,13 @@ func processParsedToolCall(
 	// The stop button cancels the generation context; never dispatch a tool
 	// body after that, even if the provider stream still delivered the call.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		log.Printf("Skipping tool %s: generation cancelled", name)
+		logging.Debugf("Skipping tool %s: generation cancelled", name)
 		return
 	}
 
 	tool, exists := toolMap[name]
 	if !exists {
-		log.Printf("Warning: Tool '%s' not found in toolMap", name)
+		logging.Warnf("Warning: Tool '%s' not found in toolMap", name)
 		return
 	}
 
@@ -1509,7 +1509,7 @@ func processParsedToolCall(
 		// may change between two identical calls (e.g. a coding workspace becomes
 		// selected after the first read failed), and replaying a stale error would
 		// trap the model in a failure loop instead of letting it recover.
-		log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
+		logging.Warnf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
 
 		result.usedTool = true
 		result.id = id
@@ -1619,7 +1619,7 @@ func processParsedToolCall(
 		executedResult, runErr, retries := runToolWithTransientRetry(ctx, name, run)
 		toolRetries = retries
 		if runErr != nil {
-			log.Printf("Error executing tool %s (after %d attempt(s)): %v", name, retries+1, runErr)
+			logging.Errorf("Error executing tool %s (after %d attempt(s)): %v", name, retries+1, runErr)
 			toolBudgetExempt = isTransientToolFailure(runErr)
 			toolSandboxCapacity = isSandboxCapacityFailure(runErr)
 			if toolSandboxCapacity {
@@ -1917,7 +1917,7 @@ func processStreamingResponseReader(
 			toolChan,
 		)
 		if result.stopAfterTool {
-			log.Printf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
+			logging.Debugf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
 			break
 		}
 	}
