@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { useCurrentUser } from "@open-chat-go/ui"
+import useSWR from "swr"
+import { fetcher, useCurrentUser } from "@open-chat-go/ui"
 
 import type { DocMetadata } from "@/pages/docs/docs"
 
@@ -22,70 +22,38 @@ type IntegrationsListResponse = {
 /**
  * Resolves the caller's documentation access.
  *
- * Sign-in state comes from the shared session query; the accessible
- * integrations come from the public `integrations/list` endpoint, which only
- * returns the integrations the caller may actually see. That endpoint is
- * session-scoped, so an anonymous visitor is treated as signed out.
+ * Sign-in state comes from the shared session query (`/api/v1/user/self`); the
+ * accessible integrations come from the caller-scoped `integrations/list`
+ * endpoint, which already applies admin-only and grant gating server-side.
+ * Anonymous visitors get `null` (unknown), so gated docs stay behind the
+ * sign-in notice.
  */
 export function useDocsAccess(): DocsAccessState {
-  const { data: user, isLoading: userLoading } = useCurrentUser() as {
-    data?: { is_admin?: boolean } | null;
-    isLoading?: boolean;
-  };
-  const isSignedIn = !!user;
-  const [accessibleIntegrations, setAccessibleIntegrations] = useState<string[] | null>(null)
+  const { data: user, isLoading: userLoading } = useCurrentUser()
+  const isSignedIn = !!user
 
-  useEffect(() => {
-    if (!isSignedIn) {
-      setAccessibleIntegrations(null)
-      return
-    }
-
-    let cancelled = false
-    setAccessibleIntegrations(null)
-
-    const load = async () => {
-      try {
-        const response = await fetch("/api/v1/integrations/list", { credentials: "include" })
-        if (cancelled) return
-        if (response.status === 401 || response.status === 403) {
-          // Signed in, but the caller may not list integrations: keep the known
-          // set empty so integration docs stay behind the no-access notice.
-          setAccessibleIntegrations([])
-          return
-        }
-        if (!response.ok) {
-          setAccessibleIntegrations([])
-          return
-        }
-        const data = (await response.json()) as IntegrationsListResponse
-        if (cancelled) return
-        setAccessibleIntegrations(
-          (data.rows ?? [])
-            .map((row) => row?.name)
-            .filter((name): name is string => typeof name === "string"),
-        )
-      } catch {
-        if (!cancelled) {
-          setAccessibleIntegrations([])
-        }
-      }
-    }
-
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [isSignedIn])
-
-  return useMemo(
-    () => ({
-      isSignedIn,
-      accessibleIntegrations,
-      isLoading: !!userLoading || (isSignedIn && accessibleIntegrations === null),
-    }),
-    [isSignedIn, accessibleIntegrations, userLoading],
+  const { data, error, isLoading: integrationsLoading } = useSWR<IntegrationsListResponse>(
+    isSignedIn ? "/api/v1/integrations/list" : null,
+    fetcher,
   )
+
+  if (!isSignedIn) {
+    return { isSignedIn: false, accessibleIntegrations: null, isLoading: !!userLoading }
+  }
+
+  const accessibleIntegrations = Array.isArray(data?.rows)
+    ? data.rows
+        .map((row) => row?.name)
+        .filter((name): name is string => typeof name === "string")
+    : error
+      ? []
+      : null
+
+  return {
+    isSignedIn: true,
+    accessibleIntegrations,
+    isLoading: !!userLoading || (accessibleIntegrations === null && !!integrationsLoading),
+  }
 }
 
 /**
