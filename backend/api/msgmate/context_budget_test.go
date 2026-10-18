@@ -453,6 +453,106 @@ func TestCompactMessagesToContextBudgetIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestCompactMessagesToContextBudgetNeverDropsTheNewestToolRound is the ci#728
+// regression: a long turn whose recent tool call/result pair sits outside the
+// protected tail used to have that result replaced by an eviction marker that
+// told the model to re-issue the call - and the turn re-issued the very same
+// call dozens of times (110 calls, 18 identical coder_read in chat
+// ec46eb95-338d-4ff9-8781-2373eef2e974). The newest round must survive intact,
+// and no eviction marker may ask for a re-issue.
+func TestCompactMessagesToContextBudgetNeverDropsTheNewestToolRound(t *testing.T) {
+	messages := []map[string]interface{}{
+		{"role": "system", "content": "You are a coding agent."},
+		{"role": "user", "content": "read the file and fix it"},
+	}
+	// Plenty of older rounds that the guard is free to evict.
+	for i := 0; i < 30; i++ {
+		callID := fmt.Sprintf("old-call-%d", i)
+		messages = append(messages,
+			map[string]interface{}{
+				"role": "assistant",
+				"tool_calls": []map[string]interface{}{{
+					"type":     "function",
+					"id":       callID,
+					"function": map[string]interface{}{"name": "coder_read", "arguments": `{"path":"old.go"}`},
+				}},
+			},
+			map[string]interface{}{"role": "tool", "tool_call_id": callID, "content": strings.Repeat("o", 6000)},
+		)
+	}
+	// The call the model just made, followed by an assistant narration and a
+	// user message: more than contextBudgetProtectedTailMessages messages after
+	// the call, so only the ci#728 rule can keep it.
+	const recentCallID = "recent-call"
+	const recentResult = "the recent result the model must still see"
+	messages = append(messages,
+		map[string]interface{}{
+			"role": "assistant",
+			"tool_calls": []map[string]interface{}{{
+				"type":     "function",
+				"id":       recentCallID,
+				"function": map[string]interface{}{"name": "coder_read", "arguments": `{"path":"recent.go"}`},
+			}},
+		},
+		map[string]interface{}{"role": "tool", "tool_call_id": recentCallID, "content": recentResult},
+	)
+	for i := 0; i < contextBudgetProtectedTailMessages+2; i++ {
+		messages = append(messages, map[string]interface{}{"role": "assistant", "content": fmt.Sprintf("narration %d", i)})
+	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": "continue"})
+
+	before := messagesCharCount(messages)
+	compacted, stats, changed := compactMessagesToContextBudget(messages, 30000)
+	if !changed {
+		t.Fatalf("expected a %d-char history to be squeezed under a 30000-char budget", before)
+	}
+	if after := messagesCharCount(compacted); after > 30000 {
+		t.Fatalf("expected the compacted history under the budget, got %d chars", after)
+	}
+
+	// (a) The newest tool call and its result survive verbatim.
+	callIndex, resultIndex := -1, -1
+	for i, message := range compacted {
+		if roleOf(message) == "tool" && toolCallIDOf(message) == recentCallID {
+			resultIndex = i
+		}
+		for _, id := range toolCallIDsOf(message) {
+			if id == recentCallID {
+				callIndex = i
+			}
+		}
+	}
+	if callIndex < 0 {
+		t.Fatalf("the most recent tool call %q must survive compaction, got %#v", recentCallID, compacted)
+	}
+	if resultIndex < 0 {
+		t.Fatalf("the result of the most recent tool call %q must never be dropped, got %#v", recentCallID, compacted)
+	}
+	if content, _ := compacted[resultIndex]["content"].(string); content != recentResult {
+		t.Fatalf("the most recent tool result must survive verbatim, got %q", content)
+	}
+	if stats.EvictedToolResults == 0 {
+		t.Fatalf("expected the older tool results to be evicted, got %#v", stats)
+	}
+	assertToolPairingValid(t, compacted)
+
+	// (b) No eviction marker tells the model to re-issue the call it just made.
+	for _, message := range compacted {
+		content, _ := message["content"].(string)
+		if !strings.HasPrefix(content, "[tool output evicted from the context budget:") {
+			continue
+		}
+		for _, fragment := range []string{"already ran", "Do NOT re-issue this call"} {
+			if !strings.Contains(content, fragment) {
+				t.Fatalf("the eviction marker must say the call already ran and must not be re-issued (%q missing), got %q", fragment, content)
+			}
+		}
+		if strings.Contains(strings.ToLower(content), "re-issue the call with narrower arguments") {
+			t.Fatalf("the eviction marker must not ask for a re-issue of the same call, got %q", content)
+		}
+	}
+}
+
 // TestInjectContextBudgetNoticeIsThresholdedAndIdempotent covers the
 // self-throttling notice: absent below the threshold, merged into the leading
 // system message above it, and replaced (never stacked) on the next round.
