@@ -129,6 +129,46 @@ upsert, so it must never be fatal:
   interactions and history) and raise it or add retention when it approaches the
   limit.
 
+#### A turn never ends on empty text, and the per-chat tool cap is a snapshot (ci#709)
+
+A native-coder turn that ran dozens of tool calls could end with `state=finished`
+and **no `last_agent_text`** while the bot message carried 60+ tool calls: the
+work was done but never reported, so it looked lost. In parallel, a chat created
+before a cap raise kept aborting at the old cap (100), because the caps were
+copied from the bot's default shared config into the chat at creation time and
+never re-read.
+
+Both halves are now fixed at the turn choke point:
+
+- Every terminal path of the tool loop records a reason and the turn's counters
+  (`backend/api/msgmate/turn_outcome.go`): cap reached, failed-cap reached,
+  provider error, cancel, loop guard (`no usable tool call`) and the confirmable
+  pause. `ResolveTerminalAssistantText` is the last step before the bot message
+  is persisted and guarantees non-empty, human-readable text that states what
+  happened and what to do next - a turn that ran tools always says the work is
+  kept and how to continue, a stop keeps whatever the turn already said and
+  appends the pause marker.
+- A reached cap is a typed `toolCallCapError`. It keeps the historic wording
+  (`exceeded maximum number of tool calls (N)`) so existing matches and the queue
+  task's failure classification keep working, and carries the counters plus the
+  user-facing guidance.
+- The resolved caps, this turn's consumed/remaining counters and the terminal
+  reason are persisted as `tool_call_budget`, `tool_call_usage` and `turn_ended`
+  message metadata, so the budget is inspectable instead of only living in an
+  error string.
+- `backend/nativecoder/toolbudget.go` snapshots the per-chat budget in the chat's
+  shared config at creation (`tool_call_budget`), and every turn resolves the
+  effective caps as the **maximum** declared by the snapshot, the chat's own
+  config, the bot runtime's *current* shared config and the compiled-in default.
+  A cap raise on a bot therefore reaches chats that already exist, a declared
+  budget is never silently lowered, and the snapshot survives a re-attach / a
+  re-provision. The bot's default shared config deliberately stays snapshot-free:
+  it is the live source a raise comes from.
+
+Regression tests: `backend/api/msgmate/turn_final_text_test.go`,
+`backend/nativecoder/toolbudget_test.go` and the snapshot assertion in
+`backend/api/chats/create_test.go`.
+
 ### Clone the repository
 
 The core frontend is tracked in-tree under `frontend/` (no longer a git
@@ -357,9 +397,27 @@ queue wait, saturation events) so the development loop can self-throttle.
 
 The default in-flight cap is 3 — the development-loop controller's
 `MAX_CONCURRENT` default (ci#592) — and is bounded by the pooled sandbox bound
-`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL` (ci#602) when that is smaller. The
-per-agent keys (`coder_provider_max_concurrency`,
-`coder_provider_queue_timeout_ms`, `coder_provider_fallback_on_saturation`,
+`coder_sandbox_max_agents_per_pool` / `OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL`
+(ci#602) when that is smaller. **The deployment lever wins over the per-agent
+key**: the shared-config default merge materialises
+`coder_provider_max_concurrency: 3` into every native coder agent's config, so
+a "config first, env second" precedence pins the whole fleet at 3 forever (that
+was ci#620 — the effective admission cap never left the literal default, no
+matter what `OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY` said). Resolution
+order is therefore env → per-agent key → pool bound → default, the resolved
+source is logged with the cap, and an existing limiter is resized in place: a
+raised cap admits more requests immediately, a lowered cap only takes effect as
+in-flight requests drain, so a change lands without a redeploy.
+
+The core-side admission controller (`backend/api/msgmate/provider_admission.go`)
+admits every provider request of the built-in chat path through that per-key
+limiter and logs `provider_admission` with `effective_max_concurrency`,
+`in_flight`, `queue_waiting` and the config `source`; the admin-only
+`GET /api/v1/admin/provider-admission` route reports the same state for the
+whole process (the raw env levers, the resolved policy and one snapshot per
+admission key, never key material). The per-agent keys
+(`coder_provider_max_concurrency`, `coder_provider_queue_timeout_ms`,
+`coder_provider_fallback_on_saturation`,
 `coder_provider_fallback_backend`/`_model`/`_endpoint`/`_api_key_env`,
 `coder_provider_fallbacks`) mirror the deployment env
 (`OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY`, `..._QUEUE_TIMEOUT_MS`,
@@ -367,8 +425,8 @@ per-agent keys (`coder_provider_max_concurrency`,
 with no explicit key env resolves `<PROVIDER_API_KEY>_FALLBACK`, so an operator
 only has to export one extra variable to shed load onto a second key. No key —
 primary or secondary — is ever exposed: the admission identity and every status
-snapshot carry only a truncated hash. `coder_context` reports the in-flight
-count and cap, and the admin-only
+snapshot carry only a truncated hash/length hint. `coder_context` reports the
+in-flight count and cap, and the admin-only
 `GET /api/v1/integrations/msgmate_coder/provider/status` route reports the
 per-key metrics for the loop. The full reference lives in the
 `msgmate_coder` integration README.
