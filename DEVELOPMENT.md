@@ -261,6 +261,44 @@ consolidation PR targeting `main` is the single place where a batch of ready
 changes is verified as a whole (see "Pull-request CI labels and deployment
 policy" above); feature/bugfix/chore PRs keep the ordinary code-change labels.
 
+### Native coder turns: inline tool calls and leaked compaction transcripts
+
+A provider round can deliver two kinds of output the native coder must never
+persist as a turn's assistant text (ci#428, ci#562):
+
+- an **inline tool call** the provider did not map onto the structured
+  `tool_calls` field — DeepSeek **DSML** control tokens, the Anthropic/XML
+  `<function_calls><invoke name="…">` shape, or the `[[tool_name key="value"]]`
+  bracket placeholder some models fall back to. Detection runs against the
+  *accumulated* stream (markers are split across deltas, so recognising them
+  only once complete would already have leaked the prefix), content is withheld
+  from the client, and the call is reassembled and executed after the stream
+  ends (`parseInlineToolCalls`). A block from which nothing can be recovered
+  fails the turn with `errMalformedInlineToolCall`;
+- a **leaked context-compaction transcript** — the model volunteering its own
+  bookkeeping, an `<analysis>…</analysis>` block followed by a numbered
+  `<summary>…</summary>` block ("Primary Request and Intent", …,
+  "Optional Next Step"). It is model bookkeeping, never an answer, so it is
+  stripped before the round result is returned; the private `tags=coder`
+  benchmark `msgmate_coder_repo_changes_summary` caught exactly that emission
+  as a final reply (the summary file was never written and the reply *was* the
+  blob). Only a message that **opens** with such a tag (optionally after a
+  fence) is treated as a leak — an ordinary answer that merely mentions the tag
+  inside real prose is left untouched.
+
+Either shape counts as "no usable text" for the same single retry the empty
+post-confirmation continuation already got (ci#428): when a round's only output
+was a stripped transcript the loop retries it once instead of finishing on it.
+If the retry produces another transcript the turn fails with
+`errLeakedCompactionTranscript`, classified as its own
+`leaked_compaction_transcript` failure reason so the chat explains it with the
+"the model returned its internal work notes; the work already done is kept —
+send another message" guidance instead of a generic internal error, and no
+empty reply is ever persisted. Recovery lives in
+`backend/api/msgmate/inline_tool_call.go` (parsers) and
+`backend/api/msgmate/compaction_output.go` (compaction detection/stripping),
+with the streaming suppression in `processStreamingResponseReader`.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra

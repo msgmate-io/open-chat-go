@@ -507,13 +507,32 @@ func streamChatCompletion(
 			// A post-confirmation continuation that produces neither text nor a
 			// tool call is useless and is often a truncated provider emission;
 			// retry it once before giving up so an intermittent blip does not
-			// silently abandon the remaining task steps (ci#428).
-			if aiResponseComplete && meta.PostConfirmationContinuation && !emptyContinuationRetried &&
-				strings.TrimSpace(toolCallResult.aiResponse) == "" {
+			// silently abandon the remaining task steps (ci#428). A round whose
+			// only output was a leaked context-compaction transcript is in the
+			// same class: the transcript was stripped (ci#562), so the turn has
+			// no usable answer either and is worth exactly one retry.
+			if aiResponseComplete && !emptyContinuationRetried &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" &&
+				(meta.PostConfirmationContinuation || toolCallResult.compactionOnly) {
 				emptyContinuationRetried = true
 				aiResponseComplete = false
-				log.Printf("Post-confirmation continuation produced an empty assistant message; retrying once")
+				log.Printf(
+					"Assistant round produced no usable text (post-confirmation continuation: %t, leaked compaction transcript: %t); retrying once",
+					meta.PostConfirmationContinuation,
+					toolCallResult.compactionOnly,
+				)
 				continue
+			}
+
+			// The retry after a leaked transcript produced another transcript:
+			// the round has no answer and nothing left to retry. Report it as a
+			// generation failure so the turn ends with a clear, human-readable
+			// error (the work already done is kept) instead of finishing on an
+			// empty message (ci#562).
+			if aiResponseComplete && toolCallResult.compactionOnly &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" && emptyContinuationRetried {
+				errChan <- errLeakedCompactionTranscript
+				return
 			}
 
 			// If AI response is complete and no more tools are being called, execute completion tools
@@ -665,7 +684,11 @@ type toolCallResult struct {
 	error             string
 	err               error
 	aiResponse        string
-	usage             *TokenUsage
+	// compactionOnly records that the round's only output was a leaked
+	// context-compaction transcript, which was stripped and must never be
+	// persisted as the answer; the loop retries such a round once (ci#562).
+	compactionOnly bool
+	usage          *TokenUsage
 	// calls holds every tool call of the round, in the order the model
 	// emitted them (ci#655). The singular id/toolName/result/... fields above
 	// mirror the last call for backwards compatibility.
@@ -1470,15 +1493,26 @@ func processStreamingResponseReader(
 		delta := chunk.Choices[0].Delta
 
 		if delta.Content != "" {
-			if !inlineToolCallDetected && containsInlineToolCall(delta.Content) {
+			aiResponseBuilder.WriteString(delta.Content)
+			accumulated := aiResponseBuilder.String()
+			// Detect against the *accumulated* content: an inline call marker
+			// (DeepSeek DSML, Anthropic/XML or the bracket placeholder some
+			// models emit) can be split across deltas, and a marker recognised
+			// only once it is complete would already have leaked its prefix to
+			// the client and — worse — been stored as the assistant text
+			// (ci#428, ci#562).
+			if !inlineToolCallDetected && containsInlineToolCall(accumulated, toolMap) {
 				inlineToolCallDetected = true
 			}
-			// Never forward inline DSML tool-call fragments as assistant text;
-			// they are recovered (or reported) after the stream ends.
-			if !inlineToolCallDetected {
+			// A leaked context-compaction transcript must not reach the client
+			// either: hold back content from the delta that opens a block (and
+			// any still-ambiguous opening prefix of one, which releases again
+			// as soon as the answer diverges). Prose forwarded before the block
+			// started is genuine and stays.
+			compactionSuspect := compactionBlockRe.MatchString(accumulated) || compactionOutputSuspected(accumulated)
+			if !inlineToolCallDetected && !compactionSuspect {
 				chunkChan <- delta.Content
 			}
-			aiResponseBuilder.WriteString(delta.Content)
 		}
 
 		if len(delta.ToolCalls) == 0 {
@@ -1528,6 +1562,15 @@ func processStreamingResponseReader(
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
+
+	// A leaked context-compaction transcript is model bookkeeping, never a
+	// user-facing answer: strip it so it can never be stored as (or posted as)
+	// the turn's reply, and flag the round when the transcript was its only
+	// output so the tool loop retries once instead of finishing on it (ci#562).
+	if sanitized, onlyBlob := sanitizeCompactionOutput(result.aiResponse); onlyBlob {
+		result.aiResponse = sanitized
+		result.compactionOnly = true
+	}
 
 	// Recover an inline tool-call block (DeepSeek DSML or Anthropic/XML) that
 	// the provider did not map onto the structured tool_calls field. Without

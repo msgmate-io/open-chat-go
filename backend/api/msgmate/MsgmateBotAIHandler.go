@@ -1183,6 +1183,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				} else {
 					text += "\n\n" + guidance
 				}
+			case FailureReasonLeakedCompaction:
+				// The model volunteered its own conversation-compaction
+				// bookkeeping (<analysis>/<summary>) instead of an answer, twice
+				// in a row; the transcript itself is never stored or shown
+				// (ci#562). Everything the turn already did is kept.
+				guidance := "The model lost track of the task and returned its internal work notes instead of an answer, so this reply was stopped. The work already done (tool calls, files, commits) is kept - send another message to continue from here."
+				reasoningEntry = "Response stopped because the model returned its internal work notes instead of an answer."
+				if text == "" {
+					text = guidance
+				} else {
+					text += "\n\n" + guidance
+				}
 			default:
 				detail := TruncateFailureDetail(streamErr.Error())
 				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)

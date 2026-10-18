@@ -125,6 +125,19 @@ func TestClassifyGenerationFailure(t *testing.T) {
 			wantReason: FailureReasonContextWindow,
 		},
 		{
+			// The model volunteered its own compaction bookkeeping instead of
+			// an answer (ci#562): neither a provider fault nor an internal
+			// error, so it gets its own reason and its own guidance.
+			name:       "leaked compaction transcript",
+			err:        errLeakedCompactionTranscript,
+			wantReason: FailureReasonLeakedCompaction,
+		},
+		{
+			name:       "wrapped leaked compaction transcript",
+			err:        fmt.Errorf("turn failed: %w", errLeakedCompactionTranscript),
+			wantReason: FailureReasonLeakedCompaction,
+		},
+		{
 			name:        "provider http failure",
 			err:         &ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"rate limited"}}`, Attempts: 2},
 			wantReason:  FailureReasonProviderError,
