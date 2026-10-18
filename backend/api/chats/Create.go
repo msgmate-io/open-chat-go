@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
@@ -21,9 +22,15 @@ import (
 // (ci#653), so a native `msgmate_coder` agent consolidates its own ready PRs
 // unless the agent (or the deployment kill switch) switches it off. An explicit
 // per-agent value always wins; a non-coder config is never touched.
+//
+// It also records the per-chat tool-call budget snapshot (ci#709) in the config
+// this chat is created with, so the budget a chat was started with survives a
+// re-attach and a re-provision, and stays inspectable as structured state
+// instead of only appearing in an abort error.
 func applySharedConfigDefaults(config map[string]interface{}) map[string]interface{} {
 	withDefaults := extiface.ApplySharedConfigDefaults(config)
-	return nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+	return nativecoder.WithToolCallBudgetSnapshot(withConsolidation, time.Now())
 }
 
 // TODO: should also supply user Id

@@ -394,6 +394,17 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		toolCallMaxFailed = int64(DefaultToolCallMaxFailed)
 	}
 
+	// ci#709: resolve the per-chat tool-call budget (the chat snapshot, the
+	// chat's own config, the bot runtime's *current* config and the default) so
+	// raising the caps on a bot takes effect on chats that already exist, and
+	// hand it to the tool loop together with an outcome recorder that reports
+	// how the turn ended and the consumed/remaining counters as structured
+	// state.
+	turnBudget := ResolveTurnToolCallBudget(aih.botContext.BotUser.ID, configMap)
+	toolCallMaxTotal = int64(turnBudget.MaxTotal)
+	toolCallMaxFailed = int64(turnBudget.MaxFailed)
+	turnOutcome := &TurnOutcome{Reason: TurnEndedCompleted, Budget: turnBudget}
+
 	endpoint, err = resolveChatProviderEndpoint(backend, endpoint)
 	if err != nil {
 		return err
@@ -460,11 +471,13 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 			ChatUUID:                     message.Content.ChatUUID,
 			TrackUsage:                   trackUsage,
 			PostConfirmationContinuation: postConfirmationContinuation,
+			Budget:                       &turnBudget,
+			Outcome:                      turnOutcome,
 		},
 	)
 
 	// Process the streaming response
-	return aih.processStreamingResponse(ctx, message, chunks, usage, toolCalls, errs, startTime, thinkingTime, thinkingStart, reasoning, model, backend)
+	return aih.processStreamingResponse(ctx, message, chunks, usage, toolCalls, errs, startTime, thinkingTime, thinkingStart, reasoning, model, backend, turnOutcome)
 }
 
 // ProcessCommand processes bot commands (like /pong, /loop)
@@ -920,7 +933,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 }
 
 // processStreamingResponse processes the streaming response from the AI
-func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool, model, backend string) error {
+func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message wsapi.NewMessage, chunks <-chan string, usage <-chan *TokenUsage, toolCalls <-chan ToolCall, errs <-chan error, startTime time.Time, thinkingTime time.Duration, thinkingStart time.Time, reasoning bool, model, backend string, turnOutcome *TurnOutcome) error {
 	var allToolCalls []interface{}
 	var fullText, thoughtBuffer, currentThoughtStep strings.Builder
 	var reasoningEntries []string
@@ -1113,9 +1126,17 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	}
 
 	// Helper function to send final message and cleanup
-	sendFinalMessage := func(isCancelled bool, streamErr error) {
+	sendFinalMessage := func(isCancelled bool, streamErr error, outcome *TurnOutcome) {
 		// If we're still thinking when finishing, add the final thinking time
 		totalTime := time.Since(startTime)
+
+		// ci#709: a user stop that lands between tool rounds may win the race
+		// against the tool loop's own outcome recording, so record the terminal
+		// reason here too. The turn then still reports why it ended instead of
+		// looking like a clean completion.
+		if isCancelled && outcome != nil && (outcome.Reason == "" || outcome.Reason == TurnEndedCompleted) {
+			outcome.Reason = TurnEndedCancelled
+		}
 
 		finalizePartial()
 		flushStreamSnapshot()
@@ -1209,6 +1230,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			}
 		}
 
+		// ci#709: a turn must never persist a bot message with tool calls but no
+		// text. Every terminal path (cap reached, provider error, cancel, loop
+		// guard) resolves a non-empty, human-readable final message below that
+		// states what happened and what to do next, so the work a long turn did
+		// is never silently lost behind an empty bubble.
+
 		metadata := map[string]interface{}{
 			"total_time": totalTime.Round(time.Millisecond).String(),
 			"cancelled":  isCancelled,
@@ -1278,6 +1305,20 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if snapshot := timeline.snapshot(); len(snapshot) > 0 {
 			metadata["timeline"] = snapshot
 		}
+
+		// ci#709: the per-chat tool-call budget and this turn's
+		// consumed/remaining counters are surfaced as structured state, so the
+		// caps are inspectable without parsing an error string.
+		if outcome != nil {
+			metadata["turn_ended"] = outcome.reason()
+			metadata["tool_call_budget"] = outcome.Budget.Metadata()
+			metadata["tool_call_usage"] = outcome.usage().Metadata()
+		}
+
+		// ci#709: a turn that ran tools must never finish on an empty message.
+		// The resolution runs last (after the confirmable-action prompt) so it
+		// only ever fills a genuinely blank message.
+		text = ResolveTerminalAssistantText(text, len(allToolCalls), isCancelled, streamErr, outcome)
 
 		if len(reasoningEntries) > 0 {
 			aih.botContext.Client.SendChatMessage(message.Content.ChatUUID, client.SendMessage{
@@ -1459,7 +1500,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// work (ci#642).
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				log.Printf("Generation deadline exceeded. Stopping response for chat %s\n", message.Content.ChatUUID)
-				sendFinalMessage(false, ctx.Err())
+				sendFinalMessage(false, ctx.Err(), turnOutcome)
 				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, ctx.Err())
 			}
 			// A newer message into a chat with a live turn supersedes it. That
@@ -1469,11 +1510,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// (ci#642).
 			if chatstate.ConsumeChatSuperseded(message.Content.ChatUUID) {
 				log.Printf("Generation superseded by a newer message for chat %s\n", message.Content.ChatUUID)
-				sendFinalMessage(false, nil)
+				sendFinalMessage(false, nil, turnOutcome)
 				return nil
 			}
 			log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
-			sendFinalMessage(true, nil)
+			sendFinalMessage(true, nil, turnOutcome)
 			return ctx.Err()
 		case chunk, ok := <-chunks:
 			if !ok {
@@ -1650,7 +1691,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		case err, ok := <-errs:
 			if ok && err != nil {
 				log.Printf("streamChatCompletion error: %v", err)
-				sendFinalMessage(false, err)
+				sendFinalMessage(false, err, turnOutcome)
 				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
 			}
 			errs = nil
@@ -1680,7 +1721,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		}
 	}
 
-	sendFinalMessage(false, nil)
+	sendFinalMessage(false, nil, turnOutcome)
 	return nil
 }
 
