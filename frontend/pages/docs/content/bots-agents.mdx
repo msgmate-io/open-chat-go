@@ -50,3 +50,58 @@ Bots select from the registered tools exposed by
 behaves as an agent: the queue worker runs tool calls, optionally asking for
 confirmation before executing them. See [Interactions](/docs#interactions) for
 the confirmation flow.
+
+## Default repository bot collection
+
+Integrations can ship a **default bot collection**: bots that are registered
+automatically on startup and can be applied to a resource with one click, so a
+fresh install does not need hand-picked bots and per-trigger wiring.
+
+The git integration (`git`) is the reference implementation. Its repository bot
+catalog is the single source of truth for the trigger wiring and applies to
+**any** repository:
+
+| Role | Bot (runtime name) | Trigger slot |
+| --- | --- | --- |
+| `chooser` | `git_repo_chooser_bot` | every event (plan + plan-only) |
+| `indexer` | `git_repo_indexer_bot` | none — suggested by the chooser |
+| `plan` | `git_repo_plan_bot` | read-only planning (`coder_mode: plan`, no writer) |
+| `development` | `msgmate-coder-bot` | coding |
+| `review` | `git_repo_review_bot` | review |
+| `lead` | `git_repo_development_lead_bot` | coordination (hive-mind) |
+
+Notes on the collection:
+
+- Each bot the integration owns is registered as a default bot bootstrap
+  config, with its tool set and a role system prompt, and is created on
+  startup. The `development` role is deliberately *referenced* rather than
+  duplicated: it is the msgmate coder integration's own default bot.
+- The chooser ships generated
+  `tool_init.git_propose_interaction_runtime.choices`, so routing an event to
+  the right agent works out of the box; the indexer is the default suggestion.
+- Repo context is indexed separately: an agent can read a bounded markdown
+  summary of the repository (`git_repo_index_read`, `git_repo_index_status`)
+  before scanning the code itself.
+
+Related tools and routes:
+
+| Kind | Name / Path | Description |
+| --- | --- | --- |
+| Tool | `git_repo_bot_catalog` | Read the catalog: roles, bots, trigger slots, installed/missing. |
+| Tool | `git_repo_apply_default_bots` | Confirmable, idempotent: wire the catalog bots to their trigger slots. |
+| Tool | `git_repo_index_status` | Whether a repository index exists and whether it is stale. |
+| Tool | `git_repo_index_read` | Read the repository index (summary + bounded content). |
+| `GET` | `/api/v1/integrations/git/repositories/{repo_uuid}/bots` | Per-role installed/missing list for a repository. |
+| `POST` | `/api/v1/integrations/git/repositories/{repo_uuid}/bots/apply-defaults` | Apply the default bots to a repository. |
+
+Applying the defaults keeps an existing polling token, enables
+`review_requested`, and reports `applied_roles` / `missing_roles` instead of
+inventing a bot that is not installed. The repository details page in the
+frontend exposes the same flow as a "Default repository bots" card with a
+one-click **Apply default bots** button.
+
+An integration that wants the same behaviour declares its bots in its
+`Definition.BotBootstrapConfigs`; the core applies them at startup and surfaces
+them as `default_bots` on `GET /api/v1/integrations/{integration_name}/overview`.
+See [Integrations & Tools](/docs#integrations) and
+[Integration Development](/docs#integration-development).
