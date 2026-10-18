@@ -36,6 +36,42 @@ Policy:
 - Maintainers may make rare, deliberate exceptions (for example to validate an
   infrastructure change); the risk is theirs and they should say so on the PR.
 
+#### Non-required status checks never block a merge (ci#683)
+
+The `main` ruleset requires exactly one context (`Run PR CI Tests and
+Deployments`). Any *other* status on the head is informational — most notably the
+`private-sandbox-tests` commit status the private sandbox suite sets on the PR
+head from its own repository.
+
+GitHub, however, derives `mergeable_state: blocked` — and therefore the CLIs'
+`gh pr merge` preflight — from **any** non-success commit status on the head,
+required or not. A PR whose only required context was green, which was
+`APPROVED` and `mergeable: true`, was reported as
+
+```
+X Pull request msgmate-io/open-chat-go#700 is not mergeable: the base branch policy prohibits the merge.
+```
+
+while the identical merge through the REST endpoint
+(`PUT /repos/{owner}/{repo}/pulls/{n}/merge`) succeeded immediately (the r25
+consolidation incident). The ruleset is the source of truth, so both paths now
+agree:
+
+- the core auto-consolidation client reads the base branch's ruleset
+  (`GET /repos/{owner}/{repo}/rules/branches/{branch}`) and evaluates exactly the
+  contexts it requires; a red *non-required* check/status is reported as
+  informational, never as "checks are failing", so such a PR stays a ready
+  consolidation candidate (`backend/nativecoder`, `requiredchecks.go`);
+- the typed `github_pr_merge` tool of `msgmate_coder` re-evaluates a
+  "base branch policy prohibits the merge" refusal against the same ruleset and,
+  when every required context is green, the review is APPROVED and the only red
+  statuses are non-required, completes the merge through the REST endpoint and
+  reports `informational_checks`. Any other refusal keeps failing, now naming the
+  resolved required/informational state;
+- the private sandbox suite no longer sets a failing commit status on PR heads
+  (its report link comment and the `main` regression guard are unaffected), so no
+  informational status can gate a merge in the first place.
+
 Never wait for or poll CI, deployments or approvals from an agent turn; report
 what is pending instead.
 
