@@ -362,12 +362,19 @@ function ToolCallCard({
   messageUUID,
   toolCall,
   index,
+  terminal = false,
 }: {
   messageUUID: string;
   toolCall: MessageToolCall;
   index: number;
+  /**
+   * The message is finished/cancelled: a call still left at "ongoing" was
+   * interrupted by the stop and must not render as a live running call
+   * (ci#668).
+   */
+  terminal?: boolean;
 }) {
-  const status = resolveToolCallStatus(toolCall);
+  const status = resolveToolCallStatus(toolCall, { terminal });
   const cardId = `${messageUUID}-tool-call-${index}`;
   const label = toolDisplayLabel(toolCall?.name);
   const summary = toolCallSummary(toolCall);
@@ -503,11 +510,14 @@ function TurnSequence({
   header,
   showNarration = true,
   defaultOpen = false,
+  terminal = false,
 }: {
   messageUUID: string;
   thoughtBlocks: TurnThoughtBlock[];
   toolCalls: MessageToolCall[];
   header: React.ReactNode;
+  /** The message is finished/cancelled (interrupted in-flight calls, ci#668). */
+  terminal?: boolean;
   /**
    * Render the timeline's assistant-narration blocks. False while the turn is
    * still running: the live message body already streams that text, so showing
@@ -539,6 +549,7 @@ function TurnSequence({
                 messageUUID={messageUUID}
                 toolCall={block.call as MessageToolCall}
                 index={block.index}
+                terminal={terminal}
               />
             ) : block.kind === "text" ? (
               showNarration ? (
@@ -559,11 +570,14 @@ function ToolCallsGroup({
   toolCalls,
   header,
   defaultOpen = false,
+  terminal = false,
 }: {
   messageUUID: string;
   toolCalls: MessageToolCall[];
   header: React.ReactNode;
   defaultOpen?: boolean;
+  /** The message is finished/cancelled (interrupted in-flight calls, ci#668). */
+  terminal?: boolean;
 }) {
   if (toolCalls.length === 0) {
     return null;
@@ -580,6 +594,7 @@ function ToolCallsGroup({
               messageUUID={messageUUID}
               toolCall={toolCall}
               index={index}
+              terminal={terminal}
             />
           ))}
         </div>
@@ -1142,6 +1157,7 @@ export function BotMessageItem({
           // turn finished the body keeps just the tail text, so the recorded
           // narration is rendered inline in the sequence (ci#569).
           showNarration={Boolean(metaFinished)}
+          terminal={metaFinished}
           defaultOpen
         />
       ) : null}
