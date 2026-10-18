@@ -633,6 +633,12 @@ consolidated the same work in parallel and burned a full agent each
   it. The dedupe lookup honours the same caller-scope gate as the other verbs
   (owner / `agent_dispatch.dispatched_by` / `agent_scope_tags`), so one lead
   cannot be intercepted by an unrelated bot of the same owner.
+- Live includes the **queued-but-not-yet-running** window: right after a
+  dispatch the bot reply sits in the queue until a worker picks it up, and the
+  status resolver still reports no active work. The guard therefore also asks
+  `workqueue.BotReplyQueuedOrActive` (active + pending + scheduled + retry), so
+  two dispatches in quick succession cannot both start a full agent; the flipped
+  `is_active` in the deduplicated response reflects the same check.
 - An **idle/finished/failed** interaction with the tag does not block a new
   turn: a finished lead may be dispatched again normally.
 - `"force": true` bypasses the guard for the rare case a concurrent lead is
