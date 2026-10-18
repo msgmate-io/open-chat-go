@@ -39,8 +39,16 @@ type integrationScheduleSpec struct {
 // schedules (via the scheduled_tasks function) and registers them with a single
 // asynq scheduler. Options are resolved by the integration itself; the host
 // only executes the resulting jobs through the generic integration:schedule
-// task. asynq's scheduler performs leader election across instances, so running
-// it in several workers/replicas does not duplicate the enqueues.
+// task.
+//
+// Note: asynq v0.26 does NOT perform leader election across instances. Every
+// scheduler process registers its own cron entries and only writes a heartbeat
+// snapshot to the "asynq:schedulers" key; duplicate ticks are merely
+// best-effort suppressed by the stable asynq.TaskID ("<integration>:<spec>")
+// plus the enqueue-time "EXISTS task-key -> 0" guard. That task key is deleted
+// once the task completes (retention 0), so a later duplicate tick can enqueue
+// a second job. Exactly one process must therefore run the scheduler; control
+// that with --run-scheduler / WORKER_SCHEDULER.
 //
 // A nil scheduler is returned (with a nil error) when no integration declares an
 // enabled schedule.

@@ -294,6 +294,18 @@ func GetServerFlags() []cli.Flag {
 			Value:   10,
 		},
 		&cli.BoolFlag{
+			Sources: cli.EnvVars("DB_SKIP_MIGRATIONS"),
+			Name:    "skip-migrations",
+			Usage:   "skip the automatic database migration pass (set on secondary processes so they do not race the primary process)",
+			Value:   false,
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("WORKER_SCHEDULER"),
+			Name:    "run-scheduler",
+			Usage:   "run the integration scheduler in this process (exactly one process must own it)",
+			Value:   true,
+		},
+		&cli.BoolFlag{
 			Sources: cli.EnvVars("SIGNUP_REQUIRES_ADMIN_APPROVAL"),
 			Name:    "signup-requires-admin-approval",
 			Usage:   "Require admin approval for new user signup",
@@ -835,6 +847,14 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
 		"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
 		"ASYNQ_CONCURRENCY": {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
+		"DB_SKIP_MIGRATIONS": {
+			Value:     fmt.Sprintf("%t", c.Bool("skip-migrations")),
+			Sensitive: false,
+		},
+		"WORKER_SCHEDULER": {
+			Value:     fmt.Sprintf("%t", c.Bool("run-scheduler")),
+			Sensitive: false,
+		},
 		"SIGNUP_REQUIRES_ADMIN_APPROVAL": {
 			Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 			Sensitive: false,
@@ -927,10 +947,11 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	defer asynqUIHandler.Close()
 
 	DB := database.SetupDatabase(database.DBConfig{
-		Backend:  c.String("db-backend"),
-		FilePath: c.String("db-path"),
-		Debug:    c.Bool("debug"),
-		ResetDB:  c.Bool("reset-db"),
+		Backend:        c.String("db-backend"),
+		FilePath:       c.String("db-path"),
+		Debug:          c.Bool("debug"),
+		ResetDB:        c.Bool("reset-db"),
+		SkipMigrations: c.Bool("skip-migrations"),
 	})
 	database.SetGlobalDB(DB)
 
@@ -1144,12 +1165,16 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 	}
 
-	integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
-	if err != nil {
-		return err
-	}
-	if integrationScheduler != nil {
-		defer integrationScheduler.Shutdown()
+	if c.Bool("run-scheduler") {
+		integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
+		if err != nil {
+			return err
+		}
+		if integrationScheduler != nil {
+			defer integrationScheduler.Shutdown()
+		}
+	} else {
+		log.Printf("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
 
 	serverErrCh := make(chan error, 1)
