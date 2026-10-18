@@ -168,8 +168,10 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 	// A stop that lands after the generation finished but before the task
 	// settled must not be recorded as a success: returning SkipRetry keeps a
-	// cancelled task from being retried (and re-running the generation).
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	// cancelled task from being retried (and re-running the generation). Only a
+	// genuine user stop counts here - a task deadline that fired as the reply
+	// completed is not a stop, and the reply is already persisted (ci#642).
+	if errors.Is(ctx.Err(), context.Canceled) {
 		failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(context.Canceled)}
 		_ = writeResult(task, failure)
 		persistTaskResult(deps.DB, task, failure)
@@ -185,11 +187,14 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 // cancellation rather than a generation failure. It checks both the wrapped
 // error and the task context so a provider request aborted by the stop signal
 // is never mistaken for a retryable failure that would re-run the generation.
+// A context.Canceled stop is a cancellation; a task deadline
+// (context.DeadlineExceeded) is NOT - it is a timeout that takes the failure
+// path so it never renders as a user pause (ci#642).
 func isBotReplyCancellation(err error, ctx context.Context) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
 		return true
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
 		return true
 	}
 	return false
@@ -255,6 +260,8 @@ func botReplyFailureMessage(err error) string {
 		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
 	case msgmate.FailureReasonContextWindow:
 		return "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+	case msgmate.FailureReasonTimeout:
+		return "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here."
 	}
 
 	if isProviderReachabilityError(err) {
