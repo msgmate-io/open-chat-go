@@ -31,18 +31,29 @@ var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) (map[string]interface{}, error) {
 	_ = DB
 	_ = user
-	withDefaults := extiface.ApplySharedConfigDefaults(config)
+	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
+	// integration defaults fill the full coder tool set (coder_bash/coder_git/
+	// coder_read) instead of being suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
 	// Auto-consolidation is a first-class default of the native msgmate_coder
 	// agent (ci#653): an agent that declares itself as a coder agent gets the
 	// `auto_consolidation` block unless it is switched off. Applying the default
 	// here as well as through the integration keeps it working in a core-only
 	// build, and an explicit per-agent value always wins.
 	//
+	// The autonomous-confirmation contract (ci#506) is promoted here as well, so
+	// an interaction that the trusted dispatch surface created with
+	// `autonomous: true` states `coder_interaction: autonomous` on its own
+	// shared config — the key the coder integration reads — and never parks on a
+	// per-action confirmation. An already configured mode always wins and a
+	// non-dispatch config is untouched.
+	//
 	// The tool-call budget snapshot (ci#709) is deliberately NOT recorded here:
 	// this helper also builds a bot's *default* shared config, which is the live
 	// source a cap raise comes from. The snapshot belongs to a chat and is
 	// recorded on the chat itself (chats.Create, createBotInteraction).
-	return nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue()), nil
+	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+	return nativecoder.ApplyCoderAutonomousConfig(withConsolidation), nil
 }
 
 type BotDTO struct {
