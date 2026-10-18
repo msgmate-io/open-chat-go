@@ -88,12 +88,9 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	stopSessionRefresh := database.StartSessionRefresh(deps.DB, token, sessionTTL)
 	defer stopSessionRefresh()
 
-	host := deps.BackendHost
-	if host == "" {
-		host = "http://127.0.0.1:1984" // TODO ensure just fallback always present
-	}
-
-	ocClient := client.NewClient(host)
+	// The fallback lives in workqueue alongside the worker flag's default so the
+	// two can never drift apart (it is only reachable when BackendHost is empty).
+	ocClient := client.NewClient(workqueue.BackendHostOrDefault(deps.BackendHost))
 	ocClient.SetSessionId(token)
 	ocClient.User = client.User{UUID: botUser.UUID}
 
