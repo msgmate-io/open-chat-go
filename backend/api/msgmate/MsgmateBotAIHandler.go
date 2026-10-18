@@ -12,6 +12,7 @@ import (
 	"time"
 
 	wsapi "backend/api/websocket"
+	"backend/chatstate"
 	client "github.com/msgmate-io/go-client-integration/goclient"
 )
 
@@ -343,6 +344,9 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	defer cancelGeneration()
 	releaseGeneration := TrackActiveChatGeneration(message.Content.ChatUUID, cancelGeneration)
 	defer releaseGeneration()
+	// A supersession marker that this turn did not consume (it completed
+	// normally) must not linger and suppress a genuinely later user stop.
+	defer chatstate.ClearChatSuperseded(message.Content.ChatUUID)
 	ctx = generationCtx
 
 	// Load the chat and its current configuration
@@ -1445,6 +1449,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				log.Printf("Generation deadline exceeded. Stopping response for chat %s\n", message.Content.ChatUUID)
 				sendFinalMessage(false, ctx.Err())
 				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, ctx.Err())
+			}
+			// A newer message into a chat with a live turn supersedes it. That
+			// turn must NOT render as a user pause - the newer message carries
+			// the conversation forward, and persisting "I paused this response"
+			// here both misleads the user and feeds the auto-continue loop
+			// (ci#642).
+			if chatstate.ConsumeChatSuperseded(message.Content.ChatUUID) {
+				log.Printf("Generation superseded by a newer message for chat %s\n", message.Content.ChatUUID)
+				sendFinalMessage(false, nil)
+				return nil
 			}
 			log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
 			sendFinalMessage(true, nil)
