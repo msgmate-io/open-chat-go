@@ -144,12 +144,12 @@ func TestEnqueueBotReplyInterruptTakesBaseTaskID(t *testing.T) {
 	}
 }
 
-// TestEnqueueBotReplyQueuedKeepsNewestReachable pins the queued-mode semantics
-// (ci#656) without a worker: with no live turn the newest message wins, so
-// exactly one reply stays pending for the chat and it is the newest one. The
-// queued-behind-a-live-turn variant is covered by
-// TestEnqueueBotReplyQueuedBehindLiveTurn.
-func TestEnqueueBotReplyQueuedKeepsNewestReachable(t *testing.T) {
+// TestEnqueueBotReplyQueuedIdleReplacesNewest pins the queued-mode semantics
+// (ci#656) without a live turn: the newest message wins, the reply takes the
+// stable per-chat task ID (the key the dispatch dedupe and the API tests use)
+// and exactly one reply stays queued for the chat. The queued-behind-a-live-turn
+// variant is covered by TestEnqueueBotReplyQueuedBehindLiveTurn.
+func TestEnqueueBotReplyQueuedIdleReplacesNewest(t *testing.T) {
 	client, inspector, payload, cleanup := newTestBotReplyQueue(t)
 	defer cleanup()
 
@@ -162,8 +162,8 @@ func TestEnqueueBotReplyQueuedKeepsNewestReachable(t *testing.T) {
 	if err != nil {
 		t.Skipf("asynq enqueue unavailable: %v", err)
 	}
-	if want := botReplyTaskID(payload.ChatUUID, "msg-2"); info.ID != want {
-		t.Fatalf("queued task id = %q, want %q", info.ID, want)
+	if want := BotReplyTaskID(payload.ChatUUID); info.ID != want {
+		t.Fatalf("idle queued task id = %q, want base id %q", info.ID, want)
 	}
 
 	if _, err := EnqueueBotReplyWithDelivery(client, inspector, third, BotReplyDeliveryQueued); err != nil {
@@ -174,16 +174,17 @@ func TestEnqueueBotReplyQueuedKeepsNewestReachable(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("pending replies = %d, want 1", len(pending))
 	}
-	if want := botReplyTaskID(payload.ChatUUID, "msg-3"); pending[0].ID != want {
-		t.Fatalf("pending reply = %q, want the newest %q", pending[0].ID, want)
+	if want := BotReplyTaskID(payload.ChatUUID); pending[0].ID != want {
+		t.Fatalf("pending reply = %q, want the replaced base id %q", pending[0].ID, want)
 	}
 }
 
 // TestEnqueueBotReplyQueuedBehindLiveTurn is the ci#656 regression: the default
-// queued mode must never take over the live turn's task. It asserts on the
-// decision helper (the queue state a live turn would produce is not reachable
-// from a unit test without a running worker) and on the fact that the reply is
-// enqueued under its own per-message ID instead of clobbering the base ID.
+// queued mode must never take over the live turn's task. It drives the
+// liveness-injected core with turnLive=true (a task waiting in the queue is
+// pending, not active, so a unit test cannot make BotReplyIsActive report a live
+// turn) and asserts that the live turn keeps the base task ID while the new
+// reply lands behind it under its own per-message ID.
 func TestEnqueueBotReplyQueuedBehindLiveTurn(t *testing.T) {
 	client, inspector, payload, cleanup := newTestBotReplyQueue(t)
 	defer cleanup()
@@ -203,7 +204,7 @@ func TestEnqueueBotReplyQueuedBehindLiveTurn(t *testing.T) {
 
 	next := payload
 	next.MessageUUID = "msg-2"
-	info, err := EnqueueBotReplyWithDelivery(client, inspector, next, BotReplyDeliveryQueued)
+	info, err := enqueueBotReplyWithDelivery(client, inspector, next, BotReplyDeliveryQueued, true)
 	if err != nil {
 		t.Fatalf("queued enqueue failed: %v", err)
 	}
@@ -212,6 +213,9 @@ func TestEnqueueBotReplyQueuedBehindLiveTurn(t *testing.T) {
 	}
 	if want := botReplyTaskID(payload.ChatUUID, "msg-2"); info.ID != want {
 		t.Fatalf("queued task id = %q, want %q", info.ID, want)
+	}
+	if _, err := inspector.GetTaskInfo(QueueDefault, live.ID); err != nil {
+		t.Fatalf("the live turn's task %q was removed by a queued reply: %v", live.ID, err)
 	}
 }
 
