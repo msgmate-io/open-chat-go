@@ -620,7 +620,9 @@ Contract and behaviour:
 - **Candidates** — the routing primitive `CandidateInteractions` enumerates the
   failing repo's live + recent interactions (a running interaction always
   qualifies, a past one only inside `DefaultDevLeadRecentWindow`, 24h), ordered
-  most-recent-first with a UUID tiebreak so routing is deterministic.
+  most-recent-first with a UUID tiebreak so routing is deterministic. An
+  interaction's repo identity comes from its explicit repo, else a
+  `repo:`/`workspace:` work tag or its workspace (`ResolvedRepo`).
   `ResolveLeadInteraction` answers the agent-chooser question "which interaction
   receives this repo's CI-relay traffic?" (running lead, else running, else most
   recent recent interaction).

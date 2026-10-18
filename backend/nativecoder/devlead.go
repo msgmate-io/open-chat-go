@@ -177,10 +177,42 @@ type LeadInteraction struct {
 	Sha            string
 	Status         string
 	LastActivityAt time.Time
+	// WorkspaceID is the sandbox/workspace the interaction runs in (its own
+	// unambiguous repo identity when Repo is not populated).
+	WorkspaceID string
+	// WorkTags are the interaction's work tags; a `repo:owner/name` tag is a
+	// fallback repo identity when Repo is empty.
+	WorkTags []string
 	// FixAttempts records how many fix attempts were already attributed to this
 	// interaction per fix session key (see FixSessionKey). A non-zero entry also
 	// means the interaction owns that fix session.
 	FixAttempts map[string]int
+}
+
+// ResolvedRepo is the interaction's repo identity, preferring the explicit repo
+// and falling back to a `repo:`/`workspace:` work tag (a `owner/name` slug).
+func (i LeadInteraction) ResolvedRepo() string {
+	if repo := NormalizeRepo(i.Repo); repo != "" {
+		return repo
+	}
+	for _, tag := range i.WorkTags {
+		value := strings.TrimSpace(tag)
+		for _, prefix := range []string{"repo:", "repository:", "workspace:"} {
+			if strings.HasPrefix(strings.ToLower(value), prefix) {
+				value = value[len(prefix):]
+				break
+			}
+		}
+		if repo := NormalizeRepo(value); strings.Contains(repo, "/") {
+			return repo
+		}
+	}
+	// A workspace id is only a repo identity when it is an owner/name slug (most
+	// workspaces are UUIDs and carry no repo information).
+	if workspace := NormalizeRepo(i.WorkspaceID); strings.Contains(workspace, "/") {
+		return workspace
+	}
+	return ""
 }
 
 // IsActive reports whether the interaction is running (appendable).
@@ -351,7 +383,7 @@ func (r DevLeadRouter) CandidateInteractions(repo string, interactions []LeadInt
 	window := r.recentWindow()
 	candidates := make([]LeadInteraction, 0, len(interactions))
 	for _, interaction := range interactions {
-		if NormalizeRepo(interaction.Repo) != target {
+		if NormalizeRepo(interaction.ResolvedRepo()) != target {
 			continue
 		}
 		if !interaction.IsActive() && now.Sub(interaction.LastActivityAt.UTC()) > window {
@@ -369,9 +401,16 @@ func (r DevLeadRouter) CandidateInteractions(repo string, interactions []LeadInt
 }
 
 // DevLeadInteractionKind is the interaction kind that denotes a repo's
-// development lead (the agent-chooser bot). A candidate with this kind is
+// development lead (the agent-chooser bot, `msgmate-coder-development-lead` /
+// `open-chat-development-lead`). A candidate whose kind carries this suffix is
 // preferred when resolving "who is this repo's lead".
 const DevLeadInteractionKind = "development-lead"
+
+// isDevLeadKind reports whether an interaction kind denotes a development lead.
+func isDevLeadKind(kind string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(kind))
+	return normalized == DevLeadInteractionKind || strings.HasSuffix(normalized, "-"+DevLeadInteractionKind)
+}
 
 // ResolveLeadInteraction answers the agent-chooser question "which interaction
 // receives this repo's CI-relay traffic?": the running lead interaction, else
@@ -393,7 +432,7 @@ func (r DevLeadRouter) ResolveLeadInteraction(repo string, interactions []LeadIn
 		if !haveLive {
 			firstLive, haveLive = candidate, true
 		}
-		if !haveLead && strings.EqualFold(strings.TrimSpace(candidate.Kind), DevLeadInteractionKind) {
+		if !haveLead && isDevLeadKind(candidate.Kind) {
 			lead, haveLead = candidate, true
 		}
 	}
@@ -434,8 +473,8 @@ func (r DevLeadRouter) Route(event CIFailureEvent, interactions []LeadInteractio
 
 	candidates := make([]LeadInteraction, 0, len(interactions))
 	for _, interaction := range interactions {
-		if NormalizeRepo(interaction.Repo) != decision.Repo {
-			decision.trailf("ignored interaction %s: repo %q is not the failing repo", interaction.UUID, NormalizeRepo(interaction.Repo))
+		if repo := interaction.ResolvedRepo(); repo != decision.Repo {
+			decision.trailf("ignored interaction %s: repo %q is not the failing repo", interaction.UUID, repo)
 			continue
 		}
 		if !interaction.IsActive() && now.Sub(interaction.LastActivityAt.UTC()) > window {

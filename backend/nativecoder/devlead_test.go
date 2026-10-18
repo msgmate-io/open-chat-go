@@ -341,6 +341,26 @@ func TestResolveLeadInteraction(t *testing.T) {
 	if _, ok := router.ResolveLeadInteraction("msgmate-io/open-chat-go", nil); ok {
 		t.Fatalf("no interactions must not resolve")
 	}
+	// The production kinds are `msgmate-coder-development-lead` /
+	// `open-chat-development-lead`; a prefixed kind still denotes the lead.
+	got, ok = router.ResolveLeadInteraction("msgmate-io/open-chat-go", []LeadInteraction{
+		{UUID: "coder", Kind: "msgmate-coder", Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now},
+		{UUID: "lead", Kind: "msgmate-coder-development-lead", Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now.Add(-time.Hour)},
+	})
+	if !ok || got.UUID != "lead" {
+		t.Fatalf("prefixed lead kind = %q/%v, want lead", got.UUID, ok)
+	}
+	// The repo identity may also arrive as a work tag / workspace rather than an
+	// explicit repo field.
+	tagged := router.CandidateInteractions("msgmate-io/open-chat-go", []LeadInteraction{
+		{UUID: "tagged", Status: LeadInteractionActive, WorkTags: []string{"repo:Msgmate-IO/Open-Chat-Go.git"}, LastActivityAt: now},
+		{UUID: "workspace", Status: LeadInteractionActive, WorkspaceID: "ws-1", WorkTags: []string{"workspace:msgmate-io/open-chat-go"}, LastActivityAt: now},
+		{UUID: "unrelated-tag", Status: LeadInteractionActive, WorkTags: []string{"ticket:ci#608"}, LastActivityAt: now},
+		{UUID: "other-repo-tag", Status: LeadInteractionActive, WorkTags: []string{"repo:msgmate-io/other"}, LastActivityAt: now},
+	})
+	if len(tagged) != 2 {
+		t.Fatalf("tagged candidates = %d, want 2: %+v", len(tagged), tagged)
+	}
 }
 
 func TestNormalizeRepo(t *testing.T) {
