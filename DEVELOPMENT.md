@@ -357,9 +357,27 @@ queue wait, saturation events) so the development loop can self-throttle.
 
 The default in-flight cap is 3 — the development-loop controller's
 `MAX_CONCURRENT` default (ci#592) — and is bounded by the pooled sandbox bound
-`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL` (ci#602) when that is smaller. The
-per-agent keys (`coder_provider_max_concurrency`,
-`coder_provider_queue_timeout_ms`, `coder_provider_fallback_on_saturation`,
+`coder_sandbox_max_agents_per_pool` / `OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL`
+(ci#602) when that is smaller. **The deployment lever wins over the per-agent
+key**: the shared-config default merge materialises
+`coder_provider_max_concurrency: 3` into every native coder agent's config, so
+a "config first, env second" precedence pins the whole fleet at 3 forever (that
+was ci#620 — the effective admission cap never left the literal default, no
+matter what `OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY` said). Resolution
+order is therefore env → per-agent key → pool bound → default, the resolved
+source is logged with the cap, and an existing limiter is resized in place: a
+raised cap admits more requests immediately, a lowered cap only takes effect as
+in-flight requests drain, so a change lands without a redeploy.
+
+The core-side admission controller (`backend/api/msgmate/provider_admission.go`)
+admits every provider request of the built-in chat path through that per-key
+limiter and logs `provider_admission` with `effective_max_concurrency`,
+`in_flight`, `queue_waiting` and the config `source`; the admin-only
+`GET /api/v1/admin/provider-admission` route reports the same state for the
+whole process (the raw env levers, the resolved policy and one snapshot per
+admission key, never key material). The per-agent keys
+(`coder_provider_max_concurrency`, `coder_provider_queue_timeout_ms`,
+`coder_provider_fallback_on_saturation`,
 `coder_provider_fallback_backend`/`_model`/`_endpoint`/`_api_key_env`,
 `coder_provider_fallbacks`) mirror the deployment env
 (`OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY`, `..._QUEUE_TIMEOUT_MS`,
@@ -367,8 +385,8 @@ per-agent keys (`coder_provider_max_concurrency`,
 with no explicit key env resolves `<PROVIDER_API_KEY>_FALLBACK`, so an operator
 only has to export one extra variable to shed load onto a second key. No key —
 primary or secondary — is ever exposed: the admission identity and every status
-snapshot carry only a truncated hash. `coder_context` reports the in-flight
-count and cap, and the admin-only
+snapshot carry only a truncated hash/length hint. `coder_context` reports the
+in-flight count and cap, and the admin-only
 `GET /api/v1/integrations/msgmate_coder/provider/status` route reports the
 per-key metrics for the loop. The full reference lives in the
 `msgmate_coder` integration README.

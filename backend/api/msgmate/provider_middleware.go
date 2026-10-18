@@ -86,6 +86,14 @@ type providerRequestMeta struct {
 	// model returns an assistant message with neither text nor tool calls, so an
 	// intermittent provider emission cannot silently abandon the task (ci#428).
 	PostConfirmationContinuation bool
+	// ProviderAdmission is the effective per-key in-flight policy of the chat
+	// (ci#620). A zero MaxConcurrency disables admission, which keeps tests and
+	// non-coder deployments on the previous behaviour.
+	ProviderAdmission ProviderAdmissionConfig
+	// ProviderAdmissionKey is the secret-free identity of the provider key the
+	// request is made with, so two keys against one provider are admitted
+	// independently.
+	ProviderAdmissionKey string
 }
 
 // runProviderRequestMiddleware invokes all registered middlewares in the

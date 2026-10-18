@@ -443,7 +443,13 @@ func streamChatCompletion(
 					executedToolResults,
 					chunkChan, usageChan, toolChan, errChan,
 					samplingParams,
-					providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts},
+					providerRequestMeta{
+						ChatUUID:             meta.ChatUUID,
+						TrackUsage:           meta.TrackUsage,
+						Attempt:              attempts,
+						ProviderAdmission:    meta.ProviderAdmission,
+						ProviderAdmissionKey: meta.ProviderAdmissionKey,
+					},
 				)
 				if err == nil {
 					break
@@ -514,7 +520,13 @@ func streamChatCompletion(
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
 						samplingParams,
-						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
+						providerRequestMeta{
+							ChatUUID:             meta.ChatUUID,
+							TrackUsage:           meta.TrackUsage,
+							Attempt:              attempts + 1,
+							ProviderAdmission:    meta.ProviderAdmission,
+							ProviderAdmissionKey: meta.ProviderAdmissionKey,
+						},
 					)
 					if err == nil || ctx.Err() != nil || !isContextWindowExceededError(err) {
 						break
@@ -888,6 +900,18 @@ func processStreamingRequest(
 		RequestBody: requestBody,
 	}
 	runProviderRequestMiddleware(middlewareCtx)
+
+	// Provider admission (ci#620): wait for a per-key in-flight slot instead of
+	// firing the request into the provider's 402/429 in-flight cap. The release
+	// runs when this attempt is done (streamed out or failed), and the effective
+	// cap plus the current in-flight count are logged so the admission decision
+	// is observable.
+	admissionRelease, admissionErr := admitProviderRequest(ctx, meta.ProviderAdmissionKey, meta.ProviderAdmission)
+	if admissionErr != nil {
+		reportProviderRequestResult(middlewareCtx, meta.Attempt, 0, admissionErr, 0, nil, nil)
+		return nil, admissionErr
+	}
+	defer admissionRelease()
 
 	requestStart := time.Now()
 	reportOutcome := func(statusCode int, requestErr error, usage *TokenUsage, response map[string]interface{}) {

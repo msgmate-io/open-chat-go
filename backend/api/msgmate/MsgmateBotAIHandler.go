@@ -399,6 +399,18 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		return err
 	}
 
+	// Provider admission (ci#620). The effective cap is resolved from the
+	// deployment env, the agent's shared config and the pooled sandbox bound, and
+	// logged with its source so the value that actually took effect is visible.
+	// It used to be pinned at the literal default of 3 because the shared-config
+	// default merge wrote that default into every agent config and the env lever
+	// was only read when the key was absent.
+	providerAPIKey := aih.botContext.Client.GetApiKey(backend)
+	providerAdmission := ResolveProviderAdmissionConfig(configMap)
+	providerAdmissionKey := ProviderAdmissionKeyFor(backend, endpoint, providerAPIKey)
+	log.Printf("[provider_admission] chat=%s resolved %s for key=%s (ci#620)",
+		message.Content.ChatUUID, providerAdmission, providerAdmissionKey)
+
 	// Check for skip-core tag
 	if aih.hasSkipCoreTag(tags) {
 		log.Printf("Chat %s has skip-core tag, executing tools only", message.Content.ChatUUID)
@@ -450,7 +462,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 		openAiMessages,
 		toolsData,
 		toolMap,
-		aih.botContext.Client.GetApiKey(backend),
+		providerAPIKey,
 		interactionStartTools,
 		interactionCompleteTools,
 		GetGlobalMsgmateHandler(),
@@ -460,6 +472,8 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 			ChatUUID:                     message.Content.ChatUUID,
 			TrackUsage:                   trackUsage,
 			PostConfirmationContinuation: postConfirmationContinuation,
+			ProviderAdmission:            providerAdmission,
+			ProviderAdmissionKey:         providerAdmissionKey,
 		},
 	)
 
