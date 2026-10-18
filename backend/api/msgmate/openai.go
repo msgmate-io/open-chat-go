@@ -34,6 +34,13 @@ type ToolCall struct {
 	// while a call runs and its duration once it completes (ci#569).
 	StartedAtUnixMs int64
 	DurationMs      int64
+	// Retries is how many extra attempts the call needed after a transient
+	// environmental failure, and BudgetExempt marks a failed call that was
+	// exempted from the agent's failed-tool budget (ci#688). Both are surfaced
+	// in the message metadata so a bursty sandbox/host condition is visible in
+	// the transcript instead of only in the backend log.
+	Retries      int
+	BudgetExempt bool
 }
 
 // IsTerminalToolCallStatus reports whether a tool-call status means the call
@@ -146,6 +153,27 @@ func buildToolErrorPlaceholder(toolName string, runErr error) string {
 		"Tool %s failed with error: %s. Please continue and provide the best possible response without this tool result.",
 		toolName,
 		runErr.Error(),
+	)
+}
+
+// buildTransientToolErrorPlaceholder builds the model-facing result of a call
+// that failed for an *environmental* reason and already exhausted its retries
+// (ci#688). It tells the model three things it cannot infer from the bare
+// error: the failure was infrastructure rather than its own arguments, it did
+// not consume the failed-tool budget, and retrying after a short wait (or
+// moving on) is the right response instead of abandoning the task.
+func buildTransientToolErrorPlaceholder(toolName string, runErr error, attempts int) string {
+	reason := "unknown error"
+	if runErr != nil {
+		reason = runErr.Error()
+	}
+	return fmt.Sprintf(
+		"Tool %s failed with an environment/infrastructure error after %d attempt(s): %s. "+
+			"This is not caused by your arguments and it does NOT count against your failed-tool budget. "+
+			"Retry the call after a short wait (the underlying sandbox/host condition is usually transient) or continue with another step.",
+		toolName,
+		attempts,
+		reason,
 	)
 }
 
@@ -362,6 +390,11 @@ func streamChatCompletion(
 		currentMessages := messages
 		totalToolCalls := 0
 		failedToolCalls := 0
+		// transientToolFailures counts the calls that failed for an
+		// environmental reason and were therefore exempted from the
+		// failed-tool budget (ci#688). They are reported separately so a
+		// saturated sandbox pool is visible without aborting the turn.
+		transientToolFailures := 0
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
@@ -595,6 +628,9 @@ func streamChatCompletion(
 							completionData["tool_call_failed_count"] = failedToolCalls
 							completionData["tool_call_max_total"] = toolCallMaxTotal
 							completionData["tool_call_max_failed"] = toolCallMaxFailed
+							// ci#688: transient/environmental failures are
+							// budget-exempt, so report them separately.
+							completionData["tool_call_transient_failed_count"] = transientToolFailures
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
@@ -619,7 +655,7 @@ func streamChatCompletion(
 			appended, updatedMessages := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds)
 			currentMessages = updatedMessages
 			for _, call := range appended {
-				toolCallDetails = append(toolCallDetails, map[string]interface{}{
+				details := map[string]interface{}{
 					"id":        call.id,
 					"name":      call.name,
 					"arguments": call.arguments,
@@ -627,13 +663,24 @@ func streamChatCompletion(
 					"status":    call.status,
 					"error":     call.error,
 					"timestamp": time.Now().Format(time.RFC3339),
-				})
-				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
-				totalToolCalls++
-				if call.status == ToolCallStatusFailed {
-					failedToolCalls++
 				}
+				if call.retries > 0 {
+					details["retries"] = call.retries
+				}
+				if call.budgetExempt {
+					details["budget_exempt"] = true
+				}
+				toolCallDetails = append(toolCallDetails, details)
+				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
 			}
+			totalToolCalls += len(appended)
+			// ci#688: only failures the model can act on consume the
+			// failed-tool budget; a transient environmental failure that
+			// survived its retries is counted separately, so one bursty
+			// sandbox provision cannot abort the interaction.
+			roundFailed, roundTransient := toolCallFailureAccounting(appended)
+			failedToolCalls += roundFailed
+			transientToolFailures += roundTransient
 
 			// A round whose every call was already processed (or that surfaced no
 			// usable call) would otherwise spin without adding anything to the
@@ -669,6 +716,16 @@ type executedToolCall struct {
 	result    string
 	status    string
 	error     string
+	// budgetExempt marks a failed call that must not consume the agent's
+	// failed-tool budget: a transient environmental failure (sandbox
+	// provisioning under load, host resource exhaustion, a connection blip
+	// towards the integration host) that survived the retries of ci#688. It is
+	// still reported to the model as a failed call, and the total tool-call cap
+	// keeps the turn bounded.
+	budgetExempt bool
+	// retries is how many extra attempts the call needed after a transient
+	// failure (0 for the common case).
+	retries int
 }
 
 type toolCallResult struct {
@@ -1336,6 +1393,11 @@ func processParsedToolCall(
 	var toolResult string
 	status := ToolCallStatusSucceeded
 	toolErr := ""
+	// ci#688: how many extra attempts the call needed after a transient
+	// environmental failure, and whether the (still) failed call is exempt
+	// from the agent's failed-tool budget.
+	toolRetries := 0
+	toolBudgetExempt := false
 	requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
 	switch {
 	case requiresConfirmation:
@@ -1360,18 +1422,30 @@ func processParsedToolCall(
 		result.result = resolvedResult
 		status = ToolCallStatusSucceeded
 	default:
-		var (
-			executedResult string
-			runErr         error
-		)
-		if contextTool, ok := tool.(ContextTool); ok {
-			executedResult, runErr = contextTool.RunToolContext(ctx, toolInput)
-		} else {
-			executedResult, runErr = tool.RunTool(toolInput)
+		// ci#688: a tool body can fail for purely environmental reasons (a
+		// per-chat sandbox that could not be provisioned under high
+		// parallelism, host resource exhaustion, a connection blip towards the
+		// integration host). Such a failure is retried with an exponential
+		// backoff — bounded by the generation context, so a user stop is never
+		// resurrected — and, when it survives the retries, it is reported to
+		// the model as a failed call that does *not* consume the failed-tool
+		// budget. Only failures the model can actually fix count against it.
+		run := func() (string, error) {
+			if contextTool, ok := tool.(ContextTool); ok {
+				return contextTool.RunToolContext(ctx, toolInput)
+			}
+			return tool.RunTool(toolInput)
 		}
+		executedResult, runErr, retries := runToolWithTransientRetry(ctx, name, run)
+		toolRetries = retries
 		if runErr != nil {
-			log.Printf("Error executing tool %s: %v", name, runErr)
-			toolResult = buildToolErrorPlaceholder(name, runErr)
+			log.Printf("Error executing tool %s (after %d attempt(s)): %v", name, retries+1, runErr)
+			toolBudgetExempt = isTransientToolFailure(runErr)
+			if toolBudgetExempt {
+				toolResult = buildTransientToolErrorPlaceholder(name, runErr, retries+1)
+			} else {
+				toolResult = buildToolErrorPlaceholder(name, runErr)
+			}
 			result.result = toolResult
 			status = ToolCallStatusFailed
 			toolErr = runErr.Error()
@@ -1391,16 +1465,20 @@ func processParsedToolCall(
 		Error:           toolErr,
 		StartedAtUnixMs: startedAtUnixMs,
 		DurationMs:      time.Since(time.UnixMilli(startedAtUnixMs)).Milliseconds(),
+		Retries:         toolRetries,
+		BudgetExempt:    toolBudgetExempt,
 	}
 	result.status = status
 	result.error = toolErr
 	result.calls = append(result.calls, executedToolCall{
-		id:        id,
-		name:      name,
-		arguments: arguments,
-		result:    toolResult,
-		status:    status,
-		error:     toolErr,
+		id:           id,
+		name:         name,
+		arguments:    arguments,
+		result:       toolResult,
+		status:       status,
+		error:        toolErr,
+		budgetExempt: toolBudgetExempt,
+		retries:      toolRetries,
 	})
 	// Cache only successful results. Caching failures would make an identical
 	// retry (after the underlying state changed) replay the stale error instead

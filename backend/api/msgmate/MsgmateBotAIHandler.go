@@ -1541,6 +1541,16 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				if strings.TrimSpace(toolCall.Error) != "" {
 					toolCallRepr["error"] = toolCall.Error
 				}
+				// ci#688: a call that failed for an environmental reason is
+				// budget-exempt and reports how many retries it needed, so a
+				// saturated sandbox pool is visible in the transcript instead
+				// of only in the backend log.
+				if toolCall.Retries > 0 {
+					toolCallRepr["retries"] = toolCall.Retries
+				}
+				if toolCall.BudgetExempt {
+					toolCallRepr["budget_exempt"] = true
+				}
 				// Per-call timing (ci#569): started_at lets the UI run a live
 				// timer while the call is ongoing, duration_ms renders the final
 				// elapsed time once it completed. A completed call reports its
