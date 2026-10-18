@@ -11,7 +11,7 @@ func TestNormalizeRuntimeSelectorPayloadChoicesRoutesLegacyToNative(t *testing.T
 		"type": "runtime-selector",
 		"choices": []interface{}{
 			map[string]interface{}{"bot": "issue-plan-bot", "label": "Plan"},
-			map[string]interface{}{"bot": "opencode", "label": "opencode"},
+			map[string]interface{}{"bot": "some-other-runtime", "label": "other"},
 		},
 	}
 	normalizeRuntimeSelectorPayloadChoices(payload)
@@ -89,6 +89,24 @@ func TestRuntimeSelectorChoiceBotName(t *testing.T) {
 	for _, tc := range cases {
 		if got := RuntimeSelectorChoiceBotName(tc.choice); got != tc.want {
 			t.Fatalf("RuntimeSelectorChoiceBotName(%v) = %q, want %q", tc.choice, got, tc.want)
+		}
+	}
+}
+
+// TestLegacyRuntimeBotAliasesTargetNativeRuntimes guards the alias map itself:
+// every target must be a native msgmate-coder runtime, so a typo'd constant
+// (ci#621 shipped `NativeRuntimeRevwBot`, which only failed in the frozen
+// workspace build) is caught by the ordinary package test run.
+func TestLegacyRuntimeBotAliasesTargetNativeRuntimes(t *testing.T) {
+	if len(legacyRuntimeBotAliases) == 0 {
+		t.Fatal("legacyRuntimeBotAliases is empty")
+	}
+	for legacy, native := range legacyRuntimeBotAliases {
+		if !IsNativeRuntimeBot(native) {
+			t.Errorf("alias %q maps to %q, which is not a native runtime", legacy, native)
+		}
+		if built, ok := NativeRuntimeBotAlias(legacy); !ok || built != native {
+			t.Errorf("NativeRuntimeBotAlias(%q) = (%q, %v), want (%q, true)", legacy, built, ok, native)
 		}
 	}
 }
