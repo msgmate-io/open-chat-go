@@ -121,6 +121,14 @@ type AgentInteractionView struct {
 	// LastAgentText is a short snippet of the agent's most recent reply, so a
 	// listing shows what each agent produced (plan/PR/status) at a glance.
 	LastAgentText string `json:"last_agent_text,omitempty"`
+	// Stalled reports that the interaction never started - nothing is queued or
+	// running for the chat and its newest message is still an unanswered prompt
+	// (ci#609) - so a managing agent sees "frozen" as an explicit state with a
+	// reason (and the interaction URL) instead of an ambiguous idle.
+	Stalled               bool   `json:"stalled,omitempty"`
+	StallReason           string `json:"stall_reason,omitempty"`
+	StallAgeSeconds       int    `json:"stall_age_seconds,omitempty"`
+	StallThresholdSeconds int    `json:"stall_threshold_seconds,omitempty"`
 }
 
 // AgentTranscriptMessage is one entry in a managed interaction's recent
@@ -504,6 +512,13 @@ func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *d
 		view.IsActive = status.IsActive
 		view.LatestMessageUUID = status.LatestMessageUUID
 		view.LatestMessageFinished = status.LatestMessageFinished
+		// ci#609: surface a stalled (never-started) interaction explicitly, so a
+		// watching/lead agent can tell a silent freeze from healthy idle work and
+		// see the reason instead of guessing.
+		view.Stalled = status.Stalled
+		view.StallReason = status.StallReason
+		view.StallAgeSeconds = status.StallAgeSeconds
+		view.StallThresholdSeconds = status.StallThresholdSeconds
 	} else {
 		view.State = "idle"
 	}
