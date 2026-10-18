@@ -591,77 +591,42 @@ func streamChatCompletion(
 				return
 			}
 
-			// Check if we've already processed this tool ID
-			if toolCallResult.id != "" && processedToolIds[toolCallResult.id] {
-				log.Printf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", toolCallResult.id)
-				continue
-			}
-
-			// Mark this tool ID as processed
-			if toolCallResult.id != "" {
-				processedToolIds[toolCallResult.id] = true
-			}
-
-			// Track detailed tool call information
-			if toolCallResult.usedTool && toolCallResult.id != "" {
-				toolCallInfo := map[string]interface{}{
-					"id":        toolCallResult.id,
-					"name":      toolCallResult.toolName,
-					"arguments": toolCallResult.arguments,
-					"result":    toolCallResult.result,
-					"status":    toolCallResult.status,
-					"error":     toolCallResult.error,
+			// A round can surface a batch of tool calls. Feed every call of the
+			// round back to the model, in emission order and attributed by its
+			// call id, so the transcript the model sees is deterministic and
+			// matches the calls it made — instead of only the last call of a
+			// batch, which left the model guessing which results existed and in
+			// what order (ci#655).
+			appended, updatedMessages := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds)
+			currentMessages = updatedMessages
+			for _, call := range appended {
+				toolCallDetails = append(toolCallDetails, map[string]interface{}{
+					"id":        call.id,
+					"name":      call.name,
+					"arguments": call.arguments,
+					"result":    call.result,
+					"status":    call.status,
+					"error":     call.error,
 					"timestamp": time.Now().Format(time.RFC3339),
+				})
+				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
+				totalToolCalls++
+				if call.status == ToolCallStatusFailed {
+					failedToolCalls++
 				}
-				toolCallDetails = append(toolCallDetails, toolCallInfo)
 			}
 
-			fmt.Println("Called tool: ", toolCallResult.toolName, "with result: ", toolCallResult.result)
+			// A round whose every call was already processed (or that surfaced no
+			// usable call) would otherwise spin without adding anything to the
+			// transcript: finish instead of re-requesting forever.
+			if len(appended) == 0 {
+				return
+			}
 
 			if toolCallResult.stopAfterTool {
 				log.Printf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
 				return
 			}
-
-			totalToolCalls++
-			if toolCallResult.status == ToolCallStatusFailed {
-				failedToolCalls++
-			}
-
-			// Add the tool call to the message history
-			toolsCallMessage := map[string]interface{}{
-				"role":         "assistant",
-				"tool_call_id": toolCallResult.id,
-				"content":      "",
-				"tool_calls": []map[string]interface{}{
-					{
-						"type": "function",
-						"id":   toolCallResult.id,
-						"function": map[string]interface{}{
-							"arguments": toolCallResult.arguments,
-							"name":      toolCallResult.toolName,
-						},
-					},
-				},
-			}
-			currentMessages = append(currentMessages, toolsCallMessage)
-
-			// Add tool result to messages and continue conversation
-			modelToolResult := truncateToolResultForModel(toolCallResult.result)
-			if modelToolResult != toolCallResult.result {
-				log.Printf(
-					"Truncated tool result for model context (%d -> %d chars): %s",
-					len(toolCallResult.result),
-					len(modelToolResult),
-					toolCallResult.toolName,
-				)
-			}
-			toolResultMsg := map[string]interface{}{
-				"role":         "tool",
-				"tool_call_id": toolCallResult.id,
-				"content":      modelToolResult,
-			}
-			currentMessages = append(currentMessages, toolResultMsg)
 
 			currentMessagesIndented, _ := json.MarshalIndent(currentMessages, "", "    ")
 			fmt.Println("Current messages: ", string(currentMessagesIndented))
@@ -673,6 +638,18 @@ func streamChatCompletion(
 	}()
 
 	return chunkChan, usageChan, toolChan, errChan
+}
+
+// executedToolCall is one fully-resolved tool call of a single streaming round.
+// A round may surface a batch of calls; they are kept in emission order so the
+// caller can feed every result back to the model deterministically (ci#655).
+type executedToolCall struct {
+	id        string
+	name      string
+	arguments string
+	result    string
+	status    string
+	error     string
 }
 
 type toolCallResult struct {
@@ -689,6 +666,71 @@ type toolCallResult struct {
 	err               error
 	aiResponse        string
 	usage             *TokenUsage
+	// calls holds every tool call of the round, in the order the model
+	// emitted them (ci#655). The singular id/toolName/result/... fields above
+	// mirror the last call for backwards compatibility.
+	calls []executedToolCall
+}
+
+// appendExecutedToolCalls appends, for every executed call that has not already
+// been processed, an assistant message carrying exactly that one tool call
+// followed by its matching tool-result message — in the order the calls were
+// made. That is the transcript the model reads back on the next round, so it
+// must be complete, ordered and attributed by call id (ci#655). It returns the
+// updated message list and the calls it actually appended, and marks each
+// appended id in processed so a repeated id is never fed back twice.
+//
+// Keeping this in one place makes the "every call of the batch reaches the
+// model, in order" contract unit-testable without a live provider.
+func appendExecutedToolCalls(
+	currentMessages []map[string]interface{},
+	calls []executedToolCall,
+	processed map[string]bool,
+) ([]executedToolCall, []map[string]interface{}) {
+	messages := currentMessages
+	appended := make([]executedToolCall, 0, len(calls))
+	for _, call := range calls {
+		if call.id != "" && processed[call.id] {
+			log.Printf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", call.id)
+			continue
+		}
+		if call.id != "" {
+			processed[call.id] = true
+		}
+
+		messages = append(messages, map[string]interface{}{
+			"role":         "assistant",
+			"tool_call_id": call.id,
+			"content":      "",
+			"tool_calls": []map[string]interface{}{
+				{
+					"type": "function",
+					"id":   call.id,
+					"function": map[string]interface{}{
+						"arguments": call.arguments,
+						"name":      call.name,
+					},
+				},
+			},
+		})
+
+		modelToolResult := truncateToolResultForModel(call.result)
+		if modelToolResult != call.result {
+			log.Printf(
+				"Truncated tool result for model context (%d -> %d chars): %s",
+				len(call.result),
+				len(modelToolResult),
+				call.name,
+			)
+		}
+		messages = append(messages, map[string]interface{}{
+			"role":         "tool",
+			"tool_call_id": call.id,
+			"content":      modelToolResult,
+		})
+		appended = append(appended, call)
+	}
+	return appended, messages
 }
 
 func processStreamingRequest(
@@ -1231,6 +1273,13 @@ func processParsedToolCall(
 		result.result = cachedResult
 		result.status = ToolCallStatusSucceeded
 		result.error = ""
+		result.calls = append(result.calls, executedToolCall{
+			id:        id,
+			name:      name,
+			arguments: arguments,
+			result:    cachedResult,
+			status:    ToolCallStatusSucceeded,
+		})
 
 		toolChan <- ToolCall{
 			ToolName:  name,
@@ -1322,6 +1371,14 @@ func processParsedToolCall(
 	}
 	result.status = status
 	result.error = toolErr
+	result.calls = append(result.calls, executedToolCall{
+		id:        id,
+		name:      name,
+		arguments: arguments,
+		result:    toolResult,
+		status:    status,
+		error:     toolErr,
+	})
 	// Cache only successful results. Caching failures would make an identical
 	// retry (after the underlying state changed) replay the stale error instead
 	// of re-executing the tool.
@@ -1341,11 +1398,23 @@ func processStreamingResponseReader(
 ) (*toolCallResult, error) {
 	result := &toolCallResult{}
 
-	var currentToolCall struct {
+	// A single assistant round can stream several tool calls and the provider
+	// interleaves their deltas: the `index` field identifies which call a delta
+	// belongs to, one call's arguments arrive across several deltas, and deltas
+	// for different calls can alternate. Reassemble each call by index (falling
+	// back to its id) and only execute it once the stream ends, in emission
+	// order, so every result is delivered exactly once, attributed to its call
+	// id and in call order instead of being run as partial deltas arrive
+	// (ci#655).
+	type streamedCall struct {
 		id        string
 		name      string
 		arguments string
 	}
+	var streamedKeys []string
+	streamed := map[string]*streamedCall{}
+	lastKey := ""
+	streamedToolCallsSeen := false
 	var aiResponseBuilder strings.Builder
 	// inlineToolCallDetected records that the model emitted an inline tool-call
 	// block (DeepSeek DSML or Anthropic/XML) in the content. Such content is
@@ -1416,61 +1485,45 @@ func processStreamingResponseReader(
 			continue
 		}
 
-		result.usedTool = true
+		streamedToolCallsSeen = true
 		for _, tc := range delta.ToolCalls {
 			toolCall, ok := tc.(map[string]interface{})
 			if !ok {
 				continue
 			}
 
-			if id, ok := toolCall["id"].(string); ok && id != "" {
-				if id != currentToolCall.id {
-					result.id = id
-					currentToolCall = struct {
-						id        string
-						name      string
-						arguments string
-					}{id: id}
-				}
+			id, _ := toolCall["id"].(string)
+			key := ""
+			if index, hasIndex := toolCallIndexValue(toolCall); hasIndex {
+				key = fmt.Sprintf("index:%d", index)
+			} else if id != "" {
+				key = "id:" + id
+			} else {
+				// A continuation delta without an index or id belongs to the
+				// call that was opened last.
+				key = lastKey
 			}
-
-			if function, ok := toolCall["function"].(map[string]interface{}); ok {
-				if name, ok := function["name"].(string); ok && name != "" {
-					currentToolCall.name = name
-					result.toolName = name
-				}
-				if args, ok := function["arguments"].(string); ok {
-					currentToolCall.arguments += args
-				}
-			}
-
-			if currentToolCall.name == "" || currentToolCall.arguments == "" {
+			if key == "" {
 				continue
 			}
-
-			processParsedToolCall(
-				ctx,
-				currentToolCall.id,
-				currentToolCall.name,
-				currentToolCall.arguments,
-				toolMap,
-				executedToolResults,
-				result,
-				toolChan,
-			)
-			break
-		}
-
-		// StopOnFirstConfirmableToolCall means the model must resolve this
-		// confirmable action before any further tool call in the same assistant
-		// turn is surfaced. Without this we would keep reading the response and
-		// turn every batched confirmable call into its own confirmable action,
-		// so all of them get approved and re-applied on already-mutated state.
-		// Drop the rest of the batch instead; the model re-issues the remaining
-		// calls one at a time.
-		if result.stopAfterTool {
-			log.Printf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
-			break
+			call := streamed[key]
+			if call == nil {
+				call = &streamedCall{}
+				streamed[key] = call
+				streamedKeys = append(streamedKeys, key)
+			}
+			lastKey = key
+			if id != "" {
+				call.id = id
+			}
+			if function, ok := toolCall["function"].(map[string]interface{}); ok {
+				if name, ok := function["name"].(string); ok && name != "" {
+					call.name = name
+				}
+				if args, ok := function["arguments"].(string); ok {
+					call.arguments += args
+				}
+			}
 		}
 	}
 
@@ -1480,7 +1533,7 @@ func processStreamingResponseReader(
 	// the provider did not map onto the structured tool_calls field. Without
 	// this the raw fragment was stored as the assistant text and the tool loop
 	// finished silently, abandoning the rest of a multi-step task (ci#428).
-	if !result.usedTool && inlineToolCallDetected {
+	if !streamedToolCallsSeen && inlineToolCallDetected {
 		recovered := parseInlineToolCalls(result.aiResponse, toolMap)
 		if len(recovered) == 0 {
 			return result, errMalformedInlineToolCall
@@ -1502,9 +1555,54 @@ func processStreamingResponseReader(
 		}
 		// The raw inline fragment is not user-facing assistant text.
 		result.aiResponse = ""
+		return result, nil
+	}
+
+	// Execute the reassembled calls in emission order, each once. Only the
+	// first stop-on-confirmable call is surfaced; the rest of the batch is
+	// dropped so approving it does not re-apply already-applied mutations.
+	for _, key := range streamedKeys {
+		call := streamed[key]
+		if call == nil || call.name == "" || call.arguments == "" {
+			continue
+		}
+		result.usedTool = true
+		processParsedToolCall(
+			ctx,
+			call.id,
+			call.name,
+			call.arguments,
+			toolMap,
+			executedToolResults,
+			result,
+			toolChan,
+		)
+		if result.stopAfterTool {
+			log.Printf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
+			break
+		}
 	}
 
 	return result, nil
+}
+
+// toolCallIndexValue reads the OpenAI streaming `index` that identifies which
+// tool call of a batched assistant turn a delta belongs to. Providers that do
+// not emit it fall back to id-based attribution.
+func toolCallIndexValue(toolCall map[string]interface{}) (int, bool) {
+	switch v := toolCall["index"].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
 }
 
 func buildTestBackendStreamingReader(
