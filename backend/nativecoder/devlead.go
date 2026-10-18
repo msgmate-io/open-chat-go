@@ -153,11 +153,9 @@ func (e CIFailureEvent) providerOrDefault() string {
 	return "unknown"
 }
 
-// NormalizeBranch lower-cases a branch and strips the `refs/heads/` prefix.
-func NormalizeBranch(branch string) string {
-	normalized := strings.ToLower(strings.TrimSpace(branch))
-	return strings.TrimPrefix(normalized, "refs/heads/")
-}
+// NormalizeRepo and NormalizeBranch live in repo.go: they are shared with the
+// interaction-tag derivation (ci#650) and the planner, so a single canonical
+// implementation is kept there.
 
 // LeadInteraction is the lead's read-only view of a candidate development-agent
 // interaction as retrieved from the chat/interaction store.
