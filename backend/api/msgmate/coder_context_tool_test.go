@@ -68,6 +68,9 @@ func TestCoderContextToolIsRegisteredAndBackedByTheUsageReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coder_context failed: %v", err)
 	}
+	// A fresh map: unmarshalling into the previous one would merge the earlier
+	// (unmeasured) payload's keys into the new one.
+	payload = map[string]interface{}{}
 	if err := json.Unmarshal([]byte(result), &payload); err != nil {
 		t.Fatalf("expected a JSON payload, got %q (%v)", result, err)
 	}
@@ -76,6 +79,9 @@ func TestCoderContextToolIsRegisteredAndBackedByTheUsageReport(t *testing.T) {
 	}
 	if _, ok := payload["note"]; ok {
 		t.Fatalf("a measured chat must not carry the budgets-only note, got %#v", payload)
+	}
+	if payload["budget_chars"] != float64(1000) {
+		t.Fatalf("expected the measured char budget, got %#v", payload["budget_chars"])
 	}
 	if !strings.Contains(tool.GetToolDescription(), "context") {
 		t.Fatalf("expected the description to explain the report, got %q", tool.GetToolDescription())
