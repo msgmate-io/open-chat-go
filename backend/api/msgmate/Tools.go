@@ -328,16 +328,24 @@ func (t *BaseTool) GetToolParameters() map[string]interface{} {
 }
 
 func (t *BaseTool) GetToolInputSchema() map[string]interface{} {
+	var schema map[string]interface{}
 	if t.ToolInputSchema != nil {
-		return normalizeToolInputSchema(t.ToolInputSchema)
+		schema = normalizeToolInputSchema(t.ToolInputSchema)
+	} else {
+		schema = normalizeToolInputSchema(map[string]interface{}{
+			"type":        "object",
+			"properties":  t.GetToolParameters(),
+			"required":    t.RequiredParams,
+			"description": "The parameters for the tool",
+		})
 	}
-
-	return normalizeToolInputSchema(map[string]interface{}{
-		"type":        "object",
-		"properties":  t.GetToolParameters(),
-		"required":    t.RequiredParams,
-		"description": "The parameters for the tool",
-	})
+	// ci#723: only the coding integration's tools advertise the optional
+	// `reason` argument, so a coder turn can narrate why each tool runs while
+	// every other tool keeps its previous schema.
+	if IsCoderToolName(t.ToolName) {
+		schema = withToolCallReasonProperty(schema)
+	}
+	return schema
 }
 
 // normalizeToolInputSchema guarantees a JSON Schema that strict providers
