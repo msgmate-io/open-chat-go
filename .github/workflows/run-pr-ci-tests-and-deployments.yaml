@@ -367,6 +367,31 @@ jobs:
             done
           done
 
+      # ci#659: the labels must be read from the API, not from
+      # `$GITHUB_EVENT_PATH`. `gh pr create -l ...` (and any burst of label
+      # edits) applies the labels in a second API call, so the `opened` event
+      # payload carries an EMPTY label set; a label-driven decision made from
+      # that snapshot is wrong for exactly the PRs the checks exist to gate.
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "Not a pull request event; no labels to resolve."
+            : > "${RUNNER_TEMP}/pr-labels.txt"
+            exit 0
+          fi
+          curl -fsSL \
+            -H "Authorization: Bearer ${LABEL_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
+            | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
+          echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
+
       - name: Resolve context and label actions
         id: context
         run: |
@@ -377,37 +402,33 @@ jobs:
             PR_NUMBER="${{ github.event.pull_request.number }}"
             SOURCE_REPOSITORY="${{ github.repository }}"
             DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
-            SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
-            SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_DEPLOY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'deploy' || true)"
+            SHOULD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test' || true)"
             # E2E has several accepted label aliases (e2e/test-e2e/test); when
             # more than one alias label is present the grep would return
             # multiple lines and a multi-line GITHUB_OUTPUT value breaks the
             # job ("Invalid format"). Keep alias support, emit one token only.
-            SHOULD_E2E_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x '(e2e|test-e2e|test)' | head -n1 || true)"
+            SHOULD_E2E_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -x '(e2e|test-e2e|test)' | head -n1 || true)"
             # Sandbox suite trigger: plain `sandbox-test` runs all tests, while
             # `sandbox-test:<tag>` labels run only tests carrying that tag
             # (multiple labels are unioned). Any matching label triggers the
             # suite.
-            SHOULD_SANDBOX_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x 'sandbox-test(:.*)?' | head -n1 || true)"
-            SHOULD_SANDBOX_TAGS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" \
+            SHOULD_SANDBOX_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -x 'sandbox-test(:.*)?' | head -n1 || true)"
+            SHOULD_SANDBOX_TAGS="$(cat "${RUNNER_TEMP}/pr-labels.txt" \
               | sed -n 's/^sandbox-test://p' \
               | tr '\n' ',' | sed 's/,\+/,/g; s/^,//; s/,$//' || true)"
             # A plain `sandbox-test` label means "run the whole suite"; it must
             # win over any `sandbox-test:<tag>` selectors so adding the tag
             # labels alongside it never narrows the public run to zero tests.
-            if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'sandbox-test'; then
+            if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'sandbox-test'; then
               SHOULD_SANDBOX_TAGS=""
             fi
-            SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
-            SHOULD_RELEASE_ANDROID="$(jq -r '
-              ([.pull_request.labels[]?.name // ""]
-              | map(ascii_downcase)
-              | index("release-android")) as $idx
-              | if $idx == null then "" else "release-android" end
-            ' "$GITHUB_EVENT_PATH")"
-            SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
-            SHOULD_AI_TEST_REAL="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-real' || true)"
-            SHOULD_TEST_CORE_ONLY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test-core-only' || true)"
+            SHOULD_BUILD="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'build' || true)"
+            SHOULD_RELEASE_ANDROID="$(grep -i -x 'release-android' "${RUNNER_TEMP}/pr-labels.txt" \
+              | head -n1 | tr '[:upper:]' '[:lower:]' || true)"
+            SHOULD_AI_TEST_MOCK="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-mock' || true)"
+            SHOULD_AI_TEST_REAL="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-real' || true)"
+            SHOULD_TEST_CORE_ONLY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test-core-only' || true)"
             # Production promotion PRs (base.ref == 'production') always run the
             # full suite. Their labels are added in one burst right after the PR
             # is opened, so each per-label event payload carries only a partial
@@ -1050,12 +1071,22 @@ jobs:
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
     steps:
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/development/scripts/resolve_live_pr_labels.sh" \
+            "${RUNNER_TEMP}/pr-labels.txt"
+
       - name: Resolve context and label actions
         id: context
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test' || true)"
           else
             SHOULD_TEST="test"
           fi
@@ -1234,12 +1265,22 @@ jobs:
       AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
     steps:
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/development/scripts/resolve_live_pr_labels.sh" \
+            "${RUNNER_TEMP}/pr-labels.txt"
+
       - name: Resolve context and label actions
         id: context
         run: |
           set -euo pipefail
-          SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
-          SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
+          SHOULD_AI_TEST_MOCK="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-mock' || true)"
+          SHOULD_DEPLOY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'deploy' || true)"
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
           echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
 
@@ -2198,26 +2239,40 @@ jobs:
   pr-test-merge-requirement:
     name: PR Test Merge Requirement
     runs-on: ubuntu-latest
+    # ci#659: this job is a label-driven gate, so it must never decide from the
+    # event payload snapshot (`gh pr create -l ...` labels the PR in a second
+    # API call, leaving the `opened` payload label-free). Every label read below
+    # consumes the live label list fetched in the first step.
     needs: [run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, run-pr-ci-sandbox-tests-after-deploy]
     if: |
       always() &&
       github.event_name == 'pull_request' &&
       github.event.action != 'closed'
     steps:
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/development/scripts/resolve_live_pr_labels.sh" \
+            "${RUNNER_TEMP}/pr-labels.txt"
+
       - name: Enforce test label and passing tests
         run: |
           set -euo pipefail
           # Production promotion PRs run the full suite without relying on
           # labels (burst label-adds race with the event payload snapshot).
           if [ "${{ github.event.pull_request.base.ref }}" != "production" ] &&
-             ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test(:.*)?)'; then
+             ! cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -qx '(test|test-e2e|e2e|sandbox-test(:.*)?)'; then
             echo "::error::PR is missing the required test label."
             exit 1
           fi
           case "${{ needs.run-pr-ci-go-tests.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'test'; then
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test'; then
                 echo "::error::PR CI did not run for this commit with the test label."
                 exit 1
               fi
@@ -2235,7 +2290,7 @@ jobs:
               exit 1
               ;;
           esac
-          if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
+          if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
             echo "::error::Tests were not executed despite the test label."
             exit 1
           fi
@@ -2256,7 +2311,7 @@ jobs:
               exit 1
                ;;
            esac
-           if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
+           if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
              echo "::error::Tests were not executed despite the test label."
              exit 1
            fi
@@ -2264,7 +2319,7 @@ jobs:
           case "${{ needs.run-pr-ci-e2e-tests.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e)'; then
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -qx '(test|test-e2e|e2e)'; then
                 echo "::error::PR CI E2E tests did not run for this commit."
                 exit 1
               fi
@@ -2286,7 +2341,7 @@ jobs:
           case "${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx 'sandbox-test(:.*)?'; then
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -qx 'sandbox-test(:.*)?'; then
                 echo "::error::PR CI sandbox tests did not run for this commit."
                 exit 1
               fi
