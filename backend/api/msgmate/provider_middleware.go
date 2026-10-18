@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"backend/nativecoder"
 )
 
 // ProviderRequestContext carries the state of one provider completion request
@@ -94,6 +96,14 @@ type providerRequestMeta struct {
 	// request is made with, so two keys against one provider are admitted
 	// independently.
 	ProviderAdmissionKey string
+	// Budget is the per-chat tool-call budget the caller already resolved for
+	// this turn (ci#709). When nil the tool loop falls back to the caps it was
+	// passed, so a direct caller (a unit test) keeps its explicit values.
+	Budget *nativecoder.ToolCallBudget
+	// Outcome receives how the turn ended and its consumed counters, so the
+	// reader can report them as structured state instead of only an error
+	// string (ci#709). Optional.
+	Outcome *TurnOutcome
 }
 
 // runProviderRequestMiddleware invokes all registered middlewares in the

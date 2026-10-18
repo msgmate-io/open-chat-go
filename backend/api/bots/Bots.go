@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -36,6 +37,11 @@ func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config ma
 	// `auto_consolidation` block unless it is switched off. Applying the default
 	// here as well as through the integration keeps it working in a core-only
 	// build, and an explicit per-agent value always wins.
+	//
+	// The tool-call budget snapshot (ci#709) is deliberately NOT recorded here:
+	// this helper also builds a bot's *default* shared config, which is the live
+	// source a cap raise comes from. The snapshot belongs to a chat and is
+	// recorded on the chat itself (chats.Create, createBotInteraction).
 	return nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue()), nil
 }
 
@@ -1451,6 +1457,11 @@ func createBotInteraction(
 	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, effectiveConfig); err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid integrations: %v", err)}
 	}
+	// ci#709: the *chat* records the tool-call budget it was created with, so
+	// the budget survives a re-attach / re-provision and is reported as
+	// structured state. The bot's default shared config stays the live source,
+	// so a later cap raise still reaches this interaction.
+	effectiveConfig = nativecoder.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
