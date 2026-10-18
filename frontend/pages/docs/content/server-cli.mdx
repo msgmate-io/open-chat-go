@@ -104,8 +104,31 @@ for details and secret-handling guidance.
 | --- | --- | --- | --- |
 | `--start-worker`, `--sw` | `START_WORKER` | `true` | Run the embedded worker in the server process. |
 | `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Worker goroutine count. |
+| `--skip-migrations` | `DB_SKIP_MIGRATIONS` | `false` | Skip the automatic schema migration pass (set on secondary processes so they do not race the primary's DDL). |
+| `--run-scheduler` | `WORKER_SCHEDULER` | `true` | Run the integration scheduler in this process. Exactly one process must own it. |
 
 Set `START_WORKER=false` when you run `open-chat worker` as a separate process.
+
+#### Multi-worker recipe
+
+To scale reply processing across several worker pods while keeping the API
+single-writer for schema migrations and periodic schedules:
+
+- On the API process: `START_WORKER=false` (the API only serves requests) and
+  leave `--run-scheduler` (`WORKER_SCHEDULER`) at its default so exactly one
+  process owns the integration scheduler. If you disable the embedded worker,
+  run the scheduler on the API (`--run-scheduler=true`) or on exactly one
+  worker — never on all of them.
+- On each worker process: `OPEN_CHAT_HOST` pointing at the API's URL
+  (e.g. `http://open-chat-server:1984`), `REDIS_MODE=external` (all workers must
+  share one Redis; `auto` can silently start a per-pod embedded Redis), and
+  `DB_SKIP_MIGRATIONS=true` (only the API migrates the schema).
+- Run the integration scheduler in **exactly one** process: `--run-scheduler`
+  (`WORKER_SCHEDULER`) is `true` by default, so set it to `false` on every
+  worker except the one that should own the schedules.
+
+asynq v0.26 does **not** leader-elect the scheduler across instances, so running
+it in every worker can enqueue periodic jobs more than once.
 
 ### Browser token flags
 
@@ -148,6 +171,8 @@ open-chat worker \
 | `--debug`, `-d` | `DEBUG` | `true` | Enable debug mode. |
 | `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Concurrent worker goroutines. |
 | `--backend-host` | `OPEN_CHAT_HOST` | `http://127.0.0.1:1984` | Backend base URL used by async bot tasks. |
+| `--skip-migrations` | `DB_SKIP_MIGRATIONS` | `false` | Skip the automatic schema migration pass (set on secondary workers). |
+| `--run-scheduler` | `WORKER_SCHEDULER` | `true` | Run the integration scheduler in this process (exactly one process must own it). |
 
 The worker also accepts all Redis flags listed above.
 
