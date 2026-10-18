@@ -36,8 +36,6 @@ var parityFallbackGuidance = map[string]string{
 	"image_and_structured_reads": "Ask for a textual description instead of the image, and inspect " +
 		"structured documents by filtering them with coder_grep - a screenshot or a notebook has to be " +
 		"reduced to text before the model sees it.",
-	"context_compaction": "Call coder_context before a large dump and keep the working set small: " +
-		"depth-bounded coder_list, path-scoped coder_grep and ranged coder_read instead of whole trees or files.",
 	"subagents": "Split the work across separate chats (dispatch a peer agent) and do the mechanical " +
 		"exploration with coder_grep/coder_list so the current context stays small instead of growing a " +
 		"second context window.",
