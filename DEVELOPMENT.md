@@ -733,6 +733,13 @@ turn inside the window (`backend/api/msgmate/context_budget.go`):
    messages are dropped. Leading system messages (an injected compaction summary),
    every user message and the newest turn are never touched, and the
    tool-call/tool-result pairing is repaired afterwards so the request stays valid.
+   The most recent tool-call round (the assistant message declaring the newest calls
+   plus every result of that round) is protected too, however far back it sits:
+   rewriting the result of the call the model just made into an eviction marker once
+   made a turn re-issue the identical call dozens of times (ci#728, 18 identical
+   `coder_read` in a 110-call run), so the tool eviction marker now states that the
+   call already ran and must *not* be re-issued (a narrower range or a
+   redirect-to-file is suggested instead).
    The guard only ever shrinks a history that already exceeds the budget, so it is
    a no-op on the normal path. The existing provider-driven trim-and-retry
    (ci#394 gap 7) still backs it up for a window smaller than the budget assumes.
