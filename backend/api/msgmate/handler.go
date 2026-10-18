@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"backend/logging"
+	"backend/nativecoder"
 )
 
 // FunctionType represents the type of function
@@ -47,6 +48,23 @@ type FunctionRegistry struct {
 // MsgmateHandler provides functionality for managing dynamic functions and interactions
 type MsgmateHandler struct {
 	registry *FunctionRegistry
+	// coderParitySurface is the process-wide coder parity surface behind the
+	// native-coder tools (ci#394 gap 7, ticket ci#957). It is created lazily on
+	// first tool use and serves every chat: the coder_compact store is keyed by
+	// chat id, so one shared surface answers any chat.
+	coderParitySurface *nativecoder.CoderParitySurface
+}
+
+// GetCoderParitySurface returns the process-wide coder parity surface, creating
+// it on first use. It is the surface the `coder_compact` runner dispatches to.
+func (h *MsgmateHandler) GetCoderParitySurface() *nativecoder.CoderParitySurface {
+	if h == nil {
+		return nil
+	}
+	if h.coderParitySurface == nil {
+		h.coderParitySurface = nativecoder.NewCoderParitySurface("")
+	}
+	return h.coderParitySurface
 }
 
 // Global singleton instance
