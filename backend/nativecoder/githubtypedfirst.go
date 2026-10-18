@@ -31,6 +31,7 @@ var GitHubTypedFirstPurpose = map[string]string{
 	GitHubToolAPI:          "read-only REST/GraphQL call (`gh api`)",
 	GitHubToolRunList:      "list workflow runs (`gh run list`), read-only",
 	GitHubToolRunView:      "read one workflow run and its jobs (`gh run view`), read-only",
+	GitHubToolAwait:        "block until a workflow run or PR checks settle, then return structured terminal state, never busy-wait (`gh pr checks --watch` / `gh run watch` / poll loops)",
 }
 
 // GitHubTypedFirstTools returns the typed GitHub tool names in a stable order.
