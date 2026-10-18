@@ -23,14 +23,21 @@ import (
 // unless the agent (or the deployment kill switch) switches it off. An explicit
 // per-agent value always wins; a non-coder config is never touched.
 //
-// It also records the per-chat tool-call budget snapshot (ci#709) in the config
-// this chat is created with, so the budget a chat was started with survives a
-// re-attach and a re-provision, and stays inspectable as structured state
+// It also promotes an explicit `agent_dispatch.autonomous` request into the
+// `coder_interaction: autonomous` contract (ci#506), so an interaction created
+// for a headless dispatched agent never parks on a per-action confirmation, and
+// records the per-chat tool-call budget snapshot (ci#709) in the config this
+// chat is created with, so the budget a chat was started with survives a
+// re-attach and a re-provision and stays inspectable as structured state
 // instead of only appearing in an abort error.
 func applySharedConfigDefaults(config map[string]interface{}) map[string]interface{} {
-	withDefaults := extiface.ApplySharedConfigDefaults(config)
+	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
+	// integration defaults fill the full coder tool set instead of being
+	// suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
 	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
-	return nativecoder.WithToolCallBudgetSnapshot(withConsolidation, time.Now())
+	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withConsolidation)
+	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
 }
 
 // TODO: should also supply user Id

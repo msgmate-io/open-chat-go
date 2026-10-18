@@ -405,6 +405,13 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	toolCallMaxFailed = int64(turnBudget.MaxFailed)
 	turnOutcome := &TurnOutcome{Reason: TurnEndedCompleted, Budget: turnBudget}
 
+	// ci#680: the context budget of this turn (the character budget of the
+	// outgoing conversation plus the per-tool output budgets), resolved from the
+	// chat config and the deployment env. It is what keeps a turn with several
+	// large tool outputs under the provider window instead of failing with
+	// "exceeded maximum context".
+	contextBudget := ResolveContextBudget(configMap)
+
 	endpoint, err = resolveChatProviderEndpoint(backend, endpoint)
 	if err != nil {
 		return err
@@ -487,6 +494,7 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 			ProviderAdmissionKey:         providerAdmissionKey,
 			Budget:                       &turnBudget,
 			Outcome:                      turnOutcome,
+			Context:                      contextBudget,
 		},
 	)
 
@@ -1327,6 +1335,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			metadata["turn_ended"] = outcome.reason()
 			metadata["tool_call_budget"] = outcome.Budget.Metadata()
 			metadata["tool_call_usage"] = outcome.usage().Metadata()
+			// ci#680: the context/token usage of the turn's last request, so an
+			// agent (and the chat) can see how close the conversation came to the
+			// window instead of only learning it from a failed turn.
+			if outcome.Context.BudgetChars > 0 {
+				metadata["context_budget"] = outcome.Context.Metadata()
+			}
 		}
 
 		// ci#709: a turn that ran tools must never finish on an empty message.
