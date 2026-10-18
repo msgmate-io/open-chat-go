@@ -9,11 +9,41 @@ section: Platform
 Open Chat Go is extended through **integrations** and **tools**. Both live in
 their own repositories and are wired into the server through stable Go
 interfaces, so the core stays small while capabilities can be developed,
-versioned and (when needed) kept private independently.
+versioned and (when needed) published in a private repository.
 
 This page covers the integration and tool interfaces, the manifest and profile
 system, the frontend page contract, a step-by-step walkthrough for **adding a
 custom integration**, and the local development loop.
+
+## Documentation visibility
+
+Documentation of an integration is owned by the integration, not by the core
+docs. A private (or otherwise restricted) integration keeps its documentation in
+its own repository and exposes it as `kind: "doc"` frontend routes; those routes
+are listed in the `/integrations/<name>` navigation, and opening one requires a
+session plus access to that integration — otherwise the docs route renders the
+access notice instead of the content.
+
+The core `/docs` pages follow the same rule, driven by frontmatter:
+
+```yaml
+---
+title: My Integration
+path: my-integration
+visibility: integration   # public | authenticated | integration
+integration: my_integration
+---
+```
+
+- `public` (default) — rendered for everyone.
+- `authenticated` — rendered for signed-in users only.
+- `integration` — rendered only for users with access to `integration`.
+
+Public pages must never inline material from a restricted integration: mention
+it in one short sentence and link to the integration's own docs. A gated page
+renders "You have to sign in to view these docs" for anonymous visitors and
+"You don't have access to view this integration's docs" for signed-in users
+without access.
 
 ## The interfaces
 
