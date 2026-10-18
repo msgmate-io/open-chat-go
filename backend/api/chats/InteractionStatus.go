@@ -187,18 +187,11 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		}
 	}
 
-	if inspector != nil {
-		taskID := workqueue.BotReplyTaskID(chat.UUID)
-		task, err := inspector.GetTaskInfo(workqueue.QueueDefault, taskID)
-		if err == nil && task != nil {
-			state := strings.ToLower(strings.TrimSpace(task.State.String()))
-			if isQueueStateActive(state) {
-				response.IsActive = true
-				response.State = string(chatstate.StateActive)
-				response.Source = "queue"
-				return response, nil
-			}
-		}
+	if inspector != nil && workqueue.BotReplyIsActive(inspector, chat.UUID) {
+		response.IsActive = true
+		response.State = string(chatstate.StateActive)
+		response.Source = "queue"
+		return response, nil
 	}
 
 	latest, err := latestMessageForChat(DB, chat.ID)
