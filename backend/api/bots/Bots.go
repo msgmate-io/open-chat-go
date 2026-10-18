@@ -38,11 +38,19 @@ func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config ma
 	// here as well as through the integration keeps it working in a core-only
 	// build, and an explicit per-agent value always wins.
 	//
+	// The autonomous-confirmation contract (ci#506) is promoted here as well, so
+	// an interaction that the trusted dispatch surface created with
+	// `autonomous: true` states `coder_interaction: autonomous` on its own
+	// shared config — the key the coder integration reads — and never parks on a
+	// per-action confirmation. An already configured mode always wins and a
+	// non-dispatch config is untouched.
+	//
 	// The tool-call budget snapshot (ci#709) is deliberately NOT recorded here:
 	// this helper also builds a bot's *default* shared config, which is the live
 	// source a cap raise comes from. The snapshot belongs to a chat and is
 	// recorded on the chat itself (chats.Create, createBotInteraction).
-	return nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue()), nil
+	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+	return nativecoder.ApplyCoderAutonomousConfig(withConsolidation), nil
 }
 
 type BotDTO struct {
