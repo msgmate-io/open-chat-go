@@ -342,6 +342,13 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		if maybeAutoContinueInteraction(context.Background(), DB, autoContinueClient, autoContinueInspector, chat, *user, receiver, message) {
 			return
 		}
+		// Post the finished reply back to the tracker for a chat whose native
+		// backend has no post-interaction hook of its own (ci#649). Runs only for
+		// an automated participant's reply, and only when the interaction is
+		// genuinely complete (the auto-continue check above returned false).
+		if user.IsAutomated {
+			MaybeRunPostInteractionActions(DB, autoContinueClient, autoContinueInspector, chat, data.Text)
+		}
 		maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
 	}()
 
