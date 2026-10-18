@@ -340,6 +340,75 @@ func (r DevLeadRouter) now() time.Time {
 	return time.Now()
 }
 
+// CandidateInteractions is the routing primitive the integration / agent-chooser
+// side calls to enumerate a repo's live + recent development-agent interactions
+// before (or without) routing a failure: active interactions always qualify, a
+// past one only inside the recent window. The result is most-recent-activity
+// first (UUID tiebreak) for deterministic routing.
+func (r DevLeadRouter) CandidateInteractions(repo string, interactions []LeadInteraction) []LeadInteraction {
+	target := NormalizeRepo(repo)
+	now := r.now()
+	window := r.recentWindow()
+	candidates := make([]LeadInteraction, 0, len(interactions))
+	for _, interaction := range interactions {
+		if NormalizeRepo(interaction.Repo) != target {
+			continue
+		}
+		if !interaction.IsActive() && now.Sub(interaction.LastActivityAt.UTC()) > window {
+			continue
+		}
+		candidates = append(candidates, interaction)
+	}
+	sort.SliceStable(candidates, func(a, b int) bool {
+		if !candidates[a].LastActivityAt.Equal(candidates[b].LastActivityAt) {
+			return candidates[a].LastActivityAt.After(candidates[b].LastActivityAt)
+		}
+		return candidates[a].UUID < candidates[b].UUID
+	})
+	return candidates
+}
+
+// DevLeadInteractionKind is the interaction kind that denotes a repo's
+// development lead (the agent-chooser bot). A candidate with this kind is
+// preferred when resolving "who is this repo's lead".
+const DevLeadInteractionKind = "development-lead"
+
+// ResolveLeadInteraction answers the agent-chooser question "which interaction
+// receives this repo's CI-relay traffic?": the running lead interaction, else
+// the most recent running interaction, else the most recent recent interaction.
+// The bool is false when the repo has no live or recent interaction (the caller
+// then spawns one).
+func (r DevLeadRouter) ResolveLeadInteraction(repo string, interactions []LeadInteraction) (LeadInteraction, bool) {
+	candidates := r.CandidateInteractions(repo, interactions)
+	var (
+		lead      LeadInteraction
+		haveLead  bool
+		firstLive LeadInteraction
+		haveLive  bool
+	)
+	for _, candidate := range candidates {
+		if !candidate.IsActive() {
+			continue
+		}
+		if !haveLive {
+			firstLive, haveLive = candidate, true
+		}
+		if !haveLead && strings.EqualFold(strings.TrimSpace(candidate.Kind), DevLeadInteractionKind) {
+			lead, haveLead = candidate, true
+		}
+	}
+	if haveLead {
+		return lead, true
+	}
+	if haveLive {
+		return firstLive, true
+	}
+	if len(candidates) > 0 {
+		return candidates[0], true
+	}
+	return LeadInteraction{}, false
+}
+
 // Route ingests a relayed CI-failure event and returns the routing decision for
 // the repo's interactions. The order is deliberate:
 //
@@ -375,12 +444,7 @@ func (r DevLeadRouter) Route(event CIFailureEvent, interactions []LeadInteractio
 		}
 		candidates = append(candidates, interaction)
 	}
-	sort.SliceStable(candidates, func(a, b int) bool {
-		if !candidates[a].LastActivityAt.Equal(candidates[b].LastActivityAt) {
-			return candidates[a].LastActivityAt.After(candidates[b].LastActivityAt)
-		}
-		return candidates[a].UUID < candidates[b].UUID
-	})
+	candidates = DevLeadRouter{RecentWindow: window, Now: func() time.Time { return now }}.CandidateInteractions(decision.Repo, candidates)
 	if len(candidates) == 0 {
 		decision.trailf("no live or recent interaction for %s", decision.Repo)
 	} else {

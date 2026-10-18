@@ -252,7 +252,7 @@ func TestRouteDerivesAttemptFromRecordedAttempts(t *testing.T) {
 	}
 }
 
-func TestRouteIngOnlyOneFixAttemptPerRelayedFailure(t *testing.T) {
+func TestRouteStartsOnlyOneFixAttemptPerRelayedFailure(t *testing.T) {
 	// Two consecutive relays of the same failure must not start two attempts.
 	now := time.Now().UTC()
 	event := testCIFailureEvent()
@@ -288,6 +288,58 @@ func TestRouteRejectsInvalidEvent(t *testing.T) {
 	}
 	if decision.Dispatch() {
 		t.Fatalf("invalid event must not dispatch")
+	}
+}
+
+func TestCandidateInteractionsFiltersAndOrders(t *testing.T) {
+	now := time.Now().UTC()
+	router := DevLeadRouter{Now: func() time.Time { return now }}
+	got := router.CandidateInteractions("Msgmate-IO/Open-Chat-Go.git", []LeadInteraction{
+		{UUID: "stale", Status: LeadInteractionCompleted, Repo: "msgmate-io/open-chat-go", LastActivityAt: now.Add(-72 * time.Hour)},
+		{UUID: "other-repo", Status: LeadInteractionActive, Repo: "msgmate-io/other", LastActivityAt: now},
+		{UUID: "older", Status: LeadInteractionCompleted, Repo: "msgmate-io/open-chat-go", LastActivityAt: now.Add(-2 * time.Hour)},
+		{UUID: "newer", Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now.Add(-time.Minute)},
+	})
+	if len(got) != 2 {
+		t.Fatalf("candidates = %v, want the two fresh same-repo interactions", got)
+	}
+	if got[0].UUID != "newer" || got[1].UUID != "older" {
+		t.Fatalf("order = %s, %s; want newer then older", got[0].UUID, got[1].UUID)
+	}
+	// Deterministic tiebreak on equal last-activity.
+	tie := router.CandidateInteractions("msgmate-io/open-chat-go", []LeadInteraction{
+		{UUID: "b", Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now},
+		{UUID: "a", Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now},
+	})
+	if tie[0].UUID != "a" || tie[1].UUID != "b" {
+		t.Fatalf("tie order = %s, %s", tie[0].UUID, tie[1].UUID)
+	}
+}
+
+func TestResolveLeadInteraction(t *testing.T) {
+	now := time.Now().UTC()
+	router := DevLeadRouter{Now: func() time.Time { return now }}
+	interactions := []LeadInteraction{
+		{UUID: "spawned-coder", Kind: "msgmate-coder", Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now},
+		{UUID: "the-lead", Kind: DevLeadInteractionKind, Status: LeadInteractionActive, Repo: "msgmate-io/open-chat-go", LastActivityAt: now.Add(-time.Hour)},
+		{UUID: "past-lead", Kind: DevLeadInteractionKind, Status: LeadInteractionCompleted, Repo: "msgmate-io/open-chat-go", LastActivityAt: now.Add(-time.Hour)},
+	}
+	got, ok := router.ResolveLeadInteraction("Msgmate-IO/Open-Chat-Go", interactions)
+	if !ok || got.UUID != "the-lead" {
+		t.Fatalf("resolve = %q/%v, want the-lead", got.UUID, ok)
+	}
+	// No explicit lead: the most recent running interaction.
+	got, ok = router.ResolveLeadInteraction("msgmate-io/open-chat-go", interactions[:1])
+	if !ok || got.UUID != "spawned-coder" {
+		t.Fatalf("fallback = %q/%v", got.UUID, ok)
+	}
+	// Only a recent past interaction: reseat on it rather than spawn blindly.
+	got, ok = router.ResolveLeadInteraction("msgmate-io/open-chat-go", []LeadInteraction{interactions[2]})
+	if !ok || got.UUID != "past-lead" {
+		t.Fatalf("past = %q/%v", got.UUID, ok)
+	}
+	if _, ok := router.ResolveLeadInteraction("msgmate-io/open-chat-go", nil); ok {
+		t.Fatalf("no interactions must not resolve")
 	}
 }
 
