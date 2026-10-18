@@ -41,6 +41,10 @@ type TurnOutcome struct {
 	SandboxCapacityFailures int
 	// Budget is the resolved per-chat tool-call budget of the turn.
 	Budget nativecoder.ToolCallBudget
+	// Context is the context/token usage report of the last request the turn
+	// sent (ci#680), so the reader can surface it as `context_budget` metadata
+	// and the `coder_context` tool can answer with the turn's real numbers.
+	Context ContextUsageReport
 }
 
 // reason returns the recorded reason, or the completed default for a nil outcome.
