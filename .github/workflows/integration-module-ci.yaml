@@ -1,0 +1,96 @@
+# ci#600: guard the integration-module CI itself and prove it on demand.
+#
+# The reusable `reusable-integration-module-ci.yaml` is only ever exercised from
+# *another* repository, so without this wrapper a change to it (or to
+# `development/scripts/integration_module_ci.sh`) would land unverified.
+#
+#   * `validate` - fast, label-free syntax gate on the script + workflow YAML,
+#     triggered by pull requests touching either file.
+#   * `smoke`    - manual (`workflow_dispatch`) end-to-end run of the reusable
+#     against a real integration repo, used when rolling the CI out or when a
+#     caller repo reports a failure. Never runs on PRs: it clones the workspace
+#     and compiles an integration module.
+name: Integration module CI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/reusable-integration-module-ci.yaml
+      - .github/workflows/integration-module-ci.yaml
+      - development/scripts/integration_module_ci.sh
+  workflow_dispatch:
+    inputs:
+      integration_repository:
+        description: Integration repo to build
+        required: false
+        type: string
+        default: msgmate-io/open-chat-go-msgmate-coder
+      integration_ref:
+        description: Integration ref to build (empty = default branch)
+        required: false
+        type: string
+        default: ""
+      workspace_path:
+        description: Workspace-relative path the integration is built at
+        required: false
+        type: string
+        default: clients/integrations/msgmate_coder_integration
+      profile:
+        description: Integration profile to materialize
+        required: false
+        type: string
+        default: core-only
+      run_tests:
+        description: Run `go test ./...` in addition to build/vet/gofmt
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate the integration module CI
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash syntax
+        run: bash -n development/scripts/integration_module_ci.sh
+
+      - name: shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          fi
+          shellcheck development/scripts/integration_module_ci.sh
+
+      - name: workflow yaml parses
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import yaml
+
+          for name in (
+              ".github/workflows/reusable-integration-module-ci.yaml",
+              ".github/workflows/integration-module-ci.yaml",
+          ):
+              doc = yaml.safe_load(pathlib.Path(name).read_text())
+              assert doc.get("jobs"), f"{name}: no jobs"
+              print(f"{name}: ok ({', '.join(doc['jobs'])})")
+          PY
+
+  smoke:
+    name: smoke build an integration module
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/reusable-integration-module-ci.yaml
+    with:
+      integration_repository: ${{ inputs.integration_repository }}
+      integration_ref: ${{ inputs.integration_ref }}
+      workspace_path: ${{ inputs.workspace_path }}
+      profile: ${{ inputs.profile }}
+      run_tests: ${{ inputs.run_tests }}
+    secrets: inherit

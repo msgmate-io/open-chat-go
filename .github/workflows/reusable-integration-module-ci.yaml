@@ -35,6 +35,18 @@ on:
         required: false
         type: string
         default: main
+      integration_repository:
+        description: >-
+          Integration repository to build (defaults to the calling repository).
+          Set this to smoke-test another repo (e.g. from open-chat-go itself).
+        required: false
+        type: string
+        default: ""
+      integration_ref:
+        description: Integration ref to build (defaults to the repo's default branch)
+        required: false
+        type: string
+        default: ""
       profile:
         description: Integration profile to materialize before building
         required: false
@@ -57,6 +69,8 @@ jobs:
       - name: Check out the integration (PR) checkout
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.integration_repository || github.repository }}
+          ref: ${{ inputs.integration_ref }}
           path: integration-src
 
       - name: Check out the open-chat-go workspace
