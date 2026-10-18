@@ -3,6 +3,7 @@ package msgmate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -1167,6 +1168,17 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 				} else {
 					text += "\n\nI ran into a problem finishing this reply. " + guidance
 				}
+			case FailureReasonTimeout:
+				// The turn ran longer than the queue allows. This is NOT a user
+				// stop, so it must never render as "I paused this response"; the
+				// work already done is kept and the user can continue (ci#642).
+				guidance := "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done (tool calls, files, commits) is kept - send another message to continue from here."
+				reasoningEntry = "Response stopped because the turn exceeded the server's time limit."
+				if text == "" {
+					text = guidance
+				} else {
+					text += "\n\n" + guidance
+				}
 			default:
 				detail := TruncateFailureDetail(streamErr.Error())
 				reasoningEntry = fmt.Sprintf("Response stopped due to an internal error: %s.", detail)
@@ -1422,6 +1434,18 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	for {
 		select {
 		case <-ctx.Done():
+			// Distinguish a genuine stop from the queue task's own deadline. A
+			// user interrupt / a newer message cancels the generation context
+			// (context.Canceled) and must still surface the pause marker, but a
+			// task that simply exceeded its deadline (context.DeadlineExceeded)
+			// is a timeout, not a user pause: a native coder turn routinely runs
+			// long and used to be marked cancelled here even though it did real
+			// work (ci#642).
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				log.Printf("Generation deadline exceeded. Stopping response for chat %s\n", message.Content.ChatUUID)
+				sendFinalMessage(false, ctx.Err())
+				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, ctx.Err())
+			}
 			log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
 			sendFinalMessage(true, nil)
 			return ctx.Err()
