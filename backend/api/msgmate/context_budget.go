@@ -496,6 +496,12 @@ func contextUsageLookup(chatUUID string) (map[string]interface{}, bool) {
 // The tool-call/tool-result pairing is repaired afterwards, so the request it
 // produces is one a provider accepts.
 //
+// The most recent tool-call round (the assistant message declaring the newest
+// calls and every result of that round) is protected as well (ci#728): a turn
+// once re-issued the exact same call dozens of times because the guard evicted
+// the result of the call it had just made and the eviction marker asked it to
+// re-issue that call.
+//
 // It returns the message list, what it did and whether anything changed; when
 // nothing changed the original slice is returned.
 func compactMessagesToContextBudget(messages []map[string]interface{}, budgetChars int) ([]map[string]interface{}, ContextCompactionStats, bool) {
@@ -524,15 +530,26 @@ func compactMessagesToContextBudget(messages []map[string]interface{}, budgetCha
 		protectedTailStart = leadingSystem
 	}
 
+	// ci#728: the most recent tool-call round is never evicted or dropped, no
+	// matter how far back it sits. A turn once re-issued the exact same call
+	// dozens of times (110 calls, 18 identical reads) because the guard evicted
+	// the result of the call it had just made: the model saw its own call in the
+	// history with an eviction marker instead of the output, and "re-issued" it.
+	newestRound := newestToolCallRoundIndices(out)
+
 	running := stats.TotalCharsBefore
 
 	// Pass 1: evict the *content* of the oldest non-protected messages, oldest
-	// first - so the newest turns of the model survive longest. The very last
-	// message is never evicted: it is the turn the model must answer.
+	// first - so the newest turns of the model survive longest. Neither the very
+	// last message (the turn the model must answer) nor the newest tool-call
+	// round (ci#728) is ever evicted.
 	lastIndex := len(out) - 1
 	for i := leadingSystem; i < lastIndex && running > target; i++ {
+		if i != lastIndex && newestRound[i] {
+			continue
+		}
 		before := messageCharCount(out[i])
-		stubbed, ok := stubMessageForContextBudget(out[i], toolNames, i == lastIndex)
+		stubbed, ok := stubMessageForContextBudget(out[i], toolNames, i == lastIndex, newestRound[i])
 		if !ok {
 			continue
 		}
@@ -553,12 +570,12 @@ func compactMessagesToContextBudget(messages []map[string]interface{}, budgetCha
 	}
 
 	// Pass 2: drop whole old messages, oldest first, keeping the leading system
-	// messages, the protected tail and every user message (a dropped task is
-	// worse than a long task).
+	// messages, the protected tail, the newest tool-call round (ci#728) and
+	// every user message (a dropped task is worse than a long task).
 	if running > target {
 		kept := make([]map[string]interface{}, 0, len(out))
 		for i, message := range out {
-			if running > target && i >= leadingSystem && i < protectedTailStart && i != lastIndex && roleOf(message) != "user" {
+			if running > target && i >= leadingSystem && i < protectedTailStart && i != lastIndex && !newestRound[i] && roleOf(message) != "user" {
 				running -= messageCharCount(message)
 				stats.DroppedMessages++
 				continue
@@ -591,11 +608,17 @@ func compactMessagesToContextBudget(messages []map[string]interface{}, budgetCha
 
 // stubMessageForContextBudget replaces one message's content with a short
 // eviction marker. It reports false for a message that must not be touched (a
-// system message, the newest message, an assistant tool-call shell, a small
-// message).
-func stubMessageForContextBudget(message map[string]interface{}, toolNames map[string]string, isLast bool) (map[string]interface{}, bool) {
+// system message, the newest message, a message of the newest tool-call round,
+// an assistant tool-call shell, a small message).
+func stubMessageForContextBudget(message map[string]interface{}, toolNames map[string]string, isLast bool, isNewestRound bool) (map[string]interface{}, bool) {
 	role := roleOf(message)
 	content, _ := message["content"].(string)
+	// ci#728: the newest tool-call round is never rewritten. Replacing its
+	// result with an eviction marker makes the model believe the call it just
+	// made never ran, and it re-issues it - the observed 110-call loop.
+	if isNewestRound {
+		return nil, false
+	}
 	if strings.TrimSpace(content) == "" {
 		return nil, false
 	}
@@ -606,9 +629,11 @@ func stubMessageForContextBudget(message map[string]interface{}, toolNames map[s
 			name = "tool"
 		}
 		return cloneMessageWithContent(message, fmt.Sprintf(
-			"[tool output evicted from the context budget: %s returned %d chars. Re-issue the call "+
-				"with narrower arguments (coder_read: offset/limit, coder_list: depth/limit, "+
-				"coder_grep: include/paths) to fetch the part you need.]",
+			"[tool output evicted from the context budget: %s already ran and returned %d chars. "+
+				"Do NOT re-issue this call: the result is not available any more. Read a narrower "+
+				"range of the same target instead (coder_read: offset/limit, coder_list: depth/entry "+
+				"cap, coder_grep: include/paths), or redirect the output to a file and read the ranges "+
+				"you need.]",
 			name, len(content),
 		)), true
 	case "user":
@@ -708,6 +733,57 @@ func toolNamesByCallID(messages []map[string]interface{}) map[string]string {
 		}
 	}
 	return names
+}
+
+// newestToolCallRoundIndices marks the messages of the most recent tool-call
+// round: the newest assistant message that declares tool calls plus every
+// message answering one of those calls that follows it (ci#728).
+//
+// Those messages are the model's own last action together with its output, the
+// one thing the turn must never rewrite. When the budget guard replaced such a
+// result by an eviction marker telling the model to "re-issue the call", the
+// turn re-issued the identical call over and over (observed: 110 calls, 18
+// identical coder_read in one rundown). A message list without a tool call - a
+// plain chat turn - returns an empty set.
+func newestToolCallRoundIndices(messages []map[string]interface{}) map[int]bool {
+	protected := map[int]bool{}
+	roundStart := -1
+	for i, message := range messages {
+		if roleOf(message) == "assistant" && len(toolCallsOf(message)) > 0 {
+			roundStart = i
+		}
+	}
+	if roundStart < 0 {
+		return protected
+	}
+	callIDs := map[string]struct{}{}
+	for _, call := range toolCallsOf(messages[roundStart]) {
+		if id := toolCallDeclaredIDOf(call); id != "" {
+			callIDs[id] = struct{}{}
+		}
+	}
+	protected[roundStart] = true
+	for i := roundStart + 1; i < len(messages); i++ {
+		if _, ok := callIDs[toolCallIDOf(messages[i])]; !ok {
+			// The round is complete once the answers stop; anything later is a
+			// new turn (or narration), not part of the protected round.
+			break
+		}
+		protected[i] = true
+	}
+	return protected
+}
+
+// toolCallDeclaredIDOf returns the id an assistant message declares for one of
+// its tool calls, whether the call carries the OpenAI `id` field or the
+// `tool_call_id` shape.
+func toolCallDeclaredIDOf(call map[string]interface{}) string {
+	for _, key := range []string{"id", "tool_call_id"} {
+		if id, ok := call[key].(string); ok && strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
 }
 
 // toolCallsOf returns an assistant message's tool calls in whatever shape the
