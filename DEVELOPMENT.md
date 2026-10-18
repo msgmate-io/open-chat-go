@@ -282,6 +282,57 @@ python3 -m venv .venv
   `echo "GITHUB_TOKEN=$(gh auth token)" >> .env`.
 - Full reference: [`development/build-tools/README.md`](../development/build-tools/README.md).
 
+### Integration module PR CI (ci#600)
+
+Integration repositories (`open-chat-go-msgmate-coder`, `open-chat-go-docker-sandbox-integration`, …)
+are **not standalone Go modules**: their `go.mod` uses relative `replace` directives into the
+monorepo layout (`replace backend => ../../../backend`), so a plain `go build ./...` inside the
+integration checkout fails on the first import. That is why they historically had no PR CI — and
+how a phase-PR train could leave an integration `main` that no longer compiled while the pin was
+perfectly fresh.
+
+Each integration repo gets a five-line caller workflow that reuses
+[`.github/workflows/reusable-integration-module-ci.yaml`](.github/workflows/reusable-integration-module-ci.yaml):
+
+```yaml
+name: CI
+on: [pull_request, push]
+jobs:
+  module:
+    uses: msgmate-io/open-chat-go/.github/workflows/reusable-integration-module-ci.yaml@main
+    with:
+      workspace_path: clients/integrations/msgmate_coder_integration
+    secrets: inherit
+```
+
+`workspace_path` must be the `path` the integration is declared with in
+[`integrations.yaml`](../integrations.yaml). The reusable checks out the calling (PR) repo and
+the `open-chat-go` workspace, then runs
+[`development/scripts/integration_module_ci.sh`](scripts/integration_module_ci.sh), which
+materializes the profile workspace, drops the PR checkout at `workspace_path` and runs
+`gofmt -l`, `go vet ./...`, `go build ./...` and `go test ./...` with `GOWORK=off` — i.e. exactly
+how a consumer builds the module. Optional inputs: `open_chat_ref` (default `main`), `profile`
+(default `core-only`), `run_tests` (default `true`).
+
+The CI itself is guarded by
+[`.github/workflows/integration-module-ci.yaml`](.github/workflows/integration-module-ci.yaml):
+`validate` shellchecks/YAML-checks the script and both workflows on every PR touching them, and a
+manual `smoke` dispatch runs the reusable end-to-end against any integration repo
+(`integration_repository` / `integration_ref` / `workspace_path` inputs).
+
+Run the script by hand:
+
+```bash
+INTEGRATION_SRC=/path/to/integration-pr-checkout \
+WORKSPACE_PATH=clients/integrations/msgmate_coder_integration \
+INTEGRATION_PROFILE=core-only \
+bash development/scripts/integration_module_ci.sh
+```
+
+The complementary *pin-freshness* guard (does a pinned SHA still exist at the upstream tip) is
+`development/scripts/check_pin_freshness.py`, and the *frozen workspace build* guard (does the
+pinned tree still compile) is `development/scripts/check_frozen_workspace.py`.
+
 ### Building a specific integration profile
 
 | Profile | Includes | Extra repos |
