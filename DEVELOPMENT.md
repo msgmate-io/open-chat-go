@@ -164,6 +164,37 @@ The capability parity of the native coder against the OpenCode bot suite (per
 bot, per capability, with the explicitly accepted fallbacks) is recorded in
 [`docs/native-coder-parity.md`](../docs/native-coder-parity.md).
 
+### Transient tool failures are retried and budget-exempt (ci#688)
+
+A tool body can fail for purely **environmental** reasons: with 16–24 concurrent
+agents a per-chat auto-sandbox sometimes could not be provisioned
+(`failed to create temporary sandbox: Cloning … error: copy-fd: …`), the host ran
+out of file descriptors / disk, or the sandbox/integration host was momentarily
+unreachable. Each such blip used to be a hard tool failure, so the agent burned
+its failed-tool budget and aborted — and a plan-mode agent then re-cloned and
+retried by itself, which made the exhaustion worse.
+
+The core tool loop therefore classifies tool failures (`api/msgmate/tool_failure_retry.go`):
+
+- a recognised **transient** failure (sandbox provisioning, host resource
+  exhaustion, connection-level blips — the marker list is deliberately limited
+  to infrastructure) is retried with an exponential backoff plus bounded jitter,
+  bounded by the generation context so a user stop is never resurrected;
+- a transient failure that survives the retries is still reported to the model
+  as a failed call, but it does **not** consume the failed-tool budget — the
+  total tool-call cap still bounds the turn, so an agent cannot loop forever.
+  The model-facing result says so explicitly and suggests a short-wait retry;
+- a failure the model can fix (a bad argument, a missing file, a permission
+  error) is never retried and always counts against the budget.
+
+The per-call flags (`retries`, `budget_exempt`) travel in the tool-call metadata
+and the `interaction_complete` payload (`tool_call_transient_failed_count`), so a
+saturated sandbox pool is visible in the transcript instead of only in the
+backend log. Both knobs are configurable per deployment:
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_ATTEMPTS` (default 3, clamped to 1–8) and
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_BASE_DELAY_MS` (default 400 ms,
+exponential up to a 5 s cap).
+
 ### Native coding-agent provider concurrency control
 
 Under full-throttle development (many native agents at once) a shared provider
