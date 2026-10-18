@@ -41,6 +41,11 @@ type ToolCall struct {
 	// the transcript instead of only in the backend log.
 	Retries      int
 	BudgetExempt bool
+	// SandboxCapacity marks a failed provisioning call whose sandbox the
+	// scheduler could not place because the node ran out of capacity (ci#691).
+	// Such a call is budget-exempt like any transient failure, and it is
+	// reported separately so a saturated node is visible in the transcript.
+	SandboxCapacity bool
 }
 
 // IsTerminalToolCallStatus reports whether a tool-call status means the call
@@ -395,6 +400,10 @@ func streamChatCompletion(
 		// failed-tool budget (ci#688). They are reported separately so a
 		// saturated sandbox pool is visible without aborting the turn.
 		transientToolFailures := 0
+		// sandboxCapacityFailures counts the subset of the above that the
+		// scheduler rejected for node capacity (ci#691), so a saturated node
+		// is visible in the completion payload on its own.
+		sandboxCapacityFailures := 0
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
@@ -631,6 +640,9 @@ func streamChatCompletion(
 							// ci#688: transient/environmental failures are
 							// budget-exempt, so report them separately.
 							completionData["tool_call_transient_failed_count"] = transientToolFailures
+							// ci#691: of those, the ones the scheduler rejected
+							// for node capacity, so a saturated node is visible.
+							completionData["tool_call_sandbox_capacity_failed_count"] = sandboxCapacityFailures
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
@@ -670,6 +682,13 @@ func streamChatCompletion(
 				if call.budgetExempt {
 					details["budget_exempt"] = true
 				}
+				// ci#691: a call that could not be scheduled because the node
+				// ran out of capacity is reported separately, so the chat
+				// shows "the node is out of CPU/memory" instead of a generic
+				// tool failure.
+				if call.sandboxCapacity {
+					details["sandbox_capacity"] = true
+				}
 				toolCallDetails = append(toolCallDetails, details)
 				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
 			}
@@ -681,6 +700,10 @@ func streamChatCompletion(
 			roundFailed, roundTransient := toolCallFailureAccounting(appended)
 			failedToolCalls += roundFailed
 			transientToolFailures += roundTransient
+			// ci#691: of those, the ones the scheduler rejected for capacity
+			// are surfaced on their own, so a saturated node is visible in the
+			// transcript and in the interaction_complete payload.
+			sandboxCapacityFailures += sandboxCapacityFailureCount(appended)
 
 			// A round whose every call was already processed (or that surfaced no
 			// usable call) would otherwise spin without adding anything to the
@@ -726,6 +749,11 @@ type executedToolCall struct {
 	// retries is how many extra attempts the call needed after a transient
 	// failure (0 for the common case).
 	retries int
+	// sandboxCapacity marks a failed provisioning call whose sandbox the
+	// scheduler could not place because the node ran out of capacity (ci#691).
+	// It is budget-exempt (a transient environmental failure) and reported
+	// separately so a saturated node is visible in the transcript.
+	sandboxCapacity bool
 }
 
 type toolCallResult struct {
@@ -1398,6 +1426,10 @@ func processParsedToolCall(
 	// from the agent's failed-tool budget.
 	toolRetries := 0
 	toolBudgetExempt := false
+	// ci#691: whether the call failed because the scheduler could not place
+	// the sandbox (node capacity), which is reported to the model with its own
+	// guidance and starts the process-wide provisioning cooldown.
+	toolSandboxCapacity := false
 	requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
 	switch {
 	case requiresConfirmation:
@@ -1430,6 +1462,14 @@ func processParsedToolCall(
 		// resurrected — and, when it survives the retries, it is reported to
 		// the model as a failed call that does *not* consume the failed-tool
 		// budget. Only failures the model can actually fix count against it.
+		//
+		// ci#691: a sandbox that the scheduler could not *place* ("0/1 nodes
+		// are available: 1 Insufficient cpu") is the same class of failure but
+		// a different timescale. The retry policy gives it a slower, bounded
+		// backoff, and while the node is known to be saturated the other
+		// provisioning calls of the fleet are held back too, so the agents do
+		// not stampede the scheduler and re-create the burst.
+		awaitSandboxCapacityCooldown(ctx, name)
 		run := func() (string, error) {
 			if contextTool, ok := tool.(ContextTool); ok {
 				return contextTool.RunToolContext(ctx, toolInput)
@@ -1441,7 +1481,14 @@ func processParsedToolCall(
 		if runErr != nil {
 			log.Printf("Error executing tool %s (after %d attempt(s)): %v", name, retries+1, runErr)
 			toolBudgetExempt = isTransientToolFailure(runErr)
-			if toolBudgetExempt {
+			toolSandboxCapacity = isSandboxCapacityFailure(runErr)
+			if toolSandboxCapacity {
+				// Start the process-wide cooldown so the next provisioning
+				// call of any agent waits for capacity instead of racing the
+				// scheduler again (ci#691).
+				noteSandboxCapacityFailure(sandboxCapacityBackoffDelay(retries + 1))
+				toolResult = buildSandboxCapacityToolErrorPlaceholder(name, runErr, retries+1)
+			} else if toolBudgetExempt {
 				toolResult = buildTransientToolErrorPlaceholder(name, runErr, retries+1)
 			} else {
 				toolResult = buildToolErrorPlaceholder(name, runErr)
@@ -1467,18 +1514,20 @@ func processParsedToolCall(
 		DurationMs:      time.Since(time.UnixMilli(startedAtUnixMs)).Milliseconds(),
 		Retries:         toolRetries,
 		BudgetExempt:    toolBudgetExempt,
+		SandboxCapacity: toolSandboxCapacity,
 	}
 	result.status = status
 	result.error = toolErr
 	result.calls = append(result.calls, executedToolCall{
-		id:           id,
-		name:         name,
-		arguments:    arguments,
-		result:       toolResult,
-		status:       status,
-		error:        toolErr,
-		budgetExempt: toolBudgetExempt,
-		retries:      toolRetries,
+		id:              id,
+		name:            name,
+		arguments:       arguments,
+		result:          toolResult,
+		status:          status,
+		error:           toolErr,
+		budgetExempt:    toolBudgetExempt,
+		retries:         toolRetries,
+		sandboxCapacity: toolSandboxCapacity,
 	})
 	// Cache only successful results. Caching failures would make an identical
 	// retry (after the underlying state changed) replay the stale error instead
