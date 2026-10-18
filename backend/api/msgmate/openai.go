@@ -773,6 +773,11 @@ type toolCallResult struct {
 	// context-compaction transcript, which was stripped and must never be
 	// persisted as the answer; the loop retries such a round once (ci#562).
 	compactionOnly bool
+	// repetitionLoop records that the round collapsed into an unbounded
+	// repetition loop: the stream was cut off early and the persisted text
+	// carries the "stopped: repeated output detected" note instead of the junk
+	// (ci#670).
+	repetitionLoop bool
 	usage          *TokenUsage
 	// calls holds every tool call of the round, in the order the model
 	// emitted them (ci#655). The singular id/toolName/result/... fields above
@@ -953,6 +958,11 @@ func processStreamingRequest(
 		}
 		if result.aiResponse != "" {
 			response["content"] = result.aiResponse
+		}
+		// Surface the degeneracy on the response record so usage tracking and
+		// metrics see it without parsing the assistant text (ci#670).
+		if result.repetitionLoop {
+			response["failure_reason"] = FailureReasonRepetitionLoop
 		}
 		if result.toolName != "" {
 			toolCallRepr := map[string]interface{}{
@@ -1571,6 +1581,10 @@ func processStreamingResponseReader(
 	// never user-facing: it is withheld from the client stream and recovered
 	// (or reported) at the end.
 	inlineToolCallDetected := false
+	// repetitionLoopDetected records that the round collapsed into an unbounded
+	// repetition loop and was cut off early (ci#670). Reading stops, and the
+	// truncated text plus a clear note is returned as the round's answer.
+	repetitionLoopDetected := false
 
 	for {
 		// A stop aborts the reader immediately: don't keep consuming the
@@ -1640,6 +1654,18 @@ func processStreamingResponseReader(
 			if !inlineToolCallDetected && !compactionSuspect {
 				chunkChan <- delta.Content
 			}
+			// A stream that has collapsed into a repetition loop is cut off
+			// here instead of being persisted verbatim: it used to write
+			// 150–255 KB of the same line into the chat before the turn was
+			// cancelled, polluting the next turn's context and burning the
+			// completion budget on nothing (ci#670). The one-line note is
+			// streamed so the persisted message (built from the streamed
+			// text) ends with a clear statement of why it stops.
+			if _, looping := detectRepetitionLoop(accumulated); looping {
+				repetitionLoopDetected = true
+				chunkChan <- repetitionLoopNote
+				break
+			}
 		}
 
 		if len(delta.ToolCalls) == 0 {
@@ -1689,6 +1715,17 @@ func processStreamingResponseReader(
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
+
+	// Cut the detected repetition run off the accumulated assistant text and
+	// replace it with a clear one-line note, so the persisted message states
+	// why it ends instead of carrying the junk (ci#670). The mid-stream check
+	// and this one run on the same accumulated text, so a mid-stream trip
+	// always truncates here too; the flag is set from either signal.
+	truncatedResponse, responseTruncated := applyRepetitionLoopGuard(result.aiResponse)
+	if responseTruncated {
+		result.aiResponse = truncatedResponse
+	}
+	result.repetitionLoop = repetitionLoopDetected || responseTruncated
 
 	// A leaked context-compaction transcript is model bookkeeping, never a
 	// user-facing answer: strip it so it can never be stored as (or posted as)
