@@ -27,6 +27,7 @@ const (
 	EnvLogLevel       = "LOG_LEVEL"
 	EnvLogLevelLegacy = "OPEN_CHAT_LOG_LEVEL"
 	EnvLogFormat      = "LOG_FORMAT"
+	EnvDebugLegacy    = "DEBUG"
 )
 
 // Silent discards every record, including errors.
@@ -99,6 +100,16 @@ func ConfigureFromEnv() error {
 	level := strings.TrimSpace(os.Getenv(EnvLogLevel))
 	if level == "" {
 		level = strings.TrimSpace(os.Getenv(EnvLogLevelLegacy))
+	}
+	// Legacy compatibility: the historic DEBUG flag (default true in the
+	// server/worker commands) used to mean "verbose". LOG_LEVEL always wins.
+	if level == "" {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvDebugLegacy))) {
+		case "1", "true", "yes", "on":
+			level = "debug"
+		case "0", "false", "no", "off":
+			level = "info"
+		}
 	}
 	return Configure(Options{Level: level, Format: os.Getenv(EnvLogFormat)})
 }
