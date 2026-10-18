@@ -356,6 +356,13 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		// genuinely complete (the auto-continue check above returned false).
 		if user.IsAutomated {
 			MaybeRunPostInteractionActions(DB, autoContinueClient, autoContinueInspector, chat, data.Text)
+			// Auto-consolidation (ci#653: the native coder rolls its own ready
+			// PRs up by default). Same reason as above: it runs for a native
+			// backend that has no chat-backend hook of its own (opencode runs
+			// its own consolidation), and only once the turn is genuinely
+			// complete. The executor is a no-op unless the chat's shared config
+			// enables it and a GitHub client is configured.
+			MaybeRunAutoConsolidation(DB, chat)
 		}
 		maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
 	}()
