@@ -416,6 +416,12 @@ func streamChatCompletion(
 		// scheduler rejected for node capacity (ci#691), so a saturated node
 		// is visible in the completion payload on its own.
 		sandboxCapacityFailures := 0
+		// ci#680: the context budget of this turn (the caller resolves it from
+		// the chat config and the deployment env) and the running count of tool
+		// results this turn's per-tool output budget cut.
+		contextBudget := meta.Context.WithDefaults()
+		truncatedToolResults := 0
+		lastContextReport := ContextUsageReport{}
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
@@ -440,6 +446,10 @@ func streamChatCompletion(
 			meta.Outcome.TransientFailures = transientToolFailures
 			meta.Outcome.SandboxCapacityFailures = sandboxCapacityFailures
 			meta.Outcome.Budget = budget
+			// ci#680: the context/token usage of the last request the turn sent
+			// travels with the outcome, so the chat metadata and the
+			// `coder_context` tool report the real numbers.
+			meta.Outcome.Context = lastContextReport
 		}
 
 		for {
@@ -463,9 +473,34 @@ func streamChatCompletion(
 				return
 			}
 
+			// ci#680: keep the outgoing request under the chat's context budget
+			// *before* it is sent. Older tool results and intermediate narration
+			// are evicted (and, as a last resort, whole old messages dropped) so a
+			// turn with several large tool outputs continues instead of failing
+			// with "exceeded maximum context".
+			budgetStats := ContextCompactionStats{}
+			if compacted, stats, changed := compactMessagesToContextBudget(currentMessages, contextBudget.BudgetChars); changed {
+				currentMessages = compacted
+				budgetStats = stats
+			}
+			// Once the conversation approaches its budget the model gets a
+			// one-line self-throttling notice (targeted reads, shallow listings)
+			// merged into the system prompt. The notice is replaced on every
+			// round, never stacked.
+			preReport := BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
+			currentMessages = injectContextBudgetNotice(currentMessages, preReport)
+
+			// ci#680: record the usage report of the request that is about to be
+			// sent, so the chat metadata and the `coder_context` tool can report
+			// the numbers and an agent can self-throttle.
+			lastContextReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
+			lastContextReport.ChatUUID = meta.ChatUUID
+			RecordContextUsage(meta.ChatUUID, lastContextReport)
+
 			// Make initial request (with provider retries when enabled).
 			fmt.Println("\n=== STARTING NEW REQUEST ROUND ===")
 			fmt.Printf("Current tool-call counts: total=%d/%d failed=%d/%d\n", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
+			fmt.Printf("Context budget: %d/%d chars (~%d tokens, %d%%)\n", lastContextReport.UsedChars, lastContextReport.BudgetChars, lastContextReport.EstimatedTokens, lastContextReport.UsedPercent)
 			maxAttempts := effectiveProviderRetryAttempts(retryOpts)
 			attempts := 0
 			for {
@@ -532,6 +567,13 @@ func streamChatCompletion(
 				// tool-result pairing so the retried request stays valid; when
 				// the message count can no longer be reduced, oversized message
 				// contents are truncated instead.
+				//
+				// ci#680: the proactive budget guard below should already have
+				// kept the request under the budget, so reaching this path means
+				// the provider window is smaller than the character budget
+				// assumes (or a single message alone exceeds it). The rounds
+				// still run, so a deployment with a tiny window keeps working
+				// without a config change.
 				for round := 0; round <= contextRetryShrinkRounds; round++ {
 					shrunkMessages, shrunk := shrinkMessagesForContextRetry(currentMessages, round)
 					if !shrunk {
@@ -712,8 +754,9 @@ func streamChatCompletion(
 			// matches the calls it made — instead of only the last call of a
 			// batch, which left the model guessing which results existed and in
 			// what order (ci#655).
-			appended, updatedMessages := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds)
+			appended, updatedMessages, roundTruncatedResults := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds, contextBudget.Limits)
 			currentMessages = updatedMessages
+			truncatedToolResults += roundTruncatedResults
 			for _, call := range appended {
 				details := map[string]interface{}{
 					"id":        call.id,
@@ -847,13 +890,21 @@ type toolCallResult struct {
 //
 // Keeping this in one place makes the "every call of the batch reaches the
 // model, in order" contract unit-testable without a live provider.
+//
+// Every result is hard-truncated at its per-tool output budget (ci#680) before
+// it enters the transcript: a `coder_list` of the monorepo or a `coder_bash`
+// dump is tens of KB, and a few of them used to blow the provider window and
+// kill the turn with "exceeded maximum context". The returned count reports how
+// many results were cut, so the turn's usage report can say so.
 func appendExecutedToolCalls(
 	currentMessages []map[string]interface{},
 	calls []executedToolCall,
 	processed map[string]bool,
-) ([]executedToolCall, []map[string]interface{}) {
+	limits ToolResultLimits,
+) ([]executedToolCall, []map[string]interface{}, int) {
 	messages := currentMessages
 	appended := make([]executedToolCall, 0, len(calls))
+	truncatedResults := 0
 	for _, call := range calls {
 		if call.id != "" && processed[call.id] {
 			log.Printf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", call.id)
@@ -879,10 +930,11 @@ func appendExecutedToolCalls(
 			},
 		})
 
-		modelToolResult := truncateToolResultForModel(call.result)
-		if modelToolResult != call.result {
+		modelToolResult, cut := truncateToolResultForTool(call.result, call.name, limits)
+		if cut {
+			truncatedResults++
 			log.Printf(
-				"Truncated tool result for model context (%d -> %d chars): %s",
+				"Truncated tool result for model context (%d -> %d chars): %s (ci#680 per-tool output budget)",
 				len(call.result),
 				len(modelToolResult),
 				call.name,
@@ -895,7 +947,7 @@ func appendExecutedToolCalls(
 		})
 		appended = append(appended, call)
 	}
-	return appended, messages
+	return appended, messages, truncatedResults
 }
 
 func processStreamingRequest(
@@ -1383,18 +1435,13 @@ func shrinkOversizedContextMessages(messages []map[string]interface{}, maxChars 
 	return repaired, true
 }
 
+// truncateToolResultForModel keeps the historical, tool-agnostic truncation
+// helper available to callers that have no resolved per-tool limits: it applies
+// the compiled-in default budget. The tool loop itself uses
+// truncateToolResultForTool with the chat's resolved limits (ci#680).
 func truncateToolResultForModel(result string) string {
-	if len(result) <= DefaultToolResultMaxCharsForModel {
-		return result
-	}
-
-	notice := fmt.Sprintf("\n\n[tool output truncated to %d chars out of %d to fit model context]", DefaultToolResultMaxCharsForModel, len(result))
-	maxContentLen := DefaultToolResultMaxCharsForModel - len(notice)
-	if maxContentLen < 0 {
-		maxContentLen = 0
-	}
-
-	return result[:maxContentLen] + notice
+	truncated, _ := truncateToolResultForTool(result, "", ResolveToolResultLimits(nil))
+	return truncated
 }
 
 // processParsedToolCall executes or surfaces a single fully parsed tool call,
