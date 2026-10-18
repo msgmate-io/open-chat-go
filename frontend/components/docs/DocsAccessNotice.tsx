@@ -2,7 +2,6 @@
 
 import { Button, Text, TextTypes } from "@open-chat-go/ui"
 import { Lock, LogIn } from "lucide-react"
-import { navigate } from "vike/client/router"
 
 import type { DocGateReason } from "@/components/docs/useDocsAccess"
 
@@ -11,7 +10,7 @@ const NOTICES: Record<
   {
     title: string;
     body: string;
-    action: { label: string; href?: string; variant?: "default" | "outline" };
+    action: { label: string; href: string; variant?: "default" | "outline" };
   }
 > = {
   signin: {
@@ -24,7 +23,7 @@ const NOTICES: Record<
     title: "You don't have access to view this integration's docs",
     body:
       "Your account is signed in, but it is not permitted to view the documentation of this integration. Ask an administrator for access if you think this is a mistake.",
-    action: { label: "Back to public docs", variant: "outline" },
+    action: { label: "Back to public docs", href: "/docs", variant: "outline" },
   },
 }
 
@@ -43,8 +42,8 @@ export function DocsAccessNotice({ reason }: { reason: DocGateReason }) {
   const notice = NOTICES[reason]
 
   return (
-    <article
-      className="docs-content mx-auto flex w-full max-w-xl flex-col items-center gap-3 py-16 text-center"
+    <div
+      className="mx-auto flex w-full max-w-xl flex-col items-center gap-3 py-16 text-center"
       data-doc-gate={reason}
     >
       <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
@@ -56,13 +55,9 @@ export function DocsAccessNotice({ reason }: { reason: DocGateReason }) {
       <Text type={TextTypes.Body5} tag="p" color="muted" className="docs-p">
         {notice.body}
       </Text>
-      <Button
-        type="button"
-        variant={notice.action.variant ?? "outline"}
-        onClick={() => navigate(notice.action.href ?? "/docs")}
-      >
-        {notice.action.label}
+      <Button asChild variant={notice.action.variant ?? "outline"}>
+        <a href={notice.action.href}>{notice.action.label}</a>
       </Button>
-    </article>
+    </div>
   )
 }
