@@ -15,6 +15,7 @@ import {
   TextTypes,
   extractConfirmableActionsFromMeta,
   mergeConfirmableAction,
+  optimisticResolveActionTaskKey,
   revalidateChatData,
   type ChatUIToolCall,
 } from "@open-chat-go/ui";
@@ -354,6 +355,11 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
       next.add(task.task_key);
       return next;
     });
+    // Drop the task from every action-task feed immediately — the local
+    // `dismissed` set only hides it in this view, so without this the sidebar
+    // count badge (and any other mounted feed) kept the resolved task until the
+    // next poll and the card could reappear on a sidebar click (ci#726).
+    void optimisticResolveActionTaskKey(task.task_key);
     void mutate();
     // Resolving a task changes the chat state and preview, so refresh the
     // derived chat caches (list, state dots, action-task feeds) too.
