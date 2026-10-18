@@ -85,17 +85,35 @@ func BotReplyIsActive(inspector *asynq.Inspector, chatUUID string) bool {
 	return len(botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)) > 0
 }
 
-// CancelBotReplyTask stops the in-flight bot reply and removes every queued
-// reply for the chat, including replies queued behind a live turn.
-func CancelBotReplyTask(inspector *asynq.Inspector, chatUUID string) {
+// botReplyTasksAnyState lists a chat's bot reply tasks in every non-terminal
+// queue state: active (running), pending (queued behind another turn or waiting
+// for a free worker), scheduled (delayed wake-up) and retry.
+func botReplyTasksAnyState(inspector *asynq.Inspector, chatUUID string) []*asynq.TaskInfo {
 	if inspector == nil || chatUUID == "" {
-		return
+		return nil
 	}
 	tasks := botReplyTasks(inspector, inspector.ListActiveTasks, chatUUID)
 	tasks = append(tasks, botReplyTasks(inspector, inspector.ListPendingTasks, chatUUID)...)
 	tasks = append(tasks, botReplyTasks(inspector, inspector.ListScheduledTasks, chatUUID)...)
 	tasks = append(tasks, botReplyTasks(inspector, inspector.ListRetryTasks, chatUUID)...)
-	for _, task := range tasks {
+	return tasks
+}
+
+// BotReplyQueuedOrActive reports whether a bot reply for the chat is live or
+// waiting in the queue. Unlike BotReplyIsActive (running turns only) this also
+// counts a reply that has been enqueued but not yet picked up by a worker, which
+// is the state a just-dispatched interaction sits in while the queue is busy.
+// Callers that must not duplicate scheduled work (eg the agent-dispatch dedupe
+// guard, ci#625) use this so two dispatches in quick succession cannot both
+// start a full agent.
+func BotReplyQueuedOrActive(inspector *asynq.Inspector, chatUUID string) bool {
+	return len(botReplyTasksAnyState(inspector, chatUUID)) > 0
+}
+
+// CancelBotReplyTask stops the in-flight bot reply and removes every queued
+// reply for the chat, including replies queued behind a live turn.
+func CancelBotReplyTask(inspector *asynq.Inspector, chatUUID string) {
+	for _, task := range botReplyTasksAnyState(inspector, chatUUID) {
 		_ = inspector.CancelProcessing(task.ID)
 		_ = inspector.DeleteTask(QueueDefault, task.ID)
 	}

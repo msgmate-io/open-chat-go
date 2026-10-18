@@ -232,17 +232,20 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		if existing, ok := liveInteractionForDedupeKey(DB, queueInspector, sessionUser, actingUser, dedupeKey); ok {
 			view := agentInteractionView(DB, queueInspector, actingUser, existing)
 			respondAgentJSON(w, http.StatusOK, map[string]interface{}{
-				"success":                true,
-				"deduplicated":           true,
-				"dedupe_key":             dedupeKey,
-				"chat_uuid":              view.ChatUUID,
-				"bot":                    view.Bot,
-				"bot_uuid":               view.BotUUID,
-				"acting_user_uuid":       view.ActingUserUUID,
-				"acting_user_username":   view.ActingUserUsername,
-				"tags":                   view.Tags,
-				"state":                  view.State,
-				"is_active":              view.IsActive,
+				"success":              true,
+				"deduplicated":         true,
+				"dedupe_key":           dedupeKey,
+				"chat_uuid":            view.ChatUUID,
+				"bot":                  view.Bot,
+				"bot_uuid":             view.BotUUID,
+				"acting_user_uuid":     view.ActingUserUUID,
+				"acting_user_username": view.ActingUserUsername,
+				"tags":                 view.Tags,
+				"state":                view.State,
+				// A reply that is queued but not yet picked up by a worker is
+				// live for dedupe purposes even though the status resolver only
+				// reports running work as active (ci#625).
+				"is_active":              view.IsActive || workqueue.BotReplyQueuedOrActive(queueInspector, view.ChatUUID),
 				"auto_continue":          view.AutoContinue,
 				"shared_interaction_url": "",
 			})
@@ -723,6 +726,12 @@ func liveInteractionForDedupeKey(
 	for _, chat := range rows {
 		if !callerMayManageInteraction(DB, caller, actingUser, chat) {
 			continue
+		}
+		// A queued-but-not-yet-running bot reply counts as live too: a freshly
+		// dispatched interaction whose worker has not picked the task up yet
+		// must already block a concurrent duplicate (ci#625).
+		if workqueue.BotReplyQueuedOrActive(inspector, chat.UUID) {
+			return chat, true
 		}
 		view := agentInteractionView(DB, inspector, actingUser, chat)
 		if view.IsActive || view.State == string(chatstate.StateNeedsConfirmation) {

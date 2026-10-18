@@ -66,6 +66,57 @@ func TestEnqueueBotReplyIdempotency(t *testing.T) {
 	}
 }
 
+// TestBotReplyQueuedOrActive covers the queued-but-not-yet-running window the
+// agent-dispatch dedupe guard relies on (ci#625): a reply enqueued but not yet
+// picked up by a worker counts as live, while a cancelled/absent one does not,
+// and a nil inspector never reports liveness.
+func TestBotReplyQueuedOrActive(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer mr.Close()
+
+	connOpt := asynq.RedisClientOpt{Addr: mr.Addr()}
+	client := asynq.NewClient(connOpt)
+	defer client.Close()
+	inspector := asynq.NewInspector(connOpt)
+	defer inspector.Close()
+
+	const chat = "chat-queued"
+	payload := BotReplyPayload{ChatUUID: chat, MessageUUID: "msg-1", BotUserID: 1}
+
+	if BotReplyQueuedOrActive(inspector, chat) {
+		t.Fatalf("no task enqueued yet: BotReplyQueuedOrActive = true, want false")
+	}
+	if BotReplyQueuedOrActive(inspector, "") {
+		t.Fatalf("empty chat uuid: BotReplyQueuedOrActive = true, want false")
+	}
+	if BotReplyQueuedOrActive(nil, chat) {
+		t.Fatalf("nil inspector: BotReplyQueuedOrActive = true, want false")
+	}
+
+	if _, err := EnqueueBotReply(client, nil, payload); err != nil {
+		if isUnsupportedScriptError(err) {
+			t.Skipf("miniredis cannot run asynq scripts: %v", err)
+		}
+		t.Fatalf("enqueue failed: %v", err)
+	}
+
+	// Enqueued but not consumed: still live for dedupe purposes.
+	if !BotReplyQueuedOrActive(inspector, chat) {
+		t.Fatalf("queued task: BotReplyQueuedOrActive = false, want true")
+	}
+	if BotReplyQueuedOrActive(inspector, "chat-other") {
+		t.Fatalf("unrelated chat: BotReplyQueuedOrActive = true, want false")
+	}
+
+	CancelBotReplyTask(inspector, chat)
+	if BotReplyQueuedOrActive(inspector, chat) {
+		t.Fatalf("after cancel: BotReplyQueuedOrActive = true, want false")
+	}
+}
+
 func isUnsupportedScriptError(err error) bool {
 	if err == nil {
 		return false
