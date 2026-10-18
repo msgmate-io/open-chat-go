@@ -561,6 +561,55 @@ Text emitted before the loop is kept. The round result carries
 `failure_reason=repetition_loop` so the degeneracy is visible in usage
 tracking/metrics without parsing the assistant text.
 
+### Context overflow: tool outputs are budgeted (ci#680)
+
+A native agent used to fail mid-task with `exceeded maximum context` after a few
+exploratory tool calls. Tool results were appended to the conversation verbatim,
+and a single `coder_list` of the monorepo returns ~380 entries while a whole-file
+`coder_read` or a `coder_bash` dump is tens of KB, so a handful of them blew the
+provider window and the turn died instead of continuing. Three guards now keep a
+turn inside the window (`backend/api/msgmate/context_budget.go`):
+
+1. **Per-tool output budget.** Every result is hard-truncated at its own limit
+   before it enters the transcript, with an explicit marker that names the tool,
+   reports the original size and tells the model how to fetch the missing part
+   (`coder_read`: `offset`/`limit`, `coder_list`: `depth`/entry cap, `coder_grep`:
+   `include`/`paths`, or redirect to a file and read ranges). The compiled-in
+   per-tool budgets are tight for the tools that are cheap to re-issue and
+   expensive in context (`coder_list`/`coder_glob` 4 KB, `coder_grep` 6 KB,
+   `coder_bash`/`coder_git` 8 KB, `coder_read` the 12 KB default). They are
+   configurable per chat/bot with the shared-config key `tool_result_max_chars`
+   (either an integer fallback or a `{tool: limit, default: limit}` object) and
+   deployment-wide with `OCI_MSGMATE_CODER_TOOL_RESULT_MAX_CHARS`, which clamps
+   every per-tool limit.
+2. **Conversation budget guard.** Before every request the history is measured
+   against the chat's character budget (`context_budget_chars`, deployment
+   override `OCI_MSGMATE_CODER_CONTEXT_BUDGET_CHARS`, default 120 000 chars ≈ 30k
+   tokens). Above it, older tool results and intermediate narration are replaced
+   by a short eviction marker — oldest first, so the newest rounds survive longest
+   — a huge non-newest user message is truncated, and as a last resort whole old
+   messages are dropped. Leading system messages (an injected compaction summary),
+   every user message and the newest turn are never touched, and the
+   tool-call/tool-result pairing is repaired afterwards so the request stays valid.
+   The guard only ever shrinks a history that already exceeds the budget, so it is
+   a no-op on the normal path. The existing provider-driven trim-and-retry
+   (ci#394 gap 7) still backs it up for a window smaller than the budget assumes.
+3. **A usage report.** The last request of every round is measured and recorded:
+   characters used vs. the budget, a conservative token estimate, the message and
+   tool-result counts, the largest tool result, how many results were truncated,
+   evicted or dropped, and the effective per-tool limits. It travels as
+   `context_budget` message metadata and is returned by the `coder_context` tool
+   (backed by the coding integration's own name when it ships one), so an agent
+   can self-throttle before the window is exhausted (ci#654). Above 60 % of the
+   budget a one-line self-throttling notice is merged into the leading system
+   message (replaced each round, never stacked).
+
+Regression tests: `backend/api/msgmate/context_budget_test.go` (a turn with four
+40 KB tool results stays under the budget and completes; the truncation marker
+and the eviction markers are explicit; the guard is idempotent and keeps the
+pairing), `backend/api/msgmate/coder_context_tool_test.go` and
+`backend/api/msgmate/tools/coder_context_tool_test.go`.
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra

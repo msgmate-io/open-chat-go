@@ -59,7 +59,7 @@ Both are answered below. The formal acceptance items of `ci#581` were:
 | Web research | `coder_websearch` / `coder_webfetch` | `msgmate_coder_*` |
 | Git read + write (+ plumbing) | `coder_git`, confirmation-free `coder_git_read`, plumbing (`ls_files` / `rev_parse` / `cat_file`) | msgmate-coder#61, #71 |
 | Typed GitHub tools | review + PR comment + repo summary + Actions runs | `msgmate_coder_gh_code_review`, `_gh_pr_comment`, `_repo_changes_summary`; msgmate-coder#59/#65/#70 |
-| Context compaction | `coder_context` / `coder_compact` | `msgmate_coder_compact`; robustness in msgmate-coder#68 |
+| Context compaction | `coder_context` / `coder_compact` | `msgmate_coder_compact`; robustness in msgmate-coder#68; core-side context budgeting `ci#680` (per-tool output budget, conversation budget guard, `coder_context` usage report) |
 | Typed install / build / test / lint / run | typed task tools | msgmate-coder#63 |
 | Environment probe | `coder_env` | msgmate-coder#74 |
 | Shell-surface coverage classification | `coder_bash` coverage classes (`ci#514` phase 0) | msgmate-coder#72 |
