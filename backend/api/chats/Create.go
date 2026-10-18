@@ -31,7 +31,10 @@ import (
 // re-attach and a re-provision and stays inspectable as structured state
 // instead of only appearing in an abort error.
 func applySharedConfigDefaults(config map[string]interface{}) map[string]interface{} {
-	withDefaults := extiface.ApplySharedConfigDefaults(config)
+	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
+	// integration defaults fill the full coder tool set instead of being
+	// suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
 	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
 	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withConsolidation)
 	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())

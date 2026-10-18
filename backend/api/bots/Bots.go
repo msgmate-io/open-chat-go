@@ -31,7 +31,10 @@ var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) (map[string]interface{}, error) {
 	_ = DB
 	_ = user
-	withDefaults := extiface.ApplySharedConfigDefaults(config)
+	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
+	// integration defaults fill the full coder tool set (coder_bash/coder_git/
+	// coder_read) instead of being suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
 	// Auto-consolidation is a first-class default of the native msgmate_coder
 	// agent (ci#653): an agent that declares itself as a coder agent gets the
 	// `auto_consolidation` block unless it is switched off. Applying the default
