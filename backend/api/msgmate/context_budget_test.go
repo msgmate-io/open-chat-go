@@ -104,7 +104,13 @@ func TestTurnWithSeveralLargeToolOutputsStaysUnderTheBudgetAndCompletes(t *testi
 	)
 
 	var assistantText strings.Builder
+	// The turn's error channel can deliver before the producer's deferred
+	// channel closes run, so the reader goroutine is awaited explicitly:
+	// reading the builder while the goroutine still appends both races on it
+	// and can observe an empty answer (ci#680 flake).
+	chunksDone := make(chan struct{})
 	go func() {
+		defer close(chunksDone)
 		for chunk := range chunks {
 			assistantText.WriteString(chunk)
 		}
@@ -125,6 +131,7 @@ func TestTurnWithSeveralLargeToolOutputsStaysUnderTheBudgetAndCompletes(t *testi
 	}()
 
 	err := <-errs
+	<-chunksDone
 	<-done
 
 	if err != nil {
