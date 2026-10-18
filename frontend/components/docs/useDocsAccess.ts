@@ -1,7 +1,7 @@
 "use client"
 
-import useSWR from "swr"
-import { fetcher, useCurrentUser } from "@open-chat-go/ui"
+import { useEffect, useState } from "react"
+import { useCurrentUser } from "@open-chat-go/ui"
 
 import type { DocMetadata } from "@/pages/docs/docs"
 
@@ -26,33 +26,56 @@ type IntegrationsListResponse = {
  * accessible integrations come from the caller-scoped `integrations/list`
  * endpoint, which already applies admin-only and grant gating server-side.
  * Anonymous visitors get `null` (unknown), so gated docs stay behind the
- * sign-in notice.
+ * sign-in notice and private documentation never flashes for them.
  */
 export function useDocsAccess(): DocsAccessState {
   const { data: user, isLoading: userLoading } = useCurrentUser()
   const isSignedIn = !!user
+  const [accessibleIntegrations, setAccessibleIntegrations] = useState<string[] | null>(null)
 
-  const { data, error, isLoading: integrationsLoading } = useSWR<IntegrationsListResponse>(
-    isSignedIn ? "/api/v1/integrations/list" : null,
-    fetcher,
-  )
+  useEffect(() => {
+    if (!isSignedIn) {
+      setAccessibleIntegrations(null)
+      return
+    }
 
-  if (!isSignedIn) {
-    return { isSignedIn: false, accessibleIntegrations: null, isLoading: !!userLoading }
-  }
+    let cancelled = false
+    setAccessibleIntegrations(null)
 
-  const accessibleIntegrations = Array.isArray(data?.rows)
-    ? data.rows
-        .map((row) => row?.name)
-        .filter((name): name is string => typeof name === "string")
-    : error
-      ? []
-      : null
+    const load = async () => {
+      try {
+        const response = await fetch("/api/v1/integrations/list", { credentials: "include" })
+        if (cancelled) return
+        if (!response.ok) {
+          // 401/403 (or any failure) means the caller cannot list integrations:
+          // keep the set empty so integration docs stay behind the notice.
+          setAccessibleIntegrations([])
+          return
+        }
+        const data = (await response.json()) as IntegrationsListResponse
+        if (cancelled) return
+        setAccessibleIntegrations(
+          (data.rows ?? [])
+            .map((row) => row?.name)
+            .filter((name): name is string => typeof name === "string"),
+        )
+      } catch {
+        if (!cancelled) {
+          setAccessibleIntegrations([])
+        }
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [isSignedIn])
 
   return {
-    isSignedIn: true,
+    isSignedIn,
     accessibleIntegrations,
-    isLoading: !!userLoading || (accessibleIntegrations === null && !!integrationsLoading),
+    isLoading: !!userLoading || (isSignedIn && accessibleIntegrations === null),
   }
 }
 
