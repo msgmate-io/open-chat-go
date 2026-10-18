@@ -1232,9 +1232,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 
 		// ci#709: a turn must never persist a bot message with tool calls but no
 		// text. Every terminal path (cap reached, provider error, cancel, loop
-		// guard) resolves a non-empty, human-readable final message below that
-		// states what happened and what to do next, so the work a long turn did
-		// is never silently lost behind an empty bubble.
+		// guard) resolves a non-empty, human-readable final message further down
+		// (after the confirmable-action prompt), so the work a long turn did is
+		// never silently lost behind an empty bubble.
 
 		metadata := map[string]interface{}{
 			"total_time": totalTime.Round(time.Millisecond).String(),
