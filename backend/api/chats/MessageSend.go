@@ -29,6 +29,13 @@ type SendMessage struct {
 	// (default) and "event" (system/widget messages such as provider retry
 	// indicators). Unknown values fall back to "text".
 	DataType *string `json:"data_type,omitempty"`
+	// DeliveryMode selects how the message is delivered when the chat is
+	// already running a bot turn (ci#656): "queued" (default) answers it after
+	// the live turn completes, "interrupt" stops the live turn and starts the
+	// new one immediately. Interrupt mode is what the "Send now" affordance
+	// sends; the work the stopped turn already persisted is preserved. An
+	// unknown value is rejected instead of silently guessing a mode.
+	DeliveryMode string `json:"delivery_mode,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
@@ -155,6 +162,15 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
 	if chatUuid == "" {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
+	}
+
+	// ci#656: the client chooses how a message sent into a chat that is already
+	// running a turn is delivered. An unknown mode is a client bug, so reject it
+	// instead of silently falling back and losing the sender's intent.
+	deliveryMode, modeOK := workqueue.ParseBotReplyDeliveryMode(data.DeliveryMode)
+	if !modeOK {
+		http.Error(w, "Invalid delivery_mode", http.StatusBadRequest)
 		return
 	}
 
@@ -314,15 +330,30 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// A newer message into a chat with a live bot reply no longer cancels the
-		// in-flight turn (ci#656): EnqueueBotReply queues it behind the running
-		// turn, which keeps the work already done and answers every message.
+		// ci#656: a message sent into a chat with a live bot reply no longer
+		// disappears. In the default "queued" mode EnqueueBotReply leaves the
+		// live turn running and queues the reply behind it, which keeps the work
+		// already done and answers every message. In "interrupt" mode the
+		// explicit "Send now" action stops the live turn and starts the new one
+		// immediately; the stopped turn's persisted work (files, commits) is
+		// preserved and the parked proposals it left behind are voided so the
+		// interrupt is authoritative.
+		if deliveryMode == workqueue.BotReplyDeliveryInterrupt {
+			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
+				log.Printf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+			} else if cancelled > 0 {
+				log.Printf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
+			}
+			if stopErr := StopAutoContinueForChat(DB, chat.ID, "interrupted_by_user"); stopErr != nil {
+				log.Printf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
+			}
+		}
 
-		if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+		if _, enqueueErr := workqueue.EnqueueBotReplyWithDelivery(queueClient, queueInspector, workqueue.BotReplyPayload{
 			ChatUUID:    chatUuid,
 			MessageUUID: message.UUID,
 			BotUserID:   receiver.ID,
-		}); enqueueErr != nil {
+		}, deliveryMode); enqueueErr != nil {
 			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
 			return
 		}
