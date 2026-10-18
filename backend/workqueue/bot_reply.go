@@ -3,6 +3,7 @@ package workqueue
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,9 +110,11 @@ func EnqueueBotReply(client *asynq.Client, inspector *asynq.Inspector, payload B
 		return nil, fmt.Errorf("asynq client is required")
 	}
 
-	taskID := BotReplyTaskID(payload.ChatUUID)
+	// Always use a per-message task ID: asynq archives a finished/cancelled task
+	// under its ID and a re-enqueue with the same ID fails with "task already
+	// exists", which silently blocked every continuation of a finished turn.
+	taskID := botReplyTaskID(payload.ChatUUID, payload.MessageUUID)
 	if BotReplyIsActive(inspector, payload.ChatUUID) {
-		taskID = botReplyTaskID(payload.ChatUUID, payload.MessageUUID)
 		_ = inspector.DeleteTask(QueueDefault, taskID)
 	} else {
 		CancelBotReplyTask(inspector, payload.ChatUUID)
@@ -122,14 +125,22 @@ func EnqueueBotReply(client *asynq.Client, inspector *asynq.Inspector, payload B
 		return nil, err
 	}
 
-	enqueueOpts := []asynq.Option{
-		asynq.Queue(QueueDefault),
-		asynq.TaskID(taskID),
-		asynq.MaxRetry(10),
-		asynq.Timeout(BotReplyTimeout()),
-		asynq.Retention(0),
+	enqueue := func(id string) (*asynq.TaskInfo, error) {
+		enqueueOpts := []asynq.Option{
+			asynq.Queue(QueueDefault),
+			asynq.TaskID(id),
+			asynq.MaxRetry(10),
+			asynq.Timeout(BotReplyTimeout()),
+			asynq.Retention(0),
+		}
+		enqueueOpts = append(enqueueOpts, opts...)
+		return client.Enqueue(task, enqueueOpts...)
 	}
-	enqueueOpts = append(enqueueOpts, opts...)
-
-	return client.Enqueue(task, enqueueOpts...)
+	info, err := enqueue(taskID)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		// A retried enqueue can collide with an archived task of the same
+		// message; use a unique suffix rather than failing the whole reply.
+		info, err = enqueue(taskID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36))
+	}
+	return info, err
 }
