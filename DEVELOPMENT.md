@@ -638,6 +638,52 @@ Contract and behaviour:
   candidate was chosen and why, which were ignored and why), the
   `<!-- oci-ci-failure-fix -->` dedupe marker, and the **never-poll-CI** rule —
   the agent pushes the fix and stops, the lead reacts to the next relayed event.
+### One live development lead per repo: dispatch dedupe keys (ci#625)
+
+The native tooling that replaces opencode is driven by a **development lead**
+agent that dispatches worker agents itself (ci#540), so the same lead can be
+started from several places at once — the scheduled loop controller, an
+in-app button, a reporter bot. Those dispatches carried a tag like `handover`
+but no stable per-repo identity, so each one started a *full* second
+`msgmate-coder-development-lead` interaction: two leads then dispatched and
+consolidated the same work in parallel and burned a full agent each
+(~3 leads in 30 minutes in the ci#625 handover).
+
+`POST /api/v1/agents/dispatch` therefore accepts two extra fields:
+
+```json
+{
+  "bot": "<lead bot uuid>",
+  "message": "run the development loop for open-chat-go-ci",
+  "tags": ["repo:open-chat-go-ci"],
+  "dedupe_key": "open-chat-go-ci",
+  "force": false
+}
+```
+
+- `dedupe_key` is a stable dispatch identity. It is normalized
+  (`dedupeKeyTag`) to the chat tag **`lead:<key>`** — lowercased, trimmed,
+  spaces folded to `-`, an existing `lead:` prefix kept — and that tag is
+  attached to the interaction, so leads stay greppable in
+  `GET /api/v1/agents/interactions`.
+- While an interaction carrying that tag is **live** — `IsActive`, or parked on
+  `needs_confirmation` — the dispatch starts **no** second agent. It returns the
+  existing one with `"deduplicated": true` and the normalized `dedupe_key`, so
+  the caller steers that interaction via `continue`/`stop` instead of duplicating
+  it. The dedupe lookup honours the same caller-scope gate as the other verbs
+  (owner / `agent_dispatch.dispatched_by` / `agent_scope_tags`), so one lead
+  cannot be intercepted by an unrelated bot of the same owner.
+- An **idle/finished/failed** interaction with the tag does not block a new
+  turn: a finished lead may be dispatched again normally.
+- `"force": true` bypasses the guard for the rare case a concurrent lead is
+  explicitly wanted; a dispatch **without** a `dedupe_key` is never deduplicated.
+
+Per-agent callers (the loop controller, in-app dispatch) should send a
+`dedupe_key` per repo (`open-chat-go-ci`, `open-chat-go`, …) so exactly one live
+lead exists per repo. The code path lives in
+`backend/api/bots/AgentDispatch.go` (`dedupeKeyTag`,
+`liveInteractionForDedupeKey`) and is covered by
+`backend/api/bots/AgentDispatchDedupe_test.go`.
 
 ### Native coder turns: inline tool calls and leaked compaction transcripts
 
