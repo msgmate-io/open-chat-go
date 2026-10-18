@@ -1,12 +1,13 @@
 package nativecoder
 
 // This file is the core-side contract for the coder surface of the opencode
-// parity gaps that are sequenced "now" (ci#394 gaps 1, 5 and 8). Each gap
-// already ships its per-chat state (todoplan.go, shellmodes.go, sessiontrust.go)
-// behind plain store methods; this file gives the tool-dispatch layer a single,
-// stable contract to call so the coding integration can expose the tools
-// (coder_todo_write, coder_todo_read, coder_bash background/stream/interactive,
-// coder_trust) without reaching into the raw stores or re-deriving limits.
+// parity gaps that are sequenced "now" (ci#394 gaps 1, 5, 7 and 8). Each gap
+// already ships its per-chat state (todoplan.go, shellmodes.go, compaction.go,
+// sessiontrust.go) behind plain store methods; this file gives the
+// tool-dispatch layer a single, stable contract to call so the coding
+// integration can expose the tools (coder_todo_write, coder_todo_read,
+// coder_bash background/stream/interactive, coder_compact, coder_trust)
+// without reaching into the raw stores or re-deriving limits.
 //
 // A request is the validated, *normalized* form of a tool call: the integration
 // maps the tool's arguments onto one of these payloads, and the coder core
@@ -255,27 +256,98 @@ func (s *coderTrustSurface) Apply(req CoderTrustRequest) (CoderTrustResult, erro
 	}, nil
 }
 
+// ------------------------- context compaction (gap 7) -------------------------
+
+// CoderCompactRequest is the tool-dispatch form of a `coder_compact` call.
+// The integration passes the session turns and/or the messages the agent
+// wants summarized (mixed with what the planner already tracks per chat);
+// the contract owns the byte cap, the oldest-first eviction and the
+// duplicate-drop, and hands back the bounded summary plus the persisted
+// context_summary the reader re-injects.
+type CoderCompactRequest struct {
+	// ChatID identifies the chat the summary is scoped to.
+	ChatID string
+	// Text is the new material to fold into the summary (the tool call's
+	// transcript excerpt; the planner also consults the per-chat state).
+	Text string
+	// Capacity is the byte cap for the resulting summary. Zero falls back to
+	// the package default (contextSummaryCapacityBytes).
+	Capacity int
+	// At is the compaction instant.
+	At time.Time
+}
+
+// CoderCompactResult is what a `coder_compact` call returns: the bounded,
+// persisted summary plus the deterministic text the transcript shows.
+type CoderCompactResult struct {
+	// Summary is the current bounded summary (after folding in Text).
+	Summary string
+	// Rendered is the deterministic text shown in the transcript.
+	Rendered string
+	// JSON is the stable JSON form of the compaction state.
+	JSON string
+}
+
+// coderCompactSurface is the state + render entry point behind coder_compact.
+type coderCompactSurface struct {
+	store *CoderCompactStore
+}
+
+// Compact folds Text into the per-chat summary under the byte cap (oldest
+// parts evicted first, duplicates dropped) and persists the result.
+func (s *coderCompactSurface) Compact(req CoderCompactRequest) (CoderCompactResult, error) {
+	if err := s.store.Compact(req.ChatID, req.Text, req.Capacity); err != nil {
+		return CoderCompactResult{}, err
+	}
+	state := s.store.State(req.ChatID)
+	encoded, err := CoderCompactStateJSON(state)
+	if err != nil {
+		return CoderCompactResult{}, err
+	}
+	return CoderCompactResult{
+		Summary:  state.Summary,
+		Rendered: RenderCoderCompactState(state),
+		JSON:     encoded,
+	}, nil
+}
+
+// State returns the current bounded summary of a chat.
+func (s *coderCompactSurface) State(chatID string) (CoderCompactResult, error) {
+	state := s.store.State(chatID)
+	encoded, err := CoderCompactStateJSON(state)
+	if err != nil {
+		return CoderCompactResult{}, err
+	}
+	return CoderCompactResult{
+		Summary:  state.Summary,
+		Rendered: RenderCoderCompactState(state),
+		JSON:     encoded,
+	}, nil
+}
+
 // ------------------------- shared surface state -------------------------
 
-// CoderParitySurface bundles the three "now" gap surfaces so the coding
+// CoderParitySurface bundles the four "now" gap surfaces so the coding
 // integration can wire them in one place and the tool loop can hold one
 // reference. The mutex protects against a nil-map constructor race only; each
 // store is itself safe for concurrent use.
 type CoderParitySurface struct {
-	mu     sync.Mutex
-	Todo   *coderTodoSurface
-	Shell  *coderShellSurface
-	Trust  *coderTrustSurface
-	ChatID string
+	mu      sync.Mutex
+	Todo    *coderTodoSurface
+	Shell   *coderShellSurface
+	Compact *coderCompactSurface
+	Trust   *coderTrustSurface
+	ChatID  string
 }
 
 // NewCoderParitySurface returns a surface bound to a chat with fresh backing
 // stores, ready for the tool-dispatch layer.
 func NewCoderParitySurface(chatID string) *CoderParitySurface {
 	return &CoderParitySurface{
-		Todo:   &coderTodoSurface{store: NewCoderTodoStore()},
-		Shell:  &coderShellSurface{store: NewCoderShellStore()},
-		Trust:  &coderTrustSurface{store: NewCoderSessionTrustStore()},
-		ChatID: chatID,
+		Todo:    &coderTodoSurface{store: NewCoderTodoStore()},
+		Shell:   &coderShellSurface{store: NewCoderShellStore()},
+		Compact: &coderCompactSurface{store: NewCoderCompactStore()},
+		Trust:   &coderTrustSurface{store: NewCoderSessionTrustStore()},
+		ChatID:  chatID,
 	}
 }
