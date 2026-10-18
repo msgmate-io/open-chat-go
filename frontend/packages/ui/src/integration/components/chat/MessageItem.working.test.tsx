@@ -153,6 +153,58 @@ describe("BotMessageItem running affordances", () => {
     expect(html).toContain("tool-calls-m7");
   });
 
+  it("renders the tool calls of a finished, cancelled turn and flags the interrupt (ci#643)", () => {
+    const html = render({
+      uuid: "m-cancelled",
+      text: "I paused this response. Send another message when you want me to continue.",
+      meta_data: { finished: true, cancelled: true },
+      tool_calls: [
+        {
+          name: "coder_list",
+          arguments: { depth: 1 },
+          result: { count: 3 },
+          status: "succeeded",
+        },
+        {
+          name: "coder_bash",
+          arguments: { command: "go test ./..." },
+          result: { exit_code: 0 },
+          status: "succeeded",
+        },
+      ],
+    });
+    expect(html).toContain('data-testid="turn-interrupted"');
+    expect(html).toContain("Interrupted after 2 tool calls");
+    // The work is persisted on the message, so it must be rendered, not hidden.
+    expect(html).toContain("tool-calls-m-cancelled");
+    expect(html).toContain("List");
+    expect(html).toContain("go test ./...");
+  });
+
+  it("flags the interrupt for a cancelled turn with a timeline too (ci#643)", () => {
+    const html = render({
+      uuid: "m-cancelled-timeline",
+      text: "paused",
+      meta_data: {
+        finished: true,
+        cancelled: true,
+        timeline: [{ kind: "thought", text: "I inspected the failing test." }],
+      },
+      tool_calls: [
+        {
+          name: "coder_bash",
+          arguments: { command: "go test ./..." },
+          result: { exit_code: 1 },
+          status: "failed",
+          timeline_index: 1,
+        },
+      ],
+    });
+    expect(html).toContain('data-testid="turn-interrupted"');
+    expect(html).toContain("Interrupted after 1 tool call");
+    expect(html).toContain('data-testid="turn-sequence"');
+  });
+
   it("does not render the timeline narration twice while the turn streams (ci#569)", () => {
     const html = render({
       uuid: "partial_chat-2",
