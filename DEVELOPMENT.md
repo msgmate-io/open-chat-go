@@ -651,6 +651,47 @@ lead exists per repo. The code path lives in
 `liveInteractionForDedupeKey`) and is covered by
 `backend/api/bots/AgentDispatchDedupe_test.go`.
 
+### Development lead: CI-error relay ingestion and routing (ci#608)
+
+The development lead ingests relayed CI-failure events and routes each one to
+the repo's development-agent interactions. The ingest + routing decision lives in
+the integration-free `backend/nativecoder` package (`devlead.go`), so both the
+core-only and the full build carry it and it is unit-testable without an
+integration profile; the integration-side transport/hook that delivers the event
+belongs to the base-integration extension (ci#607) and only emits the payload.
+
+Contract and behaviour:
+
+- **Payload** — a small, versioned, secret-free `ci_failure` event (`ci_error` is
+  accepted as an alias): `repo` (required), `provider`, `pr_number`, `branch`,
+  `sha`, `run_url`, `failing_jobs`, `failure_logs`, `attempt`, `severity`,
+  `occurred_at`. A payload advertising a newer `schema_version` is rejected
+  instead of being misinterpreted (`ParseCIFailureEvent`).
+- **Fix session** — the dedupe/attempt-cap identity is per repo+PR, else
+  repo+branch, else repo+commit (`FixSessionKey`); repo and branch are
+  normalized (lower-cased, `.git` and `refs/heads/` stripped).
+- **Candidates** — the routing primitive `CandidateInteractions` enumerates the
+  failing repo's live + recent interactions (a running interaction always
+  qualifies, a past one only inside `DefaultDevLeadRecentWindow`, 24h), ordered
+  most-recent-first with a UUID tiebreak so routing is deterministic.
+  `ResolveLeadInteraction` answers the agent-chooser question "which interaction
+  receives this repo's CI-relay traffic?" (running lead, else running, else most
+  recent recent interaction).
+- **Routing order** (`DevLeadRouter.Route`): (1) `dedupe_existing` when an
+  already-open fix session for the same fix-session key owns the attempt — no
+  second fix attempt; (2) `escalate_maintainer` when the fix-cycle cap
+  (`DefaultFixCycleMaxAttempts`, 3, overridable) is exhausted — no dispatch;
+  (3) `append_ongoing` to the running interaction, preferring one that last
+  touched the failing branch/PR; (4) `reactivate_past` the recent past
+  interaction that produced the change; (5) `spawn_new` a fresh plan→implement
+  session on the failing branch.
+- **Re-prompt** — `LeadRoutingDecision.Prompt` renders the structured fix
+  request appended to the chosen interaction: target identifiers, failing jobs
+  and failure output, the routing decision plus a **visible trail** (which
+  candidate was chosen and why, which were ignored and why), the
+  `<!-- oci-ci-failure-fix -->` dedupe marker, and the **never-poll-CI** rule —
+  the agent pushes the fix and stops, the lead reacts to the next relayed event.
+
 ### Native coder turns: inline tool calls and leaked compaction transcripts
 
 A provider round can deliver two kinds of output the native coder must never
