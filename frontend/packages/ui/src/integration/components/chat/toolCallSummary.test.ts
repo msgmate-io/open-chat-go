@@ -120,11 +120,54 @@ describe("toolCallCategory / toolDisplayLabel", () => {
     expect(toolCallCategory("weird")).toBe("other");
   });
 
+  it("categorizes the parity tool surface (ci#605)", () => {
+    expect(toolCallCategory("coder_codesearch")).toBe("read");
+    expect(toolCallCategory("coder_context")).toBe("read");
+    expect(toolCallCategory("coder_compact")).toBe("read");
+    expect(toolCallCategory("coder_todo_write")).toBe("read");
+    expect(toolCallCategory("coder_task")).toBe("read");
+    expect(toolCallCategory("coder_env")).toBe("read");
+  });
+
   it("produces a friendly label", () => {
     expect(toolDisplayLabel("coder_grep")).toBe("Search");
     expect(toolDisplayLabel("coder_bash")).toBe("Shell");
     expect(toolDisplayLabel("coder_git")).toBe("Git");
     expect(toolDisplayLabel("")).toBe("Tool");
+  });
+
+  it("labels the parity tool surface (ci#605)", () => {
+    expect(toolDisplayLabel("coder_codesearch")).toBe("Code search");
+    expect(toolDisplayLabel("coder_context")).toBe("Context");
+    expect(toolDisplayLabel("coder_compact")).toBe("Compact");
+    expect(toolDisplayLabel("coder_todo_write")).toBe("Todo");
+    expect(toolDisplayLabel("coder_task")).toBe("Sub-agent");
+    expect(toolDisplayLabel("coder_env")).toBe("Environment");
+  });
+});
+
+describe("parity tool summaries (ci#605)", () => {
+  it("summarizes codesearch, context, compact, todo, env and task", () => {
+    expect(toolCallSummary({ name: "coder_codesearch", arguments: { pattern: "Run", kind: "symbol" } })).toBe(
+      '"Run" (symbol)',
+    );
+    expect(toolCallSummary({ name: "coder_context", arguments: {} })).toBe("context usage");
+    expect(toolCallSummary({ name: "coder_compact", arguments: {} })).toBe("compact history");
+    expect(toolCallSummary({ name: "coder_todo_write", arguments: { todos: [{}, {}] } })).toBe("2 todos");
+    expect(toolCallSummary({ name: "coder_env", arguments: { name: "GOPATH" } })).toBe("GOPATH");
+    expect(toolCallSummary({ name: "coder_task", arguments: { agent: "explore", prompt: "map the repo" } })).toBe(
+      "explore: map the repo",
+    );
+  });
+
+  it("previews codesearch, context and compact results", () => {
+    expect(toolResultPreview({ name: "coder_codesearch", result: { count: 4 } })).toBe("4 matches");
+    expect(toolResultPreview({ name: "coder_codesearch", result: { count: 0 } })).toBe("no matches");
+    expect(
+      toolResultPreview({ name: "coder_context", result: { tokens_used: 100, token_budget: 400 } }),
+    ).toBe("100/400 tokens");
+    expect(toolResultPreview({ name: "coder_compact", result: { tokens_saved: 900 } })).toBe("900 tokens");
+    expect(toolResultPreview({ name: "coder_todo_read", result: { count: 0 } })).toBe("empty");
   });
 });
 
