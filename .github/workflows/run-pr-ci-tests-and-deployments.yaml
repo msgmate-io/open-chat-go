@@ -2050,6 +2050,26 @@ jobs:
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")"
+          # ci#606: the relayed `ci_failure` payload also carries a short excerpt
+          # of each failed job's tail, so the development lead has an error line
+          # to triage on instead of job names only (the `failure_logs` field of
+          # the ci#607/#608 contract). The excerpt is truncated, never echoed to
+          # the log, and read with the repo-scoped token; no secret is emitted.
+          FAILURE_LOGS=""
+          while read -r job_id job_name; do
+            [ -n "${job_id:-}" ] || continue
+            job_tail="$(curl -fsSL -L \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/jobs/${job_id}/logs" 2>/dev/null \
+              | tail -c 1200 | tr -cd '\11\12\15\40-\176' || true)"
+            if [ -n "$job_tail" ]; then
+              FAILURE_LOGS="${FAILURE_LOGS}${job_name}: ${job_tail}"$'\n'
+            fi
+          done < <(jq -r '.jobs[] | select(.conclusion == "failure") | "\(.id) \(.name)"' <<< "$RUN_JOBS_JSON")
+          # keep the payload printable ASCII so jq never chokes on raw log bytes
+          FAILURE_LOGS="$(printf '%s' "$FAILURE_LOGS" | tr -cd '\11\12\15\40-\176')"
+          FAILURE_LOGS="${FAILURE_LOGS:0:3800}"
           jq -n \
             --arg repo "${{ github.repository }}" \
             --argjson pr_number "${{ github.event.pull_request.number }}" \
@@ -2057,8 +2077,9 @@ jobs:
             --arg pr_sha "${{ github.event.pull_request.head.sha }}" \
             --arg base_ref "${{ github.base_ref }}" \
             --arg run_url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg failure_logs "$FAILURE_LOGS" \
             --argjson failed_jobs "$(jq -c '[.jobs[] | select(.conclusion == "failure") | {name, html_url}]' <<< "$RUN_JOBS_JSON")" \
-            '{repo: $repo, pr_number: $pr_number, pr_branch: $pr_branch, pr_sha: $pr_sha, base_ref: $base_ref, run_url: $run_url, failed_jobs: $failed_jobs}' \
+            '{repo: $repo, pr_number: $pr_number, pr_branch: $pr_branch, pr_sha: $pr_sha, base_ref: $base_ref, run_url: $run_url, failed_jobs: $failed_jobs, failure_logs: $failure_logs}' \
             > "$RUNNER_TEMP/ci-failure-event.json"
 
       - name: Relay the failure to the development lead
