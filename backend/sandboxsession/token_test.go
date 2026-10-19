@@ -39,6 +39,41 @@ func TestAttachTokenRoundTrip(t *testing.T) {
 	}
 }
 
+// flipLastHexDigit returns token with its final hex digit replaced by a
+// different one, so the returned token is guaranteed to differ from the
+// original. The naive tamper `token[:len(token)-1] + "0"` is a *no-op* whenever
+// the HMAC signature already ends in '0' (~1/16 of runs), which made the
+// "flipped last" tamper case flaky: the untampered token then verified
+// successfully and the case failed with "expected ErrInvalidAttachToken,
+// got <nil>".
+func flipLastHexDigit(token string) string {
+	if token == "" {
+		return "0"
+	}
+	replacement := byte('0')
+	if token[len(token)-1] == '0' {
+		replacement = '1'
+	}
+	return token[:len(token)-1] + string(replacement)
+}
+
+func TestFlipLastHexDigitAlwaysChangesTheToken(t *testing.T) {
+	issuer := newTestIssuer(t)
+	for i := 0; i < 64; i++ {
+		token, err := issuer.Mint("sbx-1", "sess-1", "admin-1", time.Hour)
+		if err != nil {
+			t.Fatalf("mint: %v", err)
+		}
+		tampered := flipLastHexDigit(token)
+		if tampered == token {
+			t.Fatalf("tampered token must differ from the original: %q", token)
+		}
+		if _, err := issuer.Verify("sbx-1", "sess-1", "admin-1", tampered); !errors.Is(err, ErrInvalidAttachToken) {
+			t.Fatalf("expected ErrInvalidAttachToken for a tampered signature, got %v", err)
+		}
+	}
+}
+
 func TestAttachTokenRejectsReplayAndTampering(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.Mint("sbx-1", "sess-1", "admin-1", time.Hour)
@@ -57,7 +92,7 @@ func TestAttachTokenRejectsReplayAndTampering(t *testing.T) {
 		"other owner":    {"sbx-1", "sess-1", "admin-2", token},
 		"garbage":        {"sbx-1", "sess-1", "admin-1", "nope"},
 		"empty":          {"sbx-1", "sess-1", "admin-1", ""},
-		"flipped last":   {"sbx-1", "sess-1", "admin-1", token[:len(token)-1] + "0"},
+		"flipped last":   {"sbx-1", "sess-1", "admin-1", flipLastHexDigit(token)},
 		"wrong sig type": {"sbx-1", "sess-1", "admin-1", strings.Replace(token, ".", ".zz", 1)},
 	}
 	for name, c := range cases {
