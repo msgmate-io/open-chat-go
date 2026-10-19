@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { ConfirmableAction } from "../ConfirmableActionWidget";
-import type { BotReplyDeliveryMode } from "../../../lib/delivery-mode";
+import type { BotReplyDeliveryMode } from "../../../../lib/delivery-mode";
 
 export interface ChatUIAttachment {
   file_id: string;
