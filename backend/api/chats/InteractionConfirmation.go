@@ -368,9 +368,9 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 }
 
 func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, user *database.User) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
-	chatUUID := r.PathValue("chat_uuid")
+	chatUUID, chatUUIDErr := parseChatUUID(r)
 	messageUUID := r.PathValue("message_uuid")
-	if chatUUID == "" || messageUUID == "" {
+	if chatUUIDErr != nil || messageUUID == "" {
 		http.Error(w, "Invalid chat/message UUID", http.StatusBadRequest)
 		return database.Chat{}, database.Message{}, nil, false
 	}
