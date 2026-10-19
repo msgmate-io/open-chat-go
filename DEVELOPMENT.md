@@ -1059,6 +1059,31 @@ prefix-checked subset `coder_*`, `github_*`, `hive_mind_*`, `mcp:`, `chat_*`,
 Provisioning checklist (generated: `RenderCI2ChecklistMarkdown()`):
 
 
+### Agent-only documentation is private (ci#736)
+
+The public repository documents the **human** development workflow only: setup,
+build, run, test, deploy, contributing and the public architecture. Agent /
+development-bot operational instructions are **not** part of this repository.
+
+- The development-lead (devlead) fleet-moderation toolkit and the agent-only
+  playbooks live in the **private** `ci` repository (`msgmate-io/open-chat-go-ci`,
+  `agent-docs/`), which also owns the tracked, reviewable operational copy of
+  every agent policy.
+- They reach the native agents through the existing native bot
+  instruction/config mechanism: the private deployment config-deltas inject them
+  as a reusable `$anchors.<name>` policy into the `system_prompt` of the
+  `msgmate_coder` / development-bot agent configurations. No public file and no
+  new workflow is involved.
+- The msgmate coder integration serves its own agent-facing page set
+  (`FrontendDocs`) from its private repository; nothing is mirrored here.
+
+`development/scripts/check_no_agent_docs_in_public.py` enforces this in PR CI
+(it also has focused unit tests under `development/scripts/tests/`): it fails
+closed when a devlead path, an agent playbook file or an agent-only
+`DEVELOPMENT.md` section reappears in the public tree. If you need to document
+agent behaviour, add it to the private `ci` repository and link it through the
+config-delta anchor, never here.
+
 ### Documentation lookup index
 
 The user- and developer-facing documentation lives in the **frontend** docs

@@ -2437,6 +2437,34 @@ jobs:
 
           echo "Full suite gate satisfied."
 
+  # Cheap, standalone guard (ci#736): the public repository must not carry
+  # agent-only / development-bot documentation. The devlead fleet-moderation
+  # toolkit and the agent-only playbooks are private (the `ci` repository) and
+  # are linked into native msgmate_coder / development-bot configurations through
+  # the existing `$anchors.*` system-prompt config deltas, never copied here.
+  # The guard fails closed on a devlead path, an agent playbook file or an
+  # agent-only `DEVELOPMENT.md` section. See
+  # `development/scripts/check_no_agent_docs_in_public.py` (unit tested in
+  # `development/scripts/tests/`).
+  agent-docs-guard:
+    name: Agent Docs Guard
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed'
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: false
+
+      - name: Reject agent-only documentation in the public repository
+        run: |
+          set -euo pipefail
+          python3 development/scripts/check_no_agent_docs_in_public.py --root .
+
   # Final, additive gate. It runs after every existing suite/merge gate (the
   # deploy-gated sandbox and real-AI suites flow through
   # `pr-test-merge-requirement` / `full-suite-gate`) and fails the run when any
