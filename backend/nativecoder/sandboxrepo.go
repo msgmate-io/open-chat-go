@@ -24,6 +24,9 @@ const (
 	// AutoSandboxGitRepoInput is the input naming the repository the automatic
 	// per-chat sandbox clones.
 	AutoSandboxGitRepoInput = "git_repo"
+	// AutoSandboxGitBranchInput is the input naming the branch the automatic
+	// per-chat sandbox checks out once it has cloned that repository.
+	AutoSandboxGitBranchInput = "git_branch"
 	// AutoSandboxFlagInput is the input that switches the automatic per-chat
 	// sandbox (clone + provision) on for the interaction.
 	AutoSandboxFlagInput = "auto_sandbox"
@@ -34,15 +37,28 @@ const (
 // caller wrote it (an `owner/name` slug or a clone remote) so the caller can
 // decide how to canonicalise it.
 func RepoValueFromTags(tags []string) string {
+	return tagValueWithPrefix(tags, RepoTagPrefix)
+}
+
+// BranchValueFromTags returns the raw branch value carried by the first
+// `branch:<name>` tag, or "" when no tag names one.
+func BranchValueFromTags(tags []string) string {
+	return tagValueWithPrefix(tags, BranchTagPrefix)
+}
+
+// tagValueWithPrefix returns the first non-empty value of a prefixed tag
+// (`repo:<value>`, `branch:<value>`), comparing the prefix case-insensitively
+// and ignoring surrounding whitespace on both sides.
+func tagValueWithPrefix(tags []string, prefix string) string {
 	for _, tag := range tags {
 		trimmed := strings.TrimSpace(tag)
-		if len(trimmed) <= len(RepoTagPrefix) {
+		if len(trimmed) <= len(prefix) {
 			continue
 		}
-		if !strings.EqualFold(trimmed[:len(RepoTagPrefix)], RepoTagPrefix) {
+		if !strings.EqualFold(trimmed[:len(prefix)], prefix) {
 			continue
 		}
-		if value := strings.TrimSpace(trimmed[len(RepoTagPrefix):]); value != "" {
+		if value := strings.TrimSpace(trimmed[len(prefix):]); value != "" {
 			return value
 		}
 	}
@@ -117,6 +133,122 @@ func AutoSandboxRepoForInteraction(config map[string]interface{}, tags []string,
 		return ""
 	}
 	return AutoSandboxRepoTarget(config, tags)
+}
+
+// ExplicitAutoSandboxBranch reports the branch the *caller* pinned for this
+// interaction's automatic sandbox: a git_branch in the explicit tool_init.
+// "" means the sandbox branch is only inherited from a bot/trigger default and
+// may be re-bound to the dispatched branch.
+func ExplicitAutoSandboxBranch(toolInit map[string]interface{}) string {
+	workspaceInit, ok := toolInit[AutoSandboxToolInitKey].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	value, _ := workspaceInit[AutoSandboxGitBranchInput].(string)
+	return strings.TrimSpace(value)
+}
+
+// AutoSandboxBranchForInteraction is the dispatch-level branch selection used by
+// the core when it creates a coder interaction. A branch the caller pinned for
+// this interaction (tool_init.coder_select_workspace.git_branch) is authoritative
+// and is never re-bound; otherwise an explicit `branch:<name>` tag wins. "" means
+// the caller did not ask for a specific branch and the sandbox keeps whatever
+// branch the configured checkout already uses.
+func AutoSandboxBranchForInteraction(tags []string, toolInit map[string]interface{}) string {
+	if ExplicitAutoSandboxBranch(toolInit) != "" {
+		return ""
+	}
+	return BranchValueFromTags(tags)
+}
+
+// refsHeadsPrefix is the `refs/heads/` prefix a CI payload may keep on a branch
+// name; it is stripped before the branch is used as a checkout target.
+const refsHeadsPrefix = "refs/heads/"
+
+// canonicalSandboxBranch turns a raw branch value into the checkout target used
+// by the automatic per-chat sandbox. Unlike NormalizeBranch (the dedupe/tag
+// identity, which lower-cases because it only ever has to compare), a checkout
+// target must keep its case: git branch names are case-sensitive, so a
+// `Feat/X` branch has to be fetched as `Feat/X`. The `refs/heads/` prefix and
+// surrounding whitespace are stripped, and a value that names no usable branch
+// is reported as "" so callers leave the checkout alone.
+func canonicalSandboxBranch(branch string) string {
+	trimmed := strings.TrimSpace(branch)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.HasPrefix(lower, refsHeadsPrefix):
+		trimmed = strings.TrimSpace(trimmed[len(refsHeadsPrefix):])
+	case lower == strings.TrimSuffix(refsHeadsPrefix, "/"):
+		trimmed = ""
+	}
+	if trimmed == "" || strings.ContainsAny(trimmed, " \t") {
+		return ""
+	}
+	return trimmed
+}
+
+// BindAutoSandboxBranch returns tool_init whose automatic per-chat sandbox
+// checks out branch. changed reports whether anything was altered and the
+// returned map is the caller's map when it was not, so a caller can cheaply keep
+// the previous value.
+//
+// It only ever touches tool_init whose coder_select_workspace entry switches
+// auto_sandbox on, so a fixed/pinned workspace and every non-coder bot keep
+// exactly the inputs they were created with. A branch the caller pinned itself is
+// the caller's responsibility (see ExplicitAutoSandboxBranch). Every other
+// tool_init input is preserved and the caller's maps are copied, never mutated.
+func BindAutoSandboxBranch(toolInit map[string]interface{}, branch string) (result map[string]interface{}, changed bool) {
+	normalized := canonicalSandboxBranch(branch)
+	if normalized == "" || toolInit == nil {
+		return toolInit, false
+	}
+	existing, ok := toolInit[AutoSandboxToolInitKey].(map[string]interface{})
+	if !ok || !autoSandboxEnabled(existing) {
+		return toolInit, false
+	}
+	if current, ok := existing[AutoSandboxGitBranchInput].(string); ok && strings.TrimSpace(current) == normalized {
+		return toolInit, false
+	}
+
+	workspaceInit := make(map[string]interface{}, len(existing)+1)
+	for key, value := range existing {
+		workspaceInit[key] = value
+	}
+	workspaceInit[AutoSandboxGitBranchInput] = normalized
+
+	merged := make(map[string]interface{}, len(toolInit))
+	for key, value := range toolInit {
+		merged[key] = value
+	}
+	merged[AutoSandboxToolInitKey] = workspaceInit
+	return merged, true
+}
+
+// WithAutoSandboxBranch returns config whose automatic per-chat sandbox checks
+// out branch. It is the config-level convenience over BindAutoSandboxBranch; a
+// config without a tool_init (or without an auto_sandbox workspace init) is
+// returned unchanged.
+func WithAutoSandboxBranch(config map[string]interface{}, branch string) map[string]interface{} {
+	if config == nil {
+		return config
+	}
+	toolInit, ok := config["tool_init"].(map[string]interface{})
+	if !ok {
+		return config
+	}
+	bound, changed := BindAutoSandboxBranch(toolInit, branch)
+	if !changed {
+		return config
+	}
+	merged := make(map[string]interface{}, len(config))
+	for key, value := range config {
+		merged[key] = value
+	}
+	merged["tool_init"] = bound
+	return merged
 }
 
 // autoSandboxEnabled reports whether the workspace init asked for the automatic
