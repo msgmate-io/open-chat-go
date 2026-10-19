@@ -77,7 +77,7 @@ func toolFailureRetryOptionsFromConfig(configMap map[string]interface{}) ToolFai
 		CapacityMaxDelay:  DefaultSandboxCapacityRetryMaxDelay,
 	}
 	if v, ok := envInt64(ToolFailureRetryAttemptsEnvKey); ok {
-		opts.MaxAttempts = int(v)
+		opts.MaxAttempts = clampRetryAttempts(v)
 	}
 	if v, ok := envInt64(ToolFailureRetryBaseDelayEnvKey); ok {
 		opts.BaseDelay = time.Duration(v) * time.Millisecond
@@ -94,13 +94,29 @@ func toolFailureRetryOptionsFromConfig(configMap map[string]interface{}) ToolFai
 	if v, ok := configMap["tool_failure_retry"].(bool); ok {
 		opts.Enabled = v
 	}
-	opts.MaxAttempts = int(mapInt64OrDefault(configMap, "tool_failure_retry_max", int64(opts.MaxAttempts)))
+	opts.MaxAttempts = clampRetryAttempts(mapInt64OrDefault(configMap, "tool_failure_retry_max", int64(opts.MaxAttempts)))
 	opts.BaseDelay = time.Duration(mapInt64OrDefault(configMap, "tool_failure_retry_base_delay_ms", int64(opts.BaseDelay/time.Millisecond))) * time.Millisecond
 	opts.MaxDelay = time.Duration(mapInt64OrDefault(configMap, "tool_failure_retry_max_delay_ms", int64(opts.MaxDelay/time.Millisecond))) * time.Millisecond
 	opts.CapacityBaseDelay = time.Duration(mapInt64OrDefault(configMap, "sandbox_capacity_retry_base_delay_ms", int64(opts.CapacityBaseDelay/time.Millisecond))) * time.Millisecond
 	opts.CapacityMaxDelay = time.Duration(mapInt64OrDefault(configMap, "sandbox_capacity_retry_max_delay_ms", int64(opts.CapacityMaxDelay/time.Millisecond))) * time.Millisecond
 
 	return normalizeToolFailureRetryOptions(opts)
+}
+
+// clampRetryAttempts saturates a raw int64 attempt count into the supported int
+// range *before* the conversion, so an oversized environment or agent-config
+// value can never wrap around into a small or negative attempt count (CodeQL
+// go/incorrect-integer-conversion). The saturating bounds are exactly the range
+// normalizeToolFailureRetryOptions enforces, so the resolved policy is
+// unchanged - only the unchecked conversion is gone.
+func clampRetryAttempts(v int64) int {
+	if v < 1 {
+		return 1
+	}
+	if v > int64(maxToolFailureRetryAttempts) {
+		return maxToolFailureRetryAttempts
+	}
+	return int(v)
 }
 
 // normalizeToolFailureRetryOptions clamps a resolved policy into the supported
