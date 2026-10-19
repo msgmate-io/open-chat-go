@@ -75,11 +75,16 @@ workspace and the trigger can be filtered independently:
 | Tag | Meaning |
 | --- | --- |
 | `repo:<slug>` | the workspace repository, e.g. `repo:open-chat-go` |
+| `branch:<name>` | the branch the workspace checks out, e.g. `branch:feat/x` (case-sensitive; a `refs/heads/` prefix is stripped) |
 | `via:<trigger>` | how it was triggered: `via:assign`, `via:mention`, `via:review`, `via:comment`, `via:plan`, `via:chat` |
 
 The `repo:` and `via:` prefixes keep the two dimensions in distinct namespaces,
 so `tags=repo:open-chat-go` lists every interaction working on that repository
-and `tags=via:assign` every assignment-driven one.
+and `tags=via:assign` every assignment-driven one. For a native coder
+interaction with a per-chat sandbox, `repo:` and `branch:` also drive the
+checkout: an explicit tag pins what the disposable sandbox clones and checks out
+(unless the caller pinned it in `tool_init`), so a re-run for a pull request
+resumes that PR's branch instead of the default.
 
 ## Auto-continuation (self-driving interactions)
 
