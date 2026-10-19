@@ -59,10 +59,12 @@ all fail closed, so the gate never turns green on an untested commit.
 
 The run and job listings are read page by page (`api_pages`) as a guard: the
 largest run of this workflow observed so far carries 56 jobs (run 39246623047 on
-#835; the 30 most recent runs peak at 31), which still fits one 100-item page, so
+#835; the 30 most recent runs peak at 34), which still fits one 100-item page, so
 nothing is known to have been truncated yet - but a listing that grew past that
 page would silently hide the gate job, making the run look like one that never
 gated the commit and letting an older run's verdict be adopted for the same SHA.
+The gate job does already fall outside the *default* 30-item page on the largest
+runs, which is why the read must not rely on the default page size.
 
 The reconciler runs from the workspace, so the `PR Test Merge Requirement` job
 starts with a shallow `actions/checkout` of the pull request's head commit. That
