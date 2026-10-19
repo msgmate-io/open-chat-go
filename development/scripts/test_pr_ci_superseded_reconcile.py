@@ -183,6 +183,103 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(code, 4)
 
 
+class PaginationTests(unittest.TestCase):
+    """Listings larger than one API page must not hide the gate job (ci#659).
+
+    `/actions/runs/<id>/jobs` is offset-paginated at 100 items and a run of this
+    workflow is close to that once the deployment jobs are counted. A single-page
+    read could miss `PR Test Merge Requirement`, treat the run as never having
+    gated the commit and fall back to an older run for the same SHA.
+    """
+
+    def test_paged_path_appends_query_parameters(self):
+        self.assertEqual(
+            mod.paged_path("/actions/runs/1/jobs", 2),
+            "/actions/runs/1/jobs?per_page=100&page=2",
+        )
+        self.assertEqual(
+            mod.paged_path("/actions/workflows/w.yaml/runs?head_sha=abc", 3),
+            "/actions/workflows/w.yaml/runs?head_sha=abc&per_page=100&page=3",
+        )
+
+    def test_gate_job_on_a_later_page_is_found(self):
+        filler = [{"name": "job-%d" % i, "conclusion": "success"} for i in range(mod.PAGE_SIZE)]
+        pages = [{"jobs": filler}, {"jobs": filler + [gate()]}]
+        urls = []
+
+        def fetch(url, token):
+            urls.append(url)
+            return pages[len(urls) - 1]
+
+        mod._FETCH = fetch
+        try:
+            conclusion = mod.gate_conclusion("msgmate-io/open-chat-go", NEWER, "token")
+        finally:
+            mod._FETCH = mod.fetch_json
+
+        self.assertEqual(conclusion, "success")
+        self.assertEqual(len(urls), 2)
+        self.assertIn("page=2", urls[1])
+
+    def test_pagination_stops_at_the_first_short_page(self):
+        pages = [100, 1]
+        urls = []
+
+        def fetch(url, token):
+            urls.append(url)
+            return {"jobs": [gate() for _ in range(pages[len(urls) - 1])]}
+
+        mod._FETCH = fetch
+        try:
+            items = list(mod.api_pages("r", "/actions/runs/1/jobs", "token"))
+        finally:
+            mod._FETCH = mod.fetch_json
+
+        self.assertEqual(len(items), 101)
+        self.assertEqual(len(urls), 2)
+
+    def test_page_budget_bounds_a_listing_that_never_ends(self):
+        urls = []
+
+        def fetch(url, token):
+            urls.append(url)
+            return {"jobs": [gate() for _ in range(mod.PAGE_SIZE)]}
+
+        mod._FETCH = fetch
+        try:
+            items = list(mod.api_pages("r", "/actions/runs/1/jobs", "token", limit=3))
+        finally:
+            mod._FETCH = mod.fetch_json
+
+        self.assertEqual(len(items), 3 * mod.PAGE_SIZE)
+        self.assertEqual(len(urls), 3)
+
+    def test_reconcile_reads_a_gate_job_beyond_the_first_page(self):
+        filler = [{"name": "job-%d" % i} for i in range(mod.PAGE_SIZE)]
+
+        class PagedApi(FakeApi):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+
+            def __call__(self, url, token):
+                if "/jobs" in url and "page=2" not in url:
+                    return {"jobs": filler}
+                if "/jobs" in url:
+                    return {"jobs": [gate()]}
+                return super().__call__(url, token)
+
+        code, summary = self.reconcile(PagedApi(runs=[run(CURRENT), run(NEWER)]))
+        self.assertEqual(code, 0)
+        self.assertIn("replacement run %s gate job concluded success" % NEWER, summary)
+
+    def reconcile(self, api, **over):
+        mod._FETCH = api
+        try:
+            return mod.reconcile(ns(**over), "token")
+        finally:
+            mod._FETCH = mod.fetch_json
+
+
 class WorkflowWiringTests(unittest.TestCase):
     """The gate job must actually be able to run the reconciler (ci#659).
 
