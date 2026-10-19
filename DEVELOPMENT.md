@@ -65,6 +65,34 @@ reconciler also checks for its own file and emits an `::error::` annotation with
 shipped without the checkout and therefore never engaged (run 39261844509 on
 #844). `WorkflowWiringTests` pins the checkout-before-reconciler ordering.
 
+#### Autonomous approval and merge of green consolidation PRs
+
+A consolidation PR is always authored by the automation identity, which cannot
+approve its own PR, so `.github/workflows/auto-approve-consolidation.yaml`
+approves **and merges** it once it is provably green:
+
+- It triggers on completion of the required **Run PR CI Tests and Deployments**
+  workflow and only considers `chore/consolidate-*` PRs targeting `main` in this
+  repository (open, not a draft, no conflicts).
+- Before merging it re-reads the PR from the API and refuses to merge unless the
+  required CI check concluded `success` and every other check on the PR finished
+  green — a red or pending check stops the merge even though the workflow is
+  allowed to bypass the ruleset.
+- It first posts the one required approving review from a *distinct* reviewer
+  identity, then merges normally (the `main` ruleset's own gates apply). If no
+  usable reviewer identity is configured it retries the merge with `--admin`,
+  i.e. through a ruleset bypass, with the API-verified green state as the gate.
+- A PR that is merely `BEHIND` gets its branch updated instead (which re-runs CI
+  and this workflow); an already merged PR counts as success, so re-runs and
+  races are harmless.
+
+The preferred configuration is a dedicated reviewer identity (GitHub App or a
+fine-grained token with `pull_requests: write`) stored as the repository secret
+`CONSOLIDATE_APPROVER_TOKEN`; alternatively add a ruleset bypass actor for the
+consolidation automation. With neither, the run warns and leaves the human
+approval in place. All of this is only wired for consolidation PRs — feature,
+bugfix, chore and docs PRs still need a human approval and merge.
+
 #### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
 
 The SQLite database lives on a single ReadWriteOnce volume, so two backend
@@ -381,6 +409,13 @@ When no backend is configured (or no sandbox integration is present), the
 legacy first-enabled-SSH-server behavior is kept, so existing deployments are
 unaffected. The OpenCode-based coding bots remain the default/backup route and
 are not modified by the native sandbox flow.
+
+The checkout a per-chat sandbox lands on is selectable from the dispatch too:
+an explicit `repo:<owner/name>` and `branch:<name>` tag pin what it clones and
+checks out (unless the caller pinned it in
+`tool_init.coder_select_workspace.git_repo`/`git_branch`, which stays
+authoritative), so a re-run for a pull request resumes that PR's branch instead
+of the bot's default.
 
 ### Custom integration profiles
 
