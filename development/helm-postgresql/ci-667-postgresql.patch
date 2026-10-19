@@ -1,5 +1,5 @@
 diff --git a/backend/templates/backend.yaml b/backend/templates/backend.yaml
-index 2aadf1d..15b4132 100644
+index 2aadf1d..d71b86e 100644
 --- a/backend/templates/backend.yaml
 +++ b/backend/templates/backend.yaml
 @@ -1,4 +1,9 @@
@@ -12,16 +12,27 @@ index 2aadf1d..15b4132 100644
  {{- $configSecret := $configFile.existingSecret | default "" }}
  {{- if and $configFile.enabled (not $configSecret) }}
  {{- if not .Values.backend.sqlite.persistence.enabled }}
-@@ -24,7 +29,7 @@ data:
+@@ -18,14 +23,15 @@ kind: Secret
+ metadata:
+   name: backend-env
+   namespace: {{ .Values.rootNamespace }}
++{{- $env := deepCopy (.Values.backend.env | default dict) }}
++{{- if ne $pgMode "off" }}
++{{- $_ := set $env "DB_BACKEND" "postgres" }}
++{{- end }}
+ type: Opaque
+ data:
+-{{- range $key, $value := .Values.backend.env }}
++{{- range $key, $value := $env }}
    {{ $key }}: {{ $value | toString | b64enc | quote }}
  {{- end }}
- {{- if not (hasKey .Values.backend.env "DB_BACKEND") }}
+-{{- if not (hasKey .Values.backend.env "DB_BACKEND") }}
 -  DB_BACKEND: {{ "sqlite" | b64enc | quote }}
-+  DB_BACKEND: {{ (ternary "postgres" "sqlite" (ne $pgMode "off")) | b64enc | quote }}
- {{- end }}
+-{{- end }}
  {{- if .Values.backend.sandboxBackend }}
    OCI_DOCKER_SANDBOX_BACKEND: {{ .Values.backend.sandboxBackend | toString | b64enc | quote }}
-@@ -36,7 +41,8 @@ data:
+ {{- end }}
+@@ -36,7 +42,8 @@ data:
    OCI_DOCKER_SANDBOX_KUBECONFIG: {{ .Values.backend.sandboxKubeconfig | toString | b64enc | quote }}
  {{- end }}
  {{- if not (hasKey .Values.backend.env "DB_PATH") }}
@@ -31,40 +42,32 @@ index 2aadf1d..15b4132 100644
    DB_PATH: {{ printf "%s/%s" .Values.backend.sqlite.persistence.mountPath .Values.backend.sqlite.persistence.fileName | b64enc | quote }}
    {{- else }}
    DB_PATH: {{ .Values.backend.sqlite.path | toString | b64enc | quote }}
-@@ -108,23 +114,35 @@ spec:
+@@ -108,7 +115,23 @@ spec:
            imagePullPolicy: {{ .Values.backend.imagePullPolicy }}
            ports:
              - containerPort: {{ .Values.backend.service.port }}
 -          {{- if $configSecret }}
--          # Config comes from an existing Secret managed out-of-band (e.g. by
--          # the kubernetes integration deployment-host flow), decoupling the
--          # config content from the Helm release.
-           env:
-+            {{- if and (eq $pgMode "internal") (not (hasKey .Values.backend.env "DB_PATH")) }}
++          {{- $pgDSNEnv := and (eq $pgMode "internal") (not (hasKey .Values.backend.env "DB_PATH")) }}
++          {{- if $pgDSNEnv }}
++          env:
 +            # DSN published by the CloudNativePG app Secret; no secret in values.
 +            - name: DB_PATH
 +              valueFrom:
 +                secretKeyRef:
 +                  name: {{ ($pg.internal).existingSecret | default (printf "%s-app" ($pg.internal).name) | quote }}
 +                  key: {{ ($pg.internal).dsnKey | default "uri" | quote }}
-+            {{- end }}
 +            {{- if $configSecret }}
-+            # Config comes from an existing Secret managed out-of-band (e.g. by
-+            # the kubernetes integration deployment-host flow), decoupling the
-+            # config content from the Helm release.
-             - name: OPEN_CHAT_CONFIG
-               value: {{ ($configFile.existingSecretMountPath | default "/backend/config/open-chat-config.yaml") | quote }}
--          {{- else if $configFile.enabled }}
--          # Explicit env wins over envFrom: load the config from the managed
--          # file instead of the inline seed value in backend-env.
--          env:
++            - name: OPEN_CHAT_CONFIG
++              value: {{ ($configFile.existingSecretMountPath | default "/backend/config/open-chat-config.yaml") | quote }}
 +            {{- else if $configFile.enabled }}
-+            # Explicit env wins over envFrom: load the config from the managed
-+            # file instead of the inline seed value in backend-env.
-             - name: OPEN_CHAT_CONFIG
-               value: {{ $configFile.path | quote }}
--          {{- end }}
++            - name: OPEN_CHAT_CONFIG
++              value: {{ $configFile.path | quote }}
 +            {{- end }}
++          {{- else if $configSecret }}
+           # Config comes from an existing Secret managed out-of-band (e.g. by
+           # the kubernetes integration deployment-host flow), decoupling the
+           # config content from the Helm release.
+@@ -125,6 +148,11 @@ spec:
            envFrom:
              - secretRef:
                  name: backend-env
@@ -147,20 +150,19 @@ index 0000000..331e058
 +    persistence:
 +      enabled: false
 diff --git a/backend/values.yaml b/backend/values.yaml
-index 95580f9..fb0c138 100644
+index 95580f9..bd97cce 100644
 --- a/backend/values.yaml
 +++ b/backend/values.yaml
-@@ -25,7 +25,8 @@ backend:
+@@ -25,6 +25,8 @@ backend:
    env:
      HOST: ""
      PORT: "1984"
--    DB_BACKEND: sqlite
-+    # DB_BACKEND is derived from `postgresql.mode` (sqlite when off); set it here
-+    # explicitly only to override that (see the postgresql block below).
++    # DB_BACKEND: derived from the `postgresql` block below when that selects a
++    # PostgreSQL mode (postgres); an explicit value here wins otherwise.
+     DB_BACKEND: sqlite
      DEBUG: "false"
      START_BOT: "false"
-     ROOT_CREDENTIALS: "admin:random"
-@@ -81,3 +82,25 @@ ingress:
+@@ -81,3 +83,25 @@ ingress:
    certManager: false
    host: ""
    extraAnnotations: {}

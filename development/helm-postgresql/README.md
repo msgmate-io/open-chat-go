@@ -2,20 +2,24 @@
 
 The backend Helm chart knows two datastores: SQLite (default, PVC-backed) and
 PostgreSQL. PostgreSQL support was added as a single `postgresql.mode` switch with
-three values (`off` | `internal` | `external`) instead of a subchart dependency, so
-an existing release can switch datastore without a chart-repo dependency tree and
-without a second Postgres operator being required.
+three values (`off` | `internal` | `external`) rather than as a subchart
+dependency, so an existing release switches datastore through values alone: no
+chart-repo dependency tree, and `external` needs no in-cluster operator at all
+(`internal` uses the CloudNativePG operator, which must already be installed).
 
 * `off` (default) - unchanged behaviour: `DB_BACKEND=sqlite`, PVC-backed SQLite.
-* `internal` - the chart deploys its own single-writer PostgreSQL instance
-  (`backend/templates/postgresql.yaml`: StatefulSet + Service + PVC) and points the
-  backend at it (`DB_BACKEND=postgres` plus host/port/db/user).
+* `internal` - the chart deploys its own PostgreSQL instance as a CloudNativePG
+  `Cluster` (`backend/templates/postgresql.yaml`) and points the backend at it
+  (`DB_BACKEND=postgres`, `DB_PATH` read from the Cluster's app Secret key
+  `uri`), so no credential is rendered by the chart.
 * `external` - no Postgres workload is created; the backend is pointed at a
-  PostgreSQL the operator runs elsewhere (managed database, another release, ...).
+  PostgreSQL the operator runs elsewhere (managed database, another release,
+  ...) through a pre-existing Secret that carries the connection URI.
 
-In both non-off modes the SQLite env (`DB_PATH`) and the SQLite PVC are left out of
-the rendered manifest, and the statement-size/cache env for Postgres is wired
-instead.
+In both non-`off` modes the SQLite env (`DB_PATH`) and the SQLite PVC are left
+out of the rendered manifest, and an explicit `DB_BACKEND` in the values is
+overridden to `postgres` so the release cannot end up pointing at SQLite while
+the values claim Postgres. An unknown `postgresql.mode` fails the render.
 
 ## Where this lives
 
