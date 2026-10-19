@@ -369,6 +369,578 @@ legacy first-enabled-SSH-server behavior is kept, so existing deployments are
 unaffected. The OpenCode-based coding bots remain the default/backup route and
 are not modified by the native sandbox flow.
 
+### Transient tool failures are retried and budget-exempt (ci#688)
+
+A tool body can fail for purely **environmental** reasons: with 16–24 concurrent
+agents a per-chat auto-sandbox sometimes could not be provisioned
+(`failed to create temporary sandbox: Cloning … error: copy-fd: …`), the host ran
+out of file descriptors / disk, or the sandbox/integration host was momentarily
+unreachable. Each such blip used to be a hard tool failure, so the agent burned
+its failed-tool budget and aborted — and a plan-mode agent then re-cloned and
+retried by itself, which made the exhaustion worse.
+
+The core tool loop therefore classifies tool failures (`api/msgmate/tool_failure_retry.go`):
+
+- a recognised **transient** failure (sandbox provisioning, host resource
+  exhaustion, connection-level blips — the marker list is deliberately limited
+  to infrastructure) is retried with an exponential backoff plus bounded jitter,
+  bounded by the generation context so a user stop is never resurrected;
+- a transient failure that survives the retries is still reported to the model
+  as a failed call, but it does **not** consume the failed-tool budget — the
+  total tool-call cap still bounds the turn, so an agent cannot loop forever.
+  The model-facing result says so explicitly and suggests a short-wait retry;
+- a failure the model can fix (a bad argument, a missing file, a permission
+  error) is never retried and always counts against the budget.
+
+The per-call flags (`retries`, `budget_exempt`) travel in the tool-call metadata
+and the `interaction_complete` payload (`tool_call_transient_failed_count`), so a
+saturated sandbox pool is visible in the transcript instead of only in the
+backend log. Both knobs are configurable per deployment:
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_ATTEMPTS` (default 3, clamped to 1–8) and
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_BASE_DELAY_MS` (default 400 ms,
+exponential up to a 5 s cap).
+
+### Scheduler-capacity failures wait for the node, they are not blips (ci#691)
+
+The ci#688 retry policy above classifies an **unschedulable sandbox pod** as a
+transient failure, but it backed it off on a millisecond scale — three attempts
+within ~1.2 s — which cannot absorb a *node capacity* condition:
+
+```text
+sandbox "coder-7b205aa3-…" is not schedulable: Unschedulable:
+0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate,
+preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+```
+
+The node only frees a sandbox's request when a finished sandbox is reaped or a
+peer agent releases its pod — tens of seconds, not hundreds of milliseconds — so
+the attempt budget was burned on a condition that could not have changed, and
+every agent of a saturated pool did it at the same time. The same finding is what
+the sandbox integration's background credential re-provision path reports
+(`failed to re-provision credentials for sandbox ssh server … after 5m0s`, the
+ci#691 signature; the fail-fast half is
+`msgmate-io/open-chat-go-docker-sandbox-integration#29`, the capacity levers are
+ci#529 / ci#545 / ci#602).
+
+`backend/api/msgmate/sandbox_capacity.go` (with the capacity backoff in
+`api/msgmate/tool_failure_retry.go`) therefore splits the capacity case out of the
+blip case:
+
+- a **scheduler capacity rejection** (`isSandboxCapacityFailure`: `insufficient
+  cpu` / `insufficient memory` / `is not schedulable` / `unschedulable` /
+  `no preemption victims` / `nodes are available`) is retried with a slower,
+  still bounded backoff — a linear ramp from `5s` to a `30s` cap, plus bounded
+  jitter — instead of the ci#688 millisecond backoff;
+- while the node is known to be saturated, the **other** provisioning calls of
+  the fleet are held back for the same window (`awaitSandboxCapacityCooldown`).
+  The cooldown is process-wide, not chat-scoped: node capacity is shared by every
+  interaction the backend serves, so one agent learning that the node is out of
+  room is information the whole fleet can use. It is a wait, never a block — it
+  is bounded by the generation context (a user stop ends it) and capped at one
+  capacity window;
+- the failure that reaches the model is its own message
+  (`buildSandboxCapacityToolErrorPlaceholder`): the sandbox could not be
+  *scheduled* because the node is out of CPU/memory, it does **not** consume the
+  failed-tool budget, and the agent should wait or continue with work that needs
+  no sandbox instead of re-provisioning in a loop;
+- the condition is surfaced separately from a generic transient failure: the tool
+  call carries `sandbox_capacity` alongside `retries`/`budget_exempt`, and the
+  `interaction_complete` payload reports
+  `tool_call_sandbox_capacity_failed_count`, so a saturated node is visible in the
+  transcript instead of only in the backend log.
+
+The capacity backoff base is configurable per deployment with
+`OCI_MSGMATE_CODER_SANDBOX_CAPACITY_RETRY_BASE_DELAY_MS` (default `5000`, the ramp
+is capped at `30s`); the attempt count is the shared
+`OCI_MSGMATE_CODER_TOOL_FAILURE_RETRY_ATTEMPTS` of ci#688. This is the application
+half of the fix — it makes the loop wait instead of stampeding — and does not
+replace the capacity levers themselves (node sizing, the right-sized per-chat
+requests of ci#604, the pooled/shared mode of ci#545).
+
+### Scheduling the next turn is bookkeeping, not work (ci#724)
+
+`coder_schedule` is how a lead agent keeps a loop running without an external
+CronJob: it persists its own prompt as the next user-side message of the chat and
+enqueues the reply with `asynq.ProcessIn(delay)`. Because scheduling *does no work*
+— it only re-arms a later turn — the call must not shorten the turn that made it,
+otherwise a turn that schedules its next pulse from inside a long loop would
+consume part of the very budget it is trying to hand to the future.
+
+`backend/api/msgmate/tool_budget.go` therefore holds the exemption rule:
+
+- `budgetExemptToolNames` names the bookkeeping tools (`coder_schedule`); a call of
+  such a tool is marked `turnBudgetExempt` when the executed call is recorded
+  (`openai.go`), so the rule lives next to the call it describes;
+- the round is charged through the pure `toolCallBudgetAccounting`, which returns
+  the charged and the exempt counts separately. Only charged calls increase
+  `totalToolCalls`, so the tool-call cap still bounds how much *work* a turn does
+  (a turn that schedules in a loop cannot run forever), it just no longer counts
+  the scheduling itself;
+- the **failed-tool budget is deliberately unaffected**: a schedule that cannot be
+  enqueued (no queue handle, a rejected delay) is a real failure the agent should
+  see and act on, not bookkeeping;
+- the exemption is visible instead of implicit: the call carries
+  `turn_budget_exempt` in the tool-call details, `tool_call_budget_exempt_count`
+  travels in the `interaction_complete` payload, and the turn's
+  `tool_call_usage` metadata gains `budget_exempt_total`, so a self-re-arming turn
+  is readable from the chat.
+
+Regression tests: `backend/api/msgmate/tool_budget_test.go`.
+
+### Native coding-agent provider concurrency control
+
+Under full-throttle development (many native agents at once) a shared provider
+key (typically OpenRouter) answers **HTTP 402 "This request would exceed your
+available credits given your current in-flight requests"** — a per-key
+*in-flight* cap, not an account-credit cap (ci#620). The native `msgmate_coder`
+runtime therefore admits every provider request through a **per-key in-flight
+limit**: additional requests queue (up to the queue timeout) and succeed instead
+of 402ing, the current in-flight/queue counts are exposed, requests over the cap
+that *do* get rejected with 402/429 fail over to a configured fallback
+provider/secondary key, and the runtime keeps metrics (in-flight, 402/429 rate,
+queue wait, saturation events) so the development loop can self-throttle.
+
+The default in-flight cap is 3 — the development-loop controller's
+`MAX_CONCURRENT` default (ci#592) — and is bounded by the pooled sandbox bound
+`coder_sandbox_max_agents_per_pool` / `OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL`
+(ci#602) when that is smaller. **The deployment lever wins over the per-agent
+key**: the shared-config default merge materialises
+`coder_provider_max_concurrency: 3` into every native coder agent's config, so
+a "config first, env second" precedence pins the whole fleet at 3 forever (that
+was ci#620 — the effective admission cap never left the literal default, no
+matter what `OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY` said). Resolution
+order is therefore env → per-agent key → pool bound → default, the resolved
+source is logged with the cap, and an existing limiter is resized in place: a
+raised cap admits more requests immediately, a lowered cap only takes effect as
+in-flight requests drain, so a change lands without a redeploy.
+
+The core-side admission controller (`backend/api/msgmate/provider_admission.go`)
+admits every provider request of the built-in chat path through that per-key
+limiter and logs `provider_admission` with `effective_max_concurrency`,
+`in_flight`, `queue_waiting` and the config `source`; the admin-only
+`GET /api/v1/admin/provider-admission` route reports the same state for the
+whole process (the raw env levers, the resolved policy and one snapshot per
+admission key, never key material). The per-agent keys
+(`coder_provider_max_concurrency`, `coder_provider_queue_timeout_ms`,
+`coder_provider_fallback_on_saturation`,
+`coder_provider_fallback_backend`/`_model`/`_endpoint`/`_api_key_env`,
+`coder_provider_fallbacks`) mirror the deployment env
+(`OCI_MSGMATE_CODER_PROVIDER_MAX_CONCURRENCY`, `..._QUEUE_TIMEOUT_MS`,
+`..._FALLBACK_ON_SATURATION`, `..._FALLBACKS`). A fallback of a known provider
+with no explicit key env resolves `<PROVIDER_API_KEY>_FALLBACK`, so an operator
+only has to export one extra variable to shed load onto a second key. No key —
+primary or secondary — is ever exposed: the admission identity and every status
+snapshot carry only a truncated hash/length hint. `coder_context` reports the
+in-flight count and cap, and the admin-only
+`GET /api/v1/integrations/msgmate_coder/provider/status` route reports the
+per-key metrics for the loop. The full reference lives in the
+`msgmate_coder` integration README.
+
+### Sandbox-pool memory budget: measure first, then bound (ci#662)
+
+The pooled sandbox levers above are all *counts* (agents per pool, provider
+in-flight); the resource that actually runs out first is memory. ci#662 closes
+that gap in two steps, in this order — **measure, record, then bound** — because
+a guessed per-sandbox request that is too large throttles the pool while one that
+is too small only moves the failure into the kernel OOM killer.
+
+**1. Measurement.** `development/scripts/sandbox-memory-inventory.sh` is a
+read-only `kubectl` inventory of the sandbox namespace. It reports the totals and
+the largest per-sandbox CPU/memory request and limit, the pod count split by age
+bucket (`live`, `idle` above `IDLE_TTL_SECONDS` = 2700s, `orphan` above
+`ORPHAN_TTL_SECONDS` = 86400s, matching the reaper), running vs stopped, every
+node's capacity/allocatable and the memory already requested on it, the
+resulting `sandboxes_that_fit` and `effective_agents_per_pool` on the **smallest**
+allocatable node (the pool may land on any node of the group, so sizing against
+the average still hits `Insufficient memory` on the small one), and a best-effort
+`kubectl top nodes/pods` reading when a metrics server exists (its absence is
+reported, never fatal). The output is greppable `sandbox_memory key=value` lines,
+is appended to `GITHUB_STEP_SUMMARY`, and ends with the exact deployment env the
+numbers imply:
+
+```text
+sandbox_memory replay_env OCI_MSGMATE_CODER_SANDBOX_MEMORY_REQUEST=2Gi \
+  OCI_MSGMATE_CODER_SANDBOX_MEMORY_LIMIT=8Gi \
+  OCI_MSGMATE_CODER_NODE_ALLOCATABLE_MEMORY=16Gi \
+  OCI_MSGMATE_CODER_SANDBOX_MEMORY_RESERVE=1638Mi
+```
+
+It mutates nothing; an empty or unmeasured namespace prints `source=unmeasured`
+and the bound stays off.
+
+**2. The bound.** `backend/api/msgmate/sandbox_memory_budget.go` resolves a
+fail-open budget from those numbers: per-sandbox request/limit, node allocatable
+and reserve (env wins over the per-agent `coder_sandbox_*` keys, then the
+materialised default — the same precedence lesson as ci#620), `MaxAgentsByMemory`
+= `(allocatable − reserve) / request` with **one sandbox of headroom left out** so
+the pool can still admit a new chat while every current agent runs, and
+`EffectiveAgentsPerPool` = the minimum of the configured ci#602 pool bound, the
+ci#620 provider cap and that memory bound. The reserve defaults to 10% of
+allocatable. With no measurement, nothing is bound: a deployment that has not
+measured must not be bricked by a guess. The resolved budget (bytes, sources and
+the resulting bound) is exposed on the admin-only
+`GET /api/v1/admin/provider-admission` response as `sandbox_memory_budget`, next
+to the provider admission state.
+
+**3. The recorded numbers.** The measurement was replayed for the current
+deployment: with a per-sandbox request of `2Gi` and a `16Gi` node, `~7` sandboxes
+fit and the effective agents-per-pool is `6`, i.e. **below** the configured
+`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL=8` of ci#602 — eight pooled agents could
+not all be scheduled on one 16Gi node at `2Gi` each. The ci#529 delta already
+prepares the right-sizing lever (a `512Mi` sandbox request/limit instead of
+`2Gi`), which the same script reports as `~28` that fit; that config change stays
+a deployment decision in the ci repo, not a code edit here. The arithmetic is
+pinned cluster-free by `development/scripts/tests/test_sandbox_memory_inventory.sh`
+(a stub `kubectl` feeding 4 pods × `2Gi`/`8Gi` on a `16Gi` node asserts
+`total_request=8Gi`, `total_limit=32Gi`, `live=2 idle=1 orphan=1 stopped=1`,
+`sandboxes_that_fit=7`, `effective_agents_per_pool=6`, plus the `unmeasured`
+path and the summary append), so a regression in the numbers fails a test rather
+than a production scheduler.
+
+### Native coding-agent auto-consolidation (default ON)
+
+A native `msgmate_coder` agent consolidates its **own ready pull requests by
+default** (ci#653): it no longer depends on the scheduled loop controller or a
+human to roll a batch up. The behaviour is driven by the `auto_consolidation`
+block of the agent's shared config, which the core merges into every config that
+declares a native coder agent (a `coder_*` role/sandbox/provider key, a `coder_*`
+tool, or a `coder_select_workspace` tool_init entry) instead of leaving it to
+each agent (or bot template) to opt in:
+
+```yaml
+auto_consolidation:
+  enabled: true            # default ON
+  threshold: 1             # consolidate as soon as >= 1 PR is ready
+  base: main
+  scope: repo              # only this repo's PRs (optionally `repos: [owner/name]`)
+  authors: [self]          # only our bot's PRs unless configured otherwise
+  require_green: true      # never include failing/conflicting/draft PRs
+  labels: [test, build, e2e, test-core-only, ai-test-mock, ai-test-real, sandbox-test, deploy]
+  branch_prefix: chore/consolidate
+  one_open_at_a_time: true # new PRs roll into the NEXT consolidation (ci#652)
+  rollup_issue: true       # maintain a consolidation tracker issue (ci#415)
+```
+
+The block is merged at the same two places the integration shared-config defaults
+are: when a bot's `default_shared_config` is written/updated (and defaults are
+applied to an interaction's effective config) and when a chat is created. Both
+run the integration defaults and then the coder default, so it applies in a
+full build and in `core-only`, where no `msgmate_coder` integration is compiled
+in.
+
+Behaviour (at the shared interaction-completion choke point, next to the
+auto-continuation loop of ci#537 and the post-interaction hook of ci#649):
+
+1. detect the **ready** open PRs in scope — green checks, targeting `main`,
+   non-draft, mergeable, authored by the agent;
+2. open **exactly one** `chore/consolidate-<date>` PR that folds them in, or
+   refresh the one that is already open, and apply the standard label set;
+3. merge it through the existing auto-approve path (ci#538) once every required
+   check is green;
+4. keep exactly one consolidation PR open: later ready PRs roll into the **next**
+   consolidation (ci#652), and `rollup_issue` keeps the tracker issue (ci#415)
+   current.
+
+The pass runs only when a GitHub credential (`OPEN_CHAT_GITHUB_POST_TOKEN`,
+`GITHUB_TOKEN` or `GH_TOKEN`) and a repository (`OPEN_CHAT_GITHUB_REPO`, or the
+per-agent `auto_consolidation_repo` key) are configured; without them it is a
+no-op, so a stock deployment is unaffected. The per-chat pass is rate-limited to
+one run per minute so an auto-continued interaction does not re-run it on every
+turn.
+
+Toggle and rollback (three levels, most specific wins):
+
+- per agent: `"auto_consolidation": {"enabled": false}` in the bot's
+  `default_shared_config` (or `require_confirmation`-style config delta);
+- per fleet: `OCI_MSGMATE_CODER_AUTO_CONSOLIDATION=0` (also `false`/`off`/`no`/
+  `disabled`) suppresses the default for every agent that does not set the key
+  explicitly;
+- `auto_consolidation: {"threshold": N, "authors": ["*"], "one_open_at_a_time":
+  false, ...}` narrows or widens any other field for a single agent.
+
+`deploy` and `sandbox-test` appear in the label set **only** because a
+consolidation PR targeting `main` is the single place where a batch of ready
+changes is verified as a whole (see "Pull-request CI labels and deployment
+policy" above); feature/bugfix/chore PRs keep the ordinary code-change labels.
+
+### Development lead: CI-error relay ingestion and routing (ci#608)
+
+The development lead ingests relayed CI-failure events and routes each one to
+the repo's development-agent interactions. The ingest + routing decision lives in
+the integration-free `backend/nativecoder` package (`devlead.go`), so both the
+core-only and the full build carry it and it is unit-testable without an
+integration profile; the integration-side transport/hook that delivers the event
+belongs to the base-integration extension (ci#607) and only emits the payload.
+
+Contract and behaviour:
+
+- **Payload** — a small, versioned, secret-free `ci_failure` event (`ci_error` is
+  accepted as an alias): `repo` (required), `provider`, `pr_number`, `branch`,
+  `sha`, `run_url`, `failing_jobs`, `failure_logs`, `attempt`, `severity`,
+  `occurred_at`. A payload advertising a newer `schema_version` is rejected
+  instead of being misinterpreted (`ParseCIFailureEvent`).
+- **Fix session** — the dedupe/attempt-cap identity is per repo+PR, else
+  repo+branch, else repo+commit (`FixSessionKey`); repo and branch are
+  normalized (lower-cased, `.git` and `refs/heads/` stripped).
+- **Candidates** — the routing primitive `CandidateInteractions` enumerates the
+  failing repo's live + recent interactions (a running interaction always
+  qualifies, a past one only inside `DefaultDevLeadRecentWindow`, 24h), ordered
+  most-recent-first with a UUID tiebreak so routing is deterministic.
+  `ResolveLeadInteraction` answers the agent-chooser question "which interaction
+  receives this repo's CI-relay traffic?" (running lead, else running, else most
+  recent recent interaction).
+- **Routing order** (`DevLeadRouter.Route`): (1) `dedupe_existing` when an
+  already-open fix session for the same fix-session key owns the attempt — no
+  second fix attempt; (2) `escalate_maintainer` when the fix-cycle cap
+  (`DefaultFixCycleMaxAttempts`, 3, overridable) is exhausted — no dispatch;
+  (3) `append_ongoing` to the running interaction, preferring one that last
+  touched the failing branch/PR; (4) `reactivate_past` the recent past
+  interaction that produced the change; (5) `spawn_new` a fresh plan→implement
+  session on the failing branch.
+- **Re-prompt** — `LeadRoutingDecision.Prompt` renders the structured fix
+  request appended to the chosen interaction: target identifiers, failing jobs
+  and failure output, the routing decision plus a **visible trail** (which
+  candidate was chosen and why, which were ignored and why), the
+  `<!-- oci-ci-failure-fix -->` dedupe marker, and the **never-poll-CI** rule —
+  the agent pushes the fix and stops, the lead reacts to the next relayed event.
+
+### CI-failure relay is quiet and lead-driven (ci#734)
+
+A failed CI run is no longer turned into an `issue-plan-bot` fix-plan session
+with a `plan_auto_implement` planner+implementer pair. The `ci-failure-planner`
+job in `.github/workflows/run-pr-ci-tests-and-deployments.yaml` (job id/name
+kept, so the required status check still reports) now relays the failure
+directly to the open-chat-go **development lead** agent, and only for
+consolidation PRs:
+
+- Trigger scope: same-repo `pull_request` to `main` whose head branch starts
+  with `chore/consolidate-`. Feature, bugfix and docs PRs get **no** comment and
+  **no** interaction at all.
+- The payload building and relay live in `development/scripts/ci_failure_relay.py`
+  (unit-tested by `development/scripts/test_ci_failure_relay.py`, run by the
+  `pin-freshness-gate` job), not inline in the workflow.
+- The lead interaction is resolved from `OPEN_CHAT_LEAD_CHAT_UUID` when
+  configured, else the interaction of `OPEN_CHAT_LEAD_BOT` (default
+  `msgmate-coder-development-lead`), preferring `is_active` and falling back to
+  the most recent one; `POST /api/v1/agents/interactions/{uuid}/continue` with
+  `resume_auto_continue: true` delivers the message. If no lead interaction
+  exists, `/api/v1/agents/dispatch` starts one with a stable per-(repo, PR, head
+  SHA) `dedupe_key`.
+- **One** PR comment only: it names the lead and the run URL and pins a
+  per-(PR, head SHA) marker, so a duplicate run for the same head relays
+  nothing. Attempts are bounded by `CI_FIX_MAX_ATTEMPTS`; when the cap is
+  reached the job posts a `limit reached` comment and adds the
+  `ci-fix-blocked` label instead of relaying again.
+- The lead message carries repo, PR number/branch/SHA, run URL and the failing
+  jobs, states that no fix-plan session was created, and repeats the
+  **never-poll-CI** rule: fix, push, stop — the lead reacts to the next relayed
+  event. No secret value is ever printed; `--dry-run` (or `DRY_RUN`) does
+  everything except call the APIs.
+- To inspect the routing without touching a live lead, dispatch the workflow
+  manually with `DRY_RUN=true` and the `pr_number` / `pr_branch` / `pr_sha`
+  inputs: the `ci-failure-relay-dry-run` job prints the message and comment body
+  it would send and makes **no** API call, and the test/deploy pipeline is
+  skipped for that dispatch. Because a dry-run resolves no interaction, its
+  comment body names the lead but reports the interaction as `resolved at
+  runtime` instead of inventing a UUID.
+
+### One live development lead per repo: dispatch dedupe keys (ci#625)
+
+The native tooling that replaces opencode is driven by a **development lead**
+agent that dispatches worker agents itself (ci#540), so the same lead can be
+started from several places at once — the scheduled loop controller, an
+in-app button, a reporter bot. Those dispatches carried a tag like `handover`
+but no stable per-repo identity, so each one started a *full* second
+`msgmate-coder-development-lead` interaction: two leads then dispatched and
+consolidated the same work in parallel and burned a full agent each
+(~3 leads in 30 minutes in the ci#625 handover).
+
+`POST /api/v1/agents/dispatch` therefore accepts two extra fields:
+
+```json
+{
+  "bot": "<lead bot uuid>",
+  "message": "run the development loop for open-chat-go-ci",
+  "tags": ["repo:open-chat-go-ci"],
+  "dedupe_key": "open-chat-go-ci",
+  "force": false
+}
+```
+
+- `dedupe_key` is a stable dispatch identity. It is normalized
+  (`dedupeKeyTag`) to the chat tag **`lead:<key>`** — lowercased, trimmed,
+  spaces folded to `-`, an existing `lead:` prefix kept — and that tag is
+  attached to the interaction, so leads stay greppable in
+  `GET /api/v1/agents/interactions`.
+- While an interaction carrying that tag is **live** — `IsActive`, or parked on
+  `needs_confirmation` — the dispatch starts **no** second agent. It returns the
+  existing one with `"deduplicated": true` and the normalized `dedupe_key`, so
+  the caller steers that interaction via `continue`/`stop` instead of duplicating
+  it. The dedupe lookup honours the same caller-scope gate as the other verbs
+  (owner / `agent_dispatch.dispatched_by` / `agent_scope_tags`), so one lead
+  cannot be intercepted by an unrelated bot of the same owner.
+- An **idle/finished/failed** interaction with the tag does not block a new
+  turn: a finished lead may be dispatched again normally.
+- `"force": true` bypasses the guard for the rare case a concurrent lead is
+  explicitly wanted; a dispatch **without** a `dedupe_key` is never deduplicated.
+
+Per-agent callers (the loop controller, in-app dispatch) should send a
+`dedupe_key` per repo (`open-chat-go-ci`, `open-chat-go`, …) so exactly one live
+lead exists per repo. The code path lives in
+`backend/api/bots/AgentDispatch.go` (`dedupeKeyTag`,
+`liveInteractionForDedupeKey`) and is covered by
+`backend/api/bots/AgentDispatchDedupe_test.go`.
+
+### Native coder turns: inline tool calls and leaked compaction transcripts
+
+A provider round can deliver two kinds of output the native coder must never
+persist as a turn's assistant text (ci#428, ci#562):
+
+- an **inline tool call** the provider did not map onto the structured
+  `tool_calls` field — DeepSeek **DSML** control tokens, the Anthropic/XML
+  `<function_calls><invoke name="…">` shape, or the `[[tool_name key="value"]]`
+  bracket placeholder some models fall back to. Detection runs against the
+  *accumulated* stream (markers are split across deltas, so recognising them
+  only once complete would already have leaked the prefix), content is withheld
+  from the client, and the call is reassembled and executed after the stream
+  ends (`parseInlineToolCalls`). A block from which nothing can be recovered
+  fails the turn with `errMalformedInlineToolCall`;
+- a **leaked context-compaction transcript** — the model volunteering its own
+  bookkeeping, an `<analysis>…</analysis>` block followed by a numbered
+  `<summary>…</summary>` block ("Primary Request and Intent", …,
+  "Optional Next Step"). It is model bookkeeping, never an answer, so it is
+  stripped before the round result is returned; the private `tags=coder`
+  benchmark `msgmate_coder_repo_changes_summary` caught exactly that emission
+  as a final reply (the summary file was never written and the reply *was* the
+  blob). Only a message that **opens** with such a tag (optionally after a
+  fence) is treated as a leak — an ordinary answer that merely mentions the tag
+  inside real prose is left untouched.
+
+Either shape counts as "no usable text" for the same single retry the empty
+post-confirmation continuation already got (ci#428): when a round's only output
+was a stripped transcript the loop retries it once instead of finishing on it.
+If the retry produces another transcript the turn fails with
+`errLeakedCompactionTranscript`, classified as its own
+`leaked_compaction_transcript` failure reason so the chat explains it with the
+"the model returned its internal work notes; the work already done is kept —
+send another message" guidance instead of a generic internal error, and no
+empty reply is ever persisted. Recovery lives in
+`backend/api/msgmate/inline_tool_call.go` (parsers) and
+`backend/api/msgmate/compaction_output.go` (compaction detection/stripping),
+with the streaming suppression in `processStreamingResponseReader`.
+
+### Native coder turns: repetition loops (ci#670)
+
+A third degenerate emission is an **unbounded repetition loop**: the model
+re-emits the same short line or phrase (`</invoke>`, `...`, `Ok.`, `Write.`, a
+degenerate Anthropic/XML inline call) thousands of times. Nothing upstream of
+the reader stops it, so a single turn used to persist 150–255 KB of identical
+junk into the chat, pollute the next turn's context and burn the whole
+completion budget before the turn was cancelled — feeding the bogus "I paused
+this response" noise of ci#642/#643.
+
+`detectRepetitionLoop` (`backend/api/msgmate/repetition_guard.go`) watches a
+bounded tail (8 KiB, so the per-delta cost stays constant however long the
+response grows) for a unit of at most 240 bytes repeated at least 12 times in a
+row over at least 300 characters. The thresholds are deliberately conservative:
+a bulleted list, a table, a code fence, a short ASCII rule or an answer that
+merely repeats a phrase a few times is never mistaken for a loop.
+
+When the guard trips, `processStreamingResponseReader` stops reading the
+provider stream, truncates the repeated run and appends the one-line note
+`[stopped: repeated output detected]`, then finishes the turn normally through
+the ordinary streaming path (so the truncated snapshot is what gets persisted).
+Text emitted before the loop is kept. The round result carries
+`repetitionLoop`, and the provider request record reports
+`failure_reason=repetition_loop` so the degeneracy is visible in usage
+tracking/metrics without parsing the assistant text.
+
+### Context overflow: tool outputs are budgeted (ci#680)
+
+A native agent used to fail mid-task with `exceeded maximum context` after a few
+exploratory tool calls. Tool results were appended to the conversation verbatim,
+and a single `coder_list` of the monorepo returns ~380 entries while a whole-file
+`coder_read` or a `coder_bash` dump is tens of KB, so a handful of them blew the
+provider window and the turn died instead of continuing. Three guards now keep a
+turn inside the window (`backend/api/msgmate/context_budget.go`):
+
+1. **Per-tool output budget.** Every result is hard-truncated at its own limit
+   before it enters the transcript, with an explicit marker that names the tool,
+   reports the original size and tells the model how to fetch the missing part
+   (`coder_read`: `offset`/`limit`, `coder_list`: `depth`/entry cap, `coder_grep`:
+   `include`/`paths`, or redirect to a file and read ranges). The compiled-in
+   per-tool budgets are tight for the tools that are cheap to re-issue and
+   expensive in context (`coder_list`/`coder_glob` 4 KB, `coder_grep` 6 KB,
+   `coder_bash`/`coder_git` 8 KB, `coder_read` the 12 KB default). They are
+   configurable per chat/bot with the shared-config key `tool_result_max_chars`
+   (either an integer fallback or a `{tool: limit, default: limit}` object) and
+   deployment-wide with `OCI_MSGMATE_CODER_TOOL_RESULT_MAX_CHARS`, which clamps
+   every per-tool limit.
+2. **Conversation budget guard.** Before every request the history is measured
+   against the chat's character budget (`context_budget_chars`, deployment
+   override `OCI_MSGMATE_CODER_CONTEXT_BUDGET_CHARS`, default 120 000 chars ≈ 30k
+   tokens). Above it, older tool results and intermediate narration are replaced
+   by a short eviction marker — oldest first, so the newest rounds survive longest
+   — a huge non-newest user message is truncated, and as a last resort whole old
+   messages are dropped. Leading system messages (an injected compaction summary),
+   every user message and the newest turn are never touched, and the
+   tool-call/tool-result pairing is repaired afterwards so the request stays valid.
+   The most recent tool-call round (the assistant message declaring the newest calls
+   plus every result of that round) is protected too, however far back it sits:
+   rewriting the result of the call the model just made into an eviction marker once
+   made a turn re-issue the identical call dozens of times (ci#728, 18 identical
+   `coder_read` in a 110-call run), so the tool eviction marker now states that the
+   call already ran and must *not* be re-issued (a narrower range or a
+   redirect-to-file is suggested instead).
+   The guard only ever shrinks a history that already exceeds the budget, so it is
+   a no-op on the normal path. The existing provider-driven trim-and-retry
+   (ci#394 gap 7) still backs it up for a window smaller than the budget assumes.
+3. **A usage report.** The last request of every round is measured and recorded:
+   characters used vs. the budget, a conservative token estimate, the message and
+   tool-result counts, the largest tool result, how many results were truncated,
+   evicted or dropped, and the effective per-tool limits. It travels as
+   `context_budget` message metadata and is returned by the `coder_context` tool
+   (backed by the coding integration's own name when it ships one), so an agent
+   can self-throttle before the window is exhausted (ci#654). Above 60 % of the
+   budget a one-line self-throttling notice is merged into the leading system
+   message (replaced each round, never stacked).
+
+Regression tests: `backend/api/msgmate/context_budget_test.go` (a turn with four
+40 KB tool results stays under the budget and completes; the truncation marker
+and the eviction markers are explicit; the guard is idempotent and keeps the
+pairing), `backend/api/msgmate/coder_context_tool_test.go` and
+`backend/api/msgmate/tools/coder_context_tool_test.go`.
+
+### Native coder turns: repeated identical tool calls (ci#569, ci#728)
+
+An exact repeat of a call that already *succeeded* in the same turn is not
+dispatched again: `executeToolCall` keys a per-turn cache
+(`executedToolResults`) by the content signature `name:arguments` and replays the
+cached payload. Failures are deliberately **not** cached — the state may change
+between two identical calls (a coding workspace becomes selected after the first
+`coder_read` failed), and replaying a stale error would trap the model in a
+failure loop instead of letting it recover.
+
+Replaying the payload verbatim was itself a trap (ci#569: a turn burned 110 tool
+calls, 18 of them an identical `coder_read`): the model could not tell a replayed
+result from a fresh one, so it re-issued the identical call until the turn was
+stopped. A replay is now **visibly a replay** (`duplicate_tool_call.go`,
+`FrameDuplicateToolCallResult`): the transcript version opens with
+`[duplicate tool call] <tool> was already executed in this turn with exactly these
+arguments.`, keeps the replayed payload verbatim (the model may still need its
+content), and closes with the instruction that the call was not executed again —
+`Do NOT re-issue it: act on the result you already have, or change the arguments.`
+plus a tool-specific alternative (`coder_read`: `offset`/`limit`, `coder_list`:
+`depth`, `coder_grep`: `path`/`include`, `coder_bash`: redirect to a file and read
+ranges, …). The instruction comes last so it is the final thing the model reads,
+and the UI tool-call row keeps the plain cached payload — the frame is a model
+instruction, not user-facing output.
+
+Regression tests: `backend/api/msgmate/duplicate_tool_call_test.go` (the frame is
+explicit and ordered, empty/unknown tools degrade gracefully, and a re-issued
+identical call is not dispatched again while its transcript version carries the
+frame).
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
