@@ -279,8 +279,8 @@ func TestApproveInteractionConfirmationAppliesOverrides(t *testing.T) {
 
 	rr := callInteractionConfirmationWithBody(t, DB, owner, chat, confirmation, client, inspector, "approve", map[string]interface{}{
 		"config_overrides": map[string]interface{}{
-			"opencode_agent":   "plan",
-			"opencode_variant": "high",
+			"opencode_agent":        "plan",
+			"opencode_variant":      "high",
 			"opencode_model_source": "runtime_default",
 		},
 	})
