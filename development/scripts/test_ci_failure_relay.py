@@ -163,6 +163,20 @@ class PayloadAndMessageTests(unittest.TestCase):
         self.assertNotEqual(first, relay.build_dedupe_key(event(pr_sha="999999999999")))
 
 
+class CommentBodyTests(unittest.TestCase):
+    def test_unresolved_target_reads_as_resolved_at_runtime(self):
+        """A dry-run resolves no interaction, so the body must not print a bare '?'."""
+        body = relay.build_comment_body(event(), 1, 3, relay.DEFAULT_LEAD_BOT, None, False)
+        self.assertIn("resolved at runtime", body)
+        self.assertNotIn("interaction `?`", body)
+
+    def test_resolved_target_names_the_interaction(self):
+        body = relay.build_comment_body(event(), 1, 3, relay.DEFAULT_LEAD_BOT,
+                                        {"chat_uuid": "lead-chat"}, False)
+        self.assertIn("interaction `lead-chat`", body)
+        self.assertNotIn("resolved at runtime", body)
+
+
 class MarkerAndAttemptTests(unittest.TestCase):
     def test_marker_round_trips_attempt_and_sha(self):
         marker = relay.build_relay_marker(event(), 2)

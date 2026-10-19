@@ -183,7 +183,9 @@ def build_comment_body(event: dict, attempt: int, max_attempts: int, lead_bot: s
     elif dispatched:
         status = "relayed to the development lead `{}` (new interaction dispatched)".format(lead_bot)
     else:
-        ref = target.get("chat_uuid") if target else "?"
+        # A dry-run makes no API call, so without OPEN_CHAT_LEAD_CHAT_UUID there
+        # is no interaction to name yet; say so instead of rendering a bare "?".
+        ref = (target or {}).get("chat_uuid") or "resolved at runtime"
         status = "relayed to the live development lead `{}` interaction `{}`".format(lead_bot, ref)
     return (
         "{marker}\n"
