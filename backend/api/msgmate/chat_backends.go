@@ -48,8 +48,13 @@ func lookupChatBackend(name string) (ChatBackendFunc, bool) {
 }
 
 // IsRegisteredChatBackend reports whether an external chat backend is
-// registered under the given name (case-insensitive).
+// registered under the given name (case-insensitive). A backend retired by the
+// native-coder cutover (ci#584) reports false even while its integration is
+// still installed, so a stale config cannot route a chat onto it.
 func IsRegisteredChatBackend(name string) bool {
+	if IsRetiredChatBackend(name) {
+		return false
+	}
 	_, ok := lookupChatBackend(name)
 	return ok
 }
@@ -76,6 +81,11 @@ func ResolveChatBackend(db *gorm.DB, chatUUID string) (ChatBackendFunc, map[stri
 	backendName := chatstate.ChatBackendNameFromConfig(config)
 	if backendName == "" {
 		return nil, nil, false
+	}
+	// A chat still pinned to a retired backend (opencode) falls back to the
+	// built-in native path instead of being routed onto it (ci#584).
+	if IsRetiredChatBackend(backendName) {
+		return nil, config, false
 	}
 	fn, ok := lookupChatBackend(backendName)
 	if !ok {
