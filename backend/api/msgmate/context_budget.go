@@ -388,6 +388,24 @@ type ContextCompactionStats struct {
 	DroppedMessages int `json:"dropped_messages"`
 }
 
+// mergeContextCompactionStats folds a second compaction pass into the first, so
+// a round that had to be squeezed twice (ci#822 r46: once with the notice
+// reserved, once for real) still reports the totals of the whole round.
+func mergeContextCompactionStats(first ContextCompactionStats, second ContextCompactionStats) ContextCompactionStats {
+	merged := first
+	if second.MessagesBefore > 0 {
+		merged.MessagesBefore = second.MessagesBefore
+	}
+	merged.MessagesAfter = second.MessagesAfter
+	merged.TotalCharsBefore = second.TotalCharsBefore
+	merged.TotalCharsAfter = second.TotalCharsAfter
+	merged.EvictedToolResults += second.EvictedToolResults
+	merged.EvictedNarration += second.EvictedNarration
+	merged.EvictedUserMessages += second.EvictedUserMessages
+	merged.DroppedMessages += second.DroppedMessages
+	return merged
+}
+
 // ContextUsageReport is the token/usage report of one outgoing request
 // (ci#680). It is recorded per chat, surfaced as `context_budget` message
 // metadata and returned by the `coder_context` tool, so an agent can
@@ -569,19 +587,40 @@ func contextUsageLookup(chatUUID string) (map[string]interface{}, bool) {
 // It returns the message list, what it did and whether anything changed; when
 // nothing changed the original slice is returned.
 func compactMessagesToContextBudget(messages []map[string]interface{}, budgetChars int) ([]map[string]interface{}, ContextCompactionStats, bool) {
+	return compactMessagesToContextBudgetReserving(messages, budgetChars, 0)
+}
+
+// compactMessagesToContextBudgetReserving is compactMessagesToContextBudget with
+// headroom reserved for text that is appended to the request *after* the guard
+// ran.
+//
+// The self-throttling notice is merged into the leading system message, which
+// the guard never rewrites (both passes skip it), so text added there can no
+// longer be compensated by a later compaction. ci#822 r46: a round whose
+// pre-notice total measured as fitting (59889 of 60000 chars) was sent at 60190
+// chars once the notice was merged in. Reserving the notice's length before the
+// compaction is what keeps every outgoing request under the budget.
+func compactMessagesToContextBudgetReserving(messages []map[string]interface{}, budgetChars int, reserveChars int) ([]map[string]interface{}, ContextCompactionStats, bool) {
 	stats := ContextCompactionStats{
 		MessagesBefore:   len(messages),
 		MessagesAfter:    len(messages),
 		TotalCharsBefore: messagesCharCount(messages),
 	}
 	stats.TotalCharsAfter = stats.TotalCharsBefore
-	if budgetChars <= 0 || stats.TotalCharsBefore <= budgetChars {
+	effectiveBudget := budgetChars
+	if reserveChars > 0 {
+		effectiveBudget = budgetChars - reserveChars
+		if effectiveBudget < 0 {
+			effectiveBudget = 0
+		}
+	}
+	if effectiveBudget <= 0 || stats.TotalCharsBefore <= effectiveBudget {
 		return messages, stats, false
 	}
 
-	target := budgetChars * contextBudgetTargetRatioPercent / 100
+	target := effectiveBudget * contextBudgetTargetRatioPercent / 100
 	if target < 1 {
-		target = budgetChars
+		target = effectiveBudget
 	}
 
 	out := make([]map[string]interface{}, len(messages))
@@ -734,6 +773,45 @@ func contextBudgetNotice(report ContextUsageReport) string {
 		report.UsedChars, report.BudgetChars, report.EstimatedTokens, report.UsedPercent,
 		report.TruncatedToolResults, report.EvictedToolResults,
 	)
+}
+
+// contextBudgetNoticeReserveChars is the headroom reserved in the compaction
+// budget for the self-throttling notice (plus the blank line separating it from
+// the system prompt), so merging the notice in cannot push a request over the
+// budget the guard exists to enforce (ci#822 r46).
+const contextBudgetNoticeReserveChars = 400
+
+// contextBudgetNoticeFor returns the notice a given message list would get, or
+// "" when it stays below the threshold. It is the exact text
+// injectContextBudgetNotice merges in, so the compaction can reserve its length
+// before the guard runs.
+func contextBudgetNoticeFor(messages []map[string]interface{}, report ContextUsageReport) string {
+	if report.BudgetChars <= 0 || report.UsedPercent < contextBudgetNoticeThresholdPercent {
+		return ""
+	}
+	if existing := leadingSystemNoticeText(messages); existing != "" {
+		return existing
+	}
+	return contextBudgetNotice(report)
+}
+
+// leadingSystemNoticeText returns the budget notice already merged into the
+// leading system message, or "" when there is none.
+func leadingSystemNoticeText(messages []map[string]interface{}) string {
+	for _, message := range messages {
+		if roleOf(message) != "system" {
+			continue
+		}
+		content, _ := message["content"].(string)
+		for _, paragraph := range strings.Split(content, "\n\n") {
+			trimmed := strings.TrimSpace(paragraph)
+			if strings.HasPrefix(trimmed, "[context budget:") {
+				return trimmed
+			}
+		}
+		return ""
+	}
+	return ""
 }
 
 // injectContextBudgetNotice merges the self-throttling notice into the leading
