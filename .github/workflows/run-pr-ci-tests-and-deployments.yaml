@@ -2155,11 +2155,18 @@ jobs:
       # on run 39261844509, PR #844): the gate stayed red for a genuinely
       # superseded run. Pin the PR head so the reconciler that runs is the one
       # from the commit being gated.
+      #
+      # The checkout checks out PR-head code (the reconciler itself), so it may
+      # only hand the privileged BOT_TOKEN to a same-repository PR. A fork PR
+      # gets the read-only `github.token`: it already receives no secrets, and a
+      # write token handed to fork-controlled code is the sharpest edge here.
+      # Credentials are not persisted because nothing in this job pushes.
       - name: Checkout source repository for the superseded-run reconciler
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          token: ${{ secrets.BOT_TOKEN || github.token }}
+          token: ${{ (github.event.pull_request.head.repo.full_name == github.repository && secrets.BOT_TOKEN) || github.token }}
+          persist-credentials: false
 
       - name: Resolve the pull request's live labels
         id: live_labels

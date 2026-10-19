@@ -313,6 +313,22 @@ class WorkflowWiringTests(unittest.TestCase):
             "the reconciler runs from the workspace, so a checkout must come first",
         )
 
+    def test_checkout_never_hands_the_bot_token_to_fork_code(self):
+        """The checkout runs PR-head code, so only same-repo PRs get BOT_TOKEN.
+
+        The reconciler is executed from the checked-out workspace, i.e. the code
+        of the commit under test. A fork PR must therefore never receive the
+        privileged token: it falls back to the read-only `github.token`.
+        """
+        step = self.gate[
+            self.gate.index("Checkout source repository") : self.gate.index(
+                "- name: Resolve the pull request's live labels"
+            )
+        ]
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", step)
+        self.assertNotIn("token: ${{ secrets.BOT_TOKEN || github.token }}", step)
+        self.assertIn("persist-credentials: false", step)
+
     def test_reconciler_exists_where_the_workflow_expects_it(self):
         self.assertTrue(
             os.path.isfile(os.path.join(HERE, "pr_ci_superseded_reconcile.py"))
