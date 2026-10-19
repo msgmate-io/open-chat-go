@@ -71,19 +71,5 @@ func TestDefaultInteractionTagsCoversPerBotAndPerRepo(t *testing.T) {
 	}
 }
 
-func TestNormalizeRepo(t *testing.T) {
-	cases := map[string]string{
-		"msgmate-io/open-chat-go":                        "msgmate-io/open-chat-go",
-		"https://github.com/msgmate-io/open-chat-go.git": "msgmate-io/open-chat-go",
-		"git@github.com:msgmate-io/open-chat-go.git":     "msgmate-io/open-chat-go",
-		"   ":                       "",
-		"open-chat-go":              "",
-		"":                          "",
-		"gitlab.com/group/sub/repo": "sub/repo",
-	}
-	for input, want := range cases {
-		if got := NormalizeRepo(input); got != want {
-			t.Errorf("NormalizeRepo(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
+// TestNormalizeRepo moved to repo_test.go together with the shared
+// implementation (ci#650 + ci#608 both declared it; see ci#730).

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionTaskKey,
+  applyActionTaskCountDecrement,
+  applyActionTaskResolution,
+  isActionTasksCountKey,
   isActionTasksKey,
   isChatListKey,
   isChatStatesKey,
   normalizeCacheKey,
+  patchActionTasksFeed,
 } from "./chat-cache";
 
 // The paginated chat list (ci#579) is fetched with `useSWRInfinite`, which
@@ -30,5 +35,78 @@ describe("chat cache key matching (ci#579)", () => {
     expect(isChatStatesKey("$inf$/api/v1/chats/states?chat_uuids=a")).toBe(true);
     expect(isActionTasksKey("/api/v1/chats/action-tasks?count_only=1")).toBe(true);
     expect(isChatListKey("/api/v1/chats/action-tasks?count_only=1")).toBe(false);
+  });
+});
+
+// The pending action-task feed is served under two shapes behind the same
+// endpoint: the sidebar badge requests `?count_only=1` (only `{count}`), the
+// action-task view requests the plain endpoint (`{count, rows}`). An optimistic
+// update must patch the right shape or the badge and the card list drift apart
+// (ci#726).
+describe("action-task cache keys and optimistic updates (ci#726)", () => {
+  it("detects the compact count-only key, including the SWR infinite marker", () => {
+    expect(isActionTasksCountKey("/api/v1/chats/action-tasks?count_only=1")).toBe(true);
+    expect(isActionTasksCountKey("$inf$/api/v1/chats/action-tasks?count_only=1")).toBe(true);
+    expect(isActionTasksCountKey("/api/v1/chats/action-tasks")).toBe(false);
+    expect(isActionTasksCountKey("/api/v1/chats/action-tasks?scope=all")).toBe(false);
+    expect(isActionTasksCountKey(undefined)).toBe(false);
+    // Still an action-task key overall, so invalidation covers both shapes.
+    expect(isActionTasksKey("/api/v1/chats/action-tasks?count_only=1")).toBe(true);
+  });
+
+  it("drops exactly one resolved row from the full feed and re-derives the count", () => {
+    const feed = {
+      count: 3,
+      rows: [{ task_key: "a" }, { task_key: "b" }, { task_key: "c" }],
+    };
+    const next = applyActionTaskResolution(feed, "b");
+    expect(next?.rows?.map((row) => row.task_key)).toEqual(["a", "c"]);
+    expect(next?.count).toBe(2);
+    // The input is never mutated in place: SWR hands the same object to every
+    // matched key, and a shared by-reference edit would corrupt other entries.
+    expect(feed.rows).toHaveLength(3);
+  });
+
+  it("is a no-op when the row is absent, the key is missing or the shape is unknown", () => {
+    const feed = { count: 2, rows: [{ task_key: "a" }, { task_key: "b" }] };
+    expect(applyActionTaskResolution(feed, "zzz")).toBe(feed);
+    expect(applyActionTaskResolution(feed, null)).toBe(feed);
+    expect(applyActionTaskResolution(undefined, "a")).toBeUndefined();
+  });
+
+  it("falls back to the row count when the feed carries no explicit count", () => {
+    const next = applyActionTaskResolution({ rows: [{ task_key: "a" }, { task_key: "b" }] }, "a");
+    expect(next?.count).toBe(1);
+  });
+
+  it("decrements the badge count and clamps at zero", () => {
+    expect(applyActionTaskCountDecrement({ count: 5 })).toEqual({ count: 4 });
+    expect(applyActionTaskCountDecrement({ count: 1 })).toEqual({ count: 0 });
+    expect(applyActionTaskCountDecrement({ count: 0 })).toEqual({ count: 0 });
+    const countOnly = { count: 2 };
+    expect(applyActionTaskCountDecrement(countOnly)).not.toBe(countOnly);
+    // No numeric count -> nothing to patch, return the entry untouched.
+    expect(applyActionTaskCountDecrement(undefined)).toBeUndefined();
+    expect(applyActionTaskCountDecrement({} as { count?: number })).toEqual({});
+  });
+
+  it("routes each cache shape to the matching updater", () => {
+    // `mutate` passes the same updater every matched key, so the shape decides.
+    expect(patchActionTasksFeed({ count: 4 }, "task-1")).toEqual({ count: 3 });
+    expect(patchActionTasksFeed({ count: 2, rows: [{ task_key: "task-1" }] }, "task-1")).toEqual({
+      count: 1,
+      rows: [],
+    });
+    expect(patchActionTasksFeed(undefined, "task-1")).toBeUndefined();
+  });
+
+  it("derives the backend task key the same way the API does", () => {
+    // backend/api/chats/ActionTasks.go `actionTaskKey`: lowercase + trim, joined
+    // with a colon. A mismatched casing would silently drop the wrong (no) row.
+    expect(actionTaskKey("CHAT-1", "Msg-2")).toBe("chat-1:msg-2");
+    expect(actionTaskKey(" chat-1 ", " msg-2 ")).toBe("chat-1:msg-2");
+    expect(actionTaskKey("", "msg-2")).toBeNull();
+    expect(actionTaskKey("chat-1", null)).toBeNull();
+    expect(actionTaskKey(undefined, undefined)).toBeNull();
   });
 });
