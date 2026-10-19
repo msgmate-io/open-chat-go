@@ -36,6 +36,11 @@ type providerAdmissionResponse struct {
 	// Limiters is the state of every admission key used since process start
 	// (effective cap, in-flight count, queue depth, counters).
 	Limiters []msgmate.ProviderAdmissionSnapshot `json:"limiters"`
+	// SandboxMemoryBudget is the memory side of the same sizing decision
+	// (ci#662): the per-sandbox request/limit, the node's allocatable memory,
+	// how many sandboxes fit and the resulting agents-per-pool bound. A byte
+	// field of 0 means "not measured yet" and no bound is applied.
+	SandboxMemoryBudget msgmate.SandboxMemoryBudget `json:"sandbox_memory_budget"`
 }
 
 // @doc:provider-admission-status
@@ -63,6 +68,10 @@ func GetProviderAdmissionStatus(w http.ResponseWriter, r *http.Request) {
 		EffectiveSource:         effective.Source,
 		EffectiveQueueTimeoutMS: effective.QueueTimeout.Milliseconds(),
 		Limiters:                msgmate.ProviderAdmissionStatus(),
+		// ci#662: the memory budget is resolved without a per-agent config here
+		// (the admin surface has no chat context), so it reports the
+		// deployment-wide levers and the default reserve.
+		SandboxMemoryBudget: msgmate.ResolveSandboxMemoryBudget(nil),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

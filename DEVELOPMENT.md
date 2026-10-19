@@ -169,6 +169,47 @@ Regression tests: `backend/api/msgmate/turn_final_text_test.go`,
 `backend/nativecoder/toolbudget_test.go` and the snapshot assertion in
 `backend/api/chats/create_test.go`.
 
+#### A message sent into a running chat is queued, never dropped (ci#656)
+
+A message sent while the chat was already running a bot turn used to disappear:
+the enqueue clobbered the live turn's task under the stable per-chat task ID
+(`bot-reply:<chat>`), so the running turn was cancelled and the new message was
+never answered. `POST /api/v1/chats/{chat_uuid}/messages/send` now takes an
+explicit `delivery_mode`:
+
+- **`queued` (default, also when the field is omitted)** - the live turn keeps
+  running and the new reply is appended *behind* it under a per-message task ID
+  (`bot-reply:<chat>:<message>`). Every message is answered and the work the
+  live turn already did (files, commits) is kept.
+- **`interrupt`** - the explicit "send now" action cancels every reply task of
+  the chat (live turn included), voids parked confirmable actions and stops the
+  auto-continuation loop for the chat, then starts the new reply immediately
+  under the stable per-chat task ID.
+- An unknown `delivery_mode` is **rejected with 400** (`Invalid delivery_mode`)
+  instead of being silently guessed.
+
+When no turn is live, any queued reply for the chat is replaced by the newest
+message, so an idle chat never accumulates stale replies. The idle and interrupt
+paths deliberately reuse the stable base task ID (they clear the chat's tasks
+first, so a re-enqueue cannot collide with an asynq-archived task); only a reply
+queued behind a *live* turn needs a per-message ID because the live turn keeps
+the base ID.
+
+`GET` interaction status (`backend/api/chats/InteractionStatus.go`) exposes
+`queued_replies` - how many messages are queued behind the chat's live turn - so
+the transcript can render persisted-but-pending messages instead of them looking
+lost. It is `0` when no turn is live: a single pending reply is just the next
+turn waiting for a worker, not a message sent into a running chat.
+
+Plumbing: `backend/workqueue/bot_reply.go` carries `BotReplyDeliveryMode`,
+`ParseBotReplyDeliveryMode`, the pure `DecideBotReplyEnqueue`,
+`EnqueueBotReplyWithDelivery` / the `EnqueueBotReply` default, `BotReplyQueuedCount`
+and the liveness-injected `enqueueBotReplyWithDelivery` core (the `turnLive` flag
+is injected because a task waiting in the queue is *pending*, not *active*, so a
+unit test cannot otherwise reach the queue-behind branch).
+
+Regression tests: `backend/workqueue/bot_reply_test.go`.
+
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
 
 When the sandbox node was saturated, a dispatched native `msgmate_coder`
@@ -532,6 +573,67 @@ in-flight count and cap, and the admin-only
 per-key metrics for the loop. The full reference lives in the
 `msgmate_coder` integration README.
 
+### Sandbox-pool memory budget: measure first, then bound (ci#662)
+
+The pooled sandbox levers above are all *counts* (agents per pool, provider
+in-flight); the resource that actually runs out first is memory. ci#662 closes
+that gap in two steps, in this order — **measure, record, then bound** — because
+a guessed per-sandbox request that is too large throttles the pool while one that
+is too small only moves the failure into the kernel OOM killer.
+
+**1. Measurement.** `development/scripts/sandbox-memory-inventory.sh` is a
+read-only `kubectl` inventory of the sandbox namespace. It reports the totals and
+the largest per-sandbox CPU/memory request and limit, the pod count split by age
+bucket (`live`, `idle` above `IDLE_TTL_SECONDS` = 2700s, `orphan` above
+`ORPHAN_TTL_SECONDS` = 86400s, matching the reaper), running vs stopped, every
+node's capacity/allocatable and the memory already requested on it, the
+resulting `sandboxes_that_fit` and `effective_agents_per_pool` on the **smallest**
+allocatable node (the pool may land on any node of the group, so sizing against
+the average still hits `Insufficient memory` on the small one), and a best-effort
+`kubectl top nodes/pods` reading when a metrics server exists (its absence is
+reported, never fatal). The output is greppable `sandbox_memory key=value` lines,
+is appended to `GITHUB_STEP_SUMMARY`, and ends with the exact deployment env the
+numbers imply:
+
+```text
+sandbox_memory replay_env OCI_MSGMATE_CODER_SANDBOX_MEMORY_REQUEST=2Gi \
+  OCI_MSGMATE_CODER_SANDBOX_MEMORY_LIMIT=8Gi \
+  OCI_MSGMATE_CODER_NODE_ALLOCATABLE_MEMORY=16Gi \
+  OCI_MSGMATE_CODER_SANDBOX_MEMORY_RESERVE=1638Mi
+```
+
+It mutates nothing; an empty or unmeasured namespace prints `source=unmeasured`
+and the bound stays off.
+
+**2. The bound.** `backend/api/msgmate/sandbox_memory_budget.go` resolves a
+fail-open budget from those numbers: per-sandbox request/limit, node allocatable
+and reserve (env wins over the per-agent `coder_sandbox_*` keys, then the
+materialised default — the same precedence lesson as ci#620), `MaxAgentsByMemory`
+= `(allocatable − reserve) / request` with **one sandbox of headroom left out** so
+the pool can still admit a new chat while every current agent runs, and
+`EffectiveAgentsPerPool` = the minimum of the configured ci#602 pool bound, the
+ci#620 provider cap and that memory bound. The reserve defaults to 10% of
+allocatable. With no measurement, nothing is bound: a deployment that has not
+measured must not be bricked by a guess. The resolved budget (bytes, sources and
+the resulting bound) is exposed on the admin-only
+`GET /api/v1/admin/provider-admission` response as `sandbox_memory_budget`, next
+to the provider admission state.
+
+**3. The recorded numbers.** The measurement was replayed for the current
+deployment: with a per-sandbox request of `2Gi` and a `16Gi` node, `~7` sandboxes
+fit and the effective agents-per-pool is `6`, i.e. **below** the configured
+`OCI_MSGMATE_CODER_MAX_AGENTS_PER_POOL=8` of ci#602 — eight pooled agents could
+not all be scheduled on one 16Gi node at `2Gi` each. The ci#529 delta already
+prepares the right-sizing lever (a `512Mi` sandbox request/limit instead of
+`2Gi`), which the same script reports as `~28` that fit; that config change stays
+a deployment decision in the ci repo, not a code edit here. The arithmetic is
+pinned cluster-free by `development/scripts/tests/test_sandbox_memory_inventory.sh`
+(a stub `kubectl` feeding 4 pods × `2Gi`/`8Gi` on a `16Gi` node asserts
+`total_request=8Gi`, `total_limit=32Gi`, `live=2 idle=1 orphan=1 stopped=1`,
+`sandboxes_that_fit=7`, `effective_agents_per_pool=6`, plus the `unmeasured`
+path and the summary append), so a regression in the numbers fails a test rather
+than a production scheduler.
+
 ### Native coding-agent auto-consolidation (default ON)
 
 A native `msgmate_coder` agent consolidates its **own ready pull requests by
@@ -779,6 +881,13 @@ turn inside the window (`backend/api/msgmate/context_budget.go`):
    messages are dropped. Leading system messages (an injected compaction summary),
    every user message and the newest turn are never touched, and the
    tool-call/tool-result pairing is repaired afterwards so the request stays valid.
+   The most recent tool-call round (the assistant message declaring the newest calls
+   plus every result of that round) is protected too, however far back it sits:
+   rewriting the result of the call the model just made into an eviction marker once
+   made a turn re-issue the identical call dozens of times (ci#728, 18 identical
+   `coder_read` in a 110-call run), so the tool eviction marker now states that the
+   call already ran and must *not* be re-issued (a narrower range or a
+   redirect-to-file is suggested instead).
    The guard only ever shrinks a history that already exceeds the budget, so it is
    a no-op on the normal path. The existing provider-driven trim-and-retry
    (ci#394 gap 7) still backs it up for a window smaller than the budget assumes.
