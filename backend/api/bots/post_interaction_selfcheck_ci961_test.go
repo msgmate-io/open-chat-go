@@ -109,3 +109,43 @@ func TestCI961ReviewProbeEndpointForm(t *testing.T) {
 		t.Fatalf("review_submitted probe: review target endpoint = %q, want %q", endpoint, want)
 	}
 }
+
+// TestCI961ReviewProbeOrgAndRepoForm pins that the live `review_submitted`
+// probe posts a separate `org` and `repo` (matching the dispatch pins in
+// ci#927's review bot config), and that the org-only form (mirrored into the
+// repo field) reconstructs the same full-slug endpoint — so the review lands
+// on the fixture PR either way. Pure string derivation; no network call.
+func TestCI961ReviewProbeOrgAndRepoForm(t *testing.T) {
+	plain := map[string]interface{}{
+		"kind":   postActionKindPullRequestReview,
+		"org":    "msgmate-io",
+		"repo":   "open-chat-go-ci",
+		"number": 622,
+	}
+	action, ok := decodePostActionPullRequestReview(plain)
+	if !ok {
+		t.Fatalf("review_submitted probe: separate org/repo review action did not decode")
+	}
+	want := "https://api.github.com/repos/msgmate-io/open-chat-go-ci/pulls/622/reviews"
+	if endpoint := reviewTargetEndpoint(action, "https://api.github.com"); endpoint != want {
+		t.Fatalf("separate org/repo: review target endpoint = %q, want %q", endpoint, want)
+	}
+
+	// The dispatch pins a separate `org` field; the executor's decoded action
+	// today carries only the `repo` field, so the shared-config loader output is
+	// what reaches the endpoint math. Mirror org into the repo field and assert
+	// the same endpoint is derived.
+	combined := map[string]interface{}{
+		"kind":   postActionKindPullRequestReview,
+		"org":    "msgmate-io",
+		"repo":   "msgmate-io/open-chat-go-ci",
+		"number": 622,
+	}
+	combinedAction, ok := decodePostActionPullRequestReview(combined)
+	if !ok {
+		t.Fatalf("review_submitted probe: combined org/repo review action did not decode")
+	}
+	if endpoint := reviewTargetEndpoint(combinedAction, "https://api.github.com"); endpoint != want {
+		t.Fatalf("combined org/repo: review target endpoint = %q, want %q", endpoint, want)
+	}
+}
