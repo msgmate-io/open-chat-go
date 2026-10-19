@@ -660,6 +660,14 @@ func BackendRouting(
 		log.Printf("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
 	}
 
+	// ci#739: the public liveness probe. It is registered *outside*
+	// AuthMiddleware (and outside the mobile-proxy branch, so a hosted
+	// deployment can always be probed) on purpose: the crash watchdog and the
+	// ci2 profile's health_http probe poll it unauthenticated, and the 403 the
+	// authenticated /api/v1/ mux returned for the undefined path made a healthy
+	// host look crashed to a "not 200 means down" watchdog.
+	mux.Handle("GET /api/v1/metrics/health", commonMiddlewares(Logging(http.HandlerFunc(metricsHandler.Liveness))))
+
 	registerIntegrationFrontendRoutes := !(debug && strings.TrimSpace(frontendProxy) != "")
 	if registerIntegrationFrontendRoutes {
 		integrationFrontendWrapper := func(handler http.Handler, isPublic bool) http.Handler {

@@ -73,6 +73,52 @@ func TestIsTransientToolFailureRecognisesSandboxProvisioning(t *testing.T) {
 	}
 }
 
+// TestSandboxRegistryConflictIsNotTransient locks in ci#739: a deterministic
+// sandbox-registry constraint violation must not enter the transient retry loop.
+// The derived sandbox name is chat-scoped, so a stale row collides identically on
+// every attempt — retrying only burns the turn budget.
+func TestSandboxRegistryConflictIsNotTransient(t *testing.T) {
+	conflicts := []error{
+		errors.New("failed creating chat sandbox: constraint failed: UNIQUE constraint failed: docker_sandboxes.owner_user_id, docker_sandboxes.name (2067)"),
+		errors.New("pq: duplicate key value violates unique constraint \"docker_sandboxes_name_owner\""),
+		errors.New("UNIQUE constraint failed"),
+	}
+	for _, err := range conflicts {
+		if isTransientToolFailure(err) {
+			t.Fatalf("expected %v to NOT be treated as a transient tool failure", err)
+		}
+		if !isSandboxRegistryConflict(err) {
+			t.Fatalf("expected %v to be detected as a sandbox registry conflict", err)
+		}
+	}
+	if isSandboxRegistryConflict(nil) {
+		t.Fatal("a nil error is never a registry conflict")
+	}
+	if isSandboxRegistryConflict(errors.New("connection refused")) {
+		t.Fatal("a connection blip is not a registry conflict")
+	}
+}
+
+// TestRunToolWithTransientRetryDoesNotRetryRegistryConflict pins the bound: a
+// registry conflict fails on the first attempt instead of consuming the retry
+// budget (ci#739).
+func TestRunToolWithTransientRetryDoesNotRetryRegistryConflict(t *testing.T) {
+	t.Setenv(ToolFailureRetryAttemptsEnvKey, "3")
+	t.Setenv(ToolFailureRetryBaseDelayEnvKey, "0")
+
+	runs := 0
+	_, err, retries := runToolWithTransientRetry(context.Background(), "coder_select_workspace", func() (string, error) {
+		runs++
+		return "", errors.New("failed creating chat sandbox: constraint failed: UNIQUE constraint failed: docker_sandboxes.owner_user_id, docker_sandboxes.name (2067)")
+	})
+	if err == nil {
+		t.Fatal("expected the registry conflict to surface")
+	}
+	if runs != 1 || retries != 0 {
+		t.Fatalf("expected a single attempt, got runs=%d retries=%d", runs, retries)
+	}
+}
+
 // TestRunToolWithTransientRetryRecovers locks in that a transient blip is
 // absorbed by the retry instead of surfacing as a hard failure.
 func TestRunToolWithTransientRetryRecovers(t *testing.T) {

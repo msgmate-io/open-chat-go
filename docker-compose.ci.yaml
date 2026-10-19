@@ -22,6 +22,14 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       IONOS_API_KEY: ${IONOS_API_KEY:-}
       OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
+      # Native-bot migration (ci#584 / umbrella ci#585). NATIVE_CODER_CUTOVER
+      # stages the opencode retirement (fallback | native | retired) and
+      # MSGMATECODER_NATIVE_ROLLBACK_WINDOW lists the families whose rollback
+      # window is open. Both are read per request, so flipping (or rolling back)
+      # is an env change on this deployment - set them through
+      # publish-open-chat-config.yaml (DRY_RUN=true first).
+      NATIVE_CODER_CUTOVER: ${NATIVE_CODER_CUTOVER:-}
+      MSGMATECODER_NATIVE_ROLLBACK_WINDOW: ${MSGMATECODER_NATIVE_ROLLBACK_WINDOW:-}
       OPENCODE_PERMISSION_MODE: ${OPENCODE_PERMISSION_MODE:-}
       # Deterministic benchmark runs + stall detection for headless runs.
       OPENCODE_TEMPERATURE: ${OPENCODE_TEMPERATURE:-}
