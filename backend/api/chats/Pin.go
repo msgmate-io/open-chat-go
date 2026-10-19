@@ -5,7 +5,6 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -77,8 +76,8 @@ func (h *ChatsHandler) UpdatePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUUID := strings.TrimSpace(r.PathValue("chat_uuid"))
-	if chatUUID == "" {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
+	if chatUUIDErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}

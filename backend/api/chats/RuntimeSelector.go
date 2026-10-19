@@ -135,9 +135,9 @@ func (h *ChatsHandler) ResolveRuntimeSelector(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	chatUUID := strings.TrimSpace(r.PathValue("chat_uuid"))
+	chatUUID, chatUUIDErr := parseChatUUID(r)
 	messageUUID := strings.TrimSpace(r.PathValue("message_uuid"))
-	if chatUUID == "" || messageUUID == "" {
+	if chatUUIDErr != nil || messageUUID == "" {
 		http.Error(w, "Invalid chat/message UUID", http.StatusBadRequest)
 		return
 	}
