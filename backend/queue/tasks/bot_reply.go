@@ -66,6 +66,15 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("%w: source message not found", asynq.SkipRetry)
 	}
 
+	// ci#656: this task is the consumer of the message, so the reply is no
+	// longer queued behind a live turn. Drop the marker the transcript renders
+	// as pending before the metadata is forwarded, so a consumed message never
+	// reaches the agent looking queued - on the success path and on every
+	// failure/retry path alike, because the drain happens before the turn.
+	if _, clearErr := database.ClearMessageQueued(deps.DB, &incomingMessage); clearErr != nil {
+		log.Printf("ci#656: failed to clear the queued marker on message %s: %v", incomingMessage.UUID, clearErr)
+	}
+
 	var senderUser database.User
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
