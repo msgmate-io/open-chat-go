@@ -13,9 +13,9 @@ const (
 )
 
 // legacyRuntimeBotAliases maps the opencode-era agent names that older selector
-// configs still carry onto the native msgmate-coder runtime that replaces them
-// (docs/native-coder-parity.md). The map is the single place the flip is
-// declared, so retiring a family is a one-line change.
+// configs still carry onto the native msgmate-coder runtime that replaces them.
+// The map is the single place the flip is declared, so retiring a family is a
+// one-line change.
 var legacyRuntimeBotAliases = map[string]string{
 	"issue-plan-bot":              NativeRuntimePlanBot,
 	"issue-repl-bot":              NativeRuntimeReplBot,
