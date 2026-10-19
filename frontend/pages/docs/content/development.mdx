@@ -145,7 +145,13 @@ inside the aggregator.
 Documentation pages are plain MDX files in `frontend/pages/docs/content/`; they
 are globbed automatically by `frontend/pages/docs/docs.ts`, so no route
 registration is needed. Frontmatter (`title`, `path`, `description`, `order`,
-`section`, optional `adminOnly`) drives the navigation.
+`section`, optional `adminOnly`) drives the navigation. `visibility`
+(`public` | `authenticated` | `integration`) plus `integration` additionally
+gate pages that document a restricted integration: visitors without a session
+see *You have to sign in to view these docs*, signed-in visitors without access
+see *You don't have access to view this integration's docs*. Public pages only
+mention such an integration and link to its own docs — never inline its
+material.
 
 ## Useful scripts
 
