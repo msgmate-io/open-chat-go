@@ -657,4 +657,8 @@ The API side of the same rollout is staged by `NATIVE_CODER_CUTOVER`
 
 The stage is read per request, so a rollout (or a rollback) is an env change on
 the deployment, no rebuild and no data migration. `publish-open-chat-config.yaml`
-(vault-sync, `DRY_RUN=true` first) is the path for that change.
+(vault-sync, `DRY_RUN=true` first) is the path for that change. The ci deployment
+profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
+rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
+`backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
+forward makes `retired` unreachable no matter what the vault says.
