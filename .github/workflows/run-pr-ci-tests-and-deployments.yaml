@@ -2148,6 +2148,19 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.action != 'closed'
     steps:
+      # ci#659: the superseded-run reconciliation below executes a repository
+      # script, so the workspace must be checked out first. Without this the step
+      # failed with "python3: can't open file .../pr_ci_superseded_reconcile.py"
+      # and, being continue-on-error, silently reported accepted=false (observed
+      # on run 39261844509, PR #844): the gate stayed red for a genuinely
+      # superseded run. Pin the PR head so the reconciler that runs is the one
+      # from the commit being gated.
+      - name: Checkout source repository for the superseded-run reconciler
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Resolve the pull request's live labels
         id: live_labels
         env:
@@ -2168,8 +2181,80 @@ jobs:
             | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
           echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
 
+      # ci#659: a cancelled CI run is not a test failure . The workflow concurrency
+      # group is keyed by PR number *and* head SHA with `cancel-in-progress: true`,
+      # and the later job "Cancel superseded workflow runs for this PR" cancels
+      # same-branch runs as well. A burst of `labeled`/`unlabeled` events therefore
+      # cancels the in-flight run for the *identical* commit, while this always()
+      # gated job still executes inside that cancelled run with every
+      # `needs.*.result` equal to `cancelled` - which reported the required check
+      # `PR Test Merge Requirement` as failed for a commit whose tests never ran
+      # (run 39245536652 on PR #835, whose replacement run then starved in queue).
+      #
+      # Blanket-passing the cancelled case would make an untested tree look
+      # mergeable, so the cancellation is reconciled instead:
+      # development/scripts/pr_ci_superseded_reconcile.py accepts only when the
+      # commit no longer needs gating (PR closed, or a newer commit is the live PR
+      # head) or when a *replacement* run for the exact same commit reached this
+      # same gate job with a real verdict, whose conclusion is adopted. Everything
+      # else (no replacement, replacement still running, unknown/cancelled job
+      # state, API failure) fails closed. Output: accepted=true|false.
+      - name: Reconcile a superseded (cancelled) CI run
+        id: superseded-reconcile
+        continue-on-error: true
+        if: >-
+          needs.run-pr-ci-go-tests.result == 'cancelled' ||
+          needs.run-pr-ci-ai-mock-tests.result == 'cancelled' ||
+          needs.run-pr-ci-e2e-tests.result == 'cancelled' ||
+          needs.run-pr-ci-sandbox-tests-after-deploy.result == 'cancelled'
+        env:
+          GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_CI_SUPERSEDED_WAIT_SECONDS: ${{ vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '1500' }}
+        run: |
+          set -uo pipefail
+          set +e
+          # The reconciler lives in the checkout above. Fail closed *and loudly*
+          # if it is missing: the original "can't open file" was invisible behind
+          # `continue-on-error`, which is how the missing checkout went unnoticed.
+          if [ ! -f development/scripts/pr_ci_superseded_reconcile.py ]; then
+            echo "::error::pr_ci_superseded_reconcile.py is missing from the checkout; the gate stays red."
+            echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          python3 development/scripts/pr_ci_superseded_reconcile.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --run-id "${{ github.run_id }}"
+          reconcile_status=$?
+          set -e
+          if [ "${reconcile_status}" -eq 0 ]; then
+            accepted=true
+          else
+            accepted=false
+          fi
+          # Never fail here; the gate step below decides and prints the reason
+          # next to the existing label and result checks.
+          echo "accepted=${accepted}" >> "${GITHUB_OUTPUT}"
+
       - name: Enforce test label and passing tests
         run: |
+          # ci#659: outcome of the superseded-run reconciliation step above
+          # (empty when it did not run, i.e. no upstream suite was cancelled).
+          superseded_accepted="${{ steps.superseded-reconcile.outputs.accepted }}"
+          # A cancelled gate is only acceptable when this run was superseded: the
+          # commit no longer needs gating (PR closed, or a newer commit is the live
+          # PR head) or a replacement run for the exact same commit reached this same
+          # gate job and produced a real verdict, which is adopted here. Everything
+          # else keeps the gate red, so an untested tree can never look mergeable.
+          accept_superseded() {
+            if [ "${superseded_accepted}" = "true" ]; then
+              echo "::notice::$1 were superseded on this commit; adopting the verdict of the replacement run instead of failing the gate."
+              return 0
+            fi
+            echo "::error::$1 were cancelled and this run was not accepted as superseded, so the gate stays red."
+            return 1
+          }
           set -euo pipefail
           # Production promotion PRs run the full suite without relying on
           # labels (burst label-adds race with the event payload snapshot).
@@ -2191,8 +2276,7 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI was cancelled."
-              exit 1
+              accept_superseded "PR CI" || exit 1
               ;;
             *)
               echo "::error::PR CI ended with unexpected result: ${{ needs.run-pr-ci-go-tests.result }}"
@@ -2212,8 +2296,7 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI mocked AI process tests were cancelled."
-              exit 1
+              accept_superseded "PR CI mocked AI process tests" || exit 1
               ;;
             *)
               echo "::error::PR CI mocked AI process tests ended with unexpected result: ${{ needs.run-pr-ci-ai-mock-tests.result }}"
@@ -2238,8 +2321,7 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI E2E tests were cancelled."
-              exit 1
+              accept_superseded "PR CI E2E tests" || exit 1
               ;;
             *)
               echo "::error::PR CI E2E tests ended with unexpected result: ${{ needs.run-pr-ci-e2e-tests.result }}"
@@ -2260,8 +2342,7 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI sandbox tests were cancelled."
-              exit 1
+              accept_superseded "PR CI sandbox tests" || exit 1
               ;;
              *)
               echo "::error::PR CI sandbox tests ended with unexpected result: ${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }}"
@@ -2358,6 +2439,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_ci_failure_relay.py -v
+
+      # ci#659: the superseded-run reconciliation decides whether a cancelled
+      # `PR Test Merge Requirement` gate may pass, so pin its acceptance criteria
+      # (accept only for a closed PR / moved head / a replacement run with a real
+      # verdict, fail closed otherwise) with stdlib-only unit tests.
+      - name: Superseded PR CI run reconciliation unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup
