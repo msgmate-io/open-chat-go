@@ -9,6 +9,7 @@ import {
 import { Square } from "lucide-react";
 
 import { cn } from "../../lib/utils";
+import { SEND_NOW_LABEL, shouldOfferSendNow } from "../../lib/delivery-mode";
 import { Text, TextTypes } from "../text";
 import { Button } from "../button";
 import { SendMessageButton } from "./SendMessageButton";
@@ -23,6 +24,8 @@ export interface MessageComposerProps {
   text: string;
   setText: (text: string) => void;
   onSendMessage?: () => void;
+  /** ci#656: send immediately, interrupting a running bot reply. */
+  onSendNow?: () => void;
   isLoading?: boolean;
   isBotResponding?: boolean;
   stopBotResponse?: () => void;
@@ -97,6 +100,7 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
       text,
       setText,
       onSendMessage = () => {},
+      onSendNow,
       isLoading = false,
       isBotResponding = false,
       stopBotResponse = () => {},
@@ -163,7 +167,21 @@ export const MessageComposer = forwardRef<HTMLTextAreaElement, MessageComposerPr
             <div className="flex min-w-0 items-end gap-1.5">
               {footerOptions}
               {isBotResponding ? (
-                <CancelResponseButton onClick={stopBotResponse} />
+                <>
+                  {shouldOfferSendNow({ isBotResponding, hasSendableContent: canSend }) &&
+                  onSendNow ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={onSendNow}
+                      data-testid="send-now-button"
+                    >
+                      {SEND_NOW_LABEL}
+                    </Button>
+                  ) : null}
+                  <CancelResponseButton onClick={stopBotResponse} />
+                </>
               ) : (
                 <SendMessageButton
                   onClick={handleSendMessage}
