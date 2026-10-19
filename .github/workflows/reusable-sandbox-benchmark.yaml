@@ -440,22 +440,25 @@ jobs:
         timeout-minutes: 40
         run: |
           set -euo pipefail
-          # provider_account_failure reports whether every recorded bot reply of
-          # this attempt failed with a provider credential/balance error. A
-          # drained balance or a bad key fails each test identically with HTTP
-          # 401/402 (ci#740), which a retry can never fix.
-          provider_account_failure() {
-            local dir="${SANDBOX_RESULTS_DIR:-}"
-            [ -n "$dir" ] && [ -d "$dir" ] || return 1
-            local file files=0 hits=0
-            for file in "$dir"/*.last_bot.json; do
-              [ -f "$file" ] || continue
-              files=$(( files + 1 ))
-              if grep -qE 'HTTP (401|402)|positive balance|insufficient_quota|invalid_api_key' "$file"; then
-                hits=$(( hits + 1 ))
-              fi
-            done
-            [ "$files" -gt 0 ] && [ "$hits" -eq "$files" ]
+          # Classify a failed attempt as a provider-side infrastructure problem
+          # rather than a coder-sandbox regression. The classifier lives in a
+          # unit-tested, sourceable script (development/scripts/
+          # sandbox_provider_failure.sh) so the workflow and its test cannot
+          # drift: `account` = drained balance/bad key (HTTP 401/402, never
+          # retryable, ci#740); `unreachable` = provider outage, rate limit or
+          # connection-level failure (HTTP 429/5xx, transient). Anything else is
+          # an ordinary failure and keeps the normal verdict.
+          provider_classifier="${GITHUB_WORKSPACE}/development/scripts/sandbox_provider_failure.sh"
+          if [ -f "$provider_classifier" ]; then
+            # shellcheck source=development/scripts/sandbox_provider_failure.sh
+            source "$provider_classifier"
+          else
+            echo "::warning::provider failure classifier ${provider_classifier} is missing; provider failures will be treated as ordinary test failures."
+          fi
+          provider_failure_class() {
+            if declare -F sandbox_provider_failure_class >/dev/null; then
+              sandbox_provider_failure_class "${SANDBOX_RESULTS_DIR:-}"
+            fi
           }
           max_attempts=2
           attempt=1
@@ -470,7 +473,8 @@ jobs:
               rc=$?
             fi
             echo "::endgroup::"
-            if provider_account_failure; then
+            failure_class="$(provider_failure_class)"
+            if [ "$failure_class" = "account" ]; then
               # Every reply of this attempt died on the provider's own
               # credential/balance check. A retry cannot clear that, and
               # retrying burns another full sandbox run per test while hiding
@@ -486,6 +490,22 @@ jobs:
               exit "$rc"
             fi
             if [ "$attempt" -ge "$max_attempts" ]; then
+              if [ "$failure_class" = "unreachable" ]; then
+                # Every reply of both attempts failed to reach the provider or
+                # was rejected with a retryable rate-limit/server error; a
+                # further retry only burns another full sandbox run per test.
+                # Record the marker and fail as transient infrastructure, so
+                # the summary can say so once instead of N times.
+                {
+                  echo "provider_unreachable_failure: every recorded bot reply of both"
+                  echo "attempts failed to reach the AI provider (outage, rate limit or"
+                  echo "connection-level error). This is transient provider"
+                  echo "infrastructure, not a coder-sandbox regression; re-run the job"
+                  echo "once the provider is reachable again."
+                } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.provider_unreachable"
+                echo "::error title=Provider unreachable::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s): every bot reply could not reach the AI provider (rate limit/outage/connection error). This is transient provider infrastructure, not a code regression; re-run once the provider is reachable."
+                exit "$rc"
+              fi
               echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
               exit "$rc"
             fi
@@ -578,6 +598,7 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
             ${{ github.workspace }}/.sandbox-results/*.last_bot.json
             ${{ github.workspace }}/.sandbox-results/*.provider_account_failure
+            ${{ github.workspace }}/.sandbox-results/*.provider_unreachable
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
@@ -619,6 +640,7 @@ jobs:
           # rather than a coder-sandbox regression (ci#740), so the summary can
           # call that out once instead of leaving N identical failure rows.
           infra_failures=0
+          unreachable_failures=0
           # Artifacts are extracted per artifact into their own subdirectory
           # (no merge-multiple: merging multiple artifacts into one directory
           # has proven lossy in practice). TSV files are single-line; locate
@@ -676,6 +698,12 @@ jobs:
             if [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_account_failure" ]; then
               infra_failures=$(( infra_failures + 1 ))
               detail="provider credential/balance error (HTTP 401/402) - infrastructure, not a code regression"
+            # A failed test whose retries all died on transient provider
+            # infrastructure (outage/rate limit/connection error) is likewise
+            # infrastructure; retrying it further cannot help (ci#740).
+            elif [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_unreachable" ]; then
+              unreachable_failures=$(( unreachable_failures + 1 ))
+              detail="could not reach the AI provider - transient infrastructure, not a code regression"
             fi
             printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
           done
@@ -685,11 +713,25 @@ jobs:
             rows="| _no sandbox tests ran_ | - | - | - | - | - |"
           fi
 
+          infra_note=""
           if [ "$infra_failures" -gt 0 ]; then
             # Call the provider-account situation out once, above the marker, so
             # a drained balance or bad key is not mistaken for N code
             # regressions (ci#740).
             infra_note="$(printf '> **%s test(s) failed on a provider credential/balance error (HTTP 401/402).** That is an infrastructure/credential problem on the AI provider account, not a coder-sandbox regression: re-top-up or reset the provider key and re-run before treating these as code failures.' "$infra_failures")"
+          fi
+          if [ "$unreachable_failures" -gt 0 ]; then
+            # And the transient provider-outage case, so a rate limit or an
+            # unreachable provider is not read as N coder regressions either.
+            note="$(printf '> **%s test(s) could not reach the AI provider.** Every recorded reply of both attempts failed on transient provider infrastructure (outage, rate limit or connection-level error), not a coder-sandbox regression: re-run the job once the provider is reachable again.' "$unreachable_failures")"
+            if [ -n "$infra_note" ]; then
+              infra_note="$(printf '%s\n%s' "$infra_note" "$note")"
+            else
+              infra_note="$note"
+            fi
+          fi
+
+          if [ -n "$infra_note" ]; then
             body="$(printf '%s\n\n%s\n%s\n%s\n\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
               "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows" "$infra_note")"
           else
