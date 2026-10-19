@@ -218,6 +218,22 @@ the two cannot drift apart. Deriving that state from the message's own
 persisted marker keeps the render correct after a reload, where an in-memory
 "was this queued?" flag would be gone.
 
+A queued reply that asynq retires instead of running - retries exhausted, a
+`SkipRetry` failure or a revoked/archived task - used to leave its marker behind
+as well: none of the clear hooks above fires for a task that is never consumed,
+so the message kept rendering as pending until the user happened to send again.
+`backend/queue/drain` closes that path with `BotReplyTerminalDrain`, an
+`asynq.ErrorHandler` wired into both asynq servers (`cmd/server.go` embedded
+worker, `cmd/worker.go` standalone worker) as `queue.BotReplyTerminalDrain(DB)`.
+It acts only on a terminal `bot:reply` failure and clears the marker of the
+failing task's own message only - a newer reply queued behind the same chat
+keeps its own marker - and is a strict no-op on a retryable failure (the reply
+may still be consumed), on other task types and on missing inputs.
+
+Regression tests: `backend/queue/drain/bot_reply_test.go` (terminal
+classification, plus the drain, the retryable no-op and the isolation cases
+against sqlite).
+
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
 
 When the sandbox node was saturated, a dispatched native `msgmate_coder`
