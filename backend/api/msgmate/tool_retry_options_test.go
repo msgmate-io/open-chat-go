@@ -109,6 +109,27 @@ func TestToolFailureRetryOptionsNumericShapesAndClamp(t *testing.T) {
 	}
 }
 
+func TestToolFailureRetryAttemptsSaturateBeforeConversion(t *testing.T) {
+	// codeql go/incorrect-integer-conversion: an attempt count that does not
+	// fit an int must saturate, never wrap into a small or negative value.
+	if got := clampRetryAttempts(1 << 62); got != maxToolFailureRetryAttempts {
+		t.Fatalf("clampRetryAttempts(1<<62) = %d, want the clamp %d", got, maxToolFailureRetryAttempts)
+	}
+	if got := clampRetryAttempts(-1 << 62); got != 1 {
+		t.Fatalf("clampRetryAttempts(-1<<62) = %d, want 1", got)
+	}
+	if got := clampRetryAttempts(3); got != 3 {
+		t.Fatalf("clampRetryAttempts(3) = %d, want 3", got)
+	}
+
+	// The same value arriving through the deployment env is saturated too.
+	t.Setenv(ToolFailureRetryAttemptsEnvKey, "9223372036854775807")
+	if got := toolFailureRetryOptionsFromConfig(nil).MaxAttempts; got != maxToolFailureRetryAttempts {
+		t.Fatalf("env MaxAttempts = %d, want the clamp %d", got, maxToolFailureRetryAttempts)
+	}
+	t.Setenv(ToolFailureRetryAttemptsEnvKey, "")
+}
+
 func TestToolFailureRetryOptionsDisabled(t *testing.T) {
 	t.Setenv(ToolFailureRetryAttemptsEnvKey, "")
 	opts := toolFailureRetryOptionsFromConfig(map[string]interface{}{"tool_failure_retry": false})
