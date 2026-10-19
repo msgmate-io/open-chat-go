@@ -32,16 +32,16 @@ func Install() {
 
 type host struct{}
 
-func (host) Version() int                         { return integrationinterface.HostVersion }
-func (host) Config() integrationinterface.Config  { return config{} }
-func (host) Logger() integrationinterface.Logger  { return stdLogger{} }
-func (host) HTTP() integrationinterface.HTTP      { return httpAdapter{} }
+func (host) Version() int                          { return integrationinterface.HostVersion }
+func (host) Config() integrationinterface.Config   { return config{} }
+func (host) Logger() integrationinterface.Logger   { return stdLogger{} }
+func (host) HTTP() integrationinterface.HTTP       { return httpAdapter{} }
 func (host) Storage() integrationinterface.Storage { return storage{db: database.GetGlobalDB()} }
-func (host) Chat() integrationinterface.Chat      { return chatAdapter{} }
+func (host) Chat() integrationinterface.Chat       { return chatAdapter{} }
 func (host) Workspace() integrationinterface.Workspace {
 	return workspaceAdapter{}
 }
-func (host) Web() integrationinterface.Web   { return webAdapter{} }
+func (host) Web() integrationinterface.Web       { return webAdapter{} }
 func (host) Tokens() integrationinterface.Tokens { return tokensAdapter{} }
 func (host) Tools() integrationinterface.Tools   { return toolsAdapter{} }
 

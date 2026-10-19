@@ -86,8 +86,8 @@ func adaptChatBackendRequest(req msgmate.ChatBackendRequest) integrationinterfac
 
 type botUserAdapter struct{ u database.User }
 
-func (b botUserAdapter) ID() uint       { return b.u.ID }
-func (b botUserAdapter) UUID() string   { return b.u.UUID }
+func (b botUserAdapter) ID() uint     { return b.u.ID }
+func (b botUserAdapter) UUID() string { return b.u.UUID }
 
 type messageWriterAdapter struct{ h *wsapi.WebSocketHandler }
 
