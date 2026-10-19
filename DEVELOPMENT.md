@@ -736,6 +736,47 @@ Contract and behaviour:
   candidate was chosen and why, which were ignored and why), the
   `<!-- oci-ci-failure-fix -->` dedupe marker, and the **never-poll-CI** rule —
   the agent pushes the fix and stops, the lead reacts to the next relayed event.
+
+### CI-failure relay is quiet and lead-driven (ci#734)
+
+A failed CI run is no longer turned into an `issue-plan-bot` fix-plan session
+with a `plan_auto_implement` planner+implementer pair. The `ci-failure-planner`
+job in `.github/workflows/run-pr-ci-tests-and-deployments.yaml` (job id/name
+kept, so the required status check still reports) now relays the failure
+directly to the open-chat-go **development lead** agent, and only for
+consolidation PRs:
+
+- Trigger scope: same-repo `pull_request` to `main` whose head branch starts
+  with `chore/consolidate-`. Feature, bugfix and docs PRs get **no** comment and
+  **no** interaction at all.
+- The payload building and relay live in `development/scripts/ci_failure_relay.py`
+  (unit-tested by `development/scripts/test_ci_failure_relay.py`, run by the
+  `pin-freshness-gate` job), not inline in the workflow.
+- The lead interaction is resolved from `OPEN_CHAT_LEAD_CHAT_UUID` when
+  configured, else the interaction of `OPEN_CHAT_LEAD_BOT` (default
+  `msgmate-coder-development-lead`), preferring `is_active` and falling back to
+  the most recent one; `POST /api/v1/agents/interactions/{uuid}/continue` with
+  `resume_auto_continue: true` delivers the message. If no lead interaction
+  exists, `/api/v1/agents/dispatch` starts one with a stable per-(repo, PR, head
+  SHA) `dedupe_key`.
+- **One** PR comment only: it names the lead and the run URL and pins a
+  per-(PR, head SHA) marker, so a duplicate run for the same head relays
+  nothing. Attempts are bounded by `CI_FIX_MAX_ATTEMPTS`; when the cap is
+  reached the job posts a `limit reached` comment and adds the
+  `ci-fix-blocked` label instead of relaying again.
+- The lead message carries repo, PR number/branch/SHA, run URL and the failing
+  jobs, states that no fix-plan session was created, and repeats the
+  **never-poll-CI** rule: fix, push, stop — the lead reacts to the next relayed
+  event. No secret value is ever printed; `--dry-run` (or `DRY_RUN`) does
+  everything except call the APIs.
+- To inspect the routing without touching a live lead, dispatch the workflow
+  manually with `DRY_RUN=true` and the `pr_number` / `pr_branch` / `pr_sha`
+  inputs: the `ci-failure-relay-dry-run` job prints the message and comment body
+  it would send and makes **no** API call, and the test/deploy pipeline is
+  skipped for that dispatch. Because a dry-run resolves no interaction, its
+  comment body names the lead but reports the interaction as `resolved at
+  runtime` instead of inventing a UUID.
+
 ### One live development lead per repo: dispatch dedupe keys (ci#625)
 
 The native tooling that replaces opencode is driven by a **development lead**
