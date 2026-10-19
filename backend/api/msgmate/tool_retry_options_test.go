@@ -2,6 +2,9 @@ package msgmate
 
 import (
 	"context"
+	"errors"
+	"math"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -114,6 +117,124 @@ func TestToolFailureRetryOptionsDisabled(t *testing.T) {
 	opts := toolFailureRetryOptionsFromConfig(map[string]interface{}{"tool_failure_retry": false})
 	if opts.Enabled || opts.MaxAttempts != 1 {
 		t.Fatalf("disabled policy must attempt exactly once, got %+v", opts)
+	}
+}
+
+// ci#703: the attempt count and the backoff values are range-checked before the
+// narrowing conversion, so an out-of-range value is refused with a typed error
+// instead of being truncated into a nonsense policy
+// (CodeQL go/incorrect-integer-conversion).
+func TestBoundedToolFailureRetryValues(t *testing.T) {
+	for _, tc := range []struct {
+		raw  int64
+		want int
+	}{
+		{0, 0},
+		{-3, -3}, // narrowed, then clamped to 1 by normalize
+		{maxToolFailureRetryAttempts, maxToolFailureRetryAttempts},
+		{999, 999}, // narrowed, then clamped to the hard cap by normalize
+		{math.MaxInt32, math.MaxInt32},
+		{math.MinInt32, math.MinInt32},
+	} {
+		got, err := boundedToolFailureRetryCount(tc.raw)
+		if err != nil {
+			t.Fatalf("boundedToolFailureRetryCount(%d) unexpected error: %v", tc.raw, err)
+		}
+		if got != tc.want {
+			t.Fatalf("boundedToolFailureRetryCount(%d) = %d, want %d", tc.raw, got, tc.want)
+		}
+	}
+	for _, raw := range []int64{math.MaxInt32 + 1, math.MaxInt64, math.MinInt32 - 1, math.MinInt64} {
+		got, err := boundedToolFailureRetryCount(raw)
+		if !errors.Is(err, ErrToolFailureRetryValueOutOfRange) {
+			t.Fatalf("boundedToolFailureRetryCount(%d) err = %v, want ErrToolFailureRetryValueOutOfRange", raw, err)
+		}
+		if got != 0 {
+			t.Fatalf("boundedToolFailureRetryCount(%d) = %d, want 0 on error", raw, got)
+		}
+	}
+
+	for _, tc := range []struct {
+		millis int64
+		want   time.Duration
+	}{
+		{0, 0},
+		{-50, -50 * time.Millisecond}, // kept, then clamped to 0 by normalize
+		{250, 250 * time.Millisecond},
+		{maxToolFailureRetryDelayMillis, time.Duration(maxToolFailureRetryDelayMillis) * time.Millisecond},
+		{-maxToolFailureRetryDelayMillis, -time.Duration(maxToolFailureRetryDelayMillis) * time.Millisecond},
+	} {
+		got, err := boundedToolFailureRetryDelay("k", tc.millis)
+		if err != nil {
+			t.Fatalf("boundedToolFailureRetryDelay(%d) unexpected error: %v", tc.millis, err)
+		}
+		if got != tc.want {
+			t.Fatalf("boundedToolFailureRetryDelay(%d) = %s, want %s", tc.millis, got, tc.want)
+		}
+	}
+	for _, raw := range []int64{maxToolFailureRetryDelayMillis + 1, math.MaxInt64, -maxToolFailureRetryDelayMillis - 1, math.MinInt64} {
+		got, err := boundedToolFailureRetryDelay("k", raw)
+		if !errors.Is(err, ErrToolFailureRetryValueOutOfRange) {
+			t.Fatalf("boundedToolFailureRetryDelay(%d) err = %v, want ErrToolFailureRetryValueOutOfRange", raw, err)
+		}
+		if got != 0 {
+			t.Fatalf("boundedToolFailureRetryDelay(%d) = %s, want 0 on error", raw, got)
+		}
+	}
+}
+
+// An out-of-range config value must keep the resolved default instead of being
+// truncated (an overflowing attempt count must never look like a small one).
+func TestToolFailureRetryOptionsRejectsOverflowingValues(t *testing.T) {
+	for _, key := range []string{
+		ToolFailureRetryAttemptsEnvKey,
+		ToolFailureRetryBaseDelayEnvKey,
+		ToolFailureRetryMaxDelayEnvKey,
+		SandboxCapacityRetryBaseDelayEnvKey,
+		SandboxCapacityRetryMaxDelayEnvKey,
+	} {
+		t.Setenv(key, "")
+	}
+
+	opts := toolFailureRetryOptionsFromConfig(map[string]interface{}{
+		"tool_failure_retry_max":               int64(math.MaxInt64),
+		"tool_failure_retry_base_delay_ms":     int64(math.MaxInt64),
+		"tool_failure_retry_max_delay_ms":      int64(math.MaxInt64),
+		"sandbox_capacity_retry_base_delay_ms": int64(math.MaxInt64),
+		"sandbox_capacity_retry_max_delay_ms":  int64(math.MaxInt64),
+	})
+	if opts.MaxAttempts != DefaultToolFailureRetryAttempts {
+		t.Fatalf("MaxAttempts = %d, want the default %d (no truncation)", opts.MaxAttempts, DefaultToolFailureRetryAttempts)
+	}
+	if opts.BaseDelay != DefaultToolFailureRetryBaseDelay || opts.MaxDelay != DefaultToolFailureRetryMaxDelay {
+		t.Fatalf("blip backoff = %s/%s, want the defaults %s/%s", opts.BaseDelay, opts.MaxDelay, DefaultToolFailureRetryBaseDelay, DefaultToolFailureRetryMaxDelay)
+	}
+	if opts.CapacityBaseDelay != DefaultSandboxCapacityRetryBaseDelay || opts.CapacityMaxDelay != DefaultSandboxCapacityRetryMaxDelay {
+		t.Fatalf("capacity backoff = %s/%s, want the defaults %s/%s", opts.CapacityBaseDelay, opts.CapacityMaxDelay, DefaultSandboxCapacityRetryBaseDelay, DefaultSandboxCapacityRetryMaxDelay)
+	}
+
+	// A delay above the supported bound is refused too, while a valid sibling
+	// key in the same map is still honoured.
+	partial := toolFailureRetryOptionsFromConfig(map[string]interface{}{
+		"tool_failure_retry_max_delay_ms":  int64(maxToolFailureRetryDelayMillis + 1),
+		"tool_failure_retry_base_delay_ms": 250,
+	})
+	if partial.MaxDelay != DefaultToolFailureRetryMaxDelay {
+		t.Fatalf("MaxDelay = %s, want the default %s", partial.MaxDelay, DefaultToolFailureRetryMaxDelay)
+	}
+	if partial.BaseDelay != 250*time.Millisecond {
+		t.Fatalf("BaseDelay = %s, want 250ms", partial.BaseDelay)
+	}
+
+	// The deployment env is range-checked with the same bound.
+	t.Setenv(ToolFailureRetryMaxDelayEnvKey, strconv.FormatInt(maxToolFailureRetryDelayMillis+1, 10))
+	t.Setenv(ToolFailureRetryAttemptsEnvKey, strconv.FormatInt(int64(math.MaxInt32)+1, 10))
+	fromEnv := toolFailureRetryOptionsFromConfig(nil)
+	if fromEnv.MaxDelay != DefaultToolFailureRetryMaxDelay {
+		t.Fatalf("env MaxDelay = %s, want the default %s", fromEnv.MaxDelay, DefaultToolFailureRetryMaxDelay)
+	}
+	if fromEnv.MaxAttempts != DefaultToolFailureRetryAttempts {
+		t.Fatalf("env MaxAttempts = %d, want the default %d", fromEnv.MaxAttempts, DefaultToolFailureRetryAttempts)
 	}
 }
 

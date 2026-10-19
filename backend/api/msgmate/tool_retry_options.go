@@ -2,6 +2,10 @@ package msgmate
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log"
+	"math"
 	"math/rand/v2"
 	"os"
 	"strconv"
@@ -33,7 +37,48 @@ const (
 	// maxToolFailureRetryAttempts is the hard cap of the configured attempt
 	// count: a bad config can never turn a failing tool into an endless loop.
 	maxToolFailureRetryAttempts = 8
+	// maxToolFailureRetryDelayMillis bounds a configured backoff value (in
+	// milliseconds) before it is converted to a time.Duration, so a hostile or
+	// overflowing config/env value is rejected instead of silently wrapped
+	// (ci#703, CodeQL go/incorrect-integer-conversion).
+	maxToolFailureRetryDelayMillis = int64(24 * 60 * 60 * 1000) // 24h
 )
+
+// ErrToolFailureRetryValueOutOfRange reports a retry-policy value that does not
+// fit the supported range (an attempt count outside int32, or a backoff outside
+// ±maxToolFailureRetryDelayMillis). The caller keeps the previous/default value
+// and logs the rejection instead of silently truncating the number.
+var ErrToolFailureRetryValueOutOfRange = errors.New("tool failure retry value out of range")
+
+// boundedToolFailureRetryCount narrows a configured attempt count to an int
+// only after proving the value is representable, so the conversion cannot
+// truncate (ci#703, CodeQL go/incorrect-integer-conversion). A value outside
+// [math.MinInt32, math.MaxInt32] is refused with
+// ErrToolFailureRetryValueOutOfRange; a small negative value is still narrowed
+// and then clamped to 1 by normalizeToolFailureRetryOptions, which keeps the
+// documented "never zero attempts" behaviour, and an oversized positive value
+// is clamped to maxToolFailureRetryAttempts.
+func boundedToolFailureRetryCount(raw int64) (int, error) {
+	if raw < math.MinInt32 || raw > math.MaxInt32 {
+		return 0, fmt.Errorf("%w: attempt count %d is outside [%d, %d]",
+			ErrToolFailureRetryValueOutOfRange, raw, int64(math.MinInt32), int64(math.MaxInt32))
+	}
+	return int(raw), nil
+}
+
+// boundedToolFailureRetryDelay converts a configured backoff value in
+// milliseconds into a time.Duration only after proving the value is bounded, so
+// the conversion can neither truncate nor wrap (a value near math.MaxInt64
+// would otherwise overflow the nanosecond multiplication). Out-of-range values
+// are refused with ErrToolFailureRetryValueOutOfRange; a small negative value is
+// kept and later clamped to 0 by normalizeToolFailureRetryOptions.
+func boundedToolFailureRetryDelay(key string, millis int64) (time.Duration, error) {
+	if millis < -maxToolFailureRetryDelayMillis || millis > maxToolFailureRetryDelayMillis {
+		return 0, fmt.Errorf("%w: %s = %dms is outside [-%dms, %dms]",
+			ErrToolFailureRetryValueOutOfRange, key, millis, maxToolFailureRetryDelayMillis, maxToolFailureRetryDelayMillis)
+	}
+	return time.Duration(millis) * time.Millisecond, nil
+}
 
 // ToolFailureRetryOptions is the effective infrastructure-retry policy of one
 // turn: how often a transient tool failure is attempted, how the two backoff
@@ -77,30 +122,84 @@ func toolFailureRetryOptionsFromConfig(configMap map[string]interface{}) ToolFai
 		CapacityMaxDelay:  DefaultSandboxCapacityRetryMaxDelay,
 	}
 	if v, ok := envInt64(ToolFailureRetryAttemptsEnvKey); ok {
-		opts.MaxAttempts = int(v)
+		if attempts, err := boundedToolFailureRetryCount(v); err != nil {
+			logToolFailureRetryValueRejected(ToolFailureRetryAttemptsEnvKey, err)
+		} else {
+			opts.MaxAttempts = attempts
+		}
 	}
 	if v, ok := envInt64(ToolFailureRetryBaseDelayEnvKey); ok {
-		opts.BaseDelay = time.Duration(v) * time.Millisecond
+		if delay, err := boundedToolFailureRetryDelay(ToolFailureRetryBaseDelayEnvKey, v); err != nil {
+			logToolFailureRetryValueRejected(ToolFailureRetryBaseDelayEnvKey, err)
+		} else {
+			opts.BaseDelay = delay
+		}
 	}
 	if v, ok := envInt64(ToolFailureRetryMaxDelayEnvKey); ok {
-		opts.MaxDelay = time.Duration(v) * time.Millisecond
+		if delay, err := boundedToolFailureRetryDelay(ToolFailureRetryMaxDelayEnvKey, v); err != nil {
+			logToolFailureRetryValueRejected(ToolFailureRetryMaxDelayEnvKey, err)
+		} else {
+			opts.MaxDelay = delay
+		}
 	}
 	if v, ok := envInt64(SandboxCapacityRetryBaseDelayEnvKey); ok {
-		opts.CapacityBaseDelay = time.Duration(v) * time.Millisecond
+		if delay, err := boundedToolFailureRetryDelay(SandboxCapacityRetryBaseDelayEnvKey, v); err != nil {
+			logToolFailureRetryValueRejected(SandboxCapacityRetryBaseDelayEnvKey, err)
+		} else {
+			opts.CapacityBaseDelay = delay
+		}
 	}
 	if v, ok := envInt64(SandboxCapacityRetryMaxDelayEnvKey); ok {
-		opts.CapacityMaxDelay = time.Duration(v) * time.Millisecond
+		if delay, err := boundedToolFailureRetryDelay(SandboxCapacityRetryMaxDelayEnvKey, v); err != nil {
+			logToolFailureRetryValueRejected(SandboxCapacityRetryMaxDelayEnvKey, err)
+		} else {
+			opts.CapacityMaxDelay = delay
+		}
 	}
 	if v, ok := configMap["tool_failure_retry"].(bool); ok {
 		opts.Enabled = v
 	}
-	opts.MaxAttempts = int(mapInt64OrDefault(configMap, "tool_failure_retry_max", int64(opts.MaxAttempts)))
-	opts.BaseDelay = time.Duration(mapInt64OrDefault(configMap, "tool_failure_retry_base_delay_ms", int64(opts.BaseDelay/time.Millisecond))) * time.Millisecond
-	opts.MaxDelay = time.Duration(mapInt64OrDefault(configMap, "tool_failure_retry_max_delay_ms", int64(opts.MaxDelay/time.Millisecond))) * time.Millisecond
-	opts.CapacityBaseDelay = time.Duration(mapInt64OrDefault(configMap, "sandbox_capacity_retry_base_delay_ms", int64(opts.CapacityBaseDelay/time.Millisecond))) * time.Millisecond
-	opts.CapacityMaxDelay = time.Duration(mapInt64OrDefault(configMap, "sandbox_capacity_retry_max_delay_ms", int64(opts.CapacityMaxDelay/time.Millisecond))) * time.Millisecond
+	// The agent config wins over the env, but every value is range-checked
+	// before it is narrowed: an out-of-range value is refused (and logged)
+	// instead of truncating into a nonsensical policy.
+	if attempts, err := boundedToolFailureRetryCount(mapInt64OrDefault(configMap, "tool_failure_retry_max", int64(opts.MaxAttempts))); err != nil {
+		logToolFailureRetryValueRejected("tool_failure_retry_max", err)
+	} else {
+		opts.MaxAttempts = attempts
+	}
+	if delay, err := boundedToolFailureRetryDelay("tool_failure_retry_base_delay_ms",
+		mapInt64OrDefault(configMap, "tool_failure_retry_base_delay_ms", int64(opts.BaseDelay/time.Millisecond))); err != nil {
+		logToolFailureRetryValueRejected("tool_failure_retry_base_delay_ms", err)
+	} else {
+		opts.BaseDelay = delay
+	}
+	if delay, err := boundedToolFailureRetryDelay("tool_failure_retry_max_delay_ms",
+		mapInt64OrDefault(configMap, "tool_failure_retry_max_delay_ms", int64(opts.MaxDelay/time.Millisecond))); err != nil {
+		logToolFailureRetryValueRejected("tool_failure_retry_max_delay_ms", err)
+	} else {
+		opts.MaxDelay = delay
+	}
+	if delay, err := boundedToolFailureRetryDelay("sandbox_capacity_retry_base_delay_ms",
+		mapInt64OrDefault(configMap, "sandbox_capacity_retry_base_delay_ms", int64(opts.CapacityBaseDelay/time.Millisecond))); err != nil {
+		logToolFailureRetryValueRejected("sandbox_capacity_retry_base_delay_ms", err)
+	} else {
+		opts.CapacityBaseDelay = delay
+	}
+	if delay, err := boundedToolFailureRetryDelay("sandbox_capacity_retry_max_delay_ms",
+		mapInt64OrDefault(configMap, "sandbox_capacity_retry_max_delay_ms", int64(opts.CapacityMaxDelay/time.Millisecond))); err != nil {
+		logToolFailureRetryValueRejected("sandbox_capacity_retry_max_delay_ms", err)
+	} else {
+		opts.CapacityMaxDelay = delay
+	}
 
 	return normalizeToolFailureRetryOptions(opts)
+}
+
+// logToolFailureRetryValueRejected reports a rejected retry-policy value. The
+// resolved policy keeps the default/env value instead, so a misconfigured
+// agent still gets bounded retrying rather than a wrapped or zeroed value.
+func logToolFailureRetryValueRejected(key string, err error) {
+	log.Printf("[tool_failure_retry] ignoring invalid retry policy value %q: %v (ci#703)", key, err)
 }
 
 // normalizeToolFailureRetryOptions clamps a resolved policy into the supported
