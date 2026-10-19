@@ -440,6 +440,23 @@ jobs:
         timeout-minutes: 40
         run: |
           set -euo pipefail
+          # provider_account_failure reports whether every recorded bot reply of
+          # this attempt failed with a provider credential/balance error. A
+          # drained balance or a bad key fails each test identically with HTTP
+          # 401/402 (ci#740), which a retry can never fix.
+          provider_account_failure() {
+            local dir="${SANDBOX_RESULTS_DIR:-}"
+            [ -n "$dir" ] && [ -d "$dir" ] || return 1
+            local file files=0 hits=0
+            for file in "$dir"/*.last_bot.json; do
+              [ -f "$file" ] || continue
+              files=$(( files + 1 ))
+              if grep -qE 'HTTP (401|402)|positive balance|insufficient_quota|invalid_api_key' "$file"; then
+                hits=$(( hits + 1 ))
+              fi
+            done
+            [ "$files" -gt 0 ] && [ "$hits" -eq "$files" ]
+          }
           max_attempts=2
           attempt=1
           while :; do
@@ -453,6 +470,21 @@ jobs:
               rc=$?
             fi
             echo "::endgroup::"
+            if provider_account_failure; then
+              # Every reply of this attempt died on the provider's own
+              # credential/balance check. A retry cannot clear that, and
+              # retrying burns another full sandbox run per test while hiding
+              # the real cause behind N identical "unexpected failure" rows.
+              # Record a marker so the summary can name the cause, and fail
+              # loudly as infrastructure instead (ci#740).
+              {
+                echo "provider_account_failure: every recorded bot reply failed with a"
+                echo "provider credential/balance error (HTTP 401/402), so this is an"
+                echo "infrastructure/credential problem, not a coder-sandbox regression."
+              } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.provider_account_failure"
+              echo "::error title=Provider account failure::sandbox test '${{ matrix.test }}' failed without retrying: every bot reply hit a provider credential/balance error (HTTP 401/402). Check the provider account/API key before re-running; this is not a code regression."
+              exit "$rc"
+            fi
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
               exit "$rc"
@@ -545,6 +577,7 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
             ${{ github.workspace }}/.sandbox-results/*.last_bot.json
+            ${{ github.workspace }}/.sandbox-results/*.provider_account_failure
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
@@ -582,6 +615,10 @@ jobs:
           header="| Test | Status | Model | Runtime | Interaction | Notes |"
           sep="|---|---|---|---|---|---|"
           : > /tmp/summary-rows.txt
+          # Counts tests whose failure was a provider credential/balance error
+          # rather than a coder-sandbox regression (ci#740), so the summary can
+          # call that out once instead of leaving N identical failure rows.
+          infra_failures=0
           # Artifacts are extracted per artifact into their own subdirectory
           # (no merge-multiple: merging multiple artifacts into one directory
           # has proven lossy in practice). TSV files are single-line; locate
@@ -633,6 +670,13 @@ jobs:
             else
               icon="❌ failed"
             fi
+            # A failed test with the provider-account marker is infrastructure,
+            # not a coder-sandbox regression; annotate the row and count it so
+            # the summary can say so once (ci#740).
+            if [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_account_failure" ]; then
+              infra_failures=$(( infra_failures + 1 ))
+              detail="provider credential/balance error (HTTP 401/402) - infrastructure, not a code regression"
+            fi
             printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
           done
 
@@ -641,8 +685,17 @@ jobs:
             rows="| _no sandbox tests ran_ | - | - | - | - | - |"
           fi
 
-          body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
-            "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows")"
+          if [ "$infra_failures" -gt 0 ]; then
+            # Call the provider-account situation out once, above the marker, so
+            # a drained balance or bad key is not mistaken for N code
+            # regressions (ci#740).
+            infra_note="$(printf '> **%s test(s) failed on a provider credential/balance error (HTTP 401/402).** That is an infrastructure/credential problem on the AI provider account, not a coder-sandbox regression: re-top-up or reset the provider key and re-run before treating these as code failures.' "$infra_failures")"
+            body="$(printf '%s\n\n%s\n%s\n%s\n\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
+              "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows" "$infra_note")"
+          else
+            body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
+              "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows")"
+          fi
 
           # Always make the result visible in the run itself.
           printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
