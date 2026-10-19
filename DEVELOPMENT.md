@@ -57,6 +57,11 @@ after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 1500s, repo variable
 `PR_CI_SUPERSEDED_WAIT_SECONDS`), an unknown/cancelled gate job or an API error
 all fail closed, so the gate never turns green on an untested commit.
 
+Because a run of this workflow is close to the 100-item jobs page, the run and
+job listings are read page by page (`api_pages`): a single-page read could miss
+the gate job, mistake the run for one that never gated the commit and adopt the
+verdict of an older run for the same SHA.
+
 The reconciler runs from the workspace, so the `PR Test Merge Requirement` job
 starts with a shallow `actions/checkout` of the pull request's head commit. The
 step is `continue-on-error: true` (the gate step decides), which is why the

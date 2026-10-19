@@ -12,6 +12,10 @@ real verdict, whose conclusion is adopted. Everything else fails closed.
 
 Exit codes: 0 accept, 1 replacement gate not green, 2 missing, 3 timeout,
 4 usage/API error. The last stdout line is `accepted=true|false`.
+
+A replacement gate job that was itself `cancelled` cannot testify about the
+commit and is skipped, but every other non-`success` verdict (including
+`skipped`, `failure` and `timed_out`) is adopted and rejects the gate.
 """
 
 from __future__ import annotations
@@ -47,15 +51,49 @@ def fetch_json(url, token, timeout=30):
 
 _FETCH = fetch_json
 
+PAGE_SIZE = 100
+MAX_PAGES = 20
+
 
 def api(repo, path, token):
     return _FETCH(API + "/repos/" + repo + path, token)
 
 
+def paged_path(path, page, per_page=PAGE_SIZE):
+    """Append offset-pagination query parameters to an API path."""
+    separator = "&" if "?" in path else "?"
+    return "%s%sper_page=%d&page=%d" % (path, separator, per_page, page)
+
+
+def api_pages(repo, path, token, per_page=PAGE_SIZE, limit=MAX_PAGES):
+    """Yield every item of an offset-paginated `{"<key>": [...]}` API listing.
+
+    Every endpoint used here returns a single list under one key, so the page
+    body is unwrapped generically and pages are requested until a short (or
+    empty) page proves the listing is exhausted. A listing that keeps returning
+    full pages stops at `limit`, which is only a runaway guard.
+    """
+    for page in range(1, limit + 1):
+        payload = api(repo, paged_path(path, page, per_page), token)
+        items = []
+        for value in payload.values():
+            if isinstance(value, list):
+                items = value
+                break
+        for item in items:
+            yield item
+        if len(items) < per_page:
+            return
+
+
 def gate_conclusion(repo, run_id, token):
-    """Verdict of the run's gate job, or None when the run has no gate job."""
-    jobs = api(repo, "/actions/runs/%s/jobs?per_page=100" % run_id, token).get("jobs") or []
-    for job in jobs:
+    """Verdict of the run's gate job, or None when the run has no gate job.
+
+    The jobs listing is paginated: a run with more jobs than fit on one page
+    would otherwise hide the gate job and be skipped as if it never gated the
+    commit, letting a newer run's verdict be read off an older run.
+    """
+    for job in api_pages(repo, "/actions/runs/%s/jobs" % run_id, token):
         if job.get("name") == GATE_JOB_NAME:
             return job.get("conclusion") or job.get("status")
     return None
@@ -63,12 +101,15 @@ def gate_conclusion(repo, run_id, token):
 
 def replacement_runs(repo, head_sha, current_run_id, token):
     """Runs of this workflow for `head_sha`, newest first, minus the current one."""
-    data = api(
-        repo,
-        "/actions/workflows/%s/runs?head_sha=%s&per_page=100" % (WORKFLOW_FILE, head_sha),
-        token,
-    )
-    runs = [r for r in (data.get("workflow_runs") or []) if r.get("id") != current_run_id]
+    runs = [
+        r
+        for r in api_pages(
+            repo,
+            "/actions/workflows/%s/runs?head_sha=%s" % (WORKFLOW_FILE, head_sha),
+            token,
+        )
+        if r.get("id") != current_run_id
+    ]
     runs.sort(key=lambda r: (r.get("id") or 0, r.get("run_attempt") or 1), reverse=True)
     return runs
 
@@ -79,6 +120,11 @@ def gate_verdict(runs, repo, token):
     Runs that never contained the gate job (the `closed`-event deployment runs)
     and runs whose gate job was itself cancelled cannot testify about the
     commit, so they are skipped rather than mistaken for a green gate.
+
+    "Newest" only orders the candidates: a run that never gated the commit is
+    not evidence, so an older run of the *same* commit may testify in its place.
+    That is intentional - same commit, same tree, same verdict - and it keeps a
+    redundant deployment run from turning a real gate result into a silent skip.
     """
     for run in runs:
         if run.get("status") != "completed":
