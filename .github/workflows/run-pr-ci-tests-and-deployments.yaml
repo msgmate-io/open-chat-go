@@ -2471,6 +2471,15 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_provider_failure.sh
 
+      # ci#745: the PR-CI progress-comment step must thread its repository/PR
+      # context explicitly and must skip (instead of 404-looping) when that
+      # context is empty. Pin the contract so the empty-URL red job cannot
+      # come back.
+      - name: PR CI progress-comment target unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_progress_comment_target.py -v
+
       - name: Profile setup
         uses: ./.github/actions/profile-setup
         with:
