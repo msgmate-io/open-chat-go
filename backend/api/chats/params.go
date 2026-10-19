@@ -20,6 +20,9 @@ var errMissingChatUUID = errors.New("missing chat uuid")
 // input (path-traversal fragments, NUL bytes, oversized strings) out of the
 // database queries that previously only rejected an empty value.
 //
+// Every handler in this package that serves a {chat_uuid} path parameter now
+// goes through this helper, so the validation cannot drift between routes.
+//
 // The parsed UUID is returned in canonical lowercase form, so the equivalent
 // dashed/undashed/upper-case spellings of the same UUID resolve to one string
 // before it is compared against the stored value.

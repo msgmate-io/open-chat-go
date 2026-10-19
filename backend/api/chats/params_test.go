@@ -1,6 +1,7 @@
 package chats
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -125,5 +126,45 @@ func TestGetChatAcceptsDashlessChatUUID(t *testing.T) {
 
 	if rr.Code != 200 {
 		t.Fatalf("expected 200 for a dashless upper-case chat UUID, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestSiblingChatUUIDHandlersRejectMalformedChatUUID extends the guard coverage
+// to the remaining /chats/{chat_uuid} handlers of this package (Delete,
+// UpdatePin, UpdateSettings, GetStreamingMessage, RerunMessage): a non-empty
+// but malformed path value must be rejected with the same 400 as before.
+func TestSiblingChatUUIDHandlersRejectMalformedChatUUID(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "sibling-chat-uuid@example.com", false)
+
+	cases := []struct {
+		name   string
+		body   string
+		invoke func(h *ChatsHandler, w http.ResponseWriter, r *http.Request)
+	}{
+		{"Delete", "", func(h *ChatsHandler, w http.ResponseWriter, r *http.Request) { h.Delete(w, r) }},
+		{"UpdatePin", `{"pinned":true}`, func(h *ChatsHandler, w http.ResponseWriter, r *http.Request) { h.UpdatePin(w, r) }},
+		{"UpdateSettings", `{}`, func(h *ChatsHandler, w http.ResponseWriter, r *http.Request) { h.UpdateSettings(w, r) }},
+		{"GetStreamingMessage", "", func(h *ChatsHandler, w http.ResponseWriter, r *http.Request) { h.GetStreamingMessage(w, r) }},
+		{"RerunMessage", "", func(h *ChatsHandler, w http.ResponseWriter, r *http.Request) { h.RerunMessage(w, r) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/v1/chats/x", strings.NewReader(tc.body))
+			req = withActionTasksUser(req, DB, owner)
+			req.SetPathValue("chat_uuid", "..")
+			req.SetPathValue("message_uuid", "..")
+			rr := httptest.NewRecorder()
+
+			tc.invoke(&ChatsHandler{}, rr, req)
+
+			if rr.Code != 400 {
+				t.Fatalf("expected 400 for a malformed chat_uuid, got %d: %s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "Invalid") {
+				t.Fatalf("expected an invalid-UUID body, got %q", rr.Body.String())
+			}
+		})
 	}
 }
