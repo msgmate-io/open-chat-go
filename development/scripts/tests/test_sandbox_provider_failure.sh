@@ -74,6 +74,10 @@ printf '{"text":"provider returned HTTP 429 rate limit exceeded"}\n' > "$case_di
 assert_class unreachable "HTTP 429 is transient"
 
 new_case
+printf '{"text":"provider returned HTTP 408 request timeout"}\n' > "$case_dir/a.last_bot.json"
+assert_class unreachable "HTTP 408 is transient (matches the Go retry list)"
+
+new_case
 printf '{"text":"provider returned HTTP 503 service unavailable"}\n' > "$case_dir/a.last_bot.json"
 printf '{"text":"read tcp: connection reset by peer"}\n' > "$case_dir/b.last_bot.json"
 assert_class unreachable "HTTP 5xx together with a connection reset is transient"
