@@ -39,6 +39,29 @@ func TestAttachTokenRoundTrip(t *testing.T) {
 	}
 }
 
+type attachCase struct {
+	sandbox string
+	session string
+	owner   string
+	token   string
+}
+
+// tamperSignature returns every token that differs from token in exactly the
+// final hex nibble of its signature. Writing a fixed replacement digit (as this
+// test originally did) is a no-op whenever the signature already ends in that
+// digit, which made the suite fail roughly one run in sixteen.
+func tamperSignature(token string) []string {
+	last := token[len(token)-1]
+	tampered := make([]string, 0, 15)
+	for _, digit := range []byte("0123456789abcdef") {
+		if digit == last {
+			continue
+		}
+		tampered = append(tampered, token[:len(token)-1]+string(digit))
+	}
+	return tampered
+}
+
 func TestAttachTokenRejectsReplayAndTampering(t *testing.T) {
 	issuer := newTestIssuer(t)
 	token, err := issuer.Mint("sbx-1", "sess-1", "admin-1", time.Hour)
@@ -46,19 +69,16 @@ func TestAttachTokenRejectsReplayAndTampering(t *testing.T) {
 		t.Fatalf("mint: %v", err)
 	}
 
-	cases := map[string]struct {
-		sandbox string
-		session string
-		owner   string
-		token   string
-	}{
+	cases := map[string]attachCase{
 		"other sandbox":  {"sbx-2", "sess-1", "admin-1", token},
 		"other session":  {"sbx-1", "sess-2", "admin-1", token},
 		"other owner":    {"sbx-1", "sess-1", "admin-2", token},
 		"garbage":        {"sbx-1", "sess-1", "admin-1", "nope"},
 		"empty":          {"sbx-1", "sess-1", "admin-1", ""},
-		"flipped last":   {"sbx-1", "sess-1", "admin-1", token[:len(token)-1] + "0"},
 		"wrong sig type": {"sbx-1", "sess-1", "admin-1", strings.Replace(token, ".", ".zz", 1)},
+	}
+	for _, tampered := range tamperSignature(token) {
+		cases["flipped last nibble ("+tampered[len(tampered)-1:]+")"] = attachCase{"sbx-1", "sess-1", "admin-1", tampered}
 	}
 	for name, c := range cases {
 		if _, err := issuer.Verify(c.sandbox, c.session, c.owner, c.token); !errors.Is(err, ErrInvalidAttachToken) {
