@@ -2148,6 +2148,19 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.action != 'closed'
     steps:
+      # ci#659: the superseded-run reconciliation below executes a repository
+      # script, so the workspace must be checked out first. Without this the step
+      # failed with "python3: can't open file .../pr_ci_superseded_reconcile.py"
+      # and, being continue-on-error, silently reported accepted=false (observed
+      # on run 39261844509, PR #844): the gate stayed red for a genuinely
+      # superseded run. Pin the PR head so the reconciler that runs is the one
+      # from the commit being gated.
+      - name: Checkout source repository for the superseded-run reconciler
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
       - name: Resolve the pull request's live labels
         id: live_labels
         env:
