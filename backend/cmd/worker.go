@@ -4,6 +4,7 @@ import (
 	"backend/database"
 	"backend/integrations"
 	"backend/queue"
+	"backend/workqueue"
 	"context"
 	"fmt"
 	"log"
@@ -48,7 +49,7 @@ func WorkerCli() *cli.Command {
 				Sources: cli.EnvVars("OPEN_CHAT_HOST"),
 				Name:    "backend-host",
 				Usage:   "Backend base URL used by async bot tasks",
-				Value:   "http://127.0.0.1:1984",
+				Value:   workqueue.DefaultBackendHost,
 			},
 			&cli.BoolFlag{
 				Sources: cli.EnvVars("DB_SKIP_MIGRATIONS"),
