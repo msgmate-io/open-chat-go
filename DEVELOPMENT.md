@@ -219,6 +219,11 @@ replace - those queued replies are cancelled and never consumed); `queue/tasks/b
 the marker before the turn is forwarded, so a consumed message never reaches the agent looking
 queued. The chat-wide drain is a no-op for unmarked messages: it prefilters on the metadata key in
 SQL before judging it in Go, because it runs on every send that supersedes a queued reply.
+The two cancellation paths that drop a chat's replies without sending a superseding message drain
+the same markers, so a cancelled message cannot stay pending forever: the `interrupt` signal
+(`POST .../signal/interrupt`) and the agent-manager stop
+(`POST /api/v1/agents/interactions/{chat_uuid}/stop`, both in the same request that calls
+`workqueue.CancelBotReplyTask`).
 Regression tests: `backend/database/queued_marker_test.go`.
 
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
