@@ -4,13 +4,16 @@ import { ArrowLeft, Pin, PinOff, Search } from "lucide-react";
 import { cn, Text, TextTypes } from "@open-chat-go/ui";
 import { fetcher } from "../../lib/utils";
 import {
+  INTEGRATIONS_ROOT,
   filterIntegrationRows,
   integrationDisplayTitle,
   isPagePinned,
   normalizeIntegrationPath,
+  normalizePathname,
   pinnedPagesForIntegration,
   resolveIntegrationLandingPath,
   togglePinnedPage,
+  trimTrailingSlashes,
   type IntegrationNavRow,
   type PinnedPageInput,
 } from "../../lib/pinned-integrations";
@@ -42,15 +45,21 @@ function normalizePath(path: string | undefined): string {
   if (!path) {
     return "";
   }
-  return path.split("?")[0].split("#")[0].replace(/\/+$/, "");
+  // ci#737: linear-time normalization; the previous
+  // `split("?")[0].split("#")[0].replace(/\/+$/, "")` had a backtracking
+  // trailing-slash quantifier that CodeQL flags as polynomial ReDoS.
+  return normalizePathname(path);
 }
 
 function shortRoutePath(route: string, integrationName: string | null): string {
   const prefix = integrationName ? `/integrations/${integrationName}/` : "";
   if (prefix && route.startsWith(prefix)) {
-    return route.slice(prefix.length).replace(/\/+$/, "");
+    return trimTrailingSlashes(route.slice(prefix.length));
   }
-  return route.replace(/^\/integrations\//, "").replace(/\/+$/, "");
+  const withoutRoot = route.startsWith(`${INTEGRATIONS_ROOT}/`)
+    ? route.slice(INTEGRATIONS_ROOT.length + 1)
+    : route;
+  return trimTrailingSlashes(withoutRoot);
 }
 
 function routeTitle(route: string, integrationName: string | null): string {

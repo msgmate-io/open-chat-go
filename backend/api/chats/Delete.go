@@ -3,7 +3,6 @@ package chats
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"backend/database"
 	"backend/server/util"
@@ -33,8 +32,8 @@ func (h *ChatsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUUID := strings.TrimSpace(r.PathValue("chat_uuid"))
-	if chatUUID == "" {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
+	if chatUUIDErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}

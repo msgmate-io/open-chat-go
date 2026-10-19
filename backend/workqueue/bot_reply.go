@@ -269,9 +269,11 @@ func enqueueBotReplyWithDelivery(client *asynq.Client, inspector *asynq.Inspecto
 		return client.Enqueue(task, enqueueOpts...)
 	}
 	info, err := enqueue(taskID)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "already exists") {
-		// A retried enqueue can collide with an archived task of the same
-		// message; use a unique suffix rather than failing the whole reply.
+	if err != nil {
+		// The stable per-chat ID can still be held by an archived/finished task
+		// from an earlier turn; asynq then rejects the re-enqueue. Fall back to a
+		// unique ID instead of failing the whole reply. A genuine queue error is
+		// returned by the second attempt.
 		info, err = enqueue(taskID + ":" + strconv.FormatInt(time.Now().UnixNano(), 36))
 	}
 	return info, err
