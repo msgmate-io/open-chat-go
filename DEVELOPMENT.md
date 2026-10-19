@@ -750,7 +750,7 @@ consolidation PRs:
   **no** interaction at all.
 - The payload building and relay live in `development/scripts/ci_failure_relay.py`
   (unit-tested by `development/scripts/test_ci_failure_relay.py`, run by the
-  `full-suite-gate` job), not inline in the workflow.
+  `pin-freshness-gate` job), not inline in the workflow.
 - The lead interaction is resolved from `OPEN_CHAT_LEAD_CHAT_UUID` when
   configured, else the interaction of `OPEN_CHAT_LEAD_BOT` (default
   `msgmate-coder-development-lead`), preferring `is_active` and falling back to
