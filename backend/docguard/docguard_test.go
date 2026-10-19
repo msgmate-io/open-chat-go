@@ -69,6 +69,11 @@ var publicAgentDocPaths = []string{
 	"docs/agent",
 	"development/agent-docs",
 	"agent-docs",
+	// The ci#733/ci#730 playbooks r42 dropped from the public tree. Naming
+	// them explicitly keeps a future "restore the docs" change from quietly
+	// re-adding the exact files ci#736 moved to the private integration.
+	"docs/ci-733-devlead-fleet-moderation-playbook.md",
+	"docs/ci730-coder-logic-extraction-plan.md",
 }
 
 // publicDocFiles collects the documentation surface a human reads: the repo
