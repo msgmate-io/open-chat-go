@@ -223,6 +223,51 @@ func TestAppendExecutedToolCallsTruncatesLargeResultsExplicitly(t *testing.T) {
 	}
 }
 
+// TestTruncateToolResultKeepsTailAndCountsOmittedCommands pins the ci#731
+// (T2/F2) fix: a `coder_bash` batch that exceeds its budget keeps a head AND a
+// tail slice, and the marker names how many per-command results were dropped
+// from the middle, so the conclusion of the batch survives the cut.
+func TestTruncateToolResultKeepsTailAndCountsOmittedCommands(t *testing.T) {
+	limits := ToolResultLimits{
+		Default: 4000,
+		PerTool: map[string]int{"coder_bash": 4000},
+		Source:  ToolResultLimitSourceConfig,
+	}
+	batch := func(n int) string {
+		var b strings.Builder
+		b.WriteString(`{"results":[`)
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(fmt.Sprintf(
+				`{"index":%d,"exit_code":0,"stdout":"%s"}`, i, strings.Repeat(fmt.Sprintf("cmd-%d ", i), 200)))
+		}
+		b.WriteString(`],"tail_sentinel":"BATCH-DONE"}`)
+		return b.String()
+	}
+
+	result := batch(20)
+	truncated, ok := truncateToolResultForTool(result, "coder_bash", limits)
+	if !ok {
+		t.Fatal("expected a 20-command batch to be truncated")
+	}
+	if len(truncated) > 4000 {
+		t.Fatalf("the truncated result must respect its budget, got %d chars", len(truncated))
+	}
+	if !strings.HasSuffix(strings.TrimRight(truncated, "\n"), `"tail_sentinel":"BATCH-DONE"}`) {
+		t.Fatalf("the tail of the batch must survive the cut, got %q", truncated[len(truncated)-120:])
+	}
+	if !strings.Contains(truncated, "were omitted from the middle") ||
+		!strings.Contains(truncated, "command result(s) dropped") {
+		t.Fatalf("the marker must name the omitted middle and the dropped commands, got %q", truncated)
+	}
+	// A result that fits its budget is untouched.
+	if plain, truncated := truncateToolResultForTool(`{"results":[]}`, "coder_bash", limits); truncated || plain != `{"results":[]}` {
+		t.Fatalf("a small result must be untouched, got %q (truncated=%t)", plain, truncated)
+	}
+}
+
 // TestResolveToolResultLimitsAppliesConfigAndEnvOverrides pins the
 // configurability the ticket asks for: per-tool limits from the chat config, a
 // deployment-wide env override that clamps them, and the compiled-in defaults
