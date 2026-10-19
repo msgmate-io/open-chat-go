@@ -582,3 +582,18 @@ repository (or ask a coder agent to quote a page through `coder_docs`). Do not
 add agent runbooks, playbooks or an agent-doc tree back to this repository:
 `go test ./docguard/` in `backend/` fails when agent-only documentation
 reappears publicly.
+
+### Native bot runtimes on the ci deployment (ci#584)
+
+The development bots of the ci deployment run on the native `msgmate-coder`
+runtimes. The flip lives in `backend/nativecoder/rollout.go`: the fleet moves
+family by family (plan, then repl/coding, then review, then admin, then the
+coordinating `msgmate-coder` lead last), every family keeps the retired opencode
+runtime configured but out of rotation for the rollback window, and the opencode
+integration is only dropped once every family has been native and stable and a
+rollback was proven on a non-critical family. `RetirementBlockers` is the
+machine-checked go/no-go for that last step and `RenderNativeBotRolloutMarkdown`
+renders the table the private runbook shows. Runtime selection in a
+runtime-selector message maps the older bot names onto the native runtime via
+`LegacyRuntimeBotAliases`, which is derived from the same registry, so retiring a
+family is a one-line change with a test behind it.
