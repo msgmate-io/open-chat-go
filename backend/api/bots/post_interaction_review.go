@@ -49,6 +49,10 @@ const (
 
 // postActionPullRequestReview is the decoded github_pull_request_review action.
 type postActionPullRequestReview struct {
+	// Org optionally carries the repository owner as a separate field. When it
+	// is set together with a bare Repo (no slash), the decoder joins the two
+	// into the full owner/repo slug; the review bot's dispatch pins this form.
+	Org  string `json:"org"`
 	Repo string `json:"repo"`
 	// Number is the pull request number.
 	Number int `json:"number"`
@@ -103,6 +107,12 @@ func decodePostActionPullRequestReview(raw map[string]interface{}) (postActionPu
 func reviewTargetEndpoint(action postActionPullRequestReview, apiBase string) string {
 	base := strings.TrimSuffix(strings.TrimSpace(apiBase), "/")
 	repo := strings.Trim(strings.TrimSpace(action.Repo), "/")
+	if repo != "" && !strings.Contains(repo, "/") && strings.TrimSpace(action.Org) != "" {
+		// The dispatch pins a separate `org` field next to a bare repo name;
+		// join the two into the full owner/repo slug before deriving the
+		// endpoint.
+		repo = strings.Trim(strings.TrimSpace(action.Org), "/") + "/" + repo
+	}
 	if number := pullNumber(action.Pull); number != 0 {
 		if repo == "" {
 			// A bare pull URL carries the repository itself (web or API form).
