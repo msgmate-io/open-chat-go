@@ -8,6 +8,7 @@ commit reached the gate job with a real verdict, whose conclusion is adopted.
 Everything else fails closed.
 """
 import argparse
+import io
 import os
 import sys
 import unittest
@@ -20,6 +21,7 @@ if HERE not in sys.path:
 import pr_ci_superseded_reconcile as mod  # noqa: E402
 
 GATE = mod.GATE_JOB_NAME
+WORKFLOW_FILE = mod.WORKFLOW_FILE
 HEAD = "faf784c5f832f144ad2d8f33bca10fd0c4d7995a"
 CURRENT = 39245536652
 NEWER = 39246623047
@@ -179,6 +181,73 @@ class ReconcileTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(code, 4)
+
+
+class WorkflowWiringTests(unittest.TestCase):
+    """The gate job must actually be able to run the reconciler (ci#659).
+
+    The reconciler was first wired into `pr-test-merge-requirement` while that
+    job had no checkout. The step died with "can't open file", and because it is
+    `continue-on-error: true` it reported `accepted=false` with no annotation, so
+    the ci#659 fix silently never engaged (run 39261844509 on PR #844). Pin the
+    wiring: a checkout must precede the script call, the job must keep needing
+    every suite it reconciles, and a missing script must stay a loud fail-closed.
+    """
+
+    WORKFLOW = os.path.abspath(
+        os.path.join(os.path.dirname(HERE), "..", ".github", "workflows", WORKFLOW_FILE)
+    )
+    GATE_JOB = "  pr-test-merge-requirement:"
+    NEXT_JOB = "  full-suite-gate:"
+
+    @classmethod
+    def setUpClass(cls):
+        with io.open(cls.WORKFLOW, encoding="utf-8") as handle:
+            workflow = handle.read()
+        start = workflow.index(cls.GATE_JOB)
+        cls.gate = workflow[start : workflow.index(cls.NEXT_JOB, start)]
+
+    def test_gate_job_checks_out_the_repository_before_running_the_reconciler(self):
+        checkout = self.gate.index("uses: actions/checkout@v4")
+        reconciler = self.gate.index("development/scripts/pr_ci_superseded_reconcile.py")
+        self.assertLess(
+            checkout,
+            reconciler,
+            "the reconciler runs from the workspace, so a checkout must come first",
+        )
+
+    def test_reconciler_exists_where_the_workflow_expects_it(self):
+        self.assertTrue(
+            os.path.isfile(os.path.join(HERE, "pr_ci_superseded_reconcile.py"))
+        )
+
+    def test_missing_reconciler_fails_closed_with_an_annotation(self):
+        marker = self.gate.index("[ ! -f development/scripts/pr_ci_superseded_reconcile.py ]")
+        block = self.gate[marker : marker + 400]
+        self.assertIn("::error::", block)
+        self.assertIn('echo "accepted=false"', block)
+
+    def test_gate_job_still_needs_every_suite_it_reconciles(self):
+        needs = self.gate[: self.gate.index("steps:")]
+        for suite in (
+            "run-pr-ci-go-tests",
+            "run-pr-ci-ai-mock-tests",
+            "run-pr-ci-e2e-tests",
+            "run-pr-ci-sandbox-tests-after-deploy",
+        ):
+            self.assertIn(suite, needs)
+
+    def test_reconcile_step_only_runs_for_a_cancelled_suite(self):
+        self.assertIn("needs.run-pr-ci-go-tests.result == 'cancelled'", self.gate)
+
+    def test_reconcile_step_cannot_fail_the_job_but_the_gate_stays_red(self):
+        step = self.gate[
+            self.gate.index("id: superseded-reconcile") : self.gate.index(
+                "- name: Enforce test label and passing tests"
+            )
+        ]
+        self.assertIn("continue-on-error: true", step)
+        self.assertIn("accepted=false", step)
 
 
 if __name__ == "__main__":
