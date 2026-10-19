@@ -1,13 +1,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { QUEUED_REPLY_HINT_LABEL } from "../../../lib/delivery-mode";
-import { UserMessageItem } from "./MessageItem";
+import { BotMessageItem, UserMessageItem } from "./MessageItem";
 
 const chat = { partner: { name: "Bot", is_bot: true } };
 
 function render(message: Record<string, unknown>) {
   return renderToStaticMarkup(
     <UserMessageItem message={message as never} chat={chat as never} selfIsSender />,
+  );
+}
+
+// A bot chat's transcript renders every row through BotMessageItem (MessagesView
+// always passes isBotChat), so the hint has to exist on that path too - not only
+// on the standalone UserMessageItem used by non-bot chats.
+function renderBotChatRow(message: Record<string, unknown>) {
+  return renderToStaticMarkup(
+    <BotMessageItem message={message as never} chat={chat as never} selfIsSender />,
   );
 }
 
@@ -41,6 +50,33 @@ describe("UserMessageItem queued delivery hint", () => {
       text: "hello",
       meta_data: { queue_state: "delivered" },
     });
+    expect(html).not.toContain('data-testid="queued-reply-hint"');
+  });
+});
+
+describe("BotMessageItem queued delivery hint (the bot-chat transcript path)", () => {
+  it("labels a parked user message in a bot chat", () => {
+    const html = renderBotChatRow({
+      uuid: "m5",
+      text: "one more thing",
+      meta_data: { queue_state: "queued" },
+    });
+    expect(html).toContain('data-testid="queued-reply-hint"');
+    expect(html).toContain(QUEUED_REPLY_HINT_LABEL);
+  });
+
+  it("stays quiet for a normal user message in a bot chat", () => {
+    const html = renderBotChatRow({ uuid: "m6", text: "hello" });
+    expect(html).not.toContain('data-testid="queued-reply-hint"');
+  });
+
+  it("does not label a bot's own message", () => {
+    const html = renderToStaticMarkup(
+      <BotMessageItem
+        message={{ uuid: "m7", text: "on it", meta_data: { queue_state: "queued" } } as never}
+        chat={chat as never}
+      />,
+    );
     expect(html).not.toContain('data-testid="queued-reply-hint"');
   });
 });
