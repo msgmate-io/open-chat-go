@@ -85,6 +85,14 @@ after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 1500s, repo variable
 `PR_CI_SUPERSEDED_WAIT_SECONDS`), an unknown/cancelled gate job or an API error
 all fail closed, so the gate never turns green on an untested commit.
 
+The reconciler runs from the workspace, so the `PR Test Merge Requirement` job
+starts with a shallow `actions/checkout` of the pull request's head commit. The
+step is `continue-on-error: true` (the gate step decides), which is why the
+reconciler also checks for its own file and emits an `::error::` annotation with
+`accepted=false` instead of dying quietly: the very first version of this fix
+shipped without the checkout and therefore never engaged (run 39261844509 on
+#844). `WorkflowWiringTests` pins the checkout-before-reconciler ordering.
+
 #### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
 
 The SQLite database lives on a single ReadWriteOnce volume, so two backend
