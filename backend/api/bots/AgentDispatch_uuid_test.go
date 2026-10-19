@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
@@ -112,12 +111,12 @@ func TestAgentManagedHandlersPassWellFormedChatUUIDToLookup(t *testing.T) {
 func TestAgentGetAcceptsNormalizedSpellingOfARealInteraction(t *testing.T) {
 	DB := setupBotsTestDB(t)
 	owner := createUserForBotsTest(t, DB, "owner.agent.uuid.normalized@example.com", false)
-	bot := createBotForInteractionTest(t, DB, owner, "normalized-spelling-bot")
+	other := createUserForBotsTest(t, DB, "peer.agent.uuid.normalized@example.com", false)
 
 	client, inspector, cleanup := setupAsynqTest(t)
 	defer cleanup()
 
-	chatUUID := dispatchInteractionForUUIDTest(t, DB, owner, bot.UUID, client, inspector)
+	chatUUID := seedInteractionForUUIDTest(t, DB, owner, other)
 
 	for _, spelling := range []struct {
 		name  string
@@ -152,24 +151,22 @@ func TestAgentGetAcceptsNormalizedSpellingOfARealInteraction(t *testing.T) {
 	}
 }
 
-// dispatchInteractionForUUIDTest creates an owner-scoped interaction through the
-// dispatch handler and returns its chat UUID.
-func dispatchInteractionForUUIDTest(t *testing.T, DB *gorm.DB, owner *database.User, botUUID string, client *asynq.Client, inspector *asynq.Inspector) string {
+// seedInteractionForUUIDTest stores an owner-scoped interaction chat directly and
+// returns its generated (canonical) UUID. Seeding the row keeps this positive
+// control focused on the path guard instead of depending on the dispatch
+// handler's queue setup.
+func seedInteractionForUUIDTest(t *testing.T, DB *gorm.DB, owner, other *database.User) string {
 	t.Helper()
-	rr := agentDispatchRequest(t, DB, owner, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
-		Bot:     botUUID,
-		Message: "work on the uuid guard",
-	}, client, inspector, (&BotsHandler{}).AgentDispatch)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200 dispatching the interaction, got %d: %s", rr.Code, rr.Body.String())
+	chat := database.Chat{
+		User1Id:  owner.ID,
+		User2Id:  other.ID,
+		ChatType: "interaction",
 	}
-	var response map[string]interface{}
-	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode the dispatch response: %v", err)
+	if err := DB.Create(&chat).Error; err != nil {
+		t.Fatalf("failed to seed the interaction chat: %v", err)
 	}
-	chatUUID, _ := response["chat_uuid"].(string)
-	if chatUUID == "" {
-		t.Fatalf("expected chat_uuid in the dispatch response: %s", rr.Body.String())
+	if chat.UUID == "" {
+		t.Fatal("expected the seeded chat to carry a generated UUID")
 	}
-	return chatUUID
+	return chat.UUID
 }
