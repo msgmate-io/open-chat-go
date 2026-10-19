@@ -10,6 +10,7 @@ import (
 	"backend/runtimecfg"
 	"backend/server"
 	"backend/server/util"
+	"backend/workqueue"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -939,6 +940,9 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	defer queueClient.Close()
 
 	queueInspector := asynq.NewInspector(redisRuntime.ConnOpt)
+	// ci#724: publish the queue handles process-wide so in-turn tools that have
+	// no request scope (eg the scheduling tool) can enqueue future work.
+	workqueue.SetGlobalQueueHandles(queueClient, queueInspector)
 	asynqUIHandler := asynqmon.New(asynqmon.Options{
 		RootPath:     "/admin/asynq/ui",
 		RedisConnOpt: redisRuntime.ConnOpt,
