@@ -903,6 +903,36 @@ and the eviction markers are explicit; the guard is idempotent and keeps the
 pairing), `backend/api/msgmate/coder_context_tool_test.go` and
 `backend/api/msgmate/tools/coder_context_tool_test.go`.
 
+### Native coder turns: repeated identical tool calls (ci#569, ci#728)
+
+An exact repeat of a call that already *succeeded* in the same turn is not
+dispatched again: `executeToolCall` keys a per-turn cache
+(`executedToolResults`) by the content signature `name:arguments` and replays the
+cached payload. Failures are deliberately **not** cached — the state may change
+between two identical calls (a coding workspace becomes selected after the first
+`coder_read` failed), and replaying a stale error would trap the model in a
+failure loop instead of letting it recover.
+
+Replaying the payload verbatim was itself a trap (ci#569: a turn burned 110 tool
+calls, 18 of them an identical `coder_read`): the model could not tell a replayed
+result from a fresh one, so it re-issued the identical call until the turn was
+stopped. A replay is now **visibly a replay** (`duplicate_tool_call.go`,
+`FrameDuplicateToolCallResult`): the transcript version opens with
+`[duplicate tool call] <tool> was already executed in this turn with exactly these
+arguments.`, keeps the replayed payload verbatim (the model may still need its
+content), and closes with the instruction that the call was not executed again —
+`Do NOT re-issue it: act on the result you already have, or change the arguments.`
+plus a tool-specific alternative (`coder_read`: `offset`/`limit`, `coder_list`:
+`depth`, `coder_grep`: `path`/`include`, `coder_bash`: redirect to a file and read
+ranges, …). The instruction comes last so it is the final thing the model reads,
+and the UI tool-call row keeps the plain cached payload — the frame is a model
+instruction, not user-facing output.
+
+Regression tests: `backend/api/msgmate/duplicate_tool_call_test.go` (the frame is
+explicit and ordered, empty/unknown tools degrade gracefully, and a re-issued
+identical call is not dispatched again while its transcript version carries the
+frame).
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
