@@ -17,12 +17,16 @@ import {
 } from "./FileUpload";
 import { ComposerOptionsMenu } from "./ComposerOptionsMenu";
 import { MessageComposer, type MessageComposerProps } from "./message-composer";
+import type { BotReplyDeliveryMode } from "../../lib/delivery-mode";
 
 export type MessageInputWithFilesProps = Omit<
   MessageComposerProps,
-  "attachmentsPreview" | "hasAttachments" | "onSendMessage" | "footerOptions"
+  "attachmentsPreview" | "hasAttachments" | "onSendMessage" | "footerOptions" | "onSendNow"
 > & {
-  onSendMessage?: (attachments?: Array<{ file_id: string; display_name?: string }>) => void;
+  onSendMessage?: (
+    attachments?: Array<{ file_id: string; display_name?: string }>,
+    deliveryMode?: BotReplyDeliveryMode
+  ) => void;
   /** Extra items rendered inside the composer options menu (attach file is always included). */
   footerMenuItems?: ReactNode;
 };
@@ -114,6 +118,14 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
       setUploadedFiles((prev) => prev.filter((file) => file.fileId !== fileId));
     };
 
+    // Both send paths clear the composer identically; kept in one place so
+    // "Send now" can never leave text or attachments behind.
+    const clearComposer = useCallback(() => {
+      setText("");
+      setUploadedFiles([]);
+      setUploadErrors([]);
+    }, [setText]);
+
     const handleSendMessage = () => {
       const attachments = uploadedFiles.map((file) => ({
         file_id: file.fileId,
@@ -121,9 +133,19 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
       }));
 
       onSendMessage(attachments.length > 0 ? attachments : undefined);
-      setText("");
-      setUploadedFiles([]);
-      setUploadErrors([]);
+      clearComposer();
+    };
+
+    // ci#656: "Send now" keeps the same attachment handling but asks the server
+    // to interrupt the running reply instead of queueing behind it.
+    const handleSendNow = () => {
+      const attachments = uploadedFiles.map((file) => ({
+        file_id: file.fileId,
+        display_name: file.displayName,
+      }));
+
+      onSendMessage(attachments.length > 0 ? attachments : undefined, "interrupt");
+      clearComposer();
     };
 
     const toolsEnabled = Boolean(botConfig?.tools && botConfig.tools.length > 0);
@@ -147,6 +169,7 @@ export const MessageInputWithFiles = forwardRef<HTMLTextAreaElement, MessageInpu
             setText={setText}
             botConfig={botConfig}
             onSendMessage={handleSendMessage}
+            onSendNow={handleSendNow}
             onPaste={handlePaste}
             hasAttachments={uploadedFiles.length > 0}
             placeholder={props.placeholder ?? "Send message to Msgmate.io"}
