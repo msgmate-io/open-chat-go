@@ -109,6 +109,7 @@ func WorkerCli() *cli.Command {
 					Queues: map[string]int{
 						queue.QueueDefault: 1,
 					},
+					ErrorHandler: queue.BotReplyTerminalDrain(DB),
 				},
 			)
 
