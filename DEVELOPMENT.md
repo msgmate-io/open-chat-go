@@ -597,3 +597,19 @@ renders the table the private runbook shows. Runtime selection in a
 runtime-selector message maps the older bot names onto the native runtime via
 `LegacyRuntimeBotAliases`, which is derived from the same registry, so retiring a
 family is a one-line change with a test behind it.
+
+The API side of the same rollout is staged by `NATIVE_CODER_CUTOVER`
+(`fallback` | `native` | `retired`, unset means `fallback`) and implemented in
+`backend/api/msgmate/runtime_cutover.go`:
+
+- `fallback` keeps the opencode bots offered as the immediate rollback.
+- `native` is the canary window: the fleet is served natively, the opencode
+  choices stay visible until the flip is signed off.
+- `retired` drops every non-native runtime choice from a runtime-selector
+  payload and refuses to resolve an external `chat_backend: opencode`, so a
+  stale chat config or a reinstalled integration cannot route a chat back onto
+  the retired runtime.
+
+The stage is read per request, so a rollout (or a rollback) is an env change on
+the deployment, no rebuild and no data migration. `publish-open-chat-config.yaml`
+(vault-sync, `DRY_RUN=true` first) is the path for that change.
