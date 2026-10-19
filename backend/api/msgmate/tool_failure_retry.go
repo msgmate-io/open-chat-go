@@ -153,11 +153,56 @@ func isSandboxCapacityFailure(err error) bool {
 	return false
 }
 
+// sandboxRegistryConflictMarkers are the lower-cased fragments of a *registry
+// constraint* failure while provisioning the per-chat sandbox, e.g.
+//
+//	failed creating chat sandbox: constraint failed: UNIQUE constraint failed:
+//	docker_sandboxes.owner_user_id, docker_sandboxes.name (2067)
+//
+// ci#739: the derived sandbox name is chat-scoped and therefore stable across
+// attempts (coder-<chat_uuid>), so a stale row collides on *every* retry with
+// byte-identical args. The condition is deterministic — no amount of waiting
+// changes it — which is the exact opposite of the connection blips in
+// transientToolFailureMarkers, so it must not be retried and must not be
+// reported to the model as a transient blip to "retry after a short wait".
+var sandboxRegistryConflictMarkers = []string{
+	"constraint failed",
+	"unique constraint",
+	"duplicate key value",
+	"already exists: docker_sandbox",
+	"docker_sandboxes.name",
+	"docker_sandboxes.owner_user_id",
+}
+
+// isSandboxRegistryConflict reports whether a tool error is a deterministic
+// sandbox-registry constraint violation (see sandboxRegistryConflictMarkers). A
+// nil error is never a conflict.
+func isSandboxRegistryConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range sandboxRegistryConflictMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // isTransientToolFailure reports whether a tool error is an environmental,
 // retryable failure (see transientToolFailureMarkers). A nil error is never
 // transient.
+//
+// A sandbox-registry constraint violation is explicitly *not* transient (ci#739):
+// retrying it re-runs the same deterministic write with the same stable sandbox
+// name, so the retry loop only burns the turn budget on a condition that cannot
+// change.
 func isTransientToolFailure(err error) bool {
 	if err == nil {
+		return false
+	}
+	if isSandboxRegistryConflict(err) {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
