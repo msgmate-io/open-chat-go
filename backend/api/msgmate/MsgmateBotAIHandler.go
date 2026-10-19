@@ -740,6 +740,12 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 							continue
 						}
 
+						// ci#630: cap a stored result on the way back into the
+						// context. Rows written before the persistence cap existed
+						// (or by an older backend) can still carry megabytes, and
+						// every follow-up turn used to replay them verbatim.
+						resultText = truncatePersistedToolResult(resultText)
+
 						openAiMessages = append(openAiMessages, map[string]interface{}{
 							"role":         "tool",
 							"tool_call_id": toolCallID,
@@ -1606,16 +1612,29 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 					}
 				}
 
+				// ci#630: the result written onto the call row (and echoed to the
+				// UI) is capped. A whole-file read or a command dump used to be
+				// stored verbatim, so a single message could reach megabytes and
+				// every later turn replayed that bulk from storage. The live
+				// per-tool context budget (ci#680) only covered one turn.
+				persistedResult := truncatePersistedToolResult(toolCall.Result)
+
 				toolCallRepr := map[string]interface{}{
 					"id":        toolCall.Id,
 					"name":      toolCall.ToolName,
 					"arguments": toolCall.ToolInput,
-					"result":    toolCall.Result,
+					"result":    persistedResult,
 					"status":    toolStatus,
 					// timeline_index is the number of reasoning blocks emitted
 					// before this call was dispatched, so the chat UI can render
 					// the thought the agent produced right before it (ci#569).
 					"timeline_index": timeline.index(),
+				}
+				// ci#630: tell the UI (and the next turn) that this payload is
+				// not the full tool output, so a visibly short result is not read
+				// as the tool having returned that little.
+				if persistedResult != toolCall.Result {
+					toolCallRepr["result_truncated"] = true
 				}
 				// ci#723: carry the model's optional reason for the call on
 				// the call row itself, so the chat shows *why* the agent ran
@@ -1913,7 +1932,9 @@ func (aih *AIHandlerImpl) executeTool(ctx context.Context, toolName string, tool
 				"id":        toolCall.Id,
 				"name":      toolCall.ToolName,
 				"arguments": toolCall.ToolInput,
-				"result":    toolCall.Result,
+				// ci#630: same cap as the normal call path, so a skip-core
+				// tool cannot smuggle an uncapped dump into the chat UI.
+				"result": truncatePersistedToolResult(toolCall.Result),
 			}},
 			nil,
 		),
