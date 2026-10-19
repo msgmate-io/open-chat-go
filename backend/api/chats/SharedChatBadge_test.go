@@ -488,4 +488,3 @@ func TestResolveFollowUpReferencePrefersConfigOverSelector(t *testing.T) {
 		t.Fatalf("expected the shared-config follow-up to win, got %+v", ref)
 	}
 }
-

@@ -43,9 +43,9 @@ type AdminChatView struct {
 }
 
 type ListedChatsPage struct {
-	Limit      int          `json:"limit"`
-	Page       int          `json:"page"`
-	TotalPages int          `json:"total_pages"`
+	Limit      int `json:"limit"`
+	Page       int `json:"page"`
+	TotalPages int `json:"total_pages"`
 	// Total is the number of chats matching the active filters. The chat list
 	// uses it to decide whether older chats remain to be fetched, so the
 	// "load more" affordance does not rely on a full-page heuristic (ci#579).
