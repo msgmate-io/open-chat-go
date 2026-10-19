@@ -66,6 +66,26 @@ on:
         description: Deployment URL for release comment links
         required: false
         default: ""
+      DRY_RUN:
+        description: ci#734 - dry-run the CI-failure relay (no comment, no lead message)
+        required: false
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+      pr_number:
+        description: ci#734 - PR number used by the relay dry-run
+        required: false
+        default: ""
+      pr_branch:
+        description: ci#734 - PR head branch used by the relay dry-run (chore/consolidate-*)
+        required: false
+        default: ""
+      pr_sha:
+        description: ci#734 - PR head SHA used by the relay dry-run
+        required: false
+        default: ""
   pull_request:
     types:
       - opened
@@ -295,7 +315,9 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
+    # ci#734: a relay dry-run dispatch must stay lightweight - it only inspects
+    # the relay routing and never starts the test/deploy pipeline.
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '' && github.event.inputs.DRY_RUN != 'true') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -1992,31 +2014,31 @@ jobs:
               -d "$payload"
           fi
 
+  # ci#734: the planner no longer creates fix-plan sessions on every failed PR.
+  # A failed CI run is relayed - quietly - to the open-chat-go development lead,
+  # and only for consolidation PRs (`chore/consolidate-*` -> `main`). Feature and
+  # bugfix PRs get no comment and no interaction at all. The job id/name are kept
+  # unchanged so any required status check keeps reporting.
   ci-failure-planner:
     name: CI Failure Planner (Open-Chat)
     runs-on: ubuntu-latest
     needs: [run-pr-ci-tests-and-deployments, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, build-backend-image-once]
-    # Security trigger scope: PR events only; the review ping comment is authored
-    # by github-actions (never the rely-on bot user) and notes the failure so the
-    # author can see it. The planning interaction - and, via the server-side
-    # plan_auto_implement post-action, the coding agent - are dispatched directly
-    # through the Open-Chat client; no reusable trigger workflow is involved.
+    # Security trigger scope: same-repo PR events only, and only when the head
+    # branch is a consolidation branch targeting main. Everything else is
+    # intentionally silent: no comment, no interaction, no plan session.
     if: >-
       always() &&
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
       (needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true') &&
-      (contains(needs.*.result, 'failure'))
+      (contains(needs.*.result, 'failure')) &&
+      github.base_ref == 'main' &&
+      startsWith(github.event.pull_request.head.ref, 'chore/consolidate-')
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
-      - name: Install Open-Chat python client
-        env:
-          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          pip install "git+https://x-access-token:${GH_TOKEN}@github.com/msgmate-io/open-chat-go-python-client.git"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Collect failing job details
         id: failure
@@ -2028,235 +2050,69 @@ jobs:
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")"
-          {
-            echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo "pr_number=${{ github.event.pull_request.number }}"
-            echo "failed_jobs<<FAILED_JOBS_EOF"
-            jq -r '.jobs[] | select(.conclusion == "failure") | "- [`\(.name)`](\(.html_url))"' <<< "$RUN_JOBS_JSON"
-            echo "FAILED_JOBS_EOF"
-          } >> "$GITHUB_OUTPUT"
+          jq -n \
+            --arg repo "${{ github.repository }}" \
+            --argjson pr_number "${{ github.event.pull_request.number }}" \
+            --arg pr_branch "${{ github.event.pull_request.head.ref }}" \
+            --arg pr_sha "${{ github.event.pull_request.head.sha }}" \
+            --arg base_ref "${{ github.base_ref }}" \
+            --arg run_url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --argjson failed_jobs "$(jq -c '[.jobs[] | select(.conclusion == "failure") | {name, html_url}]' <<< "$RUN_JOBS_JSON")" \
+            '{repo: $repo, pr_number: $pr_number, pr_branch: $pr_branch, pr_sha: $pr_sha, base_ref: $base_ref, run_url: $run_url, failed_jobs: $failed_jobs}' \
+            > "$RUNNER_TEMP/ci-failure-event.json"
 
-      - name: Count failed CI fix-plan attempts
-        id: attempts
-        env:
-          PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          COMMENTS_JSON="$(curl -fsSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100")"
-          # Every automatic failure cycle posts a `<!-- open-chat-ci-failure-plan -->`
-          # comment and a fix-plan implementation follows; the marker count is the
-          # durable attempt state for this PR.
-          PREVIOUS="$(jq '[.[] | select(.body | contains("<!-- open-chat-ci-failure-plan -->"))] | length' <<< "$COMMENTS_JSON")"
-          ATTEMPT=$((PREVIOUS + 1))
-          MAX_ATTEMPTS="${{ vars.CI_FIX_MAX_ATTEMPTS || 3 }}"
-          echo "attempt=${ATTEMPT}" >> "$GITHUB_OUTPUT"
-          echo "max_attempts=${MAX_ATTEMPTS}" >> "$GITHUB_OUTPUT"
-          if [ "${ATTEMPT}" -gt "${MAX_ATTEMPTS}" ]; then
-            echo "exhausted=true" >> "$GITHUB_OUTPUT"
-            comment_body="$(printf '%s\n' \
-              "<!-- open-chat-ci-failure-plan -->" \
-              ":warning: **CI fix-cycle limit reached (${ATTEMPT}/${MAX_ATTEMPTS} attempts).**" \
-              "" \
-              "Automatic planning/implementation sessions are stopped for this PR - maintainer intervention is required.")"
-            payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-              -d "$payload"
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels" \
-              -d '{"labels":["ci-fix-blocked"]}'
-          fi
-
-      - name: Post CI failure review ping comment on the PR
-        if: steps.attempts.outputs.exhausted != 'true'
-        env:
-          PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
-          RUN_URL: ${{ steps.failure.outputs.run_url }}
-          FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
-          ATTEMPT: ${{ steps.attempts.outputs.attempt }}
-          MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
-          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
-        run: |
-          set -euo pipefail
-          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
-            PLAN_NOTE="@${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments."
-          else
-            PLAN_NOTE="@${BOT_USER} a fix-plan session has been created and is **awaiting approval before it starts**; open the fix-plan interaction from the badge below and approve the pending confirmation to start the read-only planner."
-          fi
-          COMMENT_BODY="$(cat <<EOF
-          <!-- open-chat-ci-failure-plan -->
-          :x: **PR CI run failed** (fix attempt ${ATTEMPT}/${MAX_ATTEMPTS})
-
-          Failed jobs:
-          ${FAILED_JOBS}
-
-          Run: ${RUN_URL}
-
-          ${PLAN_NOTE}
-          EOF
-          )"
-          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.failure.outputs.pr_number }}/comments" \
-            -d "$payload"
-
-      - name: Dispatch Open-Chat fix-plan interaction
-        id: interaction
-        if: steps.attempts.outputs.exhausted != 'true'
+      - name: Relay the failure to the development lead
         env:
           OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
-          OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || 'issue-plan-bot' }}
-          OPEN_CHAT_IMPLEMENT_BOT: ${{ vars.OPEN_CHAT_IMPLEMENT_BOT || vars.OPEN_CHAT_CODING_BOT || 'open-chat-go-repl-bot' }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
-          FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
-          RUN_URL: ${{ steps.failure.outputs.run_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_SHA: ${{ github.event.pull_request.head.sha }}
-          REPO: ${{ github.repository }}
-          ATTEMPT: ${{ steps.attempts.outputs.attempt }}
-          MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
-          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
+          OPEN_CHAT_LEAD_BOT: ${{ vars.OPEN_CHAT_LEAD_BOT || 'msgmate-coder-development-lead' }}
+          OPEN_CHAT_LEAD_CHAT_UUID: ${{ vars.OPEN_CHAT_LEAD_CHAT_UUID || '' }}
+          GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CI_FIX_MAX_ATTEMPTS: ${{ vars.CI_FIX_MAX_ATTEMPTS || '3' }}
+          DRY_RUN: ${{ github.event.inputs.DRY_RUN || '' }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os, json
-          from client.client import OpenChatClient, TokenAuth
+          python3 development/scripts/ci_failure_relay.py relay --event "$RUNNER_TEMP/ci-failure-event.json"
 
-          require_confirmation = os.environ.get("REQUIRE_CONFIRMATION", "true").strip().lower() in ("true", "1", "yes")
-          post_action = {
-              "kind": "plan_auto_implement",
-              "repo": os.environ["REPO"],
-              "number": int(os.environ["PR_NUMBER"]),
-              # The server-side plan_auto_implement action posts the plan as a PR
-              # comment and dispatches the coding agent as a separate,
-              # confirmation-gated interaction. No comment-REPL / reusable
-              # workflow is involved; the dispatch is self-contained.
-              "bot": os.environ["OPEN_CHAT_IMPLEMENT_BOT"],
-              "require_confirmation": require_confirmation,
-              "post_badge": True,
-              "header": (
-                  "<!-- open-chat-post-interaction -->\n"
-                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")"
-              ),
-              "footer": (
-                  "Attempt " + os.environ["ATTEMPT"] + "/" + os.environ["MAX_ATTEMPTS"]
-                  + " | run: " + os.environ["RUN_URL"] + " | PR: " + os.environ["PR_URL"] + "\n\n"
-                  "When the plan is ready, the coding agent runs as a separate"
-                  + (" confirmation-gated" if require_confirmation else "")
-                  + " interaction; approve the implementation badge to start it. The agent should "
-                  "create or update a '[CI fix plan] PR #"
-                  + os.environ["PR_NUMBER"] + "' issue, implement the plan on the PR branch ("
-                  + os.environ["PR_BRANCH"] + ", head "
-                  + os.environ["PR_SHA"] + ") and push the fix commits so CI re-runs. Never poll CI."
-              ),
-          }
-          message = (
-              "You are a CI-failure planning agent reacting to a failed PR CI run.\n"
-              "Investigate the failing CI job for the pull request below using the gh CLI\n"
-              "(gh run list/watch/view --log-failed for the failing run number) and\n"
-              "the repository code. Determine the root cause and prepare a fix plan.\n"
-              "You operate in PLAN MODE: read-only investigation only - do NOT push\n"
-              "commits and do NOT create issues, comments or pull requests yourself.\n"
-              "Produce the plan as your final chat message; the Open-Chat server posts\n"
-              "it automatically as a PR comment when the interaction finishes.\n"
-              "Structure the final message as:\n"
-              "1. '## Root cause' - one-paragraph root-cause analysis with evidence from\n"
-              "   logs/code.\n"
-              "2. '## Fix plan' - a numbered list of small, ordered implementation steps\n"
-              "   a coding agent can execute 1:1 on the PR branch (concrete: file\n"
-              "   paths, commands, expected results).\n"
-              "3. '## Verification' - how the fix can be verified locally and by CI.\n"
-              "Do not include anything else in the final message.\n"
-              "\n"
-              "Context:\n"
-              + "- Repository: " + os.environ["REPO"] + "\n"
-              + "- PR number: " + os.environ["PR_NUMBER"] + "\n"
-              + "- PR title: " + os.environ["PR_TITLE"] + "\n"
-              + "- PR url: " + os.environ["PR_URL"] + "\n"
-              + "- CI run url: " + os.environ["RUN_URL"] + "\n"
-              + "- Fix attempt (of max " + os.environ["MAX_ATTEMPTS"] + "): " + os.environ["ATTEMPT"] + "\n"
-              + "\nFailing jobs (markdown links):\n"
-              + os.environ["FAILED_JOBS"] + "\n"
-          )
-          message = message + ("\n\n(Meta block for the plan issue, paste into the issue body "
-                               "when created, keep verbatim:)\n"
-                               + json.dumps({"pr_number": int(os.environ["PR_NUMBER"]),
-                                             "pr_branch": os.environ["PR_BRANCH"],
-                                             "attempt": int(os.environ["ATTEMPT"]),
-                                             "max_attempts": int(os.environ["MAX_ATTEMPTS"]),
-                                             "run_url": os.environ["RUN_URL"]}))
-          message = message + ("\nFailing jobs (markdown links):\n"
-                               + os.environ["FAILED_JOBS"] + "\n")
-          message = message + ("CI run url: " + os.environ["RUN_URL"] + "\n")
-          message = message + ("PR url: " + os.environ["PR_URL"] + "\n")
-          if require_confirmation:
-              message = message + ("\nNOTE: this planning interaction is confirmation-gated; it will not start until the owner approves the pending confirmation.\n")
+  # ci#734: dry-run the consolidation-PR relay from the Actions UI. This job
+  # performs **no** API call at all - no PR comment and no lead message - and
+  # only prints the message and comment body the real relay would produce, so
+  # the routing can be inspected without touching a live lead interaction.
+  ci-failure-relay-dry-run:
+    name: CI Failure Relay Dry Run (Open-Chat)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.DRY_RUN == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-          client = OpenChatClient(
-              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
-              auth=TokenAuth(token=os.environ["OPEN_CHAT_API_TOKEN"]),
-          )
-          me = client.me()
-          print("Authenticated as:", me.name)
-          bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          overrides = {"post_action": post_action, "require_confirmation": require_confirmation}
-          interaction = bot.create_interaction(message=message, overrides=overrides, share=True)
-          print("Created interaction chat:", interaction.uuid)
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"chat_uuid={interaction.uuid}\n")
-              share_uuid = getattr(interaction, "_chat_share_uuid", None)
-              if share_uuid:
-                  out.write(f"chat_share_uuid={share_uuid}\n")
-                  out.write(f"shared_url={interaction.shared_url()}\n")
-          PY
-      - name: Reply on PR with planner badge
-        if: steps.interaction.outputs.chat_uuid != ''
+      - name: Build the synthetic CI-failure event
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
-          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
-          SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
-          OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
-          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+          PR_BRANCH: ${{ github.event.inputs.pr_branch }}
+          PR_SHA: ${{ github.event.inputs.pr_sha }}
         run: |
           set -euo pipefail
-          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
-          SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
-          BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
-          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
-            NOTE="*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate interaction.*"
-          else
-            NOTE="*A fix-plan session was created for this CI failure and is **awaiting approval**: click the badge above, review it and approve the pending confirmation to start the read-only planner. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate, confirmation-gated interaction.*"
-          fi
-          COMMENT_BODY="$(printf '%s\n' \
-            "[![open-chat fix plan session](%s)](%s)" \
-            "${NOTE}")"
-          COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
-          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.failure.outputs.pr_number }}/comments" \
-            -d "$payload"
+          jq -n \
+            --arg repo "$REPO" \
+            --arg pr_branch "$PR_BRANCH" \
+            --arg pr_sha "$PR_SHA" \
+            --argjson pr_number "${PR_NUMBER:-0}" \
+            '{repo: $repo, pr_number: $pr_number, pr_branch: $pr_branch, pr_sha: $pr_sha, base_ref: "main", run_url: "", failed_jobs: []}' \
+            > "$RUNNER_TEMP/ci-failure-event.json"
+
+      - name: Dry-run the relay to the development lead
+        env:
+          OPEN_CHAT_LEAD_BOT: ${{ vars.OPEN_CHAT_LEAD_BOT || 'msgmate-coder-development-lead' }}
+          OPEN_CHAT_LEAD_CHAT_UUID: ${{ vars.OPEN_CHAT_LEAD_CHAT_UUID || '' }}
+          CI_FIX_MAX_ATTEMPTS: ${{ vars.CI_FIX_MAX_ATTEMPTS || '3' }}
+          DRY_RUN: "true"
+        run: |
+          set -euo pipefail
+          python3 development/scripts/ci_failure_relay.py relay \
+            --event "$RUNNER_TEMP/ci-failure-event.json" --dry-run
 
   pr-test-merge-requirement:
     name: PR Test Merge Requirement
@@ -2473,6 +2329,14 @@ jobs:
           # Submodule contents are not needed: the gate reads the gitlink SHAs
           # recorded in the commit tree and compares them with `git ls-remote`.
           submodules: false
+
+      # ci#734: unit-test the CI-failure relay so the quiet-by-default policy
+      # (comments/interactions only for consolidation PRs) and the
+      # one-comment/one-message behaviour cannot silently regress.
+      - name: CI failure relay unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_ci_failure_relay.py -v
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup
