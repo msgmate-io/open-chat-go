@@ -37,10 +37,11 @@ is therefore carried here as a patch, plus the values overlays it adds.
   `backend/values.postgresql-internal.example.yaml`, new
   `backend/values.postgresql-external.example.yaml` and `backend/values.yaml`
   (documented `postgresql` block with `mode: off` default).
-* The two example overlays are the documentation of the external mode: they carry
-  host, port, database and user only - never a password. The password is read from
-  an existing Secret (or an out-of-band managed credential), so no secret value is
-  committed here or rendered into the chart.
+* The two example overlays are the documentation of the Postgres modes: the
+  `internal` one only sizes the in-cluster `Cluster`, the `external` one only names
+  the pre-existing Secret and the key that holds the DSN. Neither carries host,
+  port, database, user *or* password values - credentials are always read from a
+  Secret, so no secret value is committed here or rendered into the chart.
 
 ## Applying / verifying
 
@@ -55,11 +56,20 @@ helm template t backend -f backend/values.postgresql-external.example.yaml
 ```
 
 Regression check used for this change: every existing overlay
-(`values.yaml`, `values.msgmate-io-{staging,ci,ci2,pr-deployment,production}.yaml`)
-renders **byte-identical** to before the patch, i.e. Postgres stays opt-in and
-nothing changes for the deployments that select SQLite. `helm lint backend` passes
-for all variants, and an invalid `postgresql.mode` fails the render with a clear
-message.
+(`values.yaml`, `values.msgmate-io-{staging,ci,pr-deployment,production}.yaml`)
+renders **byte-identical** (`cmp`) to before the patch, i.e. Postgres stays opt-in
+and nothing changes for the deployments that select SQLite. `helm lint backend`
+passes for all variants, and an invalid `postgresql.mode` fails the render with a
+clear message. The patch was also checked in both directions: applying it to a
+pristine chart yields this chart tree, reverse-applying it reproduces the pristine
+tree.
+
+## Requirements
+
+* `internal` needs the CloudNativePG operator (and its `Cluster` CRD) installed in
+  the target cluster; the chart only creates the `Cluster` and reads its app Secret.
+* `external` needs a pre-existing Secret holding the connection URI and needs no
+  additional cluster component.
 
 ## Not part of this change
 
