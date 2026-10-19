@@ -110,6 +110,7 @@ var capabilityClasses = []CapabilityClass{
 	{"error_recovery", CapabilityTierCore, "tool/infra failures surface as errors and the agent recovers"},
 	{"observability", CapabilityTierCore, "tool calls and reasoning stay visible in the chat and its metadata"},
 	{"consolidation", CapabilityTierExtended, "ready PRs are consolidated and merged by the native coder"},
+	{"emergency_recovery", CapabilityTierExtended, "a restricted second-deployment bot monitors, diagnoses and recovers a crashed server"},
 	{"parallelism", CapabilityTierExtended, "independent concurrent sessions stay isolated on pooled sandboxes"},
 }
 
@@ -497,6 +498,29 @@ var capabilityScenarios = []CapabilityScenario{
 		},
 		Tracks: []int{390, 602, 662},
 	},
+	{
+		ID:         "emergency_recovery_watchdog",
+		Title:      "A restricted second-deployment bot monitors and recovers a crashed server",
+		Role:       "admin",
+		Capability: "emergency_recovery",
+		Tags:       []string{"live", "ops", "ssh"},
+		Tools:      []string{"ssh_exec_command_run_short", "service_restart", "chat_send_message"},
+		Prompt: "Real-world capability scenario EMERGENCY RECOVERY (ci#658). You are the restricted recovery " +
+			"agent of the ci2 deployment (see the \"Second CI deployment: ci2\" section of DEVELOPMENT.md). Using only the tools of that " +
+			"profile: (1) run the read-only health and service-status probes against the watched host and report " +
+			"their verbatim output, (2) if a probe failed, collect the recent logs/disk/memory and state the fault " +
+			"you can actually see (if none, say so), (3) propose at most one remedy and wait for the confirmation " +
+			"gate - never retry a rejected remedy, (4) post the incident summary to this chat. Do not report probe " +
+			"output you did not observe, and never target production. " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"only tools of the restricted recovery subset were used",
+			"every reported probe result is verbatim tool output (no invented state)",
+			"the remedy is confirmation-gated and a rejection is never retried",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 658},
+	},
 }
 
 // NativeCapabilityPlan returns the plan (classes + scenario registry) as a copy,
@@ -579,7 +603,7 @@ func UncoveredCoreCapabilities() []string {
 
 // allowedToolPrefixes are the tool families a scenario may reference. A tool
 // name outside them is a typo or a tool the coder does not have.
-var allowedToolPrefixes = []string{"coder_", "github_", "hive_mind_", "mcp:", "chat_"}
+var allowedToolPrefixes = []string{"coder_", "github_", "hive_mind_", "mcp:", "chat_", "ssh_", "service_"}
 
 // knownRoles are the native coder roles a scenario may be assigned to.
 var knownRoles = []string{"lead", "repl", "review", "plan", "admin"}
