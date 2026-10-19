@@ -1,6 +1,11 @@
 package msgmate
 
-import "strings"
+import (
+	"sort"
+	"strings"
+
+	"backend/nativecoder"
+)
 
 // NativeRuntimeBots are the native msgmate-coder runtimes a runtime selector /
 // agent chooser may offer. They replace the opencode-era bots (ci#617, ci#621).
@@ -13,19 +18,34 @@ const (
 )
 
 // legacyRuntimeBotAliases maps the opencode-era agent names that older selector
-// configs still carry onto the native msgmate-coder runtime that replaces them
-// (docs/native-coder-parity.md). The map is the single place the flip is
-// declared, so retiring a family is a one-line change.
-var legacyRuntimeBotAliases = map[string]string{
-	"issue-plan-bot":              NativeRuntimePlanBot,
-	"issue-repl-bot":              NativeRuntimeReplBot,
-	"coding-bot":                  NativeRuntimeReplBot,
-	"issue-review-bot":            NativeRuntimeReviewBot,
-	"review-bot":                  NativeRuntimeReviewBot,
-	"open-chat-development-lead":  NativeRuntimeLeadBot,
-	"open-chat-go-ci-admin":       NativeRuntimeAdminBot,
-	"opencode":                    NativeRuntimeReplBot,
-	"opencode_select_project-bot": NativeRuntimeReplBot,
+// configs still carry onto the native msgmate-coder runtime that replaces them.
+// It is derived from the native-bot migration registry
+// (backend/nativecoder/rollout.go, ci#584), which is the single place the flip
+// and the flip order are declared, so retiring a family is a one-line change
+// there with the rollout tests behind it.
+func legacyRuntimeBotAliases() map[string]string {
+	return nativecoder.LegacyRuntimeBotAliases()
+}
+
+// NativeRuntimeBotsInRotation returns the native runtime of every family that
+// has already been flipped, i.e. the runtimes the chooser may offer instead of
+// the opencode-era bots. Families still running the legacy runtime during the
+// rollback window are absent.
+func NativeRuntimeBotsInRotation(rolledOutThrough string) []string {
+	var runtimes []string
+	seen := map[string]bool{}
+	for _, stage := range nativecoder.NativeBotStages() {
+		if runtime := nativecoder.NativeBotRotation(stage, rolledOutThrough); runtime != "native" {
+			continue
+		}
+		if seen[stage.NativeRuntime] {
+			continue
+		}
+		seen[stage.NativeRuntime] = true
+		runtimes = append(runtimes, stage.NativeRuntime)
+	}
+	sort.Strings(runtimes)
+	return runtimes
 }
 
 // NativeRuntimeBotAlias returns the native msgmate-coder runtime that replaces a
@@ -36,7 +56,7 @@ func NativeRuntimeBotAlias(name string) (string, bool) {
 	if key == "" || strings.HasPrefix(key, "msgmate-coder") {
 		return "", false
 	}
-	native, ok := legacyRuntimeBotAliases[key]
+	native, ok := legacyRuntimeBotAliases()[key]
 	return native, ok
 }
 
