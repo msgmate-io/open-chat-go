@@ -351,3 +351,56 @@ func TestNormalizeRepoDevLead(t *testing.T) {
 		t.Fatalf("NormalizeRepo = %q", got)
 	}
 }
+
+// TestParseRelayedCIFailurePayload pins the emitter/consumer contract (ci#606):
+// the payload `development/scripts/ci_failure_relay.py` produced for the failed
+// PR #822 CI run must parse into a routable CIFailureEvent, failure log excerpt
+// included, so the lead never sees job names without an error line.
+func TestParseRelayedCIFailurePayload(t *testing.T) {
+	raw := []byte(`{"attempt":1,"branch":"chore/consolidate-2026-10-19-r46",
+"failing_jobs":["Run PR CI Go Tests (3/4)"],
+"failure_logs":"Run PR CI Go Tests (3/4): --- FAIL: TestRoutes (0.01s)\nFAIL\tgithub.com/msgmate-io/open-chat-go/backend/server\t0.42s",
+"kind":"ci_failure","max_attempts":3,"occurred_at":"2026-10-19T04:16:07Z","pr_number":822,
+"provider":"github","repo":"msgmate-io/open-chat-go",
+"run_url":"https://github.com/msgmate-io/open-chat-go/actions/runs/39196723017",
+"schema_version":1,"severity":"error","sha":"eb5d256a70da0fb8504c7c7c6d36df7260f7fc36"}`)
+	event, err := ParseCIFailureEvent(raw)
+	if err != nil {
+		t.Fatalf("ParseCIFailureEvent(relayed payload): %v", err)
+	}
+	if got, want := event.FixSessionKey(), "msgmate-io/open-chat-go#pr-822"; got != want {
+		t.Fatalf("FixSessionKey = %q, want %q", got, want)
+	}
+	if len(event.FailingJobs) != 1 || event.FailingJobs[0] != "Run PR CI Go Tests (3/4)" {
+		t.Fatalf("FailingJobs = %v", event.FailingJobs)
+	}
+	if !strings.Contains(event.FailureLogs, "--- FAIL: TestRoutes") {
+		t.Fatalf("FailureLogs lost the error excerpt: %q", event.FailureLogs)
+	}
+	if event.PRNumber != 822 || event.Sha == "" {
+		t.Fatalf("relayed target not preserved: pr=%d sha=%q", event.PRNumber, event.Sha)
+	}
+}
+
+// TestRouteRelayedCIFailureReachesTheLeadWithLogs is the ci#606 end-to-end
+// expectation: a relayed failure routes to the running lead interaction and the
+// prompt handed over carries the collected failure log excerpt.
+func TestRouteRelayedCIFailureReachesTheLeadWithLogs(t *testing.T) {
+	event := testCIFailureEvent()
+	event.FailureLogs = "Run PR CI Go Tests (3/4): --- FAIL: TestRoutes"
+	lead := LeadInteraction{
+		UUID: "lead-chat", Kind: DevLeadInteractionKind, Repo: event.Repo,
+		PRNumber: event.PRNumber, Status: LeadInteractionActive,
+		LastActivityAt: time.Now().UTC(),
+	}
+	decision, err := DevLeadRouter{}.Route(event, []LeadInteraction{lead})
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if !decision.Dispatch() {
+		t.Fatalf("relayed failure should dispatch, got %s", decision.Route)
+	}
+	if prompt := decision.Prompt(event); !strings.Contains(prompt, "--- FAIL: TestRoutes") {
+		t.Fatalf("prompt dropped the failure log excerpt: %q", prompt)
+	}
+}

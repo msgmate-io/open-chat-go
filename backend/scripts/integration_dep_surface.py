@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Measure the integration dependency surface (ci#423).
 
-The stable-Host migration (ci#423, design in
-``frontend/pages/docs/content/integration-host-migration.mdx``) is only
+The stable-Host migration (ci#423) is only
 verifiable by measurement: an integration is decoupled when it no longer pulls
 any ``backend/...`` package into its *compiled artifact*. This script reports
 exactly that, per integration, so a migration increment can be checked and the

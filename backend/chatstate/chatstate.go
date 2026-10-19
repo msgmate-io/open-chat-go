@@ -168,4 +168,3 @@ func ClearChatSuperseded(chatUUID string) {
 	}
 	supersededChats.Delete(chatUUID)
 }
-

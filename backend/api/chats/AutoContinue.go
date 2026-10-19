@@ -49,6 +49,12 @@ const (
 	autoContinueConfigKey = "auto_continue"
 	// autoContinueMaxKey caps the number of continuations per interaction.
 	autoContinueMaxKey = "auto_continue_max"
+	// autoContinueMaxIncompleteRetriesKey bounds the *consecutive* retries of an
+	// incomplete turn (ci#724): a turn that ends without a final summary is
+	// retried, but only a bounded number of times. Zero disables the retry.
+	autoContinueMaxIncompleteRetriesKey = "auto_continue_max_incomplete_retries"
+	// autoContinueIncompletePromptKey overrides the incomplete-turn instruction.
+	autoContinueIncompletePromptKey = "auto_continue_incomplete_prompt"
 	// autoContinueDelayKey is the quiet period in seconds before the wake-up.
 	autoContinueDelayKey = "auto_continue_delay_seconds"
 	// autoContinuePromptKey overrides the continuation instruction.
@@ -80,17 +86,39 @@ const (
 
 	// defaultAutoContinueMax bounds the loop when no explicit budget is set.
 	defaultAutoContinueMax = 30
+	// defaultAutoContinueMaxIncompleteRetries bounds the retry budget of an
+	// incomplete turn (ci#724) when none is configured.
+	defaultAutoContinueMaxIncompleteRetries = 3
 	// defaultAutoContinueDelaySeconds is the default quiet period between turns.
 	defaultAutoContinueDelaySeconds = 10
 	// maxAutoContinueDelaySeconds caps a configured delay so a misconfigured
 	// value cannot park a loop for an unreasonable time.
 	maxAutoContinueDelaySeconds = 3600
+	// maxAutoContinueIncompleteRetries caps a configured incomplete-turn retry
+	// budget (ci#724).
+	maxAutoContinueIncompleteRetries = 10
 
 	// autoContinueLabel is the mode label recorded on continuation prompts.
 	autoContinueLabel = "auto_continue"
 
 	// autoContinueExhaustedReason is recorded when the loop stops on its budget.
 	autoContinueExhaustedReason = "budget_exhausted"
+	// autoContinueIncompleteExhaustedReason is recorded when the incomplete-turn
+	// retry budget is used up (ci#724).
+	autoContinueIncompleteExhaustedReason = "incomplete_retries_exhausted"
+	// autoContinueIncompleteRetryReason labels a continuation scheduled to retry
+	// an incomplete turn (ci#724).
+	autoContinueIncompleteRetryReason = "incomplete_retry"
+
+	// turnEndedMetadataKey is the message-metadata key recording why a native
+	// coder turn ended (ci#709). It mirrors the metadata written by
+	// backend/api/msgmate/MsgmateBotAIHandler.go.
+	turnEndedMetadataKey = "turn_ended"
+	// turnEndedNoUsableToolCall mirrors msgmate.TurnEndedNoUsableCall
+	// (backend/api/msgmate/turn_outcome.go). It is duplicated as a literal
+	// because api/msgmate imports api/chats, so the dependency cannot be
+	// reversed.
+	turnEndedNoUsableToolCall = "no_usable_tool_call"
 )
 
 // autoContinueSettingsSchema documents the state keys stored in
@@ -101,6 +129,9 @@ const (
 	autoContinueStopReasonStateKey        = "auto_continue_stop_reason"
 	autoContinuePendingStateKey           = "auto_continue_pending"
 	autoContinuePendingSourceMessageState = "auto_continue_pending_source_message_id"
+	// autoContinueIncompleteRetriesStateKey persists the consecutive
+	// incomplete-turn retries of an interaction (ci#724).
+	autoContinueIncompleteRetriesStateKey = "auto_continue_incomplete_retries"
 )
 
 // Transient auto-continuation stop reasons. They describe a momentary refusal
@@ -118,6 +149,11 @@ type AutoContinueConfig struct {
 	Prompt           string
 	CompletionMarker string
 	HumanMarker      string
+	// MaxIncompleteRetries bounds consecutive retries of an incomplete turn
+	// (ci#724). Zero disables the retry.
+	MaxIncompleteRetries int
+	// IncompletePrompt is the instruction used for an incomplete-turn retry.
+	IncompletePrompt string
 }
 
 // ResolveAutoContinueConfig resolves the loop policy from a chat shared config.
@@ -126,13 +162,15 @@ type AutoContinueConfig struct {
 // without an external watcher.
 func ResolveAutoContinueConfig(config map[string]interface{}) AutoContinueConfig {
 	resolved := AutoContinueConfig{
-		MaxTurns:         defaultAutoContinueMax,
-		Delay:            defaultAutoContinueDelaySeconds * time.Second,
-		CompletionMarker: DefaultAutoContinueCompletionMarker,
-		HumanMarker:      DefaultAutoContinueHumanMarker,
+		MaxTurns:             defaultAutoContinueMax,
+		Delay:                defaultAutoContinueDelaySeconds * time.Second,
+		CompletionMarker:     DefaultAutoContinueCompletionMarker,
+		HumanMarker:          DefaultAutoContinueHumanMarker,
+		MaxIncompleteRetries: defaultAutoContinueMaxIncompleteRetries,
 	}
 	if config == nil {
 		resolved.Prompt = defaultAutoContinuePrompt(resolved)
+		resolved.IncompletePrompt = defaultAutoContinueIncompletePrompt(resolved)
 		return resolved
 	}
 
@@ -154,6 +192,18 @@ func ResolveAutoContinueConfig(config map[string]interface{}) AutoContinueConfig
 	} else if value, ok := configInt(dispatch, autoContinueDelayKey); ok {
 		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
 	}
+	// ci#724: the incomplete-turn retry budget. An explicit value (including 0,
+	// which disables the retry) wins over the default.
+	if value, ok := configInt(config, autoContinueMaxIncompleteRetriesKey); ok {
+		resolved.MaxIncompleteRetries = clampAutoContinueIncompleteRetries(value)
+	} else if value, ok := configInt(dispatch, autoContinueMaxIncompleteRetriesKey); ok {
+		resolved.MaxIncompleteRetries = clampAutoContinueIncompleteRetries(value)
+	}
+	if value := configString(config, autoContinueIncompletePromptKey); value != "" {
+		resolved.IncompletePrompt = value
+	} else if value := configString(dispatch, autoContinueIncompletePromptKey); value != "" {
+		resolved.IncompletePrompt = value
+	}
 	if value := configString(config, autoContinuePromptKey); value != "" {
 		resolved.Prompt = value
 	}
@@ -173,6 +223,9 @@ func ResolveAutoContinueConfig(config map[string]interface{}) AutoContinueConfig
 	if resolved.Prompt == "" {
 		resolved.Prompt = defaultAutoContinuePrompt(resolved)
 	}
+	if resolved.IncompletePrompt == "" {
+		resolved.IncompletePrompt = defaultAutoContinueIncompletePrompt(resolved)
+	}
 	return resolved
 }
 
@@ -189,6 +242,21 @@ func defaultAutoContinuePrompt(config AutoContinueConfig) string {
 	return fmt.Sprintf(
 		"Continue with the task now: pick up exactly where you left off and make concrete progress this turn; do not ask whether to continue. "+
 			"When the WHOLE task is complete and verified, end your reply with the line %s. "+
+			"If and only if you are blocked on a decision only a human can make, end with the line %s and state exactly what you need.",
+		config.CompletionMarker, config.HumanMarker,
+	)
+}
+
+// defaultAutoContinueIncompletePrompt renders the instruction used when a turn
+// ends incomplete — it ran out of tool calls or ended without producing a
+// usable final message (ci#724). Unlike the generic continuation prompt, it
+// names the failure explicitly so the agent commits its work and reports,
+// instead of silently appearing to have finished.
+func defaultAutoContinueIncompletePrompt(config AutoContinueConfig) string {
+	return fmt.Sprintf(
+		"Your previous turn ended before you finished: it stopped without a final summary, so the work was not yet reported. "+
+			"Finish it now — make sure any completed work is committed and pushed (and, if the task calls for it, that a draft pull request is open), then reply with a short summary of what you changed and what is still pending. "+
+			"Do not restart the task. When the WHOLE task is complete and verified, end your reply with the line %s. "+
 			"If and only if you are blocked on a decision only a human can make, end with the line %s and state exactly what you need.",
 		config.CompletionMarker, config.HumanMarker,
 	)
@@ -224,6 +292,11 @@ type autoContinueState struct {
 	// proves the outstanding continuation ran.
 	Pending                bool
 	PendingSourceMessageID uint
+	// IncompleteRetries counts the *consecutive* incomplete-turn retries of the
+	// interaction (ci#724). It is reset to zero as soon as a turn completes
+	// cleanly, so a long run that hits one bad turn does not permanently
+	// exhaust its retry budget.
+	IncompleteRetries int
 }
 
 // autoContinueDecision is the outcome of the loop decision for one finished
@@ -240,6 +313,10 @@ type autoContinueDecision struct {
 	// persisted as the outstanding-continuation marker so a duplicate
 	// completion event for the same turn cannot schedule a second turn.
 	SourceMessageID uint
+	// IncompleteRetries is the incomplete-turn retry counter the decision
+	// resolved to (ci#724). It is persisted with the loop state: incremented by
+	// an incomplete-turn retry, reset by a clean completion.
+	IncompleteRetries int
 }
 
 // decideAutoContinue decides whether a finished automated turn should schedule
@@ -250,7 +327,7 @@ type autoContinueDecision struct {
 // whose previous continuation is still outstanding, or one whose budget is
 // exhausted.
 func decideAutoContinue(config AutoContinueConfig, state autoContinueState, message database.Message, meta map[string]interface{}, activeTurn bool) autoContinueDecision {
-	decision := autoContinueDecision{Turns: state.Turns, MaxTurns: config.MaxTurns, SourceMessageID: message.ID}
+	decision := autoContinueDecision{Turns: state.Turns, MaxTurns: config.MaxTurns, SourceMessageID: message.ID, IncompleteRetries: state.IncompleteRetries}
 	if !config.Enabled {
 		return decision
 	}
@@ -289,11 +366,61 @@ func decideAutoContinue(config AutoContinueConfig, state autoContinueState, mess
 		decision.StopReason = autoContinueExhaustedReason
 		return decision
 	}
+	// ci#724: a turn that ended without a usable tool call is treated as a clean
+	// completion by isInteractionCompletionMetadata (the handler always writes
+	// `finished: true`), yet the agent never reported its work — it stopped
+	// mid-task. Retry it, with its own bounded budget, using the dedicated
+	// incomplete-turn prompt so the difference is visible. The retry is
+	// deliberately checked after the stop signals: an agent that *did* declare
+	// completion (marker or `task_completed`) has finished and must not be
+	// re-run. An explicit budget of 0 disables the retry.
+	if turnEndedIncompleteRetryable(meta) && config.MaxIncompleteRetries > 0 {
+		if state.IncompleteRetries >= config.MaxIncompleteRetries {
+			decision.StopReason = autoContinueIncompleteExhaustedReason
+			return decision
+		}
+		decision.Continue = true
+		decision.Reason = autoContinueIncompleteRetryReason
+		decision.Prompt = config.IncompletePrompt
+		decision.Delay = config.Delay
+		decision.IncompleteRetries = state.IncompleteRetries + 1
+		return decision
+	}
 	decision.Continue = true
 	decision.Reason = "continuation"
 	decision.Prompt = config.Prompt
 	decision.Delay = config.Delay
+	// ci#724: a clean completion resets the incomplete-turn retry counter, so a
+	// long run that hit one bad turn does not carry the debt forever.
+	decision.IncompleteRetries = 0
 	return decision
+}
+
+// turnEndedIncompleteRetryable reports whether a finished turn stopped
+// *incompletely* and is therefore worth retrying (ci#724).
+//
+// The signal is the `turn_ended` metadata stamped by the native coder handler
+// (ci#709). Only outcomes that mean "the agent stopped before it could report"
+// qualify. Every other outcome is deliberately excluded:
+//
+//   - `tool_call_cap_reached` / `failed_tool_call_cap_reached`: retrying burns
+//     the per-chat tool budget for no gain; the generic continuation (when the
+//     budget allows) already resumes the work.
+//   - `provider_error`: a transport failure, not a policy stop — the provider
+//     retry path already handles it and a retry loop would amplify an outage.
+//   - `cancelled`: the user (or an interrupt) stopped the turn deliberately.
+//   - `confirmable_pause`: the turn is waiting for the user, and the pending
+//     action guard already refuses the continuation.
+//
+// An absent or unknown reason is never retried: it means the turn ended some
+// other way (or came from a backend that does not stamp the field), and the
+// retry must stay opt-in to a signal we actually understand.
+func turnEndedIncompleteRetryable(meta map[string]interface{}) bool {
+	if meta == nil {
+		return false
+	}
+	reason, _ := meta[turnEndedMetadataKey].(string)
+	return strings.TrimSpace(reason) == turnEndedNoUsableToolCall
 }
 
 // continuationOutstanding reports whether a continuation prompt was already
@@ -386,6 +513,12 @@ func scheduleAutoContinuePrompt(ctx context.Context, db *gorm.DB, client *asynq.
 		autoContinueMaxKey:           decision.MaxTurns,
 		"auto_continue_scheduled_by": "in_product_loop",
 	}
+	// ci#724: mark a continuation that retries an incomplete turn, so a watcher
+	// (and the transcript) can tell it apart from a routine continuation.
+	if decision.Reason == autoContinueIncompleteRetryReason {
+		metadata[autoContinueIncompleteRetryReason] = true
+		metadata[autoContinueIncompleteRetriesStateKey] = decision.IncompleteRetries
+	}
 	if decision.Delay > 0 {
 		metadata["auto_continue_delay_seconds"] = int(decision.Delay / time.Second)
 	}
@@ -432,6 +565,7 @@ func scheduleAutoContinuePrompt(ctx context.Context, db *gorm.DB, client *asynq.
 		Stopped:                false,
 		Pending:                true,
 		PendingSourceMessageID: decision.SourceMessageID,
+		IncompleteRetries:      decision.IncompleteRetries,
 	})
 }
 
@@ -480,6 +614,10 @@ type AutoContinueStatus struct {
 	Turns      int
 	Max        int
 	StopReason string
+	// IncompleteRetries reports how many consecutive turns ended without a
+	// summary and were retried, and the budget bounding them (ci#724).
+	IncompleteRetries    int
+	MaxIncompleteRetries int
 }
 
 // AutoContinueStatusForChat resolves the loop status of a chat for an
@@ -498,6 +636,8 @@ func AutoContinueStatusForChat(db *gorm.DB, chat database.Chat) AutoContinueStat
 	status.Turns = state.Turns
 	status.Max = config.MaxTurns
 	status.StopReason = state.StopReason
+	status.IncompleteRetries = state.IncompleteRetries
+	status.MaxIncompleteRetries = config.MaxIncompleteRetries
 	return status
 }
 
@@ -518,6 +658,10 @@ func populateAutoContinueStatus(db *gorm.DB, chat database.Chat, response Intera
 	response.AutoContinueTurns = state.Turns
 	response.AutoContinueMax = config.MaxTurns
 	response.AutoContinueStopReason = state.StopReason
+	// ci#724: surface the incomplete-turn retry budget so a watcher can tell a
+	// live retry from a genuinely finished run.
+	response.AutoContinueIncompleteRetries = state.IncompleteRetries
+	response.AutoContinueMaxIncompleteRetries = config.MaxIncompleteRetries
 	return response
 }
 
@@ -593,6 +737,10 @@ func loadAutoContinueState(db *gorm.DB, chatID uint) autoContinueState {
 	if pendingSource, ok := configInt(config, autoContinuePendingSourceMessageState); ok && pendingSource > 0 {
 		state.PendingSourceMessageID = uint(pendingSource)
 	}
+	// ci#724: the consecutive incomplete-turn retries of the interaction.
+	if retries, ok := configInt(config, autoContinueIncompleteRetriesStateKey); ok && retries > 0 {
+		state.IncompleteRetries = retries
+	}
 	return state
 }
 
@@ -613,6 +761,11 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 	config[autoContinueTurnsStateKey] = state.Turns
 	config[autoContinueStoppedStateKey] = state.Stopped
 	config[autoContinuePendingStateKey] = state.Pending
+	if state.IncompleteRetries > 0 {
+		config[autoContinueIncompleteRetriesStateKey] = state.IncompleteRetries
+	} else {
+		delete(config, autoContinueIncompleteRetriesStateKey)
+	}
 	if state.PendingSourceMessageID > 0 {
 		config[autoContinuePendingSourceMessageState] = state.PendingSourceMessageID
 	} else {
@@ -640,7 +793,7 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 // must not latch the loop off.
 func recordAutoContinueStop(db *gorm.DB, chat database.Chat, state autoContinueState, reason string) {
 	switch strings.TrimSpace(reason) {
-	case "", "continuation", "not_a_clean_completion", "turn_in_flight", "pending_action", continuationInFlightReason:
+	case "", "continuation", autoContinueIncompleteRetryReason, "not_a_clean_completion", "turn_in_flight", "pending_action", continuationInFlightReason:
 		return
 	}
 	if state.Stopped && state.StopReason == reason {
@@ -688,6 +841,19 @@ func clampAutoContinueDelay(seconds int) int {
 		return maxAutoContinueDelaySeconds
 	}
 	return seconds
+}
+
+// clampAutoContinueIncompleteRetries bounds a configured incomplete-turn retry
+// budget (ci#724). A negative value disables the retry (treated as 0) and an
+// absurd one is capped, so a misconfigured chat cannot spin the loop.
+func clampAutoContinueIncompleteRetries(retries int) int {
+	if retries < 0 {
+		return 0
+	}
+	if retries > maxAutoContinueIncompleteRetries {
+		return maxAutoContinueIncompleteRetries
+	}
+	return retries
 }
 
 func configBool(config map[string]interface{}, key string) bool {
