@@ -152,8 +152,6 @@ anchors:
 	}
 }
 
-
-
 // TestLoadOpenChatConfigAcceptsYAMLWithAnchors proves the loader accepts YAML
 // config documents (including anchors/aliases and multi-line strings) and
 // applies the same strict schema as JSON configs.
@@ -374,7 +372,6 @@ func TestLoadOpenChatConfigJSONUnknownAnchorRef(t *testing.T) {
 		t.Fatalf("expected unknown-anchor reference error from JSON config, got %v", err)
 	}
 }
-
 
 // TestResolveConfigSourceInlineYAML guards against passing the whole YAML
 // config document inline (e.g. via the OPEN_CHAT_CONFIG env var): content with
