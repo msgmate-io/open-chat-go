@@ -520,6 +520,36 @@ half of the fix — it makes the loop wait instead of stampeding — and does no
 replace the capacity levers themselves (node sizing, the right-sized per-chat
 requests of ci#604, the pooled/shared mode of ci#545).
 
+### Scheduling the next turn is bookkeeping, not work (ci#724)
+
+`coder_schedule` is how a lead agent keeps a loop running without an external
+CronJob: it persists its own prompt as the next user-side message of the chat and
+enqueues the reply with `asynq.ProcessIn(delay)`. Because scheduling *does no work*
+— it only re-arms a later turn — the call must not shorten the turn that made it,
+otherwise a turn that schedules its next pulse from inside a long loop would
+consume part of the very budget it is trying to hand to the future.
+
+`backend/api/msgmate/tool_budget.go` therefore holds the exemption rule:
+
+- `budgetExemptToolNames` names the bookkeeping tools (`coder_schedule`); a call of
+  such a tool is marked `turnBudgetExempt` when the executed call is recorded
+  (`openai.go`), so the rule lives next to the call it describes;
+- the round is charged through the pure `toolCallBudgetAccounting`, which returns
+  the charged and the exempt counts separately. Only charged calls increase
+  `totalToolCalls`, so the tool-call cap still bounds how much *work* a turn does
+  (a turn that schedules in a loop cannot run forever), it just no longer counts
+  the scheduling itself;
+- the **failed-tool budget is deliberately unaffected**: a schedule that cannot be
+  enqueued (no queue handle, a rejected delay) is a real failure the agent should
+  see and act on, not bookkeeping;
+- the exemption is visible instead of implicit: the call carries
+  `turn_budget_exempt` in the tool-call details, `tool_call_budget_exempt_count`
+  travels in the `interaction_complete` payload, and the turn's
+  `tool_call_usage` metadata gains `budget_exempt_total`, so a self-re-arming turn
+  is readable from the chat.
+
+Regression tests: `backend/api/msgmate/tool_budget_test.go`.
+
 ### Native coding-agent provider concurrency control
 
 Under full-throttle development (many native agents at once) a shared provider

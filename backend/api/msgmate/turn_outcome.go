@@ -39,6 +39,10 @@ type TurnOutcome struct {
 	// (ci#688, ci#691).
 	TransientFailures       int
 	SandboxCapacityFailures int
+	// BudgetExemptCalls counts the calls of the turn that were bookkeeping
+	// rather than work (`coder_schedule`, ci#724) and therefore did not consume
+	// the total tool-call budget.
+	BudgetExemptCalls int
 	// Budget is the resolved per-chat tool-call budget of the turn.
 	Budget nativecoder.ToolCallBudget
 	// Context is the context/token usage report of the last request the turn
@@ -59,9 +63,9 @@ func (o *TurnOutcome) reason() string {
 // state, so the caps no longer live only inside an error string.
 func (o *TurnOutcome) usage() nativecoder.ToolCallBudgetUsage {
 	if o == nil {
-		return nativecoder.ToolCallBudget{}.Usage(0, 0, 0, 0)
+		return nativecoder.ToolCallBudget{}.Usage(0, 0, 0, 0, 0)
 	}
-	return o.Budget.Usage(o.ToolCalls, o.FailedToolCalls, o.TransientFailures, o.SandboxCapacityFailures)
+	return o.Budget.Usage(o.ToolCalls, o.FailedToolCalls, o.TransientFailures, o.SandboxCapacityFailures, o.BudgetExemptCalls)
 }
 
 // turnBudgetFromMeta returns the budget the tool loop enforces: the one the
