@@ -169,6 +169,47 @@ Regression tests: `backend/api/msgmate/turn_final_text_test.go`,
 `backend/nativecoder/toolbudget_test.go` and the snapshot assertion in
 `backend/api/chats/create_test.go`.
 
+#### A message sent into a running chat is queued, never dropped (ci#656)
+
+A message sent while the chat was already running a bot turn used to disappear:
+the enqueue clobbered the live turn's task under the stable per-chat task ID
+(`bot-reply:<chat>`), so the running turn was cancelled and the new message was
+never answered. `POST /api/v1/chats/{chat_uuid}/messages/send` now takes an
+explicit `delivery_mode`:
+
+- **`queued` (default, also when the field is omitted)** - the live turn keeps
+  running and the new reply is appended *behind* it under a per-message task ID
+  (`bot-reply:<chat>:<message>`). Every message is answered and the work the
+  live turn already did (files, commits) is kept.
+- **`interrupt`** - the explicit "send now" action cancels every reply task of
+  the chat (live turn included), voids parked confirmable actions and stops the
+  auto-continuation loop for the chat, then starts the new reply immediately
+  under the stable per-chat task ID.
+- An unknown `delivery_mode` is **rejected with 400** (`Invalid delivery_mode`)
+  instead of being silently guessed.
+
+When no turn is live, any queued reply for the chat is replaced by the newest
+message, so an idle chat never accumulates stale replies. The idle and interrupt
+paths deliberately reuse the stable base task ID (they clear the chat's tasks
+first, so a re-enqueue cannot collide with an asynq-archived task); only a reply
+queued behind a *live* turn needs a per-message ID because the live turn keeps
+the base ID.
+
+`GET` interaction status (`backend/api/chats/InteractionStatus.go`) exposes
+`queued_replies` - how many messages are queued behind the chat's live turn - so
+the transcript can render persisted-but-pending messages instead of them looking
+lost. It is `0` when no turn is live: a single pending reply is just the next
+turn waiting for a worker, not a message sent into a running chat.
+
+Plumbing: `backend/workqueue/bot_reply.go` carries `BotReplyDeliveryMode`,
+`ParseBotReplyDeliveryMode`, the pure `DecideBotReplyEnqueue`,
+`EnqueueBotReplyWithDelivery` / the `EnqueueBotReply` default, `BotReplyQueuedCount`
+and the liveness-injected `enqueueBotReplyWithDelivery` core (the `turnLive` flag
+is injected because a task waiting in the queue is *pending*, not *active*, so a
+unit test cannot otherwise reach the queue-behind branch).
+
+Regression tests: `backend/workqueue/bot_reply_test.go`.
+
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
 
 When the sandbox node was saturated, a dispatched native `msgmate_coder`
