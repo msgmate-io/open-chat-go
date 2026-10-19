@@ -33,6 +33,13 @@ type ActionTaskAction = {
   input?: Record<string, unknown>;
   confirm_label?: string;
   continue_after_execute?: boolean;
+  // ci#735: a rejected interaction confirmation stays in the stack so it can be
+  // voided and re-dispatched; rejected/rerunnable mark it, rerun_of/rerun_count
+  // carry the re-run bookkeeping.
+  rejected?: boolean;
+  rerunnable?: boolean;
+  rerun_of?: string;
+  rerun_count?: number;
 };
 
 type ActionTaskPartner = {
@@ -164,9 +171,17 @@ function InteractionConfirmationControls({
   onResolved: (task: ActionTaskRow) => void;
   onError: (message: string) => void;
 }) {
-  const [deciding, setDeciding] = useState<"approve" | "reject" | null>(null);
+  const [deciding, setDeciding] = useState<"approve" | "reject" | "rerun" | null>(null);
 
-  const decide = async (decision: "approve" | "reject") => {
+  // ci#735: a rejected interaction confirmation is no longer a dead end - the
+  // backend keeps it in the stack with rejected/rerunnable set so the user can
+  // void the rejection and re-dispatch the interaction.
+  const rejectedAction = task.actions.find(
+    (action) => action.kind === "interaction_confirmation" && action.rejected,
+  );
+  const isRejected = Boolean(rejectedAction);
+
+  const decide = async (decision: "approve" | "reject" | "rerun") => {
     setDeciding(decision);
     try {
       const response = await fetch(
@@ -174,7 +189,10 @@ function InteractionConfirmationControls({
         { method: "POST" },
       );
       if (!response.ok) {
-        onError((await response.text()) || "Failed to resolve confirmation.");
+        onError(
+          (await response.text()) ||
+            (decision === "rerun" ? "Failed to re-run interaction." : "Failed to resolve confirmation."),
+        );
         return;
       }
       onResolved(task);
@@ -184,6 +202,26 @@ function InteractionConfirmationControls({
       setDeciding(null);
     }
   };
+
+  if (isRejected) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Text type={TextTypes.Body7} color="muted">
+          Rejected
+          {rejectedAction?.rerun_count ? ` · re-run ${rejectedAction.rerun_count}×` : ""}
+        </Text>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => decide("rerun")}
+          disabled={busy || deciding !== null}
+        >
+          Re-run interaction
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2">

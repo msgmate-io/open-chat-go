@@ -26,6 +26,11 @@ const (
 	ActionTaskKindToolConfirmation        = "tool_confirmation"
 )
 
+// ActionTaskActionRerunInteractionConfirmation is the action id advertised for a
+// rejected interaction confirmation: the user can void the rejection and
+// re-dispatch the interaction (ci#735).
+const ActionTaskActionRerunInteractionConfirmation = "rerun_interaction_confirmation"
+
 // ActionTaskAction is a single pending action found on a message that requires
 // the user's attention.
 type ActionTaskAction struct {
@@ -42,6 +47,14 @@ type ActionTaskAction struct {
 	Input                map[string]interface{} `json:"input,omitempty"`
 	ConfirmLabel         string                 `json:"confirm_label,omitempty"`
 	ContinueAfterExecute bool                   `json:"continue_after_execute,omitempty"`
+	// ci#735: re-run affordance for a rejected interaction confirmation. A
+	// rejected gate stays in the stack (instead of being silently dropped) so
+	// the user can undo the rejection; Rejected/Rerunnable mark it and
+	// RerunOf/RerunCount carry the re-run bookkeeping of an already re-run gate.
+	Rejected   bool   `json:"rejected,omitempty"`
+	Rerunnable bool   `json:"rerunnable,omitempty"`
+	RerunOf    string `json:"rerun_of,omitempty"`
+	RerunCount int    `json:"rerun_count,omitempty"`
 }
 
 // ActionTaskPartner is the compact partner identity returned with a task.
@@ -430,4 +443,28 @@ func actionTaskFirstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// actionTaskIntField reads an integer meta field that may have been decoded as a
+// float64 (encoding/json) or as a json.Number/int by another decoder.
+func actionTaskIntField(source map[string]interface{}, key string) int {
+	if source == nil {
+		return 0
+	}
+	switch value := source[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(parsed)
+	default:
+		return 0
+	}
 }
