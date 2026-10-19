@@ -1,7 +1,6 @@
 package workqueue
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -27,11 +26,12 @@ func TestBotReplyTaskIDStable(t *testing.T) {
 	}
 }
 
-// TestEnqueueBotReplyIdempotency exercises the per-chat dedupe on a real asynq
-// server backed by miniredis: a second enqueue for the same chat while the
-// first is still pending is rejected with ErrTaskIdConflict, and enqueueing
-// succeeds again once the queued task is cancelled (ci#648).
-func TestEnqueueBotReplyIdempotency(t *testing.T) {
+// TestEnqueueBotReplyFallsBackOnPendingTaskIDConflict exercises the per-chat
+// dedupe on a real asynq server backed by miniredis: a second enqueue for the
+// same chat while the first is still pending must fall back to a unique task ID
+// instead of failing with ErrTaskIdConflict (an archived/finished task from an
+// earlier turn can hold the stable base ID in production).
+func TestEnqueueBotReplyFallsBackOnPendingTaskIDConflict(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
@@ -46,8 +46,8 @@ func TestEnqueueBotReplyIdempotency(t *testing.T) {
 
 	payload := BotReplyPayload{ChatUUID: "chat-1", MessageUUID: "msg-1", BotUserID: 1}
 
-	// A nil inspector disables the pre-enqueue cancel, so the raw duplicate
-	// guard is what we observe.
+	// A nil inspector disables the pre-enqueue cancel, so the raw task-ID
+	// conflict is what we observe.
 	if _, err := EnqueueBotReply(client, nil, payload); err != nil {
 		if isUnsupportedScriptError(err) {
 			t.Skipf("miniredis cannot run asynq scripts: %v", err)
@@ -55,8 +55,12 @@ func TestEnqueueBotReplyIdempotency(t *testing.T) {
 		t.Fatalf("first enqueue failed: %v", err)
 	}
 
-	if _, err := EnqueueBotReply(client, nil, payload); !errors.Is(err, asynq.ErrTaskIDConflict) {
-		t.Fatalf("second enqueue for the same chat: expected ErrTaskIDConflict, got %v", err)
+	second, err := EnqueueBotReply(client, nil, payload)
+	if err != nil {
+		t.Fatalf("second enqueue for the same chat should fall back to a unique ID: %v", err)
+	}
+	if second == nil || second.ID == BotReplyTaskID(payload.ChatUUID) {
+		t.Fatalf("expected a unique fallback task ID, got %+v", second)
 	}
 
 	CancelBotReplyTask(inspector, payload.ChatUUID)
