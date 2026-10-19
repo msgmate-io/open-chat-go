@@ -487,6 +487,110 @@ func TestAgentScopeTagsNotForwardedToInteractionConfig(t *testing.T) {
 	}
 }
 
+// TestAgentRetagInteractionTags covers the re-tag/re-scope verb (ci#540 point
+// 3): the managing user may replace or incrementally edit an interaction's tags,
+// malformed bodies are rejected, a caller reaching the interaction only through
+// its declared scope may not write tags outside that scope, and a caller that
+// does not manage the interaction at all gets a 404.
+func TestAgentRetagInteractionTags(t *testing.T) {
+	DB := setupBotsTestDB(t)
+	owner := createUserForBotsTest(t, DB, "owner.agent.retag@example.com", false)
+	leadRuntime, leadUser := createBotRuntimeForTest(t, DB, owner, "retag-lead")
+	workerRuntime, _ := createBotRuntimeForTest(t, DB, owner, "retag-worker")
+	_, intruderUser := createBotRuntimeForTest(t, DB, owner, "retag-intruder")
+	setBotAgentScopeTags(t, DB, leadRuntime, []string{"repo:open-chat-go"})
+
+	client, inspector, cleanup := setupAsynqTest(t)
+	defer cleanup()
+	hr := &BotsHandler{}
+
+	rr := agentDispatchRequest(t, DB, owner, "POST", "/api/v1/agents/dispatch", nil, AgentDispatchRequest{
+		Bot:     workerRuntime.UUID,
+		Message: "do the work",
+		Tags:    []string{"repo:open-chat-go"},
+	}, client, inspector, hr.AgentDispatch)
+	if rr.Code != 200 {
+		t.Fatalf("expected dispatch status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var dispatch map[string]interface{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &dispatch)
+	chatUUID, _ := dispatch["chat_uuid"].(string)
+
+	retag := func(user *database.User, body interface{}) *httptest.ResponseRecorder {
+		t.Helper()
+		return agentDispatchRequest(t, DB, user, "POST", "/api/v1/agents/interactions/"+chatUUID+"/tags",
+			map[string]string{"chat_uuid": chatUUID}, body, client, inspector, hr.AgentRetag)
+	}
+	tagsOf := func() []string {
+		t.Helper()
+		var fresh database.Chat
+		if err := DB.Where("uuid = ?", chatUUID).First(&fresh).Error; err != nil {
+			t.Fatalf("expected interaction chat: %v", err)
+		}
+		return []string(fresh.Tags)
+	}
+
+	// Malformed bodies: both forms at once, and neither form.
+	if bad := retag(owner, map[string]interface{}{"tags": []string{"a"}, "add": []string{"b"}}); bad.Code != 400 {
+		t.Fatalf("expected 400 for mixed tag forms, got %d: %s", bad.Code, bad.Body.String())
+	}
+	if bad := retag(owner, map[string]interface{}{}); bad.Code != 400 {
+		t.Fatalf("expected 400 for an empty tag change, got %d: %s", bad.Code, bad.Body.String())
+	}
+
+	// The owner manages the interaction it dispatched: incremental edit.
+	editRR := retag(owner, map[string]interface{}{"add": []string{"issue:540"}, "remove": []string{"repo:open-chat-go"}})
+	if editRR.Code != 200 {
+		t.Fatalf("expected incremental retag status 200, got %d: %s", editRR.Code, editRR.Body.String())
+	}
+	var editBody struct {
+		Tags         []string `json:"tags"`
+		PreviousTags []string `json:"previous_tags"`
+	}
+	if err := json.Unmarshal(editRR.Body.Bytes(), &editBody); err != nil {
+		t.Fatalf("failed to decode retag response: %v", err)
+	}
+	if !containsString(database.StringSliceJSON(editBody.Tags), "issue:540") || containsString(database.StringSliceJSON(editBody.Tags), "repo:open-chat-go") {
+		t.Fatalf("expected tags [issue:540], got %v", editBody.Tags)
+	}
+	if !containsString(database.StringSliceJSON(editBody.PreviousTags), "repo:open-chat-go") {
+		t.Fatalf("expected previous tags to report the dispatched tag, got %v", editBody.PreviousTags)
+	}
+	if persisted := tagsOf(); containsString(database.StringSliceJSON(persisted), "repo:open-chat-go") {
+		t.Fatalf("expected the removed tag to be persisted away, got %v", persisted)
+	}
+
+	// Full replacement restores the scoped tag.
+	replaceRR := retag(owner, map[string]interface{}{"tags": []string{"repo:open-chat-go", "issue:540"}})
+	if replaceRR.Code != 200 {
+		t.Fatalf("expected replacement retag status 200, got %d: %s", replaceRR.Code, replaceRR.Body.String())
+	}
+	if persisted := tagsOf(); len(persisted) != 2 {
+		t.Fatalf("expected the replacement tag set to be persisted, got %v", persisted)
+	}
+
+	// The scoped lead reaches the interaction only through `repo:open-chat-go`;
+	// it may keep using that scope but must not write tags outside it.
+	if inScope := retag(&leadUser, map[string]interface{}{"add": []string{"repo:open-chat-go"}}); inScope.Code != 200 {
+		t.Fatalf("scoped lead: expected in-scope retag status 200, got %d: %s", inScope.Code, inScope.Body.String())
+	}
+	if outOfScope := retag(&leadUser, map[string]interface{}{"add": []string{"repo:other-project"}}); outOfScope.Code != 403 {
+		t.Fatalf("scoped lead: expected out-of-scope add status 403, got %d: %s", outOfScope.Code, outOfScope.Body.String())
+	}
+	if escape := retag(&leadUser, map[string]interface{}{"tags": []string{"repo:other-project"}}); escape.Code != 403 {
+		t.Fatalf("scoped lead: expected out-of-scope replacement status 403, got %d: %s", escape.Code, escape.Body.String())
+	}
+	if persisted := tagsOf(); !containsString(database.StringSliceJSON(persisted), "repo:open-chat-go") {
+		t.Fatalf("expected the rejected edits to leave the tags untouched, got %v", persisted)
+	}
+
+	// A bot that neither participates in, dispatched, nor is scoped to this
+	// interaction cannot retag it.
+	if denied := retag(&intruderUser, map[string]interface{}{"add": []string{"repo:open-chat-go"}}); denied.Code != 404 {
+		t.Fatalf("intruder: expected retag status 404, got %d: %s", denied.Code, denied.Body.String())
+	}
+}
+
 // setBotAgentScopeTags records the opt-in `agent_scope_tags` declaration on a
 // bot runtime's default shared config.
 func setBotAgentScopeTags(t *testing.T, DB *gorm.DB, runtime database.BotRuntimeConfig, tags []string) {
