@@ -3055,8 +3055,15 @@ jobs:
             # ci#774 follow-up: the observed run must belong to the ref/sha this job
             # dispatched, otherwise a run created from another commit would be
             # observed here and reported as this PR's deploy.
-            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] && [ "$run_ref" != "$DISPATCH_REF" ]; then
-              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'."
+            # ci#818: a workflow_dispatch can report the resolved commit sha as
+            # the run's head_branch, so a run whose ref equals the dispatched sha
+            # IS this dispatch's run. Rejecting it dyed the whole PR run red while
+            # the deploy itself was fine; only a ref that is neither the dispatched
+            # ref name nor its sha belongs to another dispatch.
+            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] \
+              && [ "$run_ref" != "$DISPATCH_REF" ] \
+              && [ "$run_ref" != "${DISPATCH_REF_SHA:-}" ]; then
+              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'${DISPATCH_REF_SHA:+ (or its commit ${DISPATCH_REF_SHA})}."
               echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
               exit 1
             fi
