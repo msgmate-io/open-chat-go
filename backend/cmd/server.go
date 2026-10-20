@@ -1230,6 +1230,26 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
 
+	// ci#744 / ci#747 RC1: arm the declared self-message schedules. Without this
+	// the schedule bookkeeping in api/msgmate is never reached at boot, so a lead
+	// (or worker) whose turn ends without an external dispatcher stays idle
+	// forever. StartSelfMessageRuntime is a no-op when
+	// OPEN_CHAT_SELF_MESSAGE_SCHEDULES is empty, so it is safe to wire
+	// unconditionally; the runtime is owned by the same process that owns the
+	// queue scheduler, so exactly one instance seeds the tasks.
+	if c.Bool("run-scheduler") {
+		selfMessageRuntime, selfErr := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
+		if selfErr != nil {
+			return fmt.Errorf("self-message scheduler failed to start: %w", selfErr)
+		}
+		if selfMessageRuntime != nil {
+			defer selfMessageRuntime.Shutdown()
+			logging.Infof("Armed the self-message schedules (ci#744); idle interactions now self-resume")
+		} else {
+			logging.Infof("No self-message schedules configured (%s unset)", msgmate.SelfMessageScheduleEnvVar)
+		}
+	}
+
 	serverErrCh := make(chan error, 1)
 	go func() {
 		err := s.Serve(listener)
