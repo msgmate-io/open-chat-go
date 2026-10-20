@@ -2509,6 +2509,17 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_pool_egress_gate.sh
 
+      # ci#612: a *pooled* workspace must get its own network namespace, and a
+      # sensitive repo must never be handed a pooled slot (follow-up of the
+      # ci#546 shared sandbox networking design). Pin the in-pod namespace
+      # script contract (deterministic per-workspace namespace, exec prefix,
+      # slirp sidecar keeping egress/DNS, sibling-port isolation refusal,
+      # --print-only never failing, no credential material).
+      - name: Sandbox workspace netns unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_workspace_netns.sh
+
       # ci#745: the PR-CI progress-comment step must thread its repository/PR
       # context explicitly and must skip (instead of 404-looping) when that
       # context is empty. Pin the contract so the empty-URL red job cannot
