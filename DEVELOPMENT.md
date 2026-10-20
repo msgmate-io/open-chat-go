@@ -996,3 +996,29 @@ implements one issue does not need the dispatch family.
 2. Keep both routes until the native route is verified live.
 3. Then retire the workflow from the lead's prompt/config in one consolidation
    PR and record the version that flipped it, so the change is revertible.
+
+### opencode retirement umbrella (ci#585)
+
+`backend/nativecoder/opencoderetirement.go` gates the retirement of the opencode
+integration on the flipped fleet. `backend/nativecoder/retirementevidence.go`
+breaks the same gate down per umbrella step (`OpencodeRetirementEvidence`): each
+checklist entry of the ticket gets the status the gate implies and the blocker
+lines that belong to it, and `RenderOpencodeRetirementEvidenceMarkdown` renders
+that table for a ticket comment. Because the rows are derived from
+`OpencodeRetirementBlockers`, a step cannot be reported as signed off while its
+blocker is still listed.
+
+The config half of the same umbrella (ci#582) is the *delta* the flip publishes:
+`backend/nativecoder/retirementdelta.go` renders the per-bot runtime mutations
+from the same flip registry - `OpencodeRetirementFlipDelta`,
+`OpencodeRetirementRollbackDelta`, `OpencodeRetirementDeltaJSON` - together with
+the ordered apply plan (`OpencodeRetirementDeltaApplyPlan`), which goes through
+the vault-sync path `publish-open-chat-config.yaml` with `DRY_RUN=true` first.
+`ValidateOpencodeRetirementDeltas` fails unless the rollback delta is the exact
+inverse of the flip delta, and `PendingOpencodeRetirementFlipDelta` reports the
+entries still outstanding for the observed fleet, so the delta, the gate and the
+deployment never disagree. The read-only job
+`backend/scripts/opencode_retirement_report` prints the per-step evidence
+(`--format=markdown`, `--format=json`) or the flip delta (`--format=delta`) for a
+ticket comment; `--require-ready` turns the gate into a non-zero exit for a
+scripted check.
