@@ -12,6 +12,7 @@ import io
 import os
 import sys
 import unittest
+import urllib.error
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,11 +26,17 @@ WORKFLOW_FILE = mod.WORKFLOW_FILE
 HEAD = "faf784c5f832f144ad2d8f33bca10fd0c4d7995a"
 CURRENT = 39245536652
 NEWER = 39246623047
+# `_NOW` is pinned to 1000000.0 in the tests, i.e. 1970-01-12T13:46:40Z.
+CREATED_STARVED = "1970-01-12T13:45:00Z"  # 100s old: older than the 60s grace
+CREATED_FRESH = "1970-01-12T13:46:00Z"  # 40s old: still inside the grace window
 LABELS = [{"name": "test"}]
 
 
-def run(run_id, status="completed", attempt=1):
-    return {"id": run_id, "status": status, "run_attempt": attempt}
+def run(run_id, status="completed", attempt=1, created_at=None):
+    payload = {"id": run_id, "status": status, "run_attempt": attempt}
+    if created_at is not None:
+        payload["created_at"] = created_at
+    return payload
 
 
 def gate(name=GATE, status="completed", conclusion="success"):
@@ -67,6 +74,7 @@ def ns(**over):
         head_sha=HEAD,
         run_id=CURRENT,
         wait_seconds=0,
+        yield_seconds=60,
     )
     base.update(over)
     return argparse.Namespace(**base)
@@ -75,15 +83,31 @@ def ns(**over):
 class ReconcileTests(unittest.TestCase):
     def setUp(self):
         self._fetch = mod._FETCH
+        self._post = mod._POST
         self._mono = mod._MONOTONIC
+        self._now = mod._NOW
         self._sleep = mod._SLEEP
         self.now = [1000.0]
         mod._MONOTONIC = lambda: self.now[0]
+        mod._NOW = lambda: self.wall[0]
         mod._SLEEP = lambda seconds: self.now.__setitem__(0, self.now[0] + 1)
+        self.wall = [1000000.0]
+        self.cancelled = []
+        self.cancel_error = None
+
+        def fake_post(url, token, timeout=30):
+            if self.cancel_error is not None:
+                raise self.cancel_error
+            self.cancelled.append(url)
+            return {}
+
+        mod._POST = fake_post
 
     def tearDown(self):
         mod._FETCH = self._fetch
+        mod._POST = self._post
         mod._MONOTONIC = self._mono
+        mod._NOW = self._now
         mod._SLEEP = self._sleep
 
     def reconcile(self, api, **over):
@@ -146,6 +170,101 @@ class ReconcileTests(unittest.TestCase):
         code, summary = self.reconcile(api, wait_seconds=0)
         self.assertEqual(code, 3)
         self.assertIn("still in_progress", summary)
+        self.assertEqual(self.cancelled, [], "a progressing run must not be starved")
+
+    def test_starved_replacement_makes_this_run_yield_the_group(self):
+        # 39407028825: `pending` for 12+ minutes with an empty repository queue,
+        # because this cancelled run still holds `pr-ci-892-<sha>`.
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="pending", created_at=CREATED_STARVED)],
+            jobs={},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 5)
+        self.assertTrue(summary.startswith("yielded:"))
+        self.assertIn("replacement run %s" % NEWER, summary)
+        self.assertEqual(
+            self.cancelled,
+            [
+                mod.API
+                + "/repos/msgmate-io/open-chat-go/actions/runs/%d/cancel" % CURRENT
+            ],
+        )
+
+    def test_replacement_within_the_grace_window_is_left_to_start(self):
+        fresh = CREATED_FRESH  # 40s old: 20s short of the 60s grace
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="queued", created_at=fresh)])
+        code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 3)
+        self.assertIn("timeout:", summary)
+        self.assertEqual(self.cancelled, [])
+
+    def test_replacement_without_a_created_at_is_not_a_reason_to_yield(self):
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="pending")])
+        code, _ = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 3)
+        self.assertEqual(self.cancelled, [])
+
+    def test_yielding_can_be_disabled(self):
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="pending", created_at=CREATED_STARVED)],
+        )
+        code, _ = self.reconcile(api, wait_seconds=0, yield_seconds=0)
+        self.assertEqual(code, 3)
+        self.assertEqual(self.cancelled, [])
+
+    def test_a_gate_verdict_outranks_yielding(self):
+        api = FakeApi(
+            runs=[
+                run(CURRENT),
+                run(NEWER, created_at=CREATED_STARVED),
+                run(NEWER - 1, status="pending", created_at=CREATED_STARVED),
+            ],
+            jobs={NEWER: [gate()]},
+        )
+        code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 0)
+        self.assertIn("concluded success", summary)
+        self.assertEqual(self.cancelled, [], "no yield once a verdict is available")
+
+    def test_already_cancelling_run_yields_without_failing(self):
+        self.cancel_error = urllib.error.HTTPError(
+            "url", 409, "Conflict", None, io.BytesIO(b"")
+        )
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="pending", created_at=CREATED_STARVED)],
+        )
+        code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
+        self.assertEqual(code, 5)
+        self.assertIn("yielded:", summary)
+
+    def test_failed_cancel_fails_closed(self):
+        self.cancel_error = urllib.error.HTTPError(
+            "url", 403, "Forbidden", None, io.BytesIO(b"")
+        )
+        api = FakeApi(
+            runs=[run(CURRENT), run(NEWER, status="pending", created_at=CREATED_STARVED)],
+        )
+        with self.assertRaises(urllib.error.HTTPError):
+            self.reconcile(api, wait_seconds=0, yield_seconds=60)
+
+    def test_starved_replacement_helper_ignores_fresh_and_running_runs(self):
+        candidates = [
+            run(NEWER, status="in_progress", created_at=CREATED_STARVED),
+            run(NEWER + 1, status="pending", created_at=CREATED_FRESH),
+            run(NEWER + 2, status="pending", created_at=CREATED_STARVED),
+        ]
+        starved = mod.starved_replacement(candidates, 1000000.0, 60)
+        self.assertIsNotNone(starved)
+        self.assertEqual(starved["id"], NEWER + 2)
+        self.assertIsNone(mod.starved_replacement(candidates, 1000000.0, 0))
+        self.assertIsNone(mod.starved_replacement([o for o in candidates[:1]], 1000000.0, 60))
+
+    def test_parse_epoch(self):
+        self.assertIsNone(mod.parse_epoch(None))
+        self.assertIsNone(mod.parse_epoch(""))
+        self.assertIsNone(mod.parse_epoch("not-a-timestamp"))
+        self.assertEqual(mod.parse_epoch("1970-01-01T00:00:00Z"), 0.0)
 
     def test_api_error_fails_closed(self):
         mod._FETCH = FakeApi(error=ValueError("boom"))
@@ -345,6 +464,28 @@ class WorkflowWiringTests(unittest.TestCase):
         ]
         self.assertIn("continue-on-error: true", step)
         self.assertIn("accepted=false", step)
+
+    def test_gate_job_threads_the_yield_budget_to_the_reconciler(self):
+        # ci#659: the reconciler self-cancels to hand the concurrency group to a
+        # starved replacement, and that only works if the budget is settable.
+        step = self.gate[
+            self.gate.index("id: superseded-reconcile") : self.gate.index(
+                "- name: Enforce test label and passing tests"
+            )
+        ]
+        self.assertIn("PR_CI_SUPERSEDED_YIELD_SECONDS:", step)
+        default = self.gate.split("PR_CI_SUPERSEDED_YIELD_SECONDS:")[1].splitlines()[0]
+        self.assertIn("'60'", default)
+        # Yielding is only reachable while the wait loop is still running, so the
+        # grace window must stay well inside the wait budget.
+        self.assertLess(60, 1500)
+
+    def test_gate_stays_red_on_a_yielded_run(self):
+        # Exit code 5 (yielded) is non-zero, so the shell maps it to
+        # `accepted=false` and the gate job's own run never turns green: the
+        # replacement run's gate owns the verdict from then on.
+        self.assertIn("if [ \"${reconcile_status}\" -eq 0 ]; then", self.gate)
+        self.assertIn("accepted=false", self.gate)
 
 
 if __name__ == "__main__":
