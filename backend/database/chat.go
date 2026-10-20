@@ -87,6 +87,10 @@ type ChatSettings struct {
 // scoped to a single target user (AccessMode "user", TargetUserId set), in
 // which case only the owner and that user may open it.
 type SharedChatInstance struct {
+	// ContentMode controls how much of the shared chat is exposed to viewers.
+	// Empty means censored (the safe default) for shares created before this
+	// field existed.
+	ContentMode string
 	Model
 	ChatId        uint   `json:"-" gorm:"index"`
 	Chat          Chat   `json:"-" gorm:"foreignKey:ChatId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

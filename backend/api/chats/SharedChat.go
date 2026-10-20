@@ -14,6 +14,7 @@ import (
 )
 
 type SharedChatPublishResponse struct {
+	ContentMode    string `json:"content_mode,omitempty"`
 	ChatUUID       string `json:"chat_uuid"`
 	ChatShareUUID  string `json:"chat_share_uuid"`
 	AccessMode     string `json:"access_mode"`
@@ -24,6 +25,7 @@ type SharedChatPublishResponse struct {
 // publishChatRequest optionally scopes a share. An omitted/empty body keeps
 // the default fully-public share behaviour.
 type publishChatRequest struct {
+	ContentMode string `json:"content_mode,omitempty"`
 	// AccessMode is "public" (default) or "user".
 	AccessMode string `json:"access_mode"`
 	// TargetUsername/TargetUserUUID identify the single user a "user" share is
@@ -66,6 +68,7 @@ func findShareTargetUser(DB *gorm.DB, username, userUUID string) (database.User,
 }
 
 type PublicInteractionChat struct {
+	ContentMode        string                 `json:"content_mode,omitempty"`
 	UUID               string                 `json:"uuid"`
 	ChatShareUUID      string                 `json:"chat_share_uuid"`
 	ChatType           string                 `json:"chat_type"`
@@ -157,6 +160,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessMode := normalizeShareAccessMode(payload.AccessMode)
+	contentMode := NormalizeShareContentMode(payload.ContentMode)
 	var targetUserID *uint
 	targetUsername := ""
 	targetUserUUID := ""
@@ -177,6 +181,16 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist the (possibly changed) share content mode. Re-publishing an
+	// existing share must never silently keep a wider mode than requested.
+	if share.ContentMode != string(contentMode) {
+		share.ContentMode = string(contentMode)
+		if saveErr := DB.Save(&share).Error; saveErr != nil {
+			http.Error(w, "Failed to publish chat", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SharedChatPublishResponse{
 		ChatUUID:       chat.UUID,
@@ -184,6 +198,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		AccessMode:     share.AccessMode,
 		TargetUsername: targetUsername,
 		TargetUserUUID: targetUserUUID,
+		ContentMode:    string(NormalizeShareContentMode(share.ContentMode)),
 	})
 }
 
@@ -283,8 +298,7 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(PublicInteractionChat{
+	_ = writeRedactedJSON(w, PublicInteractionChat{
 		UUID:          chat.UUID,
 		ChatShareUUID: share.ChatShareUUID,
 		ChatType:      chat.ChatType,
@@ -297,7 +311,7 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		Config:             config,
 		InteractionDetails: interactionDetails,
 		FollowUp:           publicFollowUpForInteraction(DB, chat),
-	})
+	}, NormalizeShareContentMode(share.ContentMode))
 }
 
 type SharedInteractionAccessResponse struct {
@@ -371,7 +385,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 		return
 	}
 
-	chat, _, err := getSharedChatByUUID(DB, shareUUID)
+	chat, share, err := getSharedChatByUUID(DB, shareUUID)
 	if err != nil {
 		http.Error(w, "Shared chat not found", http.StatusNotFound)
 		return
@@ -411,8 +425,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 		Rows:       listed,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = writeRedactedJSON(w, response, NormalizeShareContentMode(share.ContentMode))
 }
 
 func findOwnedChat(DB *gorm.DB, userID uint, chatUUID string) (database.Chat, error) {
