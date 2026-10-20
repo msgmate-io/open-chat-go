@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -166,6 +167,9 @@ func isSandboxCapacityFailure(err error) bool {
 // changes it — which is the exact opposite of the connection blips in
 // transientToolFailureMarkers, so it must not be retried and must not be
 // reported to the model as a transient blip to "retry after a short wait".
+// Because the model can still act on it (select another sandbox/workspace), the
+// failure does consume the failed-tool budget and is explained to the model by
+// buildSandboxRegistryConflictToolErrorPlaceholder below.
 var sandboxRegistryConflictMarkers = []string{
 	"constraint failed",
 	"unique constraint",
@@ -189,6 +193,32 @@ func isSandboxRegistryConflict(err error) bool {
 		}
 	}
 	return false
+}
+
+// buildSandboxRegistryConflictToolErrorPlaceholder builds the model-facing
+// result of a provisioning call that failed on a deterministic sandbox-registry
+// constraint violation (ci#739) and was therefore *not* retried. The bare error
+// reads like an infrastructure blip, which invites the model to repeat the
+// identical call — the one response that cannot work, because the sandbox name
+// is derived from the chat uuid and a stale row collides byte-identically on
+// every attempt. The placeholder names the class, states that the call counts
+// against the failed-tool budget (the condition is deterministic, not
+// environmental) and points at the remedies that can work.
+func buildSandboxRegistryConflictToolErrorPlaceholder(toolName string, runErr error) string {
+	reason := "unknown registry constraint"
+	if runErr != nil {
+		reason = runErr.Error()
+	}
+	return fmt.Sprintf(
+		"Tool %s failed on a coding-sandbox registry constraint: %s. "+
+			"The sandbox name is derived from this chat (coder-<chat_uuid>), so the identical call "+
+			"collides on every attempt: it was not retried and it DOES count against your failed-tool budget. "+
+			"Do not re-issue the same call. Instead select a different sandbox (a new sandbox or another "+
+			"workspace_uuid) or continue with work that needs no sandbox; if neither is possible, say so — "+
+			"the stale registry row needs operator cleanup.",
+		toolName,
+		reason,
+	)
 }
 
 // isTransientToolFailure reports whether a tool error is an environmental,
