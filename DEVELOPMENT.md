@@ -184,6 +184,21 @@ job listings are read page by page (`api_pages`): a single-page read could miss
 the gate job, mistake the run for one that never gated the commit and adopt the
 verdict of an older run for the same SHA.
 
+Waiting is not always the right answer, because the waiter is also the blocker:
+the concurrency group is held by *this* run until it completes, and the
+`always()`-gated job keeps a cancelled run alive for the whole wait budget, so a
+replacement run for the identical commit can be starved by the very run that is
+waiting for it (observed on #892: run 39407028825 stayed `pending` for 12+
+minutes with an empty repository queue, blocked behind the cancelled run
+39407027496). A replacement that has been unable to start for
+`PR_CI_SUPERSEDED_YIELD_SECONDS` (default 60s, repo variable of the same name)
+therefore makes the reconciler cancel its own run - `yield_group`, exit code 5,
+`accepted=false` - and hand the group over; a replacement that is already
+`in_progress` is left to finish, and a `409` on the cancel (already cancelling)
+still counts as yielded. The replacement run's gate owns the verdict from then
+on. Set the variable to `0` to disable yielding and keep the old
+wait-until-timeout behaviour.
+
 The reconciler runs from the workspace, so the `PR Test Merge Requirement` job
 starts with a shallow `actions/checkout` of the pull request's head commit. The
 step is `continue-on-error: true` (the gate step decides), which is why the
