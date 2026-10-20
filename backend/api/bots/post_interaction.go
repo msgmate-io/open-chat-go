@@ -17,8 +17,6 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
-
-	"backend/logging"
 )
 
 // This file implements the backend-agnostic "post the final message for them"
