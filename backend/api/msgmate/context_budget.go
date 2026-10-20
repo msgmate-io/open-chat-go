@@ -439,6 +439,10 @@ type ContextUsageReport struct {
 	DroppedMessages      int `json:"dropped_messages"`
 	// Limits is the effective per-tool output budget of the chat.
 	Limits ToolResultLimits `json:"-"`
+	// BashCoverage classifies the `coder_bash` calls the request carries
+	// (ci#514 S1): how many commands a typed tool already replaces. It is the
+	// measurement half of the shell-retirement plan and never changes behaviour.
+	BashCoverage BashCoverageReport `json:"bash_coverage,omitempty"`
 	// UpdatedAt is when the report was recorded.
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -468,6 +472,9 @@ func (r ContextUsageReport) Metadata() map[string]interface{} {
 	}
 	if r.UpdatedAt != "" {
 		meta["updated_at"] = r.UpdatedAt
+	}
+	if r.BashCoverage.Total > 0 {
+		meta["bash_coverage"] = r.BashCoverage.Metadata()
 	}
 	return meta
 }
@@ -506,6 +513,9 @@ func BuildContextUsageReport(messages []map[string]interface{}, budgetChars int,
 			report.LargestToolResult = names[toolCallIDOf(message)]
 		}
 	}
+	// ci#514 S1: classify the shell commands the request carries, so the coverage
+	// of the typed tool surface is measured on real traffic (no behaviour change).
+	report.BashCoverage = BuildBashCoverageReport(BashCommandsFromMessages(messages))
 	return report
 }
 
