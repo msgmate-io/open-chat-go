@@ -959,6 +959,16 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	})
 	database.SetGlobalDB(DB)
 
+	// Expired sessions are rejected by the auth middleware but never removed, so
+	// the sessions table only grows. Sweep them on an interval from the server
+	// process (ci#729 follow-up); OPEN_CHAT_SESSION_SWEEP_INTERVAL tunes it.
+	if sweepInterval := database.SessionSweepInterval(); sweepInterval > 0 {
+		log.Printf("Sweeping expired sessions every %s", sweepInterval)
+		defer database.StartSessionSweeper(DB, sweepInterval)()
+	} else {
+		log.Printf("Expired session sweeping disabled (%s=off)", database.SessionSweepIntervalEnv)
+	}
+
 	if err := runStartupBootstrapDBStep(ctx, "seed-model-configs", func() error {
 		return database.SeedModelConfigs(DB)
 	}); err != nil {
