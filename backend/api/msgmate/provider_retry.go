@@ -85,6 +85,12 @@ func providerErrorInfo(err error) (code int, body string, attempts int, ok bool)
 func isRetryableProviderStatus(code int) bool {
 	switch code {
 	case http.StatusRequestTimeout,
+		// ci#747 RC3: a key-limit / out-of-credit provider response (402) is
+		// how the provider signalled the outage that parked the agents. It is
+		// recovered automatically once the account is topped up again, so it
+		// takes the same bounded retry/backoff as 429 and 5xx instead of
+		// dead-ending the turn.
+		http.StatusPaymentRequired,
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,
 		http.StatusBadGateway,
