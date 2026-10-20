@@ -327,7 +327,7 @@ func TestSeedModelConfigsAcceptsInlineExtraModelsJSON(t *testing.T) {
 	  }
 	]`)
 
-	DB := SetupDatabase(DBConfig{
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "inline_extra.db"),
 		Debug:    false,
