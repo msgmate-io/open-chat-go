@@ -22,6 +22,9 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       IONOS_API_KEY: ${IONOS_API_KEY:-}
       OPEN_CHAT_CONFIG: ${OPEN_CHAT_CONFIG:-}
+      # ci#645: keep the CI logs readable; set LOG_LEVEL=debug for full tracing.
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       # Native-bot migration (ci#584 / umbrella ci#585). NATIVE_CODER_CUTOVER
       # stages the opencode retirement (fallback | native | retired) and
       # MSGMATECODER_NATIVE_ROLLBACK_WINDOW lists the families whose rollback
