@@ -18,6 +18,8 @@ on:
       - .github/workflows/reusable-integration-module-ci.yaml
       - .github/workflows/integration-module-ci.yaml
       - development/scripts/integration_module_ci.sh
+      - development/scripts/check_integration_decoupling.py
+      - development/scripts/tests/test_integration_decoupling.sh
   workflow_dispatch:
     inputs:
       integration_repository:
@@ -82,6 +84,13 @@ jobs:
               assert doc.get("jobs"), f"{name}: no jobs"
               print(f"{name}: ok ({', '.join(doc['jobs'])})")
           PY
+
+      # ci#423: the decoupling guard decides whether an integration is still
+      # coupled to backend/...; its own outcomes are pinned hermetically.
+      - name: decoupling guard self-test
+        run: |
+          python3 -m py_compile development/scripts/check_integration_decoupling.py
+          bash development/scripts/tests/test_integration_decoupling.sh
 
   smoke:
     name: smoke build an integration module
