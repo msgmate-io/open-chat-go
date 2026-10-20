@@ -3,12 +3,13 @@ package msgmate
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"backend/logging"
 )
 
 // This file is the **core-side** half of ci#620: the per-key provider
@@ -434,13 +435,13 @@ func logProviderAdmissionState(snapshot ProviderAdmissionSnapshot) {
 	providerAdmissionMu.Unlock()
 
 	if changed {
-		log.Printf("[provider_admission] key=%s effective_max_concurrency=%d in_flight=%d queue_waiting=%d source=%s queue_timeout=%s (ci#620)",
+		logging.Errorf("[provider_admission] key=%s effective_max_concurrency=%d in_flight=%d queue_waiting=%d source=%s queue_timeout=%s (ci#620)",
 			snapshot.Key, snapshot.MaxConcurrency, snapshot.InFlight, snapshot.QueueWaiting, snapshot.Source,
 			snapshot.QueueTimeout.Round(time.Millisecond))
 		return
 	}
 	if snapshot.Saturated {
-		log.Printf("[provider_admission] key=%s saturated: in_flight=%d at effective_max_concurrency=%d queue_waiting=%d (ci#620)",
+		logging.Debugf("[provider_admission] key=%s saturated: in_flight=%d at effective_max_concurrency=%d queue_waiting=%d (ci#620)",
 			snapshot.Key, snapshot.InFlight, snapshot.MaxConcurrency, snapshot.QueueWaiting)
 	}
 }

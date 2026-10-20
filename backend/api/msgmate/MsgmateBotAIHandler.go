@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -14,6 +13,8 @@ import (
 	wsapi "backend/api/websocket"
 	"backend/chatstate"
 	client "github.com/msgmate-io/go-client-integration/goclient"
+
+	"backend/logging"
 )
 
 // providerHostEnv maps provider backends whose API host is configured through
@@ -430,12 +431,12 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	providerAPIKey := aih.botContext.Client.GetApiKey(backend)
 	providerAdmission := ResolveProviderAdmissionConfig(configMap)
 	providerAdmissionKey := ProviderAdmissionKeyFor(backend, endpoint, providerAPIKey)
-	log.Printf("[provider_admission] chat=%s resolved %s for key=%s (ci#620)",
+	logging.Debugf("[provider_admission] chat=%s resolved %s for key=%s (ci#620)",
 		message.Content.ChatUUID, providerAdmission, providerAdmissionKey)
 
 	// Check for skip-core tag
 	if aih.hasSkipCoreTag(tags) {
-		log.Printf("Chat %s has skip-core tag, executing tools only", message.Content.ChatUUID)
+		logging.Debugf("Chat %s has skip-core tag, executing tools only", message.Content.ChatUUID)
 		return aih.executeToolsOnly(ctx, message, tools, toolInit, dynamicTools, mcpTools)
 	}
 
@@ -457,10 +458,10 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 
 	// Log the extracted interaction tools for debugging
 	if len(interactionStartTools) > 0 {
-		log.Printf("Found interaction_start tools: %v", interactionStartTools)
+		logging.Infof("Found interaction_start tools: %v", interactionStartTools)
 	}
 	if len(interactionCompleteTools) > 0 {
-		log.Printf("Found interaction_complete tools: %v", interactionCompleteTools)
+		logging.Debugf("Found interaction_complete tools: %v", interactionCompleteTools)
 	}
 
 	// A turn triggered by a confirmable-action execution is a "post-confirmation
@@ -838,7 +839,7 @@ func (aih *AIHandlerImpl) processMessageAttachments(text string, attachments []i
 		fileHandler := NewFileHandler(aih.botContext)
 		processedAttachments, err := fileHandler.ProcessAttachments(attachments, backend)
 		if err != nil {
-			log.Printf("Error processing attachments: %v", err)
+			logging.Errorf("Error processing attachments: %v", err)
 		} else {
 			contentArray = append(contentArray, processedAttachments...)
 		}
@@ -867,7 +868,7 @@ func (aih *AIHandlerImpl) processCurrentMessageAttachments(text string, attachme
 		fileHandler := NewFileHandler(aih.botContext)
 		processedAttachments, err := fileHandler.ProcessAttachments(attachments, backend)
 		if err != nil {
-			log.Printf("Error processing attachments: %v", err)
+			logging.Errorf("Error processing attachments: %v", err)
 		} else {
 			contentArray = append(contentArray, processedAttachments...)
 		}
@@ -890,11 +891,11 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 	if len(tools) > 0 {
 		trustedRuntime := trustedToolRuntime(aih, message.Content.ChatUUID, message.Content.SenderUUID)
 		// Debug: Print all available tools in AllTools
-		log.Printf("=== DEBUG: Available tools in AllTools ===")
+		logging.Debugf("=== DEBUG: Available tools in AllTools ===")
 		for i, tool := range AllTools {
-			log.Printf("AllTools[%d]: %s (RequiresInit: %v)", i, tool.GetToolName(), tool.GetRequiresInit())
+			logging.Debugf("AllTools[%d]: %s (RequiresInit: %v)", i, tool.GetToolName(), tool.GetRequiresInit())
 		}
-		log.Printf("=== END DEBUG ===")
+		logging.Debugf("=== END DEBUG ===")
 
 		for _, toolName := range tools {
 			trustedRuntime = trustedToolRuntime(aih, message.Content.ChatUUID, message.Content.SenderUUID)
@@ -912,7 +913,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 					actualToolName = parts[1]
 				}
 			}
-			log.Printf("====> Processing tool registration for %s, with actual tool name %s", toolName, actualToolName)
+			logging.Debugf("====> Processing tool registration for %s, with actual tool name %s", toolName, actualToolName)
 
 			// Always instantiate a fresh tool per interaction. Mutating entries from AllTools
 			// would share tool_init (e.g. task_pk) across concurrent interactions.
@@ -924,7 +925,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 			if !toolFound || tool == nil {
 				dynamicTool, dynamicFound, dynamicErr := NewDynamicRESTToolFromSnapshot(actualToolName, dynamicTools)
 				if dynamicErr != nil {
-					log.Printf("====> WARNING: Dynamic tool %s failed to load: %v", actualToolName, dynamicErr)
+					logging.Errorf("====> WARNING: Dynamic tool %s failed to load: %v", actualToolName, dynamicErr)
 					continue
 				}
 				if dynamicFound && dynamicTool != nil {
@@ -932,17 +933,17 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 				} else {
 					mcpTool, mcpFound, mcpErr := NewMCPToolFromSnapshot(actualToolName, mcpTools)
 					if mcpErr != nil {
-						log.Printf("====> WARNING: MCP tool %s failed to load: %v", actualToolName, mcpErr)
+						logging.Errorf("====> WARNING: MCP tool %s failed to load: %v", actualToolName, mcpErr)
 						continue
 					}
 					if !mcpFound || mcpTool == nil {
-						log.Printf("====> WARNING: Tool %s NOT FOUND!", actualToolName)
+						logging.Errorf("====> WARNING: Tool %s NOT FOUND!", actualToolName)
 						continue
 					}
 					tool = mcpTool
 				}
 			}
-			log.Printf("====> Registered tool instance %s (RequiresInit: %v)", actualToolName, tool.GetRequiresInit())
+			logging.Debugf("====> Registered tool instance %s (RequiresInit: %v)", actualToolName, tool.GetRequiresInit())
 			toolsData = append(toolsData, tool.ConstructTool())
 			toolMap[toolName] = tool
 			toolMap[tool.GetToolFunctionName()] = tool
@@ -959,7 +960,7 @@ func (aih *AIHandlerImpl) setupTools(message wsapi.NewMessage, tools []string, t
 				initData, ok = toolInit[actualToolName]
 			}
 			if ok {
-				log.Printf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
+				logging.Debugf("Setting init data for tool %s (toolName: %s)", tool.GetToolName(), toolName)
 				tool.SetInitData(mergeToolInitWithTrustedRuntime(initData, trustedRuntime))
 			} else {
 				tool.SetInitData(mergeToolInitWithTrustedRuntime(map[string]interface{}{}, trustedRuntime))
@@ -1543,7 +1544,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// long and used to be marked cancelled here even though it did real
 			// work (ci#642).
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				log.Printf("Generation deadline exceeded. Stopping response for chat %s\n", message.Content.ChatUUID)
+				logging.Debugf("Generation deadline exceeded. Stopping response for chat %s\n", message.Content.ChatUUID)
 				sendFinalMessage(false, ctx.Err(), turnOutcome)
 				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, ctx.Err())
 			}
@@ -1553,11 +1554,11 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// here both misleads the user and feeds the auto-continue loop
 			// (ci#642).
 			if chatstate.ConsumeChatSuperseded(message.Content.ChatUUID) {
-				log.Printf("Generation superseded by a newer message for chat %s\n", message.Content.ChatUUID)
+				logging.Debugf("Generation superseded by a newer message for chat %s\n", message.Content.ChatUUID)
 				sendFinalMessage(false, nil, turnOutcome)
 				return nil
 			}
-			log.Printf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
+			logging.Debugf("Cancellation received. Stopping response for chat %s\n", message.Content.ChatUUID)
 			sendFinalMessage(true, nil, turnOutcome)
 			return ctx.Err()
 		case chunk, ok := <-chunks:
@@ -1760,7 +1761,7 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			}
 		case err, ok := <-errs:
 			if ok && err != nil {
-				log.Printf("streamChatCompletion error: %v", err)
+				logging.Errorf("streamChatCompletion error: %v", err)
 				sendFinalMessage(false, err, turnOutcome)
 				return fmt.Errorf("%w: %v", ErrResponseAlreadySent, err)
 			}
@@ -1818,10 +1819,10 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 
 	// Log the extracted interaction tools for debugging
 	if len(interactionStartTools) > 0 {
-		log.Printf("Found interaction_start tools: %v", interactionStartTools)
+		logging.Infof("Found interaction_start tools: %v", interactionStartTools)
 	}
 	if len(interactionCompleteTools) > 0 {
-		log.Printf("Found interaction_complete tools: %v", interactionCompleteTools)
+		logging.Debugf("Found interaction_complete tools: %v", interactionCompleteTools)
 	}
 
 	// Send start message
@@ -1838,14 +1839,14 @@ func (aih *AIHandlerImpl) executeToolsOnly(ctx context.Context, message wsapi.Ne
 	// Execute interaction_start tools
 	for _, toolName := range interactionStartTools {
 		if err := aih.executeTool(ctx, toolName, toolMap, message, partialSessionID); err != nil {
-			log.Printf("Error executing interaction_start tool %s: %v", toolName, err)
+			logging.Errorf("Error executing interaction_start tool %s: %v", toolName, err)
 		}
 	}
 
 	// Execute interaction_complete tools
 	for _, toolName := range interactionCompleteTools {
 		if err := aih.executeTool(ctx, toolName, toolMap, message, partialSessionID); err != nil {
-			log.Printf("Error executing interaction_complete tool %s: %v", toolName, err)
+			logging.Errorf("Error executing interaction_complete tool %s: %v", toolName, err)
 		}
 	}
 

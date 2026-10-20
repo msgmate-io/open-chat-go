@@ -5,11 +5,12 @@ package websocket
 import (
 	"context"
 	"github.com/coder/websocket"
-	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"backend/logging"
 )
 
 type Subscriber struct {
@@ -48,7 +49,7 @@ func NewWebSocketHandler() *WebSocketHandler {
 		// publishLimiter: rate.NewLimiter(rate.Limit(1), 1),
 		MessageHandler: &Messages{},
 		logf: func(f string, v ...interface{}) {
-			log.Printf(f, v...)
+			logging.Debugf(f, v...)
 		},
 		subscribers: make(map[*Subscriber]struct{}),
 		connections: make(map[*websocket.Conn]struct{}),

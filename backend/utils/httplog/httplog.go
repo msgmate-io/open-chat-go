@@ -1,9 +1,10 @@
 package httplog
 
 import (
-	"log"
 	"net/http"
 	"net/http/httputil"
+
+	"backend/logging"
 )
 
 type loggingTransport struct {
@@ -16,7 +17,7 @@ func (s *loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if s.full {
 		buf, _ = httputil.DumpRequestOut(r, s.logBody)
 	} else {
-		log.Printf("--> %s %s %s\n", r.Host, r.Method, r.URL)
+		logging.Debugf("--> %s %s %s\n", r.Host, r.Method, r.URL)
 	}
 
 	resp, err := http.DefaultTransport.RoundTrip(r)
@@ -24,9 +25,9 @@ func (s *loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if s.full {
 		respBytes, _ := httputil.DumpResponse(resp, true)
 		buf = append(buf, respBytes...)
-		log.Printf("<-> %s\n%s\n", r.URL.String(), buf)
+		logging.Debugf("<-> %s\n%s\n", r.URL.String(), buf)
 	} else if resp != nil {
-		log.Printf("<-- %d %s\n", resp.StatusCode, resp.Request.URL)
+		logging.Debugf("<-- %d %s\n", resp.StatusCode, resp.Request.URL)
 	}
 
 	return resp, err

@@ -11,7 +11,6 @@
 package integrationhost
 
 import (
-	"log"
 	"net/http"
 
 	"backend/database"
@@ -20,6 +19,8 @@ import (
 
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // Install makes the core adapter the process-wide Host. Call it once at server
@@ -76,19 +77,19 @@ func (config) Get(key string) (integrationinterface.Value, bool) {
 type stdLogger struct{}
 
 func (stdLogger) Debugf(format string, args ...interface{}) {
-	log.Printf("[integration][debug] "+format, args...)
+	logging.Debugf("[integration][debug] "+format, args...)
 }
 
 func (stdLogger) Infof(format string, args ...interface{}) {
-	log.Printf("[integration] "+format, args...)
+	logging.Debugf("[integration] "+format, args...)
 }
 
 func (stdLogger) Warnf(format string, args ...interface{}) {
-	log.Printf("[integration][warn] "+format, args...)
+	logging.Warnf("[integration][warn] "+format, args...)
 }
 
 func (stdLogger) Errorf(format string, args ...interface{}) {
-	log.Printf("[integration][error] "+format, args...)
+	logging.Errorf("[integration][error] "+format, args...)
 }
 
 // storage wraps the concrete persistence handle. Handle returns the raw
