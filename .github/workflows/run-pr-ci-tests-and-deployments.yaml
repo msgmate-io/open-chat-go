@@ -2697,6 +2697,14 @@ jobs:
             cat /tmp/ci_deploy_dispatch.json || true
             exit 1
           fi
+          # A 204 only means GitHub accepted the request: a mis-targeted or
+          # silently rejected dispatch (wrong ref, missing workflow_dispatch
+          # trigger, run-name that does not embed the dispatch id) creates no run
+          # at all and used to surface only as a 25-minute "run never appeared"
+          # timeout in the waiter job with nothing to diagnose. Record exactly what
+          # was dispatched here; the waiter now fails fast (300s) and prints the
+          # recent dispatched run titles (ci#774).
+          echo "::notice::Deploy dispatch accepted (HTTP 204): repo='${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}' ref='${CI_REF:-main}' dispatch_id='${DISPATCH_RUN_ID:-none}' target='${DEPLOYMENT_NAME:-none}' response_body=$(cat /tmp/ci_deploy_dispatch.json 2>/dev/null || echo '(empty)')."
 
       - name: Dispatch build and release workflow in source repository
         if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true'
@@ -2888,6 +2896,15 @@ jobs:
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
+          # Accept any dispatched run of the expected deployment title created
+          # at/after the dispatch (5 min of clock-skew slack) in addition to an
+          # exact DISPATCH_RUN_ID match, so a receiving-repo run-name template
+          # cannot make this loop spin with nothing to match.
+          match_since=$(( $(date +%s) - 300 ))
+          # A run that never appears means the dispatch was dropped or used the
+          # wrong ref - never a slow deploy - so do not burn the 25-minute window.
+          first_miss_at=""
+          miss_fail_seconds=300
           poll_interval=15
           # Cover a full 12-25 minute deploy instead of the old ~5 minute bound,
           # which falsely failed while the dispatched deploy was still running.
@@ -2897,7 +2914,7 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
               break
             fi
 
@@ -2907,11 +2924,18 @@ jobs:
               continue
             fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" --argjson since "$match_since" '
               def candidates:
-                [.workflow_runs[]
-                | select((.display_title // "") | endswith($dispatch_id))
-                | select((.display_title // "") | startswith("Deploy " + $deployment))];
+                (( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] ) | unique_by(.id));
               (if $pr != "" then
                 [candidates[] | select((.display_title // "") | contains("PR#" + $pr))][0]
                 // candidates[0]
@@ -2923,7 +2947,21 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent dispatched CI deploy run titles (for diagnosis):"
+                jq -r '[.workflow_runs[]? | (.display_title // .name // "unknown")] | .[:10] | .[]' <<< "$runs_json" 2>/dev/null || true
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run 'Deploy ${DEPLOYMENT_NAME}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              # No matching run at all is a dispatch/ref problem, not a slow
+              # deploy. Fail fast and point at the 'Dispatch Approved Deploy' job
+              # notice, which records the dispatch ref, target and response body
+              # (ci#774).
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for 'Deploy ${DEPLOYMENT_NAME}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the 'Dispatch Approved Deploy' job notice for the dispatch ref, target and response body - a silently dropped or wrong-ref dispatch looks identical to a very slow deploy."
+                exit 1
+              fi
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -3882,6 +3920,14 @@ jobs:
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          # Accept a run of the expected deployment title created at/after the
+          # dispatch (5 min slack) in addition to an exact DISPATCH_RUN_ID match,
+          # so a run-name template mismatch cannot cause a 25-minute spin, and fail
+          # fast when no run appears at all - that is a dispatch/ref problem, not a
+          # slow deploy (ci#774).
+          match_since=$(( $(date +%s) - 300 ))
+          first_miss_at=""
+          miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
           # (25 min) of polling, with the job capped 5 min above that.
@@ -3891,7 +3937,7 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
               break
             fi
 
@@ -3901,21 +3947,36 @@ jobs:
               continue
             fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --argjson since "$match_since" '
               [
-                .workflow_runs[]
-                | select((.display_title // .name // "") | endswith($dispatch_id))
-                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                ( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] )
+                | unique_by(.id)
+                | .[]
                 | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
-              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
-                echo "Recent CI workflow titles:"
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent CI workflow titles (for diagnosis):"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run '${expected_title_prefix}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for '${expected_title_prefix}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the merged-deploy dispatch step notice for the dispatch ref, target and response body."
+                exit 1
               fi
               interruptible_sleep "$poll_interval"
               continue
@@ -4064,6 +4125,14 @@ jobs:
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          # Accept a run of the expected deployment title created at/after the
+          # dispatch (5 min slack) in addition to an exact DISPATCH_RUN_ID match,
+          # so a run-name template mismatch cannot cause a 25-minute spin, and fail
+          # fast when no run appears at all - that is a dispatch/ref problem, not a
+          # slow deploy (ci#774).
+          match_since=$(( $(date +%s) - 300 ))
+          first_miss_at=""
+          miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
           # (25 min) of polling, with the job capped 5 min above that.
@@ -4073,7 +4142,7 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
               break
             fi
 
@@ -4083,21 +4152,36 @@ jobs:
               continue
             fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --argjson since "$match_since" '
               [
-                .workflow_runs[]
-                | select((.display_title // .name // "") | endswith($dispatch_id))
-                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                ( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] )
+                | unique_by(.id)
+                | .[]
                 | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
-              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
-                echo "Recent CI workflow titles:"
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent CI workflow titles (for diagnosis):"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run '${expected_title_prefix}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for '${expected_title_prefix}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the merged-deploy dispatch step notice for the dispatch ref, target and response body."
+                exit 1
               fi
               interruptible_sleep "$poll_interval"
               continue
