@@ -1,0 +1,40 @@
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "livenessProbe": {
+              "failureThreshold": 3,
+              "periodSeconds": 10,
+              "timeoutSeconds": 2
+            },
+            "name": "redis-container",
+            "readinessProbe": {
+              "failureThreshold": 6,
+              "periodSeconds": 5,
+              "timeoutSeconds": 2
+            },
+            "resources": {
+              "limits": {
+                "cpu": "500m"
+              },
+              "requests": {
+                "cpu": "100m"
+              }
+            },
+            "startupProbe": {
+              "failureThreshold": 12,
+              "initialDelaySeconds": 0,
+              "periodSeconds": 5,
+              "tcpSocket": {
+                "port": 6379
+              },
+              "timeoutSeconds": 2
+            }
+          }
+        ]
+      }
+    }
+  }
+}
