@@ -19,7 +19,7 @@ import {
   Text,
   TextTypes,
 } from "@open-chat-go/ui";
-import { Check, Copy, ExternalLink, LayoutGrid, List, Search, Server } from "lucide-react";
+import { Check, Copy, ExternalLink, LayoutGrid, List, Search, Server, X } from "lucide-react";
 
 export type ChatDetailsTabId = "overview" | "init" | "tools" | "mcp";
 
@@ -334,6 +334,13 @@ export function ToolDetailsDialog({
             <SchemaBlock title="Input parameters (call schema)" schema={tool?.call_schema} />
             <SchemaBlock title="Init parameters (init schema)" schema={tool?.init_schema} />
           </div>
+        </div>
+
+        <div className="sticky bottom-0 -mx-4 -mb-4 mt-2 flex justify-end gap-2 border-t border-border/70 bg-background/95 px-4 py-3 backdrop-blur">
+          <Button size="sm" onClick={() => onOpenChange(false)}>
+            <X className="mr-1 h-3.5 w-3.5" />
+            Close
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
