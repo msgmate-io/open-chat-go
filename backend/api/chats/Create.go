@@ -38,7 +38,12 @@ func applySharedConfigDefaults(config map[string]interface{}) map[string]interfa
 	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
 	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
 	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withConsolidation)
-	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
+	// A dev-lead chat gets the native dispatch route and the old-chat recall
+	// tools (ci#757) on top of the autonomous contract, so it can run peer
+	// development agents through hive_mind_agent_* instead of the deprecated
+	// GitHub-Actions workflow. Selective: a non-lead config is never touched.
+	withDispatchRoute := nativecoder.ApplyDevLeadDispatchTools(withAutonomous)
+	return nativecoder.WithToolCallBudgetSnapshot(withDispatchRoute, time.Now())
 }
 
 // TODO: should also supply user Id

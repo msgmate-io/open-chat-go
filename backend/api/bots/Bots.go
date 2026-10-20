@@ -53,7 +53,14 @@ func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config ma
 	// source a cap raise comes from. The snapshot belongs to a chat and is
 	// recorded on the chat itself (chats.Create, createBotInteraction).
 	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
-	return nativecoder.ApplyCoderAutonomousConfig(withConsolidation), nil
+	// The native dispatch route (ci#757): a development-lead chat keeps the
+	// hive_mind_agent_* family plus the openchat interaction-recall tools, so the
+	// lead itself can start/steer/stop peer development agents and search old
+	// chat context instead of shelling out to the deprecated GitHub workflow.
+	// Selective and opt-out-able: a non-lead config is never touched and
+	// `hive_mind_tools: false` or OCI_DISABLE_HIVE_MIND_TOOLS disables it.
+	withDispatchRoute := nativecoder.ApplyDevLeadDispatchTools(nativecoder.ApplyCoderAutonomousConfig(withConsolidation))
+	return withDispatchRoute, nil
 }
 
 type BotDTO struct {
