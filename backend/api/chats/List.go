@@ -4,13 +4,14 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 type ListedChat struct {
@@ -29,6 +30,11 @@ type ListedChat struct {
 	Pinned        bool   `json:"pinned"`
 	ChatShareUUID string `json:"chat_share_uuid,omitempty"`
 	SharedChatURL string `json:"shared_interaction_url,omitempty"`
+	// State is the resolved interaction state of the chat (idle, active,
+	// finished, failed or needs_confirmation), resolved with the same logic as
+	// /api/v1/chats/states. It travels with the list row so the sidebar can
+	// filter server-side without a second state request (ci#761).
+	State string `json:"state,omitempty"`
 	// AdminView is set when an admin is listing/viewing a chat they do not
 	// participate in, so the UI can clearly mark that another user's chat is
 	// being rendered.
@@ -79,7 +85,7 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 	if chat.SharedConfig != nil {
 		// The ConfigData is already JSON, just unmarshal it
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
-			log.Printf("Error unmarshaling config data: %v", err)
+			logging.Errorf("Error unmarshaling config data: %v", err)
 		}
 	}
 
@@ -127,8 +133,9 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 //	@Param        exclude_tags query string false "Comma-separated tags to exclude (a chat carrying any is hidden)"
 //	@Param        time_from query string false "Only chats with activity at/after this RFC3339 timestamp"
 //	@Param        time_to query string false "Only chats with activity at/before this RFC3339 timestamp"
+//	@Param        state query string false "Comma-separated interaction states to filter by (idle, active, finished, failed, needs_confirmation)"
 //	@Success      200 {object} chats.ListedChatsPage "Paginated list of chats"
-//	@Failure      400 {string} string "Unable to get database or user"
+//	@Failure      400 {string} string "Unable to get database or user, or invalid state filter"
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/list [get]
 func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +145,17 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	// The state filter cannot be expressed as a SQL predicate on the chat row:
+	// a chat's state depends on live queue activity, pending user actions and
+	// the newest message. Requests carrying `state` are therefore served by the
+	// dedicated filtered path below, which resolves the candidate states before
+	// pagination (ci#761).
+	stateFilter, stateErr := parseChatStateFilter(r.URL.Query()["state"])
+	if stateErr != nil {
+		http.Error(w, "Invalid state filter (expected a comma-separated list of idle, active, finished, failed, needs_confirmation)", http.StatusBadRequest)
 		return
 	}
 
@@ -275,6 +293,17 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return q
 	}
 
+	if len(stateFilter) > 0 {
+		// The state-filtered page resolves the state of the newest matching
+		// chats and paginates that subset itself, so it must not use the
+		// SQL-paginated query above (ci#761). The asynq inspector is optional:
+		// without it chats whose state depends on the live queue simply resolve
+		// to idle instead of failing the list.
+		inspector, _ := util.GetAsynqInspector(r)
+		h.listChatsFilteredByState(w, DB, user, pagination, stateFilter, newFilteredQuery, inspector)
+		return
+	}
+
 	query := newFilteredQuery()
 
 	// Apply pagination and preloads. The count must run against the filtered
@@ -289,7 +318,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Error != nil {
 		// A single corrupt message row must never blank the whole chat list.
 		// Retry without the latest-message preload so the list still renders.
-		log.Printf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
+		logging.Errorf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
 		chats = nil
 		q = query.Scopes(database.Paginate(&chats, &pagination, query)).
 			Preload("User1").
@@ -324,7 +353,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Find(&pinnedChats).Error
 		if pinnedErr != nil {
 			// Never let the pinned top-up break the primary list.
-			log.Printf("Failed to load pinned chats for user %d: %v", user.ID, pinnedErr)
+			logging.Errorf("Failed to load pinned chats for user %d: %v", user.ID, pinnedErr)
 		} else if len(pinnedChats) > 0 {
 			seen := make(map[uint]bool, len(chats))
 			for _, chat := range chats {
@@ -344,6 +373,18 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	listedChats := make([]ListedChat, len(chats))
 	for i, chat := range chats {
 		listedChats[i] = convertChatToListedChat(user, chat)
+	}
+
+	// The unfiltered page also carries the resolved state per row (ci#761), so
+	// the sidebar can render the correct badge from the list response while the
+	// /api/v1/chats/states poll keeps refreshing it. The resolver is the same
+	// one the state filter and the batch states endpoint use.
+	if len(chats) > 0 {
+		inspector, _ := util.GetAsynqInspector(r)
+		states := ResolveChatStates(DB, inspector, chats)
+		for i := range listedChats {
+			listedChats[i].State = states[chats[i].UUID]
+		}
 	}
 
 	chatIDs := make([]uint, 0, len(chats))

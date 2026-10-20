@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -17,6 +16,8 @@ import (
 	"github.com/hibiken/asynq"
 	client "github.com/msgmate-io/go-client-integration/goclient"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // botReplyTurnBudget resolves how long the current turn may still run: the
@@ -72,7 +73,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	// reaches the agent looking queued - on the success path and on every
 	// failure/retry path alike, because the drain happens before the turn.
 	if _, clearErr := database.ClearMessageQueued(deps.DB, &incomingMessage); clearErr != nil {
-		log.Printf("ci#656: failed to clear the queued marker on message %s: %v", incomingMessage.UUID, clearErr)
+		logging.Errorf("ci#656: failed to clear the queued marker on message %s: %v", incomingMessage.UUID, clearErr)
 	}
 
 	var senderUser database.User
@@ -179,7 +180,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		}
 		if responseAlreadySent {
 			if disposeErr := disposeToolInitAfterBotReply(deps.DB, payload.ChatUUID); disposeErr != nil {
-				log.Printf("tool_init disposal failed after already-sent response for chat %s: %v", payload.ChatUUID, disposeErr)
+				logging.Errorf("tool_init disposal failed after already-sent response for chat %s: %v", payload.ChatUUID, disposeErr)
 			}
 			failureMessage = fmt.Sprintf("%s (response already sent)", failureMessage)
 		}
@@ -190,7 +191,7 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	if disposeErr := disposeToolInitAfterBotReply(deps.DB, payload.ChatUUID); disposeErr != nil {
-		log.Printf("tool_init disposal failed for chat %s: %v", payload.ChatUUID, disposeErr)
+		logging.Errorf("tool_init disposal failed for chat %s: %v", payload.ChatUUID, disposeErr)
 	}
 
 	// A stop that lands after the generation finished but before the task

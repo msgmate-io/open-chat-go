@@ -114,9 +114,16 @@ func ConfigureFromEnv() error {
 	return Configure(Options{Level: level, Format: os.Getenv(EnvLogFormat)})
 }
 
+// Enabled reports whether the process-wide logger emits records at level.
+// Packages that own their own logging knobs (the GORM SQL tracer, for example)
+// use it to follow LOG_LEVEL without importing log/slog themselves.
+func Enabled(level slog.Level) bool {
+	return slog.Default().Enabled(context.Background(), level)
+}
+
 // DebugEnabled reports whether debug records are emitted.
 func DebugEnabled() bool {
-	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
+	return Enabled(slog.LevelDebug)
 }
 
 // Debugf logs a printf-style debug record.
@@ -149,7 +156,11 @@ func logf(level slog.Level, format string, args []any) {
 	if !logger.Enabled(ctx, level) {
 		return
 	}
-	logger.Log(ctx, level, fmt.Sprintf(format, args...))
+	// Call sites migrated from log.Printf/log.Println frequently end their
+	// format string with a newline; slog emits one record per call, so a
+	// single trailing newline is dropped to avoid blank lines in the output.
+	msg := strings.TrimSuffix(fmt.Sprintf(format, args...), "\n")
+	logger.Log(ctx, level, msg)
 }
 
 func logArgs(level slog.Level, msg string, args []any) {

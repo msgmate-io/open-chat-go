@@ -1,12 +1,16 @@
 package msgmate
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"backend/logging"
 )
 
 // ci#620: the effective provider admission cap used to be pinned at the literal
@@ -80,6 +84,103 @@ func TestResolveProviderAdmissionConfigRespectsPoolBound(t *testing.T) {
 	if resolved.MaxConcurrency != 4 {
 		t.Fatalf("MaxConcurrency = %d, want the pool bound 4", resolved.MaxConcurrency)
 	}
+	if got := resolved.LimitingSource(); got != "pool:coder_sandbox_max_agents_per_pool" {
+		t.Fatalf("LimitingSource = %q, want the pool bound to be named as the winning bound", got)
+	}
+}
+
+// ci#620 follow-up: the saturation message used to blame the deployment env
+// lever even when a lower bound (the ci#602 pool clamp) decided the effective
+// cap, which sends an operator to raise a lever that cannot change anything. It
+// now names the bound that won, and the same answer is machine-readable on the
+// policy and the status snapshot.
+func TestSaturationErrorNamesTheWinningBound(t *testing.T) {
+	t.Run("pool clamp wins over the env lever", func(t *testing.T) {
+		withEnv(t, ProviderMaxConcurrencyEnvKey, "32")
+		// Not a realistic pair, just the operator's exact symptom: the env
+		// lever is set yet the effective cap is a lower pool bound.
+		policy := ResolveProviderAdmissionConfig(map[string]interface{}{
+			"coder_sandbox_max_agents_per_pool": 3,
+		})
+		if policy.MaxConcurrency != 3 {
+			t.Fatalf("MaxConcurrency = %d, want the pool bound 3", policy.MaxConcurrency)
+		}
+		err := &ProviderSaturationError{Key: "openrouter|x|key-len73", MaxConcurrency: policy.MaxConcurrency, InFlight: 3, QueueWaiting: 20, Waited: 2 * time.Minute, Source: policy.Source}
+		message := err.Error()
+		if !strings.Contains(message, "clamped by the pooled sandbox bound coder_sandbox_max_agents_per_pool") {
+			t.Fatalf("message %q must name the pool bound that actually decided the cap", message)
+		}
+		if !strings.Contains(message, "raising "+ProviderMaxConcurrencyEnvKey+" has no effect") {
+			t.Fatalf("message %q must say that raising the env lever cannot help", message)
+		}
+		if !strings.Contains(message, "max_concurrency=3") {
+			t.Fatalf("message %q must still carry the effective cap", message)
+		}
+		if err.LimitingSource() != "pool:coder_sandbox_max_agents_per_pool" {
+			t.Fatalf("LimitingSource = %q", err.LimitingSource())
+		}
+	})
+
+	t.Run("env lever is named when it is the winning bound", func(t *testing.T) {
+		withEnv(t, ProviderMaxConcurrencyEnvKey, "32")
+		policy := ResolveProviderAdmissionConfig(map[string]interface{}{})
+		if policy.LimitingSource() != "env:"+ProviderMaxConcurrencyEnvKey {
+			t.Fatalf("LimitingSource = %q, want the env lever", policy.LimitingSource())
+		}
+		err := &ProviderSaturationError{Key: "k", MaxConcurrency: policy.MaxConcurrency, Source: policy.Source}
+		if got := err.Advice(); !strings.Contains(got, "raise "+ProviderMaxConcurrencyEnvKey) {
+			t.Fatalf("Advice() = %q, want the env lever", got)
+		}
+	})
+
+	t.Run("agent key is named when the env lever is unset", func(t *testing.T) {
+		withEnv(t, ProviderMaxConcurrencyEnvKey, "")
+		policy := ResolveProviderAdmissionConfig(map[string]interface{}{"coder_provider_max_concurrency": 7})
+		if policy.LimitingSource() != "agent:coder_provider_max_concurrency" {
+			t.Fatalf("LimitingSource = %q, want the agent key", policy.LimitingSource())
+		}
+	})
+
+	t.Run("no resolved policy falls back to the deployment lever", func(t *testing.T) {
+		if got := (&ProviderSaturationError{Key: "k"}).LimitingSource(); got != "" {
+			t.Fatalf("LimitingSource = %q, want empty without a resolved policy", got)
+		}
+		if got := (&ProviderSaturationError{Key: "k"}).Advice(); !strings.Contains(got, "raise "+ProviderMaxConcurrencyEnvKey) {
+			t.Fatalf("Advice() = %q, want the env lever fallback", got)
+		}
+	})
+}
+
+// TestSaturationLimiterReportsItsWinningBound checks the wire from the limiter to
+// the snapshot: a saturated limiter carries the bound that decided its cap, so
+// the admin status can answer "which lever do I raise?" without guessing.
+func TestSaturationLimiterReportsItsWinningBound(t *testing.T) {
+	resetProviderAdmissionForTest()
+	withEnv(t, ProviderMaxConcurrencyEnvKey, "32")
+	policy := ResolveProviderAdmissionConfig(map[string]interface{}{"coder_sandbox_max_agents_per_pool": 1})
+	policy.QueueTimeout = 20 * time.Millisecond
+
+	release, _, err := providerAdmissionLimiterFor("bound-key", policy).acquire(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	_, _, err = providerAdmissionLimiterFor("bound-key", policy).acquire(context.Background())
+	saturation, ok := err.(*ProviderSaturationError)
+	if !ok {
+		t.Fatalf("err = %T (%v), want *ProviderSaturationError", err, err)
+	}
+	if saturation.LimitingSource() != "pool:coder_sandbox_max_agents_per_pool" {
+		t.Fatalf("LimitingSource = %q, want the pool bound", saturation.LimitingSource())
+	}
+
+	snapshot := providerAdmissionLimiterFor("bound-key", policy).snapshot()
+	if snapshot.LimitingSource != "pool:coder_sandbox_max_agents_per_pool" {
+		t.Fatalf("snapshot.LimitingSource = %q, want the pool bound (config_source=%q)", snapshot.LimitingSource, snapshot.Source)
+	}
+	if snapshot.Source != "env:"+ProviderMaxConcurrencyEnvKey+"+pool:coder_sandbox_max_agents_per_pool" {
+		t.Fatalf("snapshot.Source = %q, want the full provenance preserved", snapshot.Source)
+	}
+	release()
 }
 
 // TestAdmissionLimiterResizesAtRuntime covers "changeable via config without a
@@ -214,5 +315,78 @@ func TestAdmissionKeyIsSecretFree(t *testing.T) {
 	}
 	if !strings.Contains(key, "openrouter") {
 		t.Fatalf("admission key %q must identify the backend", key)
+	}
+}
+
+// TestProviderAdmissionLogLevels keeps the ci#645 mapping honest for this call
+// site. The routine "effective policy changed" line is bookkeeping, not a
+// failure, so it must stay below the default info level; a genuinely saturated
+// key is the operator-relevant signal and stays a warning. An earlier revision
+// of this file logged the routine line at error level and the saturation at
+// debug, which is exactly the heaviness ci#645 complains about.
+func TestProviderAdmissionLogLevels(t *testing.T) {
+	buf := &bytes.Buffer{}
+	reconfigure := func(level string) {
+		t.Helper()
+		if err := logging.Configure(logging.Options{Level: level, Format: "text", Writer: buf}); err != nil {
+			t.Fatalf("configure logging: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = logging.Configure(logging.Options{Level: "info", Format: "text", Writer: io.Discard})
+	})
+
+	// Derive both snapshots from a real limiter instead of hand-building the
+	// struct: Saturated is computed by the limiter (in_flight >= effective cap)
+	// and a literal that forgets to set it silently disarms the assertion below,
+	// which is exactly how this test went red in CI (got "" for the warn line).
+	policy := ProviderAdmissionConfig{MaxConcurrency: 1, Source: "test"}
+	limiter := providerAdmissionLimiterFor("log-level-key", policy)
+	routine := limiter.snapshot()
+	release, _, err := limiter.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(release)
+	saturated := limiter.snapshot()
+	if !saturated.Saturated {
+		t.Fatalf("snapshot = %+v, want a saturated limiter at its cap", saturated)
+	}
+
+	// At info the routine change line is silenced.
+	buf.Reset()
+	resetProviderAdmissionForTest()
+	reconfigure("info")
+	logProviderAdmissionState(routine)
+	if strings.Contains(buf.String(), "effective_max_concurrency") {
+		t.Fatalf("the routine admission change must not log at info, got %q", buf.String())
+	}
+
+	// A saturated key warns even at info, and never at error level.
+	buf.Reset()
+	resetProviderAdmissionForTest()
+	logProviderAdmissionState(saturated) // first observation: routine change line
+	buf.Reset()
+	logProviderAdmissionState(saturated)
+	if !strings.Contains(buf.String(), "saturated") {
+		t.Fatalf("a saturated key must warn at info, got %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "level=WARN") {
+		t.Fatalf("saturation must be a warning, got %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "level=ERROR") {
+		t.Fatalf("saturation is not a failure and must not log at error level, got %q", buf.String())
+	}
+
+	// At debug the routine change line is visible again for diagnosis.
+	buf.Reset()
+	resetProviderAdmissionForTest()
+	reconfigure("debug")
+	logProviderAdmissionState(routine)
+	if !strings.Contains(buf.String(), "effective_max_concurrency") {
+		t.Fatalf("the routine admission change must be visible at debug, got %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "level=ERROR") {
+		t.Fatalf("the routine admission change must not log at error level, got %q", buf.String())
 	}
 }

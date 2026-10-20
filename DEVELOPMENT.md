@@ -47,6 +47,43 @@ test. The classifier is pinned by
 `development/scripts/tests/test_sandbox_provider_failure.sh`, which runs in the
 Pin Freshness Gate.
 
+The `PR Test Merge Requirement` gate is **label-driven and fail-closed** for every
+requested suite: when a suite's job reports `skipped` while the label that
+requests it (`test`, `ai-test-mock`, `e2e`, `sandbox-test`, …) is live on the pull
+request — or, for the Go tests, while the job's own `should_test` output says it
+was requested — the gate errors out instead of accepting the missing run. A suite
+that was *not* requested stays a pass. Cancelled runs are only accepted when a
+replacement run for the same commit adopted their verdict. The
+`run-pr-ci-ai-mock-tests` case in that gate is pinned by
+`development/scripts/test_pr_ci_ai_mock_gate.py` (stdlib-only, runs in the Pin
+Freshness Gate) so the label guard cannot silently regress to `skipped) ;;`.
+
+The readiness gate's other half — the `ci#722` redis probe budget — is pinned the
+same way: `development/scripts/redis_readiness_contract.py` re-derives the
+`probe_timeout_too_low` / `probe_budget_too_short` / `startup_probe_missing` /
+`redis_cpu_request_missing` findings from a redis Deployment manifest, emits the
+exact strategic-merge patch the gate proposes (checked in as
+`development/redis-readiness/ci-722-redis-probes.patch.json`) and exits non-zero
+while any check fails, so a redis pod without a probe budget or CPU request cannot
+silently come back and take the queue/state endpoint (and every freshly dispatched
+interaction) down with it. The gate itself stays read-only; applying the patch is
+the operator's call. Its regression test,
+`development/scripts/test_redis_readiness_contract.py`, runs in the Pin Freshness
+Gate too.
+
+The PR-CI progress comments follow the same rule. Every job that upserts the
+`<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
+`repository`/`PR number` pair: pass it through step `env` with the event context
+as fallback (`github.repository` / `github.event.pull_request.number`) and let
+`development/scripts/upsert_pr_ci_progress_comment.sh` own the marker lookup plus
+the create-or-update call. An empty target must log a `::warning::` and skip with
+exit 0 before the first HTTP call — never interpolate a raw
+`needs.*.outputs.*` expression into an `api.github.com` URL, which collapses to
+`repos//issues//comments` and fails the step with `curl: (22) ... 404` (ci#745).
+`development/scripts/test_pr_ci_progress_comment_target.py` and the hermetic
+`development/scripts/tests/test_upsert_pr_ci_progress_comment.sh` pin both halves
+in the Pin Freshness Gate.
+
 #### Autonomous approval and merge of green consolidation PRs
 
 A consolidation PR is always authored by the automation identity, which cannot
@@ -92,9 +129,28 @@ Pin Freshness Gate job): a cancelled gate is accepted only when the commit no
 longer needs gating (PR closed, or a newer commit is the live PR head) or when a
 *replacement* run for the exact same commit reached the same gate job with a real
 verdict, whose conclusion is adopted. No replacement, a replacement still queued
-after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 1500s, repo variable
+after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 3600s, repo variable
 `PR_CI_SUPERSEDED_WAIT_SECONDS`), an unknown/cancelled gate job or an API error
 all fail closed, so the gate never turns green on an untested commit.
+
+The wait budget must outlast a *whole* replacement run, not just the gap to its
+gate job: run 39370413734 (PR #879, commit `886d6e26`) took 2550s from creation
+to its gate verdict, so the original 1500s default expired ~12 minutes early and
+run 39370411496 reported the required check as failed (`replacement run
+39370413734 still pending after 1500s`) for a commit whose replacement gate job
+then concluded `success` — the same red-on-a-cancelled-run symptom ci#659 set out
+to remove, only reachable through the budget instead of the reconciliation
+logic. The default is now one hour, pinned to the workflow default by
+`WorkflowWiringTests`.
+
+A longer default is still a threshold, so the expiry path is made
+self-identifying rather than silently shifting the cliff: exit code 3 (budget
+expired before any replacement could testify) prints a `budget-expired:` summary
+line *and* a `::warning::` annotation naming the budget. That keeps a latent-red
+gate from a budget expiry distinguishable in the logs from a replacement run that
+really concluded non-green (exit 1) — the two look identical on the check
+rollup, and the warning tells the maintainer to raise
+`PR_CI_SUPERSEDED_WAIT_SECONDS` instead of debugging the reconciliation.
 
 Because a run of this workflow is close to the 100-item jobs page, the run and
 job listings are read page by page (`api_pages`): a single-page read could miss
@@ -183,6 +239,39 @@ upsert, so it must never be fatal:
   interactions and history) and raise it or add retention when it approaches the
   limit.
 
+#### Expired sessions are swept, not just rejected (ci#729 follow-up)
+
+Expired sessions were never removed: `resolveValidSessionFromRequest` in
+`backend/server/middleware.go` rejects an expired token with 401/403, logout
+deletes only the sessions it was asked to delete, and an automated turn deletes
+its own session when it finishes. Everything else - the 24h browser sessions
+`Login` writes, bot sessions whose turn died before their deferred cleanup ran -
+stayed in the `sessions` table forever, on the one volume the note above flags as
+a growth risk.
+
+- `database.StartSessionSweeper` (`backend/database/session_cleanup.go`) sweeps
+  from the server process: once at startup, then every interval until the stop
+  function (deferred in `runServer`) is called - the stop is blocking, so no sweep
+  can outlive the server.
+- `database.DeleteExpiredSessions` deletes sessions whose `expiry` is older than
+  `now - ExpiredSessionGrace` (1h). The grace is not needed for correctness (an
+  expired token is rejected anyway) but keeps a row around long enough that clock
+  skew or a refresh landing a moment late cannot race the delete.
+- The delete is **unscoped** on purpose: `Session` embeds `gorm.Model`, so a plain
+  `Delete` would only stamp `deleted_at` and leave the row's bytes behind - the
+  exact growth this exists to stop. Soft-deleted sessions are invisible to every
+  read path anyway.
+- It is idempotent and safe across processes (the row is simply already gone in
+  the second sweep) and runs through `RetryOnBusy`, since a sweep can overlap a
+  bot turn's writes.
+- Tuning: `OPEN_CHAT_SESSION_SWEEP_INTERVAL` (a Go duration, default `1h`;
+  `off`/`disabled`/`never`/`0` disables the sweeper). An unparsable value logs and
+  falls back to the default instead of silently changing behaviour.
+- `backend/database/session_cleanup_test.go` pins it: only rows past the grace are
+  removed (unexpired and inside-grace rows survive), the sweep is idempotent, a
+  cancelled context aborts before writing, the interval knob's parsing, and the
+  background loop actually deletes a stale row and stops when told.
+
 #### A message sent into a running chat is queued, never dropped (ci#656)
 
 A message sent while the chat was already running a bot turn used to disappear:
@@ -253,6 +342,57 @@ may still be consumed), on other task types and on missing inputs.
 Regression tests: `backend/queue/drain/bot_reply_test.go` (terminal
 classification, plus the drain, the retryable no-op and the isolation cases
 against sqlite).
+
+#### Chat-state filters are applied server-side, before pagination (ci#761)
+
+The sidebar's state filter (`idle`, `active`, `finished`, `failed`,
+`needs_confirmation`) used to run at render time over the chats that happened to
+be loaded, so an active interaction older than the first page looked like it did
+not exist: the UI showed "no active chats" while the server had several.
+
+`GET /api/v1/chats/list` now takes a `state` query parameter (comma-separated
+and/or repeated, case- and space-tolerant; an unknown value is **rejected with
+400** through `parseChatStateFilter` / `ErrInvalidChatStateFilter`). A chat's
+state is not a SQL predicate - it depends on live queue activity, pending user
+confirmations and the newest message - so a request carrying `state` does not use
+the SQL-paginated path at all: `listChatsFilteredByState`
+(`backend/api/chats/ChatStateFilter.go`) resolves the state of the newest
+`ChatStateFilterScanLimit` (1000) chats matching every *other* filter with
+`ResolveChatStates`, paginates only the matching subset itself and reports
+`total` / `total_pages` for that subset, so one bounded request still finds an
+old active chat without pressing "load more".
+
+Semantics that must not drift:
+
+- `ResolveChatStates` is the same resolver `GET /api/v1/chats/states` and the
+  single-chat interaction status use, so the server-side filter and the badge the
+  UI polls can never disagree. A chat whose state cannot be resolved counts as
+  `idle`, so the `idle` filter surfaces it.
+- Pinned chats stay subject to the filter: a matching pin is prepended to the
+  first page and deduplicated by id (like the ci#512 top-up), a non-matching pin
+  (pinned + `finished` while filtering `active`) stays hidden.
+- The asynq inspector is optional in this path: without it, chats whose state
+  depends on the live queue resolve to `idle` instead of failing the whole list.
+- A request **without** `state` keeps the previous code path exactly. It now also
+  carries the resolved state per row (`ListedChat.state`), which is what the
+  sidebar badges from until the `/chats/states` poll overlays the live value.
+
+Frontend (`frontend/packages/ui/src/components/chat/ChatsList.tsx`,
+`chat-list-helpers.ts`): `state` is part of the `useSWRInfinite` key through the
+pure `buildChatListUrl` helper (kept out of the component so the "the selected
+state must be part of the key" behaviour is testable without a browser),
+`stateFilter` is in the dependency list of the effect that resets the painted
+pages, the render-time state filter over loaded rows is gone and the row badge
+falls back to the server-resolved `chat.state`. A request without a selected
+state emits no `state` parameter at all, so the default request keeps its exact
+previous shape.
+
+Regression tests: `backend/api/chats/ChatStateFilter_test.go` (parsing,
+validation, matcher), `backend/api/chats/ChatStateFilterList_test.go` (handler
+level: each supported state, totals/pagination across pages, invalid state, pins,
+and the state filter combined with the sibling filters and search) and the
+"chat list state filter is part of the request key (ci#761)" block in
+`frontend/packages/ui/src/components/chat/chat-list.test.tsx`.
 
 ### A native interaction that cannot start is reported, never a silent idle (ci#609)
 
@@ -712,3 +852,87 @@ profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
 rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
 `backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
 forward makes `retired` unreachable no matter what the vault says.
+
+### Native coder / opencode capability parity (ci#394)
+
+The second half of the replacement goal is *capability*: flipping the fleet is
+pointless while the native `msgmate_coder` agent still misses parts of the
+opencode surface it replaces. `backend/nativecoder/opencodeparity.go` keeps that
+gap list as data - the nine gaps of ci#394 with their sequencing phase
+(`now`/`next`/`later`), status (`open`/`partial`/`closed`), the coder tool that
+closes the gap, the opencode capability it replaces, the tracker tickets and a
+one-line note about the current shortfall:
+
+- `ValidateOpenCodeParityPlan` fails on a malformed registry (duplicate or
+  unknown ids, unknown phase/status, a tool claimed by two gaps, or a `closed`
+  gap naming a tool the coder does not ship), and the unit tests call it for the
+  shipped registry.
+- `RetirementParityBlockers` is the capability gate: while any blocking gap is
+  open it returns one line per gap, and `RetirementReadiness` composes it with
+  the mechanical `RetirementBlockers` above, so "can we drop opencode?" is a
+  single call. Both must be empty.
+- `ParityRetentionEntries` turns the open gaps into the `RetainedParity` reason
+  the migration state requires, so a family still on opencode because of a gap
+  is a recorded exception instead of a silent default.
+- `RenderOpenCodeParityMarkdown` and `OpenCodeParityJSON` render the same data
+  for the private runbook and for run evidence; closing a gap in prose without
+  closing it in the registry no longer matches what the gate reports.
+
+Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
+allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
+image and structured reads, session compaction, and only then the large pieces
+(sub-agents, code search/LSP, per-workspace MCP).
+## Native agent dispatch - retiring the workflow-only dispatch route (ci#757)
+
+The `trigger-open-chat-coding-interaction.yaml` workflow in the private
+`msgmate-io/open-chat-go-ci` repository is the *legacy* way for a lead agent to
+start another coding agent: it shells out through `coder_bash`
+(`gh workflow run`) and relies on GitHub to deliver the trigger. It stays
+supported as the reproducible, auditable fallback, but it is **deprecated as the
+primary route** for the development lead.
+
+The native route is the in-server agent-dispatch surface documented in
+`backend/api/bots/AgentDispatch.go`, exposed to the native coder (and through the
+hive-mind integration) as the `hive_mind_agent_*` tool family. It mirrors the
+workflow inputs (task message, repo/issue tags, `autonomous`,
+`approve_confirmations`, auto-continue + completion/human markers,
+workspace/sandbox) and adds the continue/stop lifecycle, so a lead agent starts,
+observes, steers and stops peers without a GitHub round-trip and without a
+second, structurally different trigger path to keep in sync:
+
+- `hive_mind_agent_dispatch` - start a named bot with a task, tags, autonomous
+  and auto-continue options; returns the `chat_uuid` to watch.
+- `hive_mind_agent_list` / `hive_mind_agent_get` - list the in-flight and
+  finished interactions and read one transcript.
+- `hive_mind_agent_continue` / `hive_mind_agent_stop` - nudge or stop a peer.
+- `hive_mind_observe_list` / `hive_mind_observe_get` - snapshot what other
+  interactions produced (a plan, a PR, a blocker).
+- `hive_mind_state_get` / `hive_mind_state_set` - durable state that survives a
+  reaped sandbox.
+- `hive_mind_influence` - queue an intervention on an observed interaction.
+
+### Recalling old chat context
+
+Past development chats stay searchable through the interaction-history tools
+(`mcp:open-chat-opencode-mcp:openchat_list_interactions`,
+`openchat_get_interaction`, `openchat_search_interactions`,
+`openchat_search_interaction_messages`), so "what did we already try on this
+issue?" is answerable from inside a dev-agent chat instead of by scrolling the
+server UI.
+
+### Enabling the tools selectively
+
+The families are opt-in per bot/chat through the shared-config `tools` key. An
+**empty** `tools: []` means "not configured": the key is dropped so the
+compiled-in defaults apply (ci#617). To narrow a chat deliberately, list a
+non-empty array. Enable the `hive_mind_*` tools (plus the `mcp:` interaction
+history tools) for lead/dev-agent chats; a leaf worker agent that only
+implements one issue does not need the dispatch family.
+
+### Migration order
+
+1. Enable and verify the native tools for the lead/dev-agent chats on
+   ci.msgmate.io (a dispatch -> observe -> continue/stop round-trip).
+2. Keep both routes until the native route is verified live.
+3. Then retire the workflow from the lead's prompt/config in one consolidation
+   PR and record the version that flipped it, so the change is revertible.

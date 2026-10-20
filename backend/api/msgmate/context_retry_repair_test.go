@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The context-window retry path (ci#394 gap 7) trims the history and retries.
@@ -404,6 +405,40 @@ func TestShrinkOversizedContextMessagesTruncatesToolResults(t *testing.T) {
 		t.Fatalf("the system message must never be truncated, got %q", content)
 	}
 	assertPairingValid(t, shrunk)
+}
+
+// TestShrinkOversizedContextMessagesStaysValidUTF8 covers the last-resort
+// context fallback (ci#680): the oversized content that reaches it is normally a
+// tool result - source files, diffs, sandbox logs - so a byte-offset cut can
+// land mid-rune. The shrunk message must stay valid UTF-8, otherwise the retry
+// request this fallback exists to send is itself unparseable.
+func TestShrinkOversizedContextMessagesStaysValidUTF8(t *testing.T) {
+	for _, fill := range []string{"é", "→"} {
+		huge := strings.Repeat(fill, contextRetryMaxMessageChars) // 2-3 bytes per rune
+		messages := []map[string]interface{}{
+			systemMessage("base prompt that must survive"),
+			assistantToolCall("call-1", "coder_read"),
+			toolResult("call-1", huge),
+			userMessage("keep me"),
+		}
+		shrunk, ok := shrinkOversizedContextMessages(messages, contextRetryMaxMessageChars)
+		if !ok {
+			t.Fatalf("expected an oversized tool result to be truncated (%q)", fill)
+		}
+		for _, message := range shrunk {
+			if messageRole(t, message) != "tool" {
+				continue
+			}
+			content, _ := message["content"].(string)
+			if !utf8.ValidString(content) {
+				t.Fatalf("the shrunk tool result must stay valid UTF-8, got %q", content)
+			}
+			if !strings.Contains(content, "content truncated from") {
+				t.Fatalf("the truncation notice must be present, got %q", content)
+			}
+		}
+		assertPairingValid(t, shrunk)
+	}
 }
 
 func TestShrinkOversizedContextMessagesNoopWhenNothingOversized(t *testing.T) {
