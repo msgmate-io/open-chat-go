@@ -90,6 +90,11 @@ const (
 	MaxPort = 65535
 	// UnassignedSlot marks a workspace without a resolved slot.
 	UnassignedSlot = -1
+	// MaxConfigInt bounds every numeric config/env lever before it is read, so
+	// an operator typo (or a hostile value) cannot overflow the 32 bit
+	// arithmetic of the port/slot math. It is far above every legal lever
+	// (port <= 65535, slot count <= 253) and a single digit wider than a port.
+	MaxConfigInt = 1 << 24
 )
 
 // Environment variables injected into the workspace and read by the coding
@@ -465,9 +470,16 @@ func SlotFor(workspaceKey string, slotCount int) int {
 	if trimmed == "" || slotCount <= 0 {
 		return UnassignedSlot
 	}
-	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(trimmed))
-	return int(hasher.Sum32() % uint32(slotCount))
+	// A 64 bit digest (not the 32 bit sum) so the modulo needs no narrowing
+	// conversion of an int to uint32: the digest width always covers slotCount.
+	return int(fnvHash64(trimmed) % uint64(slotCount))
+}
+
+// fnvHash64 is the stable 64 bit FNV-1a digest of a workspace key.
+func fnvHash64(workspaceKey string) uint64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(workspaceKey))
+	return hasher.Sum64()
 }
 
 // loopbackFor renders the slot's loopback address. The whole 127.0.0.0/8 is
@@ -641,29 +653,43 @@ func stringList(raw interface{}) []string {
 }
 
 // configInt reads a positive integer that may be decoded as int, float64 or a
-// numeric string.
+// numeric string. Values outside [0, MaxConfigInt] are rejected instead of being
+// narrowed, so the port/slot math cannot be driven out of range by config.
 func configInt(raw interface{}) (int, bool) {
 	switch typed := raw.(type) {
 	case int:
-		return typed, true
+		return clampedConfigInt(int64(typed))
 	case int64:
-		return int(typed), true
+		return clampedConfigInt(typed)
 	case float64:
-		return int(typed), true
+		if typed > MaxConfigInt || typed < 0 {
+			return 0, false
+		}
+		return clampedConfigInt(int64(typed))
 	case string:
 		return lookupInt(typed)
 	}
 	return 0, false
 }
 
-// lookupInt parses a numeric string; ok=false for an empty or malformed value.
+// clampedConfigInt accepts a fully decoded integer only inside [0, MaxConfigInt].
+func clampedConfigInt(value int64) (int, bool) {
+	if value < 0 || value > MaxConfigInt {
+		return 0, false
+	}
+	return int(value), true
+}
+
+// lookupInt parses a numeric string; ok=false for an empty, malformed or
+// out-of-range value. The range check keeps every derived port/slot calculation
+// inside its 32 bit bounds (see MaxConfigInt).
 func lookupInt(raw string) (int, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return 0, false
 	}
 	number, err := strconv.Atoi(trimmed)
-	if err != nil {
+	if err != nil || number < 0 || number > MaxConfigInt {
 		return 0, false
 	}
 	return number, true

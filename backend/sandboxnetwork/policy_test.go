@@ -400,3 +400,65 @@ func TestStringAndReportNeverLeakSecrets(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveRejectsNumericLeversOutOfRange pins the range guard: an operator
+// typo (or a hostile value) must fall back to the default instead of driving the
+// port/slot math out of its 32 bit bounds.
+func TestResolveRejectsNumericLeversOutOfRange(t *testing.T) {
+	huge := fmt.Sprintf("%d", int64(MaxConfigInt)*4096)
+	for _, configKey := range []string{ConfigPortBase, ConfigPortStride, ConfigMaxSharedWorkspaces} {
+		for name, lookup := range map[string]func(string) string{
+			"env":   envOf(map[string]string{EnvPortBaseLever: huge, EnvPortStrideLever: huge, ConfigMaxAgentsPerPool: huge}),
+			"noEnv": noEnv,
+		} {
+			config := map[string]interface{}{ConfigSharedMode: "shared", configKey: huge}
+			policy := ResolveWithLookup(config, "/workspace/abc", lookup)
+			if policy.Isolated() {
+				continue
+			}
+			if policy.PortBase > MaxPort+MaxConfigInt || policy.PortStride > MaxPort+MaxConfigInt {
+				t.Fatalf("%s/%s: out-of-range %s leaked into the policy: base=%d stride=%d",
+					configKey, name, configKey, policy.PortBase, policy.PortStride)
+			}
+			if policy.PortMin < 0 || policy.PortMax < 0 || policy.PortMax > MaxPort {
+				t.Fatalf("%s/%s: port slice out of range: %d..%d", configKey, name, policy.PortMin, policy.PortMax)
+			}
+			if policy.PortMax > 0 && policy.PortMin > policy.PortMax {
+				t.Fatalf("%s/%s: inverted port slice: %d..%d", configKey, name, policy.PortMin, policy.PortMax)
+			}
+		}
+	}
+
+	// A negative lever is never accepted either.
+	policy := ResolveWithLookup(map[string]interface{}{ConfigSharedMode: "shared"}, "/workspace/abc", envOf(map[string]string{
+		EnvPortStrideLever: "-8",
+	}))
+	if policy.PortStride <= 0 {
+		t.Fatalf("negative stride must not win: %+v", policy)
+	}
+}
+
+// TestLookupIntBounds covers the parse helper directly: only [0, MaxConfigInt]
+// parses, everything else is ok=false so the caller keeps its default.
+func TestLookupIntBounds(t *testing.T) {
+	cases := []struct {
+		raw   string
+		want  int
+		valid bool
+	}{
+		{" 31000 ", 31000, true},
+		{"0", 0, true},
+		{fmt.Sprintf("%d", MaxConfigInt), MaxConfigInt, true},
+		{fmt.Sprintf("%d", MaxConfigInt+1), 0, false},
+		{fmt.Sprintf("%d", int64(MaxConfigInt)*4096), 0, false},
+		{"-1", 0, false},
+		{"", 0, false},
+		{"31000x", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := lookupInt(tc.raw)
+		if ok != tc.valid || (ok && got != tc.want) {
+			t.Fatalf("lookupInt(%q) = (%d, %v), want (%d, %v)", tc.raw, got, ok, tc.want, tc.valid)
+		}
+	}
+}

@@ -51,6 +51,13 @@ Rules that make this safe by construction:
    (1024, the non-root floor), and a workspace without a stable key gets
    `UnassignedSlot` plus a warning instead of being handed slot 0 of somebody
    else.
+ 7. **Numeric levers are range-checked before the math.** Every env/config lever
+    is parsed through a guard that only accepts `[0, MaxConfigInt]` (`1<<24`, one
+    digit wider than the largest legal port); anything else falls back to the
+    documented default. A typo such as
+    `OPENCHAT_SANDBOX_PORT_STRIDE=99999999999` therefore cannot overflow the port
+    window arithmetic — it is ignored instead of being narrowed into a
+    caller-chosen value.
 
 Loopback aliases start at `127.0.0.2` on purpose: `127.0.0.1` stays the pod's
 plain loopback and is never an *exclusive* alias an agent could mistake for its
