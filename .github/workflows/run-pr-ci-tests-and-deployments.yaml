@@ -2498,10 +2498,21 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_provider_failure.sh
 
-      # ci#745: every PR-CI progress-comment step must address an explicit,
-      # non-empty repository/PR target and must skip (instead of 404-looping)
-      # when that target is empty. Pins the workflow wiring; the helper's
-      # runtime behaviour is covered by the hermetic shell test below it.
+      # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
+      # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
+      # networking design). Pin the in-pod probe script contract (single-line
+      # JSON report, non-zero exit for an unhealthy pool, --print-only never
+      # failing the caller, no credential material) so a broken pool can never be
+      # handed out silently.
+      - name: Sandbox pool egress gate unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_pool_egress_gate.sh
+
+      # ci#745: the PR-CI progress-comment step must thread its repository/PR
+      # context explicitly and must skip (instead of 404-looping) when that
+      # context is empty. Pin the contract so the empty-URL red job cannot
+      # come back.
       - name: PR CI progress-comment target unit tests
         run: |
           set -euo pipefail
