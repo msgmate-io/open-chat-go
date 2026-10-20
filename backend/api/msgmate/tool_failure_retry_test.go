@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -468,5 +469,130 @@ func TestModelFixableToolFailureStillConsumesFailedToolBudget(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("expected a non-transient failure to be attempted without retries, got %d provider rounds", got)
+	}
+}
+
+// ci739RegistryConflictError is the exact failure reported in ci#739: a stale
+// sandbox row makes the chat-scoped sandbox name collide on every attempt.
+const ci739RegistryConflictError = "failed creating chat sandbox: constraint failed: " +
+	"UNIQUE constraint failed: docker_sandboxes.owner_user_id, docker_sandboxes.name (2067)"
+
+// TestSandboxRegistryConflictPlaceholderNamesTheRemedy guards the model-facing
+// wording of a registry conflict (ci#739): it must name the class, the reason
+// and the remedies, and it must *not* be sold as budget-exempt — a conflict is
+// deterministic, so calling it free would invite the identical, always-colliding
+// retry the whole policy exists to prevent.
+func TestSandboxRegistryConflictPlaceholderNamesTheRemedy(t *testing.T) {
+	got := buildSandboxRegistryConflictToolErrorPlaceholder(
+		"coder_select_workspace",
+		errors.New(ci739RegistryConflictError),
+	)
+	for _, fragment := range []string{
+		"coder_select_workspace",
+		"coding-sandbox registry constraint",
+		"docker_sandboxes.name",
+		"not retried",
+		"DOES count against your failed-tool budget",
+		"Do not re-issue the same call",
+		"workspace_uuid",
+	} {
+		if !strings.Contains(got, fragment) {
+			t.Fatalf("expected %q to contain %q", got, fragment)
+		}
+	}
+	if strings.Contains(got, "does NOT count against your failed-tool budget") {
+		t.Fatalf("a deterministic registry conflict must never be reported as budget-exempt, got %q", got)
+	}
+	if !strings.Contains(
+		buildSandboxRegistryConflictToolErrorPlaceholder("coder_select_workspace", nil),
+		"unknown registry constraint",
+	) {
+		t.Fatal("expected a nil error to fall back to the generic constraint reason")
+	}
+}
+
+// TestRegistryConflictConsumesFailedToolBudget is the ci#739 counterpart of the
+// ci#688 exemption: a registry conflict is deterministic and the model *can*
+// change course (another sandbox/workspace), so it stays a counted failure. With
+// a failed-tool budget of 1 the very first conflict must abort the turn and the
+// call must carry no retries — the retry would be a byte-identical collision.
+func TestRegistryConflictConsumesFailedToolBudget(t *testing.T) {
+	t.Setenv(ToolFailureRetryAttemptsEnvKey, "3")
+	t.Setenv(ToolFailureRetryBaseDelayEnvKey, "0")
+
+	toolMap := map[string]Tool{
+		"coder_select_workspace": &failingTool{
+			BaseTool: &BaseTool{ToolName: "coder_select_workspace"},
+			err:      errors.New(ci739RegistryConflictError),
+		},
+	}
+
+	server, requests := sandboxFailureSSEServer(t, "coder_select_workspace")
+
+	chunks, usage, toolCalls, errs := streamChatCompletion(
+		context.Background(),
+		server.URL, "some-model", "litellm",
+		10, // tool_call_max_total: high enough to never trigger
+		1,  // tool_call_max_failed
+		[]map[string]interface{}{{"role": "user", "content": "select a workspace"}},
+		nil, toolMap, "test-key", nil, nil, nil, SamplingParams{}, ProviderRetryOptions{},
+		providerRequestMeta{ChatUUID: "chat-1"},
+	)
+
+	collected := make(chan struct{})
+	var mu sync.Mutex
+	var frames []ToolCall
+	go func() {
+		defer close(collected)
+		for frame := range toolCalls {
+			mu.Lock()
+			frames = append(frames, frame)
+			mu.Unlock()
+		}
+	}()
+	go func() {
+		for range chunks {
+		}
+	}()
+	go func() {
+		for range usage {
+		}
+	}()
+	err := <-errs
+	// The error channel is closed *before* the tool-call channel, so waiting on
+	// the collector is what guarantees every frame of this turn was recorded.
+	<-collected
+
+	if err == nil {
+		t.Fatal("expected the turn to abort on the failed-tool budget")
+	}
+	if !strings.Contains(err.Error(), "exceeded maximum number of failed tool calls") {
+		t.Fatalf("expected a registry conflict to consume the failed-tool budget, got %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("expected the conflict to abort in a single provider round, got %d", got)
+	}
+
+	mu.Lock()
+	turnFrames := append([]ToolCall(nil), frames...)
+	mu.Unlock()
+
+	var failedFrames []ToolCall
+	for _, frame := range turnFrames {
+		if frame.Status == ToolCallStatusFailed {
+			failedFrames = append(failedFrames, frame)
+		}
+	}
+	if len(failedFrames) != 1 {
+		t.Fatalf("expected one failed frame, got %d", len(failedFrames))
+	}
+	if failedFrames[0].Retries != 0 {
+		t.Fatalf("expected no retry for a deterministic conflict, got %d", failedFrames[0].Retries)
+	}
+	if failedFrames[0].BudgetExempt {
+		t.Fatal("expected a registry conflict to stay inside the failed-tool budget")
+	}
+	if !strings.Contains(failedFrames[0].Result, "registry constraint") {
+		t.Fatalf("expected the frame to carry the remedy, got %q", failedFrames[0].Result)
 	}
 }
