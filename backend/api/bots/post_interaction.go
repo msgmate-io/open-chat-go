@@ -13,6 +13,7 @@ import (
 	"backend/api/msgmate"
 	"backend/chatstate"
 	"backend/database"
+	"backend/logging"
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
@@ -135,11 +136,11 @@ func runPostInteractionActions(db *gorm.DB, queueClient *asynq.Client, queueInsp
 			// on the fixture PR instead of a comment nobody asserted on.
 			review, ok := decodePostActionPullRequestReview(action)
 			if !ok {
-				log.Printf("post-interaction: skipping invalid pull request review action for chat %s", loaded.UUID)
+				logging.Infof("post-interaction: skipping invalid pull request review action for chat %s", loaded.UUID)
 				continue
 			}
 			if err := runPullRequestReview(review, text); err != nil {
-				log.Printf("post-interaction: github_pull_request_review failed for chat %s: %v", loaded.UUID, err)
+				logging.Errorf("post-interaction: github_pull_request_review failed for chat %s: %v", loaded.UUID, err)
 			}
 		default:
 			comment, ok := decodePostActionGithubComment(action)
