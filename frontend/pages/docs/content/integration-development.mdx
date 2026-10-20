@@ -111,6 +111,49 @@ Migration recipe for one integration:
 Test-only `backend/...` imports are tolerated during the migration: the guard
 measures the shipped artifact (`go list -deps`, without `-test`).
 
+### Measuring the dependency surface
+
+The migration is verified by measurement, not by intent:
+`backend/scripts/integration_dep_surface.py` prints, per integration, the
+transitive package count of its shipped graph and how many of those packages are
+`backend/...` (that number must reach `0`), plus the same two numbers including
+tests. Run it from the Go workspace that `use`s `backend/` and the integrations:
+
+```bash
+GOWORK="$PWD/go.work" python3 backend/scripts/integration_dep_surface.py
+```
+
+To measure the before/after delta of a migration, record the surface first and
+diff against it afterwards:
+
+```bash
+GOWORK="$PWD/go.work" python3 backend/scripts/integration_dep_surface.py \
+    --write-baseline integrations.dep-surface.json
+GOWORK="$PWD/go.work" python3 backend/scripts/integration_dep_surface.py \
+    --baseline integrations.dep-surface.json
+```
+
+`--baseline` adds a `d_pkgs`/`d_backend` column per integration and fails when an
+integration pulls more `backend/...` packages than the baseline (or a package
+that was not recorded). The committed `integrations.dep-surface.json` pins the
+integrations that are already migrated (`go_client`, `rest_api_tool`) at zero
+`backend/...` packages, so re-coupling them fails the check; `--write-baseline`
+refreshes the file after a migration.
+
+Only integrations that are already decoupled may be pinned in the baseline; a
+pinned entry that still records `backend/...` packages would silently neuter the
+check. That invariant is verified without a Go toolchain, which is how CI
+validates the committed file:
+
+```bash
+python3 backend/scripts/integration_dep_surface.py \
+    --check-baseline integrations.dep-surface.json
+```
+
+The same script is exercised hermetically (stub `go`, no toolchain needed) by
+`development/scripts/tests/test_integration_dep_surface.sh`, which pins the
+exit codes above and runs in CI.
+
 ## Tools
 
 Tools are declared on the integration definition and implement the tool
