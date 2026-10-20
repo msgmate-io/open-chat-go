@@ -15,9 +15,9 @@ import (
 )
 
 type Subscriber struct {
-	msgs      chan []byte
-	UserUUID  string
-	ChatUUID  string
+	msgs     chan []byte
+	UserUUID string
+	ChatUUID string
 	// ContentMode is the share content level this subscriber is allowed to
 	// see. Anything that is not an explicit "unsecure" is censored.
 	ContentMode string

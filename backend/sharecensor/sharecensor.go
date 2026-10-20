@@ -189,3 +189,119 @@ func toMap(value interface{}) map[string]interface{} {
 	}
 	return mapped
 }
+
+// shareMetaAllowlist lists the only message meta-data keys a censored share may
+// still expose. Everything else (secrets, tokens, user data, provider payloads)
+// is dropped before the payload ever leaves the server.
+var shareMetaAllowlist = map[string]struct{}{
+	"model": {}, "state": {}, "status": {}, "type": {},
+	"provider": {}, "name": {}, "title": {},
+}
+
+// CensorSharedJSON applies the censored share reduction to an encoded JSON
+// document (object, array or single frame). Raw message text and tool-call names
+// survive; tool-call arguments/results, meta-data, reasoning, attachments and any
+// secret-looking key are removed. Non-JSON input is returned unchanged.
+func CensorSharedJSON(raw []byte) []byte {
+	var doc interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return raw
+	}
+	out, err := json.Marshal(reduceForShare(doc))
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func reduceForShare(v interface{}) interface{} {
+	switch typed := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for k, val := range typed {
+			lk := strings.ToLower(k)
+			switch {
+			case lk == "tool_calls" || lk == "toolcalls":
+				out[k] = reduceToolCallList(val)
+			case lk == "meta_data" || lk == "metadata":
+				if reduced := reduceMetaForShare(val); reduced != nil {
+					out[k] = reduced
+				}
+			case isShareDeniedKey(lk):
+			default:
+				out[k] = reduceForShare(val)
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, reduceForShare(item))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func reduceToolCallList(v interface{}) interface{} {
+	items, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, ok := entry["name"].(string)
+		if !ok || name == "" {
+			continue
+		}
+		out = append(out, map[string]interface{}{"name": name})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func reduceMetaForShare(v interface{}) interface{} {
+	meta, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make(map[string]interface{}, len(meta))
+	for k, val := range meta {
+		if _, allowed := shareMetaAllowlist[strings.ToLower(k)]; !allowed {
+			continue
+		}
+		switch val.(type) {
+		case string, float64, bool, nil:
+			out[k] = val
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isShareDeniedKey(lk string) bool {
+	switch lk {
+	case "reasoning", "reasoning_content", "thinking", "attachments", "attachment",
+		"arguments", "argument", "args", "params", "parameters", "input", "inputs",
+		"result", "results", "output", "outputs", "tool_call_id", "raw", "raw_response",
+		"tool_result", "tool_output", "env", "environment", "config_data", "credentials":
+		return true
+	}
+	for _, needle := range []string{"token", "secret", "password", "api_key", "apikey",
+		"credential", "kubeconfig", "kube_config", "authorization", "cookie", "email",
+		"private_key", "ssh_key", "passwd"} {
+		if strings.Contains(lk, needle) {
+			return true
+		}
+	}
+	return false
+}
