@@ -48,14 +48,26 @@ var browserTokenRoutes = []browserTokenRoute{
 // the Open-Chat TUI it forwards into a per-chat coding sandbox, so the TUI can
 // attach to and chat in the caller's bound session. Unlike the browser
 // allowlist it includes the message-send route (and the default-bot lookup the
-// TUI uses to fall back to creating a chat); it is still default-deny, so a
-// leaked sandbox config can only reach these routes as the minting user.
+// TUI uses to fall back to creating a chat) plus the turn-state routes the
+// usability overhaul needs (ci#521): a status footer, a live streamed turn and
+// a stop signal. It is still default-deny and chat-scoped, so a leaked sandbox
+// config can only reach these routes, and only for chats the minting user
+// takes part in.
 var coderTUITokenRoutes = []browserTokenRoute{
 	{Method: http.MethodGet, Pattern: "/user/self", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/chats/list", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}", Scope: ""},
 	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/list", Scope: ""},
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/send", Scope: ""},
+	// Live turn state (ci#521 usability overhaul): the TUI renders a status
+	// footer from the interaction status route, hydrates the in-flight
+	// assistant text between polls from the streaming snapshot, and lets the
+	// user stop a turn with the signal route. Both handlers re-check chat
+	// participation before acting, so the wildcard `{signal}` segment cannot
+	// reach another user's chat.
+	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/status", Scope: ""},
+	{Method: http.MethodGet, Pattern: "/chats/{chat_uuid}/messages/streaming", Scope: ""},
+	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/signals/{signal}", Scope: ""},
 	// The forwarded TUI surfaces the coder's confirmable actions inline, so it
 	// can approve or reject a parked tool call exactly like the web widget.
 	{Method: http.MethodPost, Pattern: "/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", Scope: ""},
