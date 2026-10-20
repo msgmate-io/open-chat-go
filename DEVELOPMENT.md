@@ -57,6 +57,7 @@ replacement run for the same commit adopted their verdict. The
 `run-pr-ci-ai-mock-tests` case in that gate is pinned by
 `development/scripts/test_pr_ci_ai_mock_gate.py` (stdlib-only, runs in the Pin
 Freshness Gate) so the label guard cannot silently regress to `skipped) ;;`.
+
 The readiness gate's other half — the `ci#722` redis probe budget — is pinned the
 same way: `development/scripts/redis_readiness_contract.py` re-derives the
 `probe_timeout_too_low` / `probe_budget_too_short` / `startup_probe_missing` /
@@ -69,6 +70,19 @@ interaction) down with it. The gate itself stays read-only; applying the patch i
 the operator's call. Its regression test,
 `development/scripts/test_redis_readiness_contract.py`, runs in the Pin Freshness
 Gate too.
+
+The PR-CI progress comments follow the same rule. Every job that upserts the
+`<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
+`repository`/`PR number` pair: pass it through step `env` with the event context
+as fallback (`github.repository` / `github.event.pull_request.number`) and let
+`development/scripts/upsert_pr_ci_progress_comment.sh` own the marker lookup plus
+the create-or-update call. An empty target must log a `::warning::` and skip with
+exit 0 before the first HTTP call — never interpolate a raw
+`needs.*.outputs.*` expression into an `api.github.com` URL, which collapses to
+`repos//issues//comments` and fails the step with `curl: (22) ... 404` (ci#745).
+`development/scripts/test_pr_ci_progress_comment_target.py` and the hermetic
+`development/scripts/tests/test_upsert_pr_ci_progress_comment.sh` pin both halves
+in the Pin Freshness Gate.
 
 #### Autonomous approval and merge of green consolidation PRs
 
