@@ -366,9 +366,10 @@ and, once the database file is unlinked underneath a still-open connection, into
   never close), which is a false positive on someone else's code, not a
   regression in ours.
 - `knownTempDirPoolViolations` in that file is the only escape hatch: it lists
-  files whose fix is owned by an in-flight PR (currently #919 for `api/chats`),
-  and the guard fails on an entry that no longer violates, so the exception has
-  to be deleted with the fix rather than quietly outliving it.
+  files whose fix is owned by an in-flight PR, and the guard fails on an entry
+  that no longer violates, so the exception has to be deleted with the fix rather
+  than quietly outliving it. It is empty as of the r56 consolidation (the three
+  `api/chats` entries were #919 and went away with that fix).
 - Known limitation of that scan, deliberate and *not* closed here: the predicate
   is per *file*, so a file that calls `SetupTestDatabase(` for one helper and a
   bare `SetupDatabase(` for another is exempted wholesale. The hole is latent

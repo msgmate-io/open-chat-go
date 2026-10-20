@@ -98,11 +98,13 @@ var unwrappedPoolCloseCalls = []string{".DB()", ".Close()"}
 // The guard stays green while another PR is in flight, but it cannot be used as
 // a permanent hiding place: TestTempDirSQLiteHelpersCloseTheirPool fails on an
 // entry that no longer violates, so whoever lands the fix is told to drop it.
-var knownTempDirPoolViolations = map[string]string{
-	"backend/api/chats/SharedChatBadge_test.go":      "#919",
-	"backend/api/chats/browser_token_access_test.go": "#919",
-	"backend/api/chats/create_test.go":               "#919",
-}
+//
+// The three `api/chats` entries (#919) were removed by the r56 consolidation:
+// that PR merged into the same branch as this guard, and once its package-local
+// `closeChatsTestDB` helper was on the tree those files no longer violate, so
+// the exceptions had to go with the fix - which is exactly what this guard
+// enforces. The map stays here (empty) as the only escape hatch.
+var knownTempDirPoolViolations = map[string]string{}
 
 // TestTempDirSQLiteHelpersCloseTheirPool is the ci#920 guard: it is the reason
 // the audit cannot silently rot. Every *_test.go in the backend module that
