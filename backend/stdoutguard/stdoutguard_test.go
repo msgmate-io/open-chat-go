@@ -82,6 +82,13 @@ const (
 // fmt""), the last path element otherwise ("json" for encoding/json). "_"
 // imports are dropped and "." imports are reported separately, because a dot
 // import makes the package's exports bare identifiers in the file.
+//
+// The reported flags are deliberately lexical, not scope-aware: with a dot os
+// import, a bare "Stdout" selector is attributed to the standard library even
+// if a local declaration of that name would win in Go's own scope resolution.
+// That is the conservative direction for a guard — an oddly-named local writer
+// fails the test with a message naming os.Stdout instead of slipping a real
+// stdout write through — and it is pinned by fixture.
 func importAliases(file *ast.File) (aliases map[string]string, dotFmt, dotOS bool) {
 	aliases = map[string]string{}
 	for _, spec := range file.Imports {
@@ -432,6 +439,44 @@ import "backend/logging"
 func f9() { logging.Infof("kept") }
 `,
 			want: 0,
+		},
+		{
+			name: "dot os import is flagged like any other os name",
+			source: `package p
+
+import . "os"
+
+func f10() { _, _ = Stdout.WriteString("x") }
+`,
+			want: 1,
+		},
+		{
+			name: "aliased os import is flagged too",
+			source: `package p
+
+import o "os"
+
+func f11() { _ = o.Stdout.Fd() }
+`,
+			want: 1,
+		},
+		{
+			name: "a local that shadows the import is still reported (documented limit)",
+			source: `package p
+
+import "os"
+
+type Sink struct{}
+
+func (Sink) WriteString(string) (int, error) { return 0, nil }
+
+func f12() {
+	s := Sink{}
+	_ = os.Stdout
+	_ = s
+}
+`,
+			want: 1,
 		},
 	}
 	for _, tc := range tests {
