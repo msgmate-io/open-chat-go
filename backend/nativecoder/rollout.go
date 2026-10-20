@@ -259,6 +259,57 @@ func RetirementBlockers(state NativeBotMigrationState) []string {
 	return blockers
 }
 
+// RetirementReadiness is the full go/no-go for dropping the legacy integration
+// from the deployment profile: the rollout mechanics of RetirementBlockers
+// ("did every family flip, was a rollback proven, is the fleet stable") plus the
+// ci#394 capability gate in RetirementParityBlockers ("is the native runtime
+// capable enough to be the only one"). RetirementBlockers alone is not enough:
+// it can be empty while the coder still misses opencode capabilities.
+func RetirementReadiness(state NativeBotMigrationState) []string {
+	blockers := RetirementBlockers(state)
+	blockers = append(blockers, RetirementParityBlockers()...)
+	sort.Strings(blockers)
+	return blockers
+}
+
+// ParityRetentionEntries derives the RetainedParity entries of
+// NativeBotMigrationState from the ci#394 gap registry: while capability gaps
+// are open, every family that would otherwise be retired needs a recorded
+// reason, and the reason is not hand-written. An empty map is the state where
+// no family needs a parity exception because the registry is closed.
+func ParityRetentionEntries() map[string]string {
+	reasons := RetirementParityBlockers()
+	if len(reasons) == 0 {
+		return map[string]string{}
+	}
+	reason := fmt.Sprintf("retained on %s: %d opencode parity gap(s) of ci#394 are still open (%s)",
+		OpenCodeLegacyRuntime, len(reasons), firstParityBlockerID(reasons))
+	out := map[string]string{}
+	for _, stage := range NativeBotStages() {
+		out[stage.Stage] = reason
+	}
+	return out
+}
+
+// firstParityBlockerID extracts the gap id from a blocker line so the derived
+// retention reason names a concrete gap. The blockers are sorted, so the result
+// is stable.
+func firstParityBlockerID(blockers []string) string {
+	if len(blockers) == 0 {
+		return ""
+	}
+	line := blockers[0]
+	start := strings.Index(line, "\"")
+	if start < 0 {
+		return line
+	}
+	rest := line[start+1:]
+	if end := strings.Index(rest, "\""); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
 // RollbackProofEligible reports whether a family may carry the rollback proof
 // (ci#584: the rollback must be proven at least once on a non-critical bot). A
 // family is eligible when it is not the coordinating lead and does not share the

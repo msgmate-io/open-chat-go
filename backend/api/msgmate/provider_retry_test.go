@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestProviderErrorInfoFromProviderRequestError(t *testing.T) {
@@ -210,6 +211,27 @@ func TestTruncateFailureDetail(t *testing.T) {
 	}
 	if got := TruncateFailureDetail("  spaced  "); got != "spaced" {
 		t.Fatalf("expected trimmed detail, got %q", got)
+	}
+}
+
+// TestTruncateFailureDetailStaysValidUTF8 covers ci#680 on the user-facing
+// failure path: provider errors quote request content (the place an oversized
+// tool dump ends up), so a byte-offset cut must not leave a torn rune in the
+// message shown to the user.
+func TestTruncateFailureDetailStaysValidUTF8(t *testing.T) {
+	for _, fill := range []string{"é", "→", "🧑"} {
+		detail := strings.Repeat(fill, 400)
+		got := TruncateFailureDetail(detail)
+		if !utf8.ValidString(got) {
+			t.Fatalf("detail must stay valid UTF-8, got %q", got)
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Fatalf("expected the truncation marker, got %q", got)
+		}
+	}
+	// A short non-ASCII detail must survive untouched.
+	if got := TruncateFailureDetail("ok é →"); got != "ok é →" {
+		t.Fatalf("short detail must be kept as-is, got %q", got)
 	}
 }
 

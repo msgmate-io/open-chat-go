@@ -183,3 +183,60 @@ export function batchesForPaintedPages(
   const safeBatchSize = Math.max(batchSize, 1)
   return Math.max(1, Math.ceil((Math.max(paintedPages, 1) * pageSize) / safeBatchSize))
 }
+
+// One batch request of the chat-list API. Every field becomes a query parameter
+// of the `useSWRInfinite` key, except the ones that are empty/absent: those must
+// stay out of the URL so an unfiltered request looks exactly like it did before.
+export type ChatListQuery = {
+  page: number
+  limit: number
+  chatTypes?: string
+  search?: string
+  tags?: string[]
+  excludeTags?: string[]
+  // The interaction state filter, applied server-side (ci#761). It has to be
+  // part of the key: a key that ignored it would keep serving the previously
+  // loaded page instead of refetching the matching rows.
+  state?: string | null
+  timeFrom?: string
+  timeTo?: string
+  scope?: string
+}
+
+// Serializes one list request. Kept out of the component so the "is the state
+// filter part of the SWR key?" behaviour is unit-testable without a browser.
+export function buildChatListQuery(query: ChatListQuery): string {
+  const params = new URLSearchParams()
+  if (query.chatTypes) {
+    params.set("chat_types", query.chatTypes)
+  }
+  params.set("page", String(query.page))
+  params.set("limit", String(query.limit))
+  if (query.search) {
+    params.set("q", query.search)
+  }
+  if (query.tags && query.tags.length > 0) {
+    params.set("tags", query.tags.join(","))
+  }
+  if (query.excludeTags && query.excludeTags.length > 0) {
+    params.set("exclude_tags", query.excludeTags.join(","))
+  }
+  if (query.timeFrom) {
+    params.set("time_from", query.timeFrom)
+  }
+  if (query.timeTo) {
+    params.set("time_to", query.timeTo)
+  }
+  if (query.state) {
+    params.set("state", query.state)
+  }
+  if (query.scope) {
+    params.set("scope", query.scope)
+  }
+  return params.toString()
+}
+
+// The full URL (and thereby the SWR key) of one chat-list batch.
+export function buildChatListUrl(query: ChatListQuery): string {
+  return `/api/v1/chats/list?${buildChatListQuery(query)}`
+}
