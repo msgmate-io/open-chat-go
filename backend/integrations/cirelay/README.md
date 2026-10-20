@@ -1,11 +1,11 @@
-# CI-error relay (`cirelay`) — integration contract
+# Integration event contract (`cirelay`)
 
-This package is the Open-Chat side of the CI-error relay contract. It resolves a
-structured CI-failure event to the target repository's **development lead**
-interaction (running, else the most recent, else "spawn one") and to the
-**candidate agent interactions** for that repo (live + recent, matched by
-`repo:` / workspace / work tags). It performs no routing logic of its own beyond
-that resolution: the CI side only emits a payload + auth.
+This package is the Open-Chat side of the failure-event ingestion contract. It
+resolves a structured failure event to the target repository's **lead
+interaction** (running, else the most recent, else "spawn one") and to the
+**candidate interactions** for that repo (live + recent, matched by `repo:` /
+workspace / work tags). It performs no routing logic of its own beyond that
+resolution: the CI side only emits a payload + auth.
 
 ## Event schema (version 1)
 
@@ -17,7 +17,7 @@ that resolution: the CI side only emits a payload + auth.
     "repo": "msgmate-io/open-chat-go",
     "provider": "github",
     "pr_number": 607,
-    "branch": "fix/ci",
+    "branch": "fix/x",
     "sha": "0f3c...",
     "run_url": "https://github.com/.../actions/runs/123",
     "failing_jobs": [
@@ -39,21 +39,21 @@ Rules:
 * `repo` inside the payload is required; it is normalized to `owner/name`, so a
   full clone URL (`https://github.com/owner/name.git`) is accepted.
 * **No secrets.** Tokens, kubeconfigs and user data never travel in the payload;
-  the only credential is the relay bearer token in the `Authorization` header.
+  the only credential is the bearer token in the `Authorization` header.
 
 ## Endpoints
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
 | `/api/integrations/event` | `POST` | Generic, kind-dispatched ingestion (`EventsHandler`). Envelope above. |
-| dedicated `ci_failure` relay path (`RelayHandler`) | `POST` | Backwards-compatible, ci_failure-only hook; unchanged. |
+| dedicated `ci_failure` route (`RelayHandler`) | `POST` | Backwards-compatible, single-kind hook; unchanged. |
 
-Both hooks are authentication-gated by the relay bearer token and never echo or
-log it. Status codes: `401` missing/wrong token, `400` malformed envelope, `422`
+Both hooks are authentication-gated by the bearer token and never echo or log
+it. Status codes: `401` missing/wrong token, `400` malformed envelope, `422`
 unsupported kind or invalid kind payload, `502` downstream resolution failure,
 `200` with the `Resolution` document on success.
 
-`Resolution` reports the normalized `repo`, whether a lead was found, the lead
+`Resolution` reports the normalized `repo`, whether a target was found, the
 interaction id (and whether it is running), the chosen routing mode, the target
 interaction id, and the candidate interaction ids.
 
