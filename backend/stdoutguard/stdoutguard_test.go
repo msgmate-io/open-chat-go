@@ -20,9 +20,12 @@ package stdoutguard
 // fmt.Fprintf(os.Stdout, ...) and os.Stdout.WriteString land in the container
 // log exactly like fmt.Print does. Writes that merely look similar stay
 // allowed: fmt.Fprintf(os.Stderr, ...) and fmt.Fprint(&buf, ...) are not stdout
-// traffic, and neither is handing the os.Stdout file itself to another function.
-// The documented limit of a syntax-only guard is that it cannot follow the file
-// into a variable ("w := os.Stdout; w.Write(...)").
+// traffic. No *purpose* is inferred from a reference to the file, though: naming
+// os.Stdout at all is reported, including handing it to another helper or to
+// log.SetOutput - the conservative direction for a guard.
+// The documented limit of a syntax-only guard is the opposite case: stdout
+// reached without ever naming the file, e.g. os.NewFile(1, ...) or a child
+// process inheriting fd 1.
 //
 // Three trees are deliberately exempt:
 //   - backend/logging: the log sink itself defaults to os.Stdout.
@@ -126,9 +129,11 @@ func importAliases(file *ast.File) (aliases map[string]string, dotFmt, dotOS boo
 //   - the builtin print/println (they write to stderr/stdout without going
 //     through fmt at all).
 //
-// The matcher cannot follow os.Stdout into a variable ("w := os.Stdout;
-// w.Write(...)") and it treats a local declaration that shadows an imported
-// name as that import; both are documented limits of a syntax-only guard.
+// The matcher is purely lexical: it reports the reference itself, so it cannot
+// tell a real stdout write from a mere mention, and it treats a local
+// declaration that shadows an imported name as that import. Both are documented
+// limits of a syntax-only guard. It also cannot see the file reached without
+// naming it ("os.NewFile(1, ...)", a child process inheriting fd 1).
 func stdoutViolations(fset *token.FileSet, file *ast.File) []string {
 	aliases, dotFmt, dotOS := importAliases(file)
 	var violations []string
@@ -487,6 +492,31 @@ func f13() {
 }
 `,
 			want: 1,
+		},
+		{
+			name: "stdout handed to an arbitrary helper",
+			source: `package p
+
+import "os"
+
+func sink(any) {}
+
+func f14() { sink(os.Stdout) }
+`,
+			want: 1,
+		},
+		{
+			name: "stdout reached without naming the file is invisible to the guard (documented limit)",
+			source: `package p
+
+import "os"
+
+func f15() {
+	f := os.NewFile(1, "stdout")
+	_ = f
+}
+`,
+			want: 0,
 		},
 	}
 	for _, tc := range tests {
