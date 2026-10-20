@@ -57,6 +57,18 @@ replacement run for the same commit adopted their verdict. The
 `run-pr-ci-ai-mock-tests` case in that gate is pinned by
 `development/scripts/test_pr_ci_ai_mock_gate.py` (stdlib-only, runs in the Pin
 Freshness Gate) so the label guard cannot silently regress to `skipped) ;;`.
+The readiness gate's other half — the `ci#722` redis probe budget — is pinned the
+same way: `development/scripts/redis_readiness_contract.py` re-derives the
+`probe_timeout_too_low` / `probe_budget_too_short` / `startup_probe_missing` /
+`redis_cpu_request_missing` findings from a redis Deployment manifest, emits the
+exact strategic-merge patch the gate proposes (checked in as
+`development/redis-readiness/ci-722-redis-probes.patch.json`) and exits non-zero
+while any check fails, so a redis pod without a probe budget or CPU request cannot
+silently come back and take the queue/state endpoint (and every freshly dispatched
+interaction) down with it. The gate itself stays read-only; applying the patch is
+the operator's call. Its regression test,
+`development/scripts/test_redis_readiness_contract.py`, runs in the Pin Freshness
+Gate too.
 
 #### Autonomous approval and merge of green consolidation PRs
 
