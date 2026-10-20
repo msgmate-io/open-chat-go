@@ -28,6 +28,7 @@ import { listChatSearchActions } from "../../integration/components/chat/chat-ui
 import {
     CHAT_LIST_FETCH_BATCH_SIZE,
     CHAT_LIST_INITIAL_BATCHES,
+    buildChatListUrl,
     batchesForPaintedPages,
     paintedRowBudget,
     chatStatesRefreshInterval,
@@ -158,9 +159,9 @@ const TIME_TO_QUERY_PARAM = "time_to"
 const TAGS_QUERY_PARAM = "tags"
 const EXCLUDE_TAGS_QUERY_PARAM = "exclude_tags"
 
-// Chat-state filter. The state is resolved per-chat from the batch
-// `/api/v1/chats/states` endpoint, so filtering happens client-side over the
-// loaded page.
+// Chat-state filter. The state is resolved server-side and travels on every
+// list row (`chat.state`) since ci#761, so the selected state is sent as a
+// request parameter and only the matching chats are ever loaded.
 type ChatStateFilter = "active" | "needs_confirmation" | "finished" | "failed" | "idle"
 const STATE_QUERY_PARAM = "state"
 const CHAT_STATE_FILTER_ORDER: ChatStateFilter[] = ["active", "needs_confirmation", "finished", "failed", "idle"]
@@ -614,35 +615,24 @@ export function ChatsList({
         if (!showChats) {
             return null
         }
-        const params = new URLSearchParams()
-        params.set("chat_types", serializeChatTypes(chatTypeFilters))
-        params.set("page", String(page))
-        params.set("limit", String(CHAT_LIST_FETCH_BATCH_SIZE))
-        if (searchQuery.trim()) {
-            params.set(SEARCH_QUERY_PARAM, searchQuery.trim())
-        }
-        if (tagFilters.length > 0) {
-            params.set(TAGS_QUERY_PARAM, tagFilters.join(","))
-        }
-        if (excludeTagFilters.length > 0) {
-            params.set(EXCLUDE_TAGS_QUERY_PARAM, excludeTagFilters.join(","))
-        }
-        if (timeFrom) {
-            params.set(TIME_FROM_QUERY_PARAM, timeFrom)
-        }
-        if (timeTo) {
-            params.set(TIME_TO_QUERY_PARAM, timeTo)
-        }
         // The state filter is applied server-side (ci#761): it is part of the
         // SWR key, so selecting a state refetches instead of filtering the rows
         // that happen to be loaded already. Pinned chats stay subject to it.
-        if (stateFilter) {
-            params.set(STATE_QUERY_PARAM, stateFilter)
-        }
-        if (seeAll && isAdmin) {
-            params.set("scope", "all")
-        }
-        return `/api/v1/chats/list?${params.toString()}`
+        // Both the key and this parameter list live in the pure
+        // `buildChatListUrl` helper, so a test can assert that the selected
+        // state really changes the key.
+        return buildChatListUrl({
+            page,
+            limit: CHAT_LIST_FETCH_BATCH_SIZE,
+            chatTypes: serializeChatTypes(chatTypeFilters),
+            search: searchQuery.trim(),
+            tags: tagFilters,
+            excludeTags: excludeTagFilters,
+            state: stateFilter,
+            timeFrom,
+            timeTo,
+            scope: seeAll && isAdmin ? "all" : "",
+        })
     }, [chatTypeFilters, searchQuery, tagFilters, excludeTagFilters, stateFilter, timeFrom, timeTo, showChats, seeAll, isAdmin])
 
     // Changing any filter changes the result set, so collapse back to the first

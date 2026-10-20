@@ -9,6 +9,8 @@ import {
   CHAT_STATES_IDLE_REFRESH_MS,
   CHAT_STATES_MAX_CHATS,
   batchesForPaintedPages,
+  buildChatListQuery,
+  buildChatListUrl,
   chatStatesRefreshInterval,
   chatStatesRequestUuids,
   collectAutomatedChatUuids,
@@ -162,6 +164,58 @@ describe("pin patching of the cached chat list (ci#579)", () => {
     expect(applyPinnedToChatListValue(42, "a", true)).toBe(42);
     const untouched = { page: 1 };
     expect(applyPinnedToChatListValue(untouched, "a", true)).toBe(untouched);
+  });
+});
+
+describe("chat list state filter is part of the request key (ci#761)", () => {
+  it("omits the state parameter when no state is selected", () => {
+    const query = buildChatListQuery({ page: 1, limit: 10, chatTypes: "bot" });
+    expect(query).not.toContain("state=");
+    // Pinned chats are ordinary rows, so the default request must not change
+    // shape just because state filtering exists.
+    expect(buildChatListUrl({ page: 1, limit: 10 })).toBe("/api/v1/chats/list?page=1&limit=10");
+  });
+
+  it("serializes the selected state into the request URL", () => {
+    const url = buildChatListUrl({ page: 2, limit: 5, state: "needs_confirmation" });
+    expect(url).toContain("state=needs_confirmation");
+    expect(new URLSearchParams(url.split("?")[1]).get("state")).toBe("needs_confirmation");
+  });
+
+  it("produces a different key per state so SWR refetches page one", () => {
+    const base = { page: 1, limit: CHAT_LIST_FETCH_BATCH_SIZE };
+    const keys = ["active", "needs_confirmation", "finished", "failed", "idle", null].map((state) =>
+      buildChatListUrl({ ...base, state }),
+    );
+    // Six distinct keys: every state (plus "no filter") forces its own fetch
+    // instead of reusing a cached page loaded under another filter.
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(new Set(keys.map((key) => key.split("?")[1]?.includes("state=") ?? false)).size).toBe(2);
+  });
+
+  it("keeps the state filter alongside the other server-side filters", () => {
+    const params = new URLSearchParams(
+      buildChatListQuery({
+        page: 3,
+        limit: 20,
+        chatTypes: "bot",
+        search: "hello",
+        tags: ["a", "b"],
+        excludeTags: ["automation"],
+        timeFrom: "2024-01-01T00:00:00Z",
+        state: "failed",
+        scope: "all",
+      }),
+    );
+    expect(params.get("state")).toBe("failed");
+    expect(params.get("chat_types")).toBe("bot");
+    expect(params.get("q")).toBe("hello");
+    expect(params.get("tags")).toBe("a,b");
+    expect(params.get("exclude_tags")).toBe("automation");
+    expect(params.get("time_from")).toBe("2024-01-01T00:00:00Z");
+    expect(params.get("scope")).toBe("all");
+    expect(params.get("page")).toBe("3");
+    expect(params.get("limit")).toBe("20");
   });
 });
 
