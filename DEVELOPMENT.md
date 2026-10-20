@@ -92,9 +92,19 @@ Pin Freshness Gate job): a cancelled gate is accepted only when the commit no
 longer needs gating (PR closed, or a newer commit is the live PR head) or when a
 *replacement* run for the exact same commit reached the same gate job with a real
 verdict, whose conclusion is adopted. No replacement, a replacement still queued
-after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 1500s, repo variable
+after `PR_CI_SUPERSEDED_WAIT_SECONDS` (default 3600s, repo variable
 `PR_CI_SUPERSEDED_WAIT_SECONDS`), an unknown/cancelled gate job or an API error
 all fail closed, so the gate never turns green on an untested commit.
+
+The wait budget must outlast a *whole* replacement run, not just the gap to its
+gate job: run 39370413734 (PR #879, commit `886d6e26`) took 2550s from creation
+to its gate verdict, so the original 1500s default expired ~12 minutes early and
+run 39370411496 reported the required check as failed (`replacement run
+39370413734 still pending after 1500s`) for a commit whose replacement gate job
+then concluded `success` — the same red-on-a-cancelled-run symptom ci#659 set out
+to remove, only reachable through the budget instead of the reconciliation
+logic. The default is now one hour, pinned to the workflow default by
+`WorkflowWiringTests`.
 
 Because a run of this workflow is close to the 100-item jobs page, the run and
 job listings are read page by page (`api_pages`): a single-page read could miss
