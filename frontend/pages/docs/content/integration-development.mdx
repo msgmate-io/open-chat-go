@@ -81,6 +81,36 @@ The server discovers integrations through generated side-effect imports
 (`backend/integrations/externalintegrations/imports_gen.go`) that the manager
 writes for the selected profile — the core never hardcodes an integration.
 
+### The Host boundary (no `backend/...` imports)
+
+An integration must not import `backend/...` packages: doing so ties its compile
+inputs to the monorepo and drags every backend dependency into the integration's
+own build, which is what blocks per-integration prebuilds (ci#345 design,
+ci#410 footprint, ci#423). Everything an integration needs from the core is
+reached through the versioned Host interface in
+[`go_integration_interface`](https://github.com/msgmate-io/open-chat-go-integration-interface)
+(`integrationinterface.RequireHost()`); the backend implements it in
+`backend/integrationhost`. The Host surface deliberately exposes *capabilities*,
+never `fs.FS`, `http.ServeMux` or `*gorm.DB`.
+
+Migration recipe for one integration:
+
+1. Read the module's coupling report:
+   `python3 development/scripts/check_integration_decoupling.py --module-dir .`
+   (or `--json` for a machine-readable before/after diff of the shipped
+   dependency surface).
+2. Replace each `backend/...` use in the **shipped** packages (not `_test.go`
+   files) with the matching Host capability — config/runtime values, logging,
+   storage/DB access, HTTP helpers.
+3. Only once `go list -deps ./...` reports no `backend/...` package, drop the
+   `backend` requirement and the `replace backend => ...` directive from
+   `go.mod`, and re-run the guard: it must print `decoupled`.
+4. Set `REQUIRE_DECOUPLED=true` for that integration in the module CI so the
+   report becomes an enforced gate.
+
+Test-only `backend/...` imports are tolerated during the migration: the guard
+measures the shipped artifact (`go list -deps`, without `-test`).
+
 ## Tools
 
 Tools are declared on the integration definition and implement the tool
