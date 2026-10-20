@@ -213,6 +213,39 @@ upsert, so it must never be fatal:
   interactions and history) and raise it or add retention when it approaches the
   limit.
 
+#### Expired sessions are swept, not just rejected (ci#729 follow-up)
+
+Expired sessions were never removed: `resolveValidSessionFromRequest` in
+`backend/server/middleware.go` rejects an expired token with 401/403, logout
+deletes only the sessions it was asked to delete, and an automated turn deletes
+its own session when it finishes. Everything else - the 24h browser sessions
+`Login` writes, bot sessions whose turn died before their deferred cleanup ran -
+stayed in the `sessions` table forever, on the one volume the note above flags as
+a growth risk.
+
+- `database.StartSessionSweeper` (`backend/database/session_cleanup.go`) sweeps
+  from the server process: once at startup, then every interval until the stop
+  function (deferred in `runServer`) is called - the stop is blocking, so no sweep
+  can outlive the server.
+- `database.DeleteExpiredSessions` deletes sessions whose `expiry` is older than
+  `now - ExpiredSessionGrace` (1h). The grace is not needed for correctness (an
+  expired token is rejected anyway) but keeps a row around long enough that clock
+  skew or a refresh landing a moment late cannot race the delete.
+- The delete is **unscoped** on purpose: `Session` embeds `gorm.Model`, so a plain
+  `Delete` would only stamp `deleted_at` and leave the row's bytes behind - the
+  exact growth this exists to stop. Soft-deleted sessions are invisible to every
+  read path anyway.
+- It is idempotent and safe across processes (the row is simply already gone in
+  the second sweep) and runs through `RetryOnBusy`, since a sweep can overlap a
+  bot turn's writes.
+- Tuning: `OPEN_CHAT_SESSION_SWEEP_INTERVAL` (a Go duration, default `1h`;
+  `off`/`disabled`/`never`/`0` disables the sweeper). An unparsable value logs and
+  falls back to the default instead of silently changing behaviour.
+- `backend/database/session_cleanup_test.go` pins it: only rows past the grace are
+  removed (unexpired and inside-grace rows survive), the sweep is idempotent, a
+  cancelled context aborts before writing, the interval knob's parsing, and the
+  background loop actually deletes a stale row and stops when told.
+
 #### A message sent into a running chat is queued, never dropped (ci#656)
 
 A message sent while the chat was already running a bot turn used to disappear:
