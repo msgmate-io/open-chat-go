@@ -79,3 +79,15 @@ profiles:
     repos:
       - ci
       - helm
+
+  # Everything a development agent needs in one profile (ci#756): the full
+  # private CI tooling (which brings the integrations manifest fragment), the
+  # deployment Helm chart, the Android client and the optional LLM coding
+  # context, so a per-chat sandbox is completely prepared before the agent's
+  # first turn instead of the model installing tooling ad hoc.
+  full-development:
+    repos:
+      - ci
+      - helm
+      - gomobile
+      - llm_coding_agents

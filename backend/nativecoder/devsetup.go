@@ -34,7 +34,7 @@ const (
 	DevSetupEnvKey = "OCI_MSGMATE_CODER_DEV_SETUP"
 	// DevSetupProfileDefault is the profile of the built-in default for a
 	// known development repository (all batteries included, ci#756).
-	DevSetupProfileDefault = "full-ci"
+	DevSetupProfileDefault = "full-development"
 	// devSetupSetupMarker is prepended to every generated script so the sandbox
 	// transcript shows which profile prepared the workspace.
 	devSetupSetupMarker = "[ci#756 dev-setup]"
@@ -52,7 +52,7 @@ type DevSetupRepoProfile struct {
 // development repository that needs submodules and the build tooling.
 var DefaultDevSetupProfiles = []DevSetupRepoProfile{
 	{RepoPrefix: "msgmate-io/open-chat-go-mobile", Profile: "full-android"},
-	{RepoPrefix: "msgmate-io/open-chat-go-ci", Profile: "full-ci"},
+	{RepoPrefix: "msgmate-io/open-chat-go-ci", Profile: DevSetupProfileDefault},
 	{RepoPrefix: "msgmate-io/open-chat-go-helm-chart", Profile: "full-ci"},
 	{RepoPrefix: "msgmate-io/open-chat-go-llm-coding-context", Profile: "full-ci"},
 	{RepoPrefix: "msgmate-io/open-chat-go-build-tools", Profile: "core-only"},
