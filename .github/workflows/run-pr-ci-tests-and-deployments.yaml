@@ -317,7 +317,19 @@ jobs:
     runs-on: ubuntu-latest
     # ci#734: a relay dry-run dispatch must stay lightweight - it only inspects
     # the relay routing and never starts the test/deploy pipeline.
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '' && github.event.inputs.DRY_RUN != 'true') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
+    # ci#659: never read the event payload's label snapshot here. `gh pr create
+    # -l ...` (and the default `test` label that `no_labels_guidance` attaches in
+    # a second API call) land after the event was emitted, so an `opened` payload
+    # is label-free and a burst of per-label events carries only a partial
+    # snapshot. Gating this job on the payload skipped it while
+    # `pr-test-merge-requirement` (always() gated) read the live label list and
+    # failed with "PR CI did not run for this commit with the test label" for a
+    # commit whose suites were never asked to run (run 39373933834, PR #880).
+    # Start on every pull-request event and let the live snapshot resolved below
+    # - published as the `should_*` outputs every suite and deploy job consumes -
+    # decide what actually runs.
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '' && github.event.inputs.DRY_RUN != 'true') || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -344,6 +356,7 @@ jobs:
       should_ai_test_mock: ${{ steps.context.outputs.should_ai_test_mock }}
       should_ai_test_real: ${{ steps.context.outputs.should_ai_test_real }}
       should_test_core_only: ${{ steps.context.outputs.should_test_core_only }}
+      should_android_build_test: ${{ steps.context.outputs.should_android_build_test }}
       image_url: ${{ steps.image.outputs.image_url }}
       android_release_run_url: ${{ steps.android_release_dispatch.outputs.android_release_run_url }}
       dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
@@ -451,6 +464,7 @@ jobs:
             SHOULD_AI_TEST_MOCK="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-mock' || true)"
             SHOULD_AI_TEST_REAL="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-real' || true)"
             SHOULD_TEST_CORE_ONLY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test-core-only' || true)"
+            SHOULD_ANDROID_BUILD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'slow-android-build-test' || true)"
             # Production promotion PRs (base.ref == 'production') always run the
             # full suite. Their labels are added in one burst right after the PR
             # is opened, so each per-label event payload carries only a partial
@@ -471,6 +485,7 @@ jobs:
               SHOULD_AI_TEST_MOCK="ai-test-mock"
               SHOULD_AI_TEST_REAL="ai-test-real"
               SHOULD_TEST_CORE_ONLY="test-core-only"
+              SHOULD_ANDROID_BUILD_TEST="slow-android-build-test"
             fi
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
             DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
@@ -498,6 +513,7 @@ jobs:
             SHOULD_AI_TEST_MOCK=""
             SHOULD_AI_TEST_REAL=""
             SHOULD_TEST_CORE_ONLY=""
+            SHOULD_ANDROID_BUILD_TEST=""
             RAW_PR_NAME="$DEPLOYMENT_NAME"
             DISPATCH_REF="$TARGET_REF"
             IS_SAME_REPO_PR="true"
@@ -571,6 +587,7 @@ jobs:
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
           echo "should_ai_test_real=$SHOULD_AI_TEST_REAL" >> "$GITHUB_OUTPUT"
           echo "should_test_core_only=$SHOULD_TEST_CORE_ONLY" >> "$GITHUB_OUTPUT"
+          echo "should_android_build_test=$SHOULD_ANDROID_BUILD_TEST" >> "$GITHUB_OUTPUT"
           echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
           echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
           echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} e2e=${SHOULD_E2E_TEST:-false} sandbox=${SHOULD_SANDBOX_TEST:-false} sandbox-tags=${SHOULD_SANDBOX_TAGS:-<all>} build=${SHOULD_BUILD:-false} release-android=${SHOULD_RELEASE_ANDROID:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
@@ -1085,7 +1102,7 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
       (github.event.pull_request.base.ref == 'production' ||
-      contains(github.event.pull_request.labels.*.name, 'test'))))
+      needs.run-pr-ci-tests-and-deployments.outputs.should_test != '')))
     strategy:
       fail-fast: false
       matrix:
@@ -1289,7 +1306,7 @@ jobs:
       needs.build-backend-image-once.result == 'success' &&
       github.event_name == 'pull_request' && github.event.action != 'closed' &&
       (github.event.pull_request.base.ref == 'production' ||
-      contains(github.event.pull_request.labels.*.name, 'ai-test-mock'))
+      needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
@@ -1662,7 +1679,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
+        (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
@@ -1771,7 +1788,7 @@ jobs:
       (needs.sandbox-android-image-ensure.result == 'success' || needs.sandbox-android-image-ensure.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
+        (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     steps:
       - name: Free runner disk space
         uses: jlumbroso/free-disk-space@main
