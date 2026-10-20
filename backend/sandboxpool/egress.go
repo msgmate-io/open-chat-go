@@ -89,6 +89,11 @@ const (
 	DefaultRecycleAfterFailures = 3
 )
 
+// ProbeScriptPath is the in-pod probe that produces the authoritative report.
+// It lives in the repository because the pool pod is provisioned from it, and it
+// is named here so the admin surface and the pool start path agree on one path.
+const ProbeScriptPath = "development/scripts/sandbox-pool-egress-gate.sh"
+
 // DefaultEgressTargets are the endpoints a pooled sandbox must reach to behave
 // like a dedicated pod: cluster DNS (which the kubelet/CoreDNS of the pool
 // namespace answers) plus the GitHub and GitHub API endpoints the credential
