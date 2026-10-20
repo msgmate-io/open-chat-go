@@ -267,6 +267,19 @@ and, once the database file is unlinked underneath a still-open connection, into
 - The ordering rationale lives in exactly one place instead of a per-package
   `closeXTestDB` copy; `backend/database/testdb_test.go` pins the close-before-
   `RemoveAll` ordering and the idempotent re-close.
+- The audit is held in place by `TestTempDirSQLiteHelpersCloseTheirPool` in the
+  same file: it scans the backend module's `*_test.go` files and fails when a
+  file binds `t.TempDir()` to a SQLite pool (`SetupDatabase(`, `gorm.Open(`,
+  `openSQLite(`) without referencing `SetupTestDatabase(`/`CloseTestDB(`, or
+  both `.DB()` and `.Close()` when it unwraps the pool itself. Requiring both
+  halves there matters: a file that closes some unrelated handle and never
+  touches the pool is exactly the shape `api/chats/browser_token_access_test.go`
+  had. A new helper copied from a stale one fails there instead of flaking CI
+  intermittently, which is the only failure mode this bug has.
+- `knownTempDirPoolViolations` in that file is the only escape hatch: it lists
+  files whose fix is owned by an in-flight PR (currently #919 for `api/chats`),
+  and the guard fails on an entry that no longer violates, so the exception has
+  to be deleted with the fix rather than quietly outliving it.
 
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
