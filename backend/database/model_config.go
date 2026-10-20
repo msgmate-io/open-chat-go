@@ -7,12 +7,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"slices"
 	"strings"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 //go:embed data/default_model_configs.json
@@ -405,7 +406,7 @@ func seedModelConfigEntries(db *gorm.DB, entries []modelConfigFileEntry, source 
 		if err := db.Create(&record).Error; err != nil {
 			return fmt.Errorf("failed to seed model config %q from %s: %w", cfg.Model, source, err)
 		}
-		log.Printf("Seeded model config: %s (bots: %v, source: %s)", cfg.Model, entry.BotUsernames, source)
+		logging.Infof("Seeded model config: %s (bots: %v, source: %s)", cfg.Model, entry.BotUsernames, source)
 	}
 
 	return nil

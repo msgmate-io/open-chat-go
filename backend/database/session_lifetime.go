@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"backend/workqueue"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // Automated (bot) sessions used by a bot reply turn used to be created with a
@@ -124,7 +125,7 @@ func RunSessionRefresh(ctx context.Context, db *gorm.DB, token string, ttl, inte
 				// The session is gone: the turn already cleaned up.
 				return
 			}
-			log.Printf("bot session refresh failed: %v", err)
+			logging.Errorf("bot session refresh failed: %v", err)
 		}
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -12,6 +11,8 @@ import (
 	"backend/workqueue"
 
 	"github.com/hibiken/asynq"
+
+	"backend/logging"
 )
 
 // integrationScheduleFunction is the well-known Definition.Functions key an
@@ -75,7 +76,7 @@ func StartIntegrationSchedulers(connOpt asynq.RedisConnOpt) (*asynq.Scheduler, e
 			spec.Function = strings.TrimSpace(spec.Function)
 			spec.Spec = strings.TrimSpace(spec.Spec)
 			if spec.ID == "" || spec.Spec == "" {
-				log.Printf("Integration %q declared a schedule with an empty id/spec; skipping", def.Name)
+				logging.Infof("Integration %q declared a schedule with an empty id/spec; skipping", def.Name)
 				continue
 			}
 			if spec.Function == "" {
@@ -100,7 +101,7 @@ func StartIntegrationSchedulers(connOpt asynq.RedisConnOpt) (*asynq.Scheduler, e
 				scheduler.Shutdown()
 				return nil, fmt.Errorf("register integration schedule %s: %w", taskID, err)
 			}
-			log.Printf("Registered integration schedule %s (spec %s, function %s)", taskID, spec.Spec, spec.Function)
+			logging.Infof("Registered integration schedule %s (spec %s, function %s)", taskID, spec.Spec, spec.Function)
 			registered++
 		}
 	}
@@ -110,7 +111,7 @@ func StartIntegrationSchedulers(connOpt asynq.RedisConnOpt) (*asynq.Scheduler, e
 	if err := scheduler.Start(); err != nil {
 		return nil, fmt.Errorf("start integration scheduler: %w", err)
 	}
-	log.Printf("Started integration scheduler with %d schedule(s)", registered)
+	logging.Infof("Started integration scheduler with %d schedule(s)", registered)
 	return scheduler, nil
 }
 

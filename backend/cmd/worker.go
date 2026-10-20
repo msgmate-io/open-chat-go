@@ -7,10 +7,11 @@ import (
 	"backend/workqueue"
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/hibiken/asynq"
 	"github.com/urfave/cli/v3"
+
+	"backend/logging"
 )
 
 func WorkerCli() *cli.Command {
@@ -81,12 +82,12 @@ func WorkerCli() *cli.Command {
 			defer redisRuntime.Cleanup()
 			if redisRuntime.Mode == queue.RedisModeEmbedded {
 				if redisRuntime.FallbackReason != nil {
-					log.Printf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
+					logging.Errorf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
 				} else {
-					log.Printf("Started embedded redis at %s", redisRuntime.Address)
+					logging.Infof("Started embedded redis at %s", redisRuntime.Address)
 				}
 			} else {
-				log.Printf("Using external redis at %s", redisRuntime.Address)
+				logging.Infof("Using external redis at %s", redisRuntime.Address)
 			}
 
 			DB := database.SetupDatabase(database.DBConfig{
@@ -122,10 +123,10 @@ func WorkerCli() *cli.Command {
 					defer integrationScheduler.Shutdown()
 				}
 			} else {
-				log.Printf("Integration scheduler disabled (run-scheduler=false); another process must own it")
+				logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 			}
 
-			log.Printf("Starting asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
+			logging.Infof("Starting asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 			if err := server.Run(processor.NewServeMux()); err != nil {
 				return fmt.Errorf("asynq worker failed: %w", err)
 			}
