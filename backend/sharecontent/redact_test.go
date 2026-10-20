@@ -1,4 +1,4 @@
-package chats
+package sharecontent
 
 import (
 	"net/http/httptest"
@@ -6,26 +6,26 @@ import (
 	"testing"
 )
 
-func TestNormalizeShareContentModeDefaultsToCensored(t *testing.T) {
+func TestNormalizeModeDefaultsToCensored(t *testing.T) {
 	for _, raw := range []string{"", "  ", "bogus", "CENSORED", "censored"} {
-		if got := NormalizeShareContentMode(raw); got != ShareContentModeCensored {
-			t.Fatalf("NormalizeShareContentMode(%q) = %q, want censored", raw, got)
+		if got := NormalizeMode(raw); got != ModeCensored {
+			t.Fatalf("NormalizeMode(%q) = %q, want censored", raw, got)
 		}
 	}
 	for _, raw := range []string{"full", "FULL", " full "} {
-		if got := NormalizeShareContentMode(raw); got != ShareContentModeFull {
-			t.Fatalf("NormalizeShareContentMode(%q) = %q, want full", raw, got)
+		if got := NormalizeMode(raw); got != ModeFull {
+			t.Fatalf("NormalizeMode(%q) = %q, want full", raw, got)
 		}
 	}
-	if IsValidShareContentMode("nope") {
+	if IsValidMode("nope") {
 		t.Fatal("expected invalid mode to be rejected")
 	}
-	if !IsValidShareContentMode("censored") || !IsValidShareContentMode("full") {
+	if !IsValidMode("censored") || !IsValidMode("full") {
 		t.Fatal("expected supported modes to be valid")
 	}
 }
 
-func TestRedactMessageForShareCensoredDropsToolPayloads(t *testing.T) {
+func TestRedactMessageCensoredDropsToolPayloads(t *testing.T) {
 	message := map[string]any{
 		"content": "hello",
 		"role":    "assistant",
@@ -41,7 +41,7 @@ func TestRedactMessageForShareCensoredDropsToolPayloads(t *testing.T) {
 		},
 	}
 
-	out := RedactMessageForShare(message, ShareContentModeCensored)
+	out := RedactMessage(message, ModeCensored)
 	if out["content"] != "hello" || out["role"] != "assistant" {
 		t.Fatalf("raw text content must survive censoring, got %#v", out)
 	}
@@ -69,7 +69,7 @@ func TestRedactMessageForShareCensoredDropsToolPayloads(t *testing.T) {
 	}
 }
 
-func TestRedactMessageForShareFullMasksSecretsOnly(t *testing.T) {
+func TestRedactMessageFullMasksSecretsOnly(t *testing.T) {
 	message := map[string]any{
 		"content": "text",
 		"arguments": map[string]any{
@@ -79,7 +79,7 @@ func TestRedactMessageForShareFullMasksSecretsOnly(t *testing.T) {
 		"note": "Bearer abcdefghijklmnop",
 	}
 
-	out := RedactMessageForShare(message, ShareContentModeFull)
+	out := RedactMessage(message, ModeFull)
 	args, ok := out["arguments"].(map[string]any)
 	if !ok {
 		t.Fatalf("full mode must keep tool arguments, got %#v", out["arguments"])
@@ -87,18 +87,18 @@ func TestRedactMessageForShareFullMasksSecretsOnly(t *testing.T) {
 	if args["path"] != "main.go" {
 		t.Fatalf("non-secret argument must survive, got %#v", args)
 	}
-	if args["api_key"] != ShareContentRedactedPlaceholder {
+	if args["api_key"] != RedactedPlaceholder {
 		t.Fatalf("api_key must be masked, got %#v", args["api_key"])
 	}
-	if out["note"] != ShareContentRedactedPlaceholder {
+	if out["note"] != RedactedPlaceholder {
 		t.Fatalf("bearer token must be masked, got %#v", out["note"])
 	}
 }
 
-func TestRedactMessageForShareDoesNotMutateInput(t *testing.T) {
+func TestRedactMessageDoesNotMutateInput(t *testing.T) {
 	inner := map[string]any{"secret": "keep"}
 	message := map[string]any{"arguments": inner}
-	RedactMessageForShare(message, ShareContentModeCensored)
+	RedactMessage(message, ModeCensored)
 	if _, ok := message["arguments"]; !ok {
 		t.Fatal("input message must not be mutated")
 	}
@@ -107,20 +107,20 @@ func TestRedactMessageForShareDoesNotMutateInput(t *testing.T) {
 	}
 }
 
-func TestRedactMessageForShareHandlesNilAndDeepPayloads(t *testing.T) {
-	if got := RedactMessageForShare(nil, ShareContentModeCensored); got != nil {
+func TestRedactMessageHandlesNilAndDeepPayloads(t *testing.T) {
+	if got := RedactMessage(nil, ModeCensored); got != nil {
 		t.Fatalf("nil message must stay nil, got %#v", got)
 	}
 	deep := map[string]any{"content": "x"}
-	for i := 0; i < maxRedactionDepth+5; i++ {
+	for i := 0; i < MaxRedactionDepth+5; i++ {
 		deep = map[string]any{"nested": deep}
 	}
-	if out := RedactMessageForShare(deep, ShareContentModeCensored); out == nil {
+	if out := RedactMessage(deep, ModeCensored); out == nil {
 		t.Fatal("deep payload must not panic or return nil")
 	}
 }
 
-func TestLooksLikeShareSecret(t *testing.T) {
+func TestLooksLikeSecret(t *testing.T) {
 	secrets := []string{
 		"sk-abcdefghijklmnop",
 		"ghp_abcdefghijklmnop",
@@ -128,23 +128,23 @@ func TestLooksLikeShareSecret(t *testing.T) {
 		"apiVersion: v1\nclusters: []",
 	}
 	for _, value := range secrets {
-		if !LooksLikeShareSecret(value) {
+		if !LooksLikeSecret(value) {
 			t.Fatalf("expected %q to look like a secret", value)
 		}
 	}
-	if LooksLikeShareSecret("just a normal sentence") {
+	if LooksLikeSecret("just a normal sentence") {
 		t.Fatal("plain text must not be flagged")
 	}
 }
 
-func TestRedactMessageForShareCensoredHidesToolOutput(t *testing.T) {
+func TestRedactMessageCensoredHidesToolOutput(t *testing.T) {
 	message := map[string]any{
 		"role":         "tool",
 		"tool_call_id": "call_1",
 		"content":      "secret tool output",
 	}
-	out := RedactMessageForShare(message, ShareContentModeCensored)
-	if out["content"] != ShareContentRedactedPlaceholder {
+	out := RedactMessage(message, ModeCensored)
+	if out["content"] != RedactedPlaceholder {
 		t.Fatalf("tool output must be hidden in censored mode, got %#v", out["content"])
 	}
 }
@@ -156,8 +156,8 @@ func TestWriteRedactedJSONStripsCensoredFields(t *testing.T) {
 		"config":              map[string]any{"system_prompt": "be nice"},
 		"interaction_details": map[string]any{"model": "gpt-4o"},
 	}
-	if err := writeRedactedJSON(recorder, payload, ShareContentModeCensored); err != nil {
-		t.Fatalf("writeRedactedJSON failed: %v", err)
+	if err := WriteRedactedJSON(recorder, payload, ModeCensored); err != nil {
+		t.Fatalf("WriteRedactedJSON failed: %v", err)
 	}
 	body := recorder.Body.String()
 	if strings.Contains(body, "system_prompt") || strings.Contains(body, "be nice") {

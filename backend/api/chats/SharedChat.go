@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/database"
 	"backend/server/util"
+	"backend/sharecontent"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -160,7 +161,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessMode := normalizeShareAccessMode(payload.AccessMode)
-	contentMode := NormalizeShareContentMode(payload.ContentMode)
+	contentMode := sharecontent.NormalizeMode(payload.ContentMode)
 	var targetUserID *uint
 	targetUsername := ""
 	targetUserUUID := ""
@@ -198,7 +199,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		AccessMode:     share.AccessMode,
 		TargetUsername: targetUsername,
 		TargetUserUUID: targetUserUUID,
-		ContentMode:    string(NormalizeShareContentMode(share.ContentMode)),
+		ContentMode:    string(sharecontent.NormalizeMode(share.ContentMode)),
 	})
 }
 
@@ -298,7 +299,7 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	_ = writeRedactedJSON(w, PublicInteractionChat{
+	_ = sharecontent.WriteRedactedJSON(w, PublicInteractionChat{
 		UUID:          chat.UUID,
 		ChatShareUUID: share.ChatShareUUID,
 		ChatType:      chat.ChatType,
@@ -311,7 +312,7 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		Config:             config,
 		InteractionDetails: interactionDetails,
 		FollowUp:           publicFollowUpForInteraction(DB, chat),
-	}, NormalizeShareContentMode(share.ContentMode))
+	}, sharecontent.NormalizeMode(share.ContentMode))
 }
 
 type SharedInteractionAccessResponse struct {
@@ -425,7 +426,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 		Rows:       listed,
 	}
 
-	_ = writeRedactedJSON(w, response, NormalizeShareContentMode(share.ContentMode))
+	_ = sharecontent.WriteRedactedJSON(w, response, sharecontent.NormalizeMode(share.ContentMode))
 }
 
 func findOwnedChat(DB *gorm.DB, userID uint, chatUUID string) (database.Chat, error) {

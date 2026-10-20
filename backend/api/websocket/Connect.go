@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"backend/database"
+	"backend/sharecontent"
 	"context"
 	"errors"
 	"net"
@@ -107,7 +108,15 @@ func (ws *WebSocketHandler) ConnectSharedInteraction(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := ws.SubscribeChatChannel(w, r, chat.UUID); err != nil {
+	if !share.IsPublic() {
+		viewer, _ := r.Context().Value("user").(*database.User)
+		if viewer == nil || !share.AllowsUser(viewer.ID) {
+			http.Error(w, "Shared chat not found", http.StatusNotFound)
+			return
+		}
+	}
+
+	if err := ws.SubscribeChatChannel(w, r, chat.UUID, sharecontent.Mode(share.ContentMode)); err != nil {
 		if !isExpectedSocketClose(err) {
 			ws.logf("error shared interaction socket connection error: %v", err)
 		}

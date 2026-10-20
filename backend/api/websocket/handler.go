@@ -3,6 +3,7 @@ package websocket
 // TODO: Also implement a redis-compoatible handler
 
 import (
+	"backend/sharecontent"
 	"context"
 	"github.com/coder/websocket"
 	"log"
@@ -13,10 +14,16 @@ import (
 )
 
 type Subscriber struct {
-	msgs      chan []byte
-	UserUUID  string
-	ChatUUID  string
-	closeSlow func()
+	msgs     chan []byte
+	UserUUID string
+	ChatUUID string
+	// ShareContentMode is empty for regular (authenticated) subscribers and set
+	// to the share's content mode for shared interaction viewers. Shared
+	// subscribers only ever receive redacted frames, so sensitive payloads such
+	// as tool call parameters, tool outputs and message meta data can not leak
+	// through a live broadcast.
+	ShareContentMode string
+	closeSlow        func()
 }
 
 type WebSocketHandler struct {
@@ -107,12 +114,23 @@ func (cs *WebSocketHandler) PublishInChatChannel(msg []byte, chatUUID string) {
 
 	for s := range cs.subscribers {
 		if s.ChatUUID == chatUUID {
-			select {
-			case s.msgs <- msg:
-			default:
-				go s.closeSlow()
-			}
+			cs.sendToSubscriber(s, msg)
 		}
+	}
+}
+
+// sendToSubscriber queues a frame for a single subscriber, applying the share
+// redaction rules for shared interaction viewers. The caller must hold
+// subscribersMu.
+func (cs *WebSocketHandler) sendToSubscriber(s *Subscriber, msg []byte) {
+	payload := msg
+	if s.ShareContentMode != "" {
+		payload = sharecontent.RedactJSON(msg, sharecontent.Mode(s.ShareContentMode))
+	}
+	select {
+	case s.msgs <- payload:
+	default:
+		go s.closeSlow()
 	}
 }
 
@@ -202,13 +220,14 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.Request, chatUUID string) error {
+func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.Request, chatUUID string, contentMode sharecontent.Mode) error {
 	var mu sync.Mutex
 	var c *websocket.Conn
 	var closed bool
 	s := &Subscriber{
-		ChatUUID: chatUUID,
-		msgs:     make(chan []byte, cs.subscriberMessageBuffer),
+		ChatUUID:         chatUUID,
+		ShareContentMode: string(sharecontent.NormalizeMode(string(contentMode))),
+		msgs:             make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
 			mu.Lock()
 			defer mu.Unlock()

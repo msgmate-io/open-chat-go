@@ -1,39 +1,39 @@
-package chats
+package sharecontent
 
 import "strings"
 
-// ShareContentMode controls how much of a shared interaction (chat) is exposed
+// Mode controls how much of a shared interaction (chat) is exposed
 // to the people a chat was shared with.
 //
 // The goal of this file is that it should never be possible to leak sensitive
 // data (tool call parameters, tool outputs, secrets, tokens, kubeconfigs, ...)
 // through a shared chat, no matter which API endpoint or websocket broadcast a
 // viewer uses.
-type ShareContentMode string
+type Mode string
 
 const (
-	// ShareContentModeCensored only exposes the gist of what is going on: the
+	// ModeCensored only exposes the gist of what is going on: the
 	// raw text content of messages, who sent them, the state of the interaction
 	// and the *names* of the tool calls that happened. Tool call parameters,
 	// tool results, meta data, reasoning and attachments are stripped.
-	ShareContentModeCensored ShareContentMode = "censored"
+	ModeCensored Mode = "censored"
 
-	// ShareContentModeFull is the "unsecure" mode: it exposes everything that is
+	// ModeFull is the "unsecure" mode: it exposes everything that is
 	// stored for the chat, except for values that are hard secrets (credentials,
 	// tokens, keys) which are always masked.
-	ShareContentModeFull ShareContentMode = "full"
+	ModeFull Mode = "full"
 )
 
-// ShareContentRedactedPlaceholder is substituted for every value that is hidden
+// RedactedPlaceholder is substituted for every value that is hidden
 // from the viewer. It intentionally carries no information about the original
 // value (no length, no prefix, no type).
-const ShareContentRedactedPlaceholder = "[redacted]"
+const RedactedPlaceholder = "[redacted]"
 
-// maxRedactionDepth bounds the recursion so that hostile/looping payloads can
+// MaxRedactionDepth bounds the recursion so that hostile/looping payloads can
 // not turn redaction into a denial of service.
-const maxRedactionDepth = 32
+const MaxRedactionDepth = 32
 
-// shareCensoredKeys are keys that are stripped in ShareContentModeCensored.
+// shareCensoredKeys are keys that are stripped in ModeCensored.
 // They are matched against a normalized key name (lower case, no separators).
 var shareCensoredKeys = map[string]struct{}{
 	// tool call parameters
@@ -52,7 +52,7 @@ var shareCensoredKeys = map[string]struct{}{
 	"tools": {}, "tooldefinitions": {}, "toolschemas": {},
 }
 
-// shareAlwaysSecretKeys are masked even in ShareContentModeFull, because their
+// shareAlwaysSecretKeys are masked even in ModeFull, because their
 // values are credentials and must never be exposed through a share, an API or a
 // websocket broadcast.
 var shareAlwaysSecretKeys = map[string]struct{}{
@@ -64,32 +64,32 @@ var shareAlwaysSecretKeys = map[string]struct{}{
 	"serviceaccounttoken": {}, "sshprivatekey": {}, "webhooksecret": {},
 }
 
-// NormalizeShareContentMode maps arbitrary user input onto a supported share
+// NormalizeMode maps arbitrary user input onto a supported share
 // content mode. Unknown/empty input defaults to the safe censored mode so that
 // a missing or misspelled value can never widen what is exposed.
-func NormalizeShareContentMode(raw string) ShareContentMode {
-	switch ShareContentMode(strings.ToLower(strings.TrimSpace(raw))) {
-	case ShareContentModeFull:
-		return ShareContentModeFull
+func NormalizeMode(raw string) Mode {
+	switch Mode(strings.ToLower(strings.TrimSpace(raw))) {
+	case ModeFull:
+		return ModeFull
 	default:
-		return ShareContentModeCensored
+		return ModeCensored
 	}
 }
 
-// IsValidShareContentMode reports whether the given raw value is an explicitly
+// IsValidMode reports whether the given raw value is an explicitly
 // supported share content mode (used for input validation).
-func IsValidShareContentMode(raw string) bool {
-	switch ShareContentMode(strings.ToLower(strings.TrimSpace(raw))) {
-	case ShareContentModeFull, ShareContentModeCensored:
+func IsValidMode(raw string) bool {
+	switch Mode(strings.ToLower(strings.TrimSpace(raw))) {
+	case ModeFull, ModeCensored:
 		return true
 	default:
 		return false
 	}
 }
 
-// NormalizeShareKey normalizes a payload key for lookups: lower cased and with
+// NormalizeKey normalizes a payload key for lookups: lower cased and with
 // separators removed so that "api_key", "apiKey" and "API-KEY" are equivalent.
-func NormalizeShareKey(key string) string {
+func NormalizeKey(key string) string {
 	var b strings.Builder
 	b.Grow(len(key))
 	for _, r := range strings.ToLower(key) {
@@ -103,46 +103,46 @@ func NormalizeShareKey(key string) string {
 	return b.String()
 }
 
-// RedactMessageForShare returns a copy of the given message payload that is safe
+// RedactMessage returns a copy of the given message payload that is safe
 // to hand to a share viewer. The input map is never modified.
 //
-// In ShareContentModeCensored only the text content, the identity/timing fields
-// and the names of tool calls survive; in ShareContentModeFull everything except
+// In ModeCensored only the text content, the identity/timing fields
+// and the names of tool calls survive; in ModeFull everything except
 // hard secrets (credentials, tokens, keys) is kept.
-func RedactMessageForShare(message map[string]any, mode ShareContentMode) map[string]any {
+func RedactMessage(message map[string]any, mode Mode) map[string]any {
 	if message == nil {
 		return nil
 	}
-	mode = NormalizeShareContentMode(string(mode))
-	redacted, ok := redactShareValue(message, mode, 0).(map[string]any)
+	mode = NormalizeMode(string(mode))
+	redacted, ok := RedactValue(message, mode, 0).(map[string]any)
 	if !ok {
 		return map[string]any{}
 	}
 	return applyCensoredMessageRules(redacted, mode)
 }
 
-// RedactMessagesForShare applies RedactMessageForShare to a whole message list.
-func RedactMessagesForShare(messages []map[string]any, mode ShareContentMode) []map[string]any {
+// RedactMessages applies RedactMessage to a whole message list.
+func RedactMessages(messages []map[string]any, mode Mode) []map[string]any {
 	if messages == nil {
 		return nil
 	}
 	out := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
-		out = append(out, RedactMessageForShare(message, mode))
+		out = append(out, RedactMessage(message, mode))
 	}
 	return out
 }
 
-// RedactToolCallsForShare reduces tool calls to their name plus an explicit
+// RedactToolCalls reduces tool calls to their name plus an explicit
 // redaction marker, so a viewer can see which tools ran but never with which
 // parameters or what they returned.
-func RedactToolCallsForShare(toolCalls []any, mode ShareContentMode) []any {
+func RedactToolCalls(toolCalls []any, mode Mode) []any {
 	if toolCalls == nil {
 		return nil
 	}
-	mode = NormalizeShareContentMode(string(mode))
-	if mode == ShareContentModeFull {
-		redacted, _ := redactShareValue(toolCalls, mode, 0).([]any)
+	mode = NormalizeMode(string(mode))
+	if mode == ModeFull {
+		redacted, _ := RedactValue(toolCalls, mode, 0).([]any)
 		return redacted
 	}
 	out := make([]any, 0, len(toolCalls))
@@ -180,42 +180,44 @@ func shareToolCallName(call any) string {
 	return ""
 }
 
-// redactShareValue walks an arbitrary decoded JSON value and removes everything
+// RedactValue walks an arbitrary decoded JSON value and removes everything
 // that must not leave the server for the given share mode.
-func redactShareValue(value any, mode ShareContentMode, depth int) any {
-	if depth > maxRedactionDepth {
-		return ShareContentRedactedPlaceholder
+func RedactValue(value any, mode Mode, depth int) any {
+	if depth > MaxRedactionDepth {
+		return RedactedPlaceholder
 	}
 	switch typed := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, item := range typed {
-			if IsAlwaysSecretShareKey(key) {
-				out[key] = ShareContentRedactedPlaceholder
+			if IsAlwaysSecretKey(key) {
+				out[key] = RedactedPlaceholder
 				continue
 			}
-			if mode == ShareContentModeCensored {
+			if mode == ModeCensored {
 				if isCensoredShareKey(key) {
 					continue
 				}
 				// Tool calls keep their names but lose parameters/results.
-				if normalized := NormalizeShareKey(key); normalized == "toolcalls" || normalized == "toolcall" {
-					out[key] = RedactToolCallsForShare(item, mode)
+				if normalized := NormalizeKey(key); normalized == "toolcalls" || normalized == "toolcall" {
+					if calls, ok := item.([]any); ok {
+						out[key] = RedactToolCalls(calls, mode)
+					}
 					continue
 				}
 			}
-			out[key] = redactShareValue(item, mode, depth+1)
+			out[key] = RedactValue(item, mode, depth+1)
 		}
 		return out
 	case []any:
 		out := make([]any, 0, len(typed))
 		for _, item := range typed {
-			out = append(out, redactShareValue(item, mode, depth+1))
+			out = append(out, RedactValue(item, mode, depth+1))
 		}
 		return out
 	case string:
-		if LooksLikeShareSecret(typed) {
-			return ShareContentRedactedPlaceholder
+		if LooksLikeSecret(typed) {
+			return RedactedPlaceholder
 		}
 		return typed
 	default:
@@ -223,23 +225,23 @@ func redactShareValue(value any, mode ShareContentMode, depth int) any {
 	}
 }
 
-// IsAlwaysSecretShareKey reports whether a payload key holds a credential that
+// IsAlwaysSecretKey reports whether a payload key holds a credential that
 // must be masked in every share mode.
-func IsAlwaysSecretShareKey(key string) bool {
-	_, found := shareAlwaysSecretKeys[NormalizeShareKey(key)]
+func IsAlwaysSecretKey(key string) bool {
+	_, found := shareAlwaysSecretKeys[NormalizeKey(key)]
 	return found
 }
 
 func isCensoredShareKey(key string) bool {
-	_, found := shareCensoredKeys[NormalizeShareKey(key)]
+	_, found := shareCensoredKeys[NormalizeKey(key)]
 	return found
 }
 
-// LooksLikeShareSecret performs a cheap heuristic check for credential material
+// LooksLikeSecret performs a cheap heuristic check for credential material
 // that ends up inside free form strings (log output, tool results, ...). It is
 // deliberately conservative: false positives only cost readability, false
 // negatives leak data.
-func LooksLikeShareSecret(value string) bool {
+func LooksLikeSecret(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return false
@@ -273,17 +275,17 @@ func LooksLikeShareSecret(value string) bool {
 // applyCensoredMessageRules removes message content that is not conversation
 // text but the raw result of a tool execution. In censored mode a viewer may
 // see *that* a tool ran and which tool it was, never what it returned.
-func applyCensoredMessageRules(message map[string]any, mode ShareContentMode) map[string]any {
-	if mode != ShareContentModeCensored {
+func applyCensoredMessageRules(message map[string]any, mode Mode) map[string]any {
+	if mode != ModeCensored {
 		return message
 	}
 	role, _ := message["role"].(string)
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "tool", "function", "tool_result", "toolresult":
-		message["content"] = ShareContentRedactedPlaceholder
+		message["content"] = RedactedPlaceholder
 	}
 	if _, hasToolCallID := message["tool_call_id"]; hasToolCallID && role != "user" {
-		message["content"] = ShareContentRedactedPlaceholder
+		message["content"] = RedactedPlaceholder
 	}
 	return message
 }
