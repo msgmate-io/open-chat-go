@@ -39,7 +39,11 @@ func TestProviderErrorInfoOtherErrors(t *testing.T) {
 }
 
 func TestIsRetryableProviderRequestError(t *testing.T) {
+	// 402 is the key-limit / out-of-credit outage shape (ci#747 RC3): the
+	// provider is reachable and recovers on its own, so it must take the
+	// bounded retry/backoff path instead of dead-ending the turn.
 	retryable := []*ProviderRequestError{
+		{StatusCode: 402},
 		{StatusCode: 429}, {StatusCode: 500}, {StatusCode: 502},
 		{StatusCode: 503}, {StatusCode: 504}, {StatusCode: 408},
 	}
