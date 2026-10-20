@@ -23,7 +23,35 @@ func setupChatsTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	DB := database.SetupDatabase(cfg)
+	closeChatsTestDB(t, DB)
+	return DB
+}
+
+// closeChatsTestDB closes the connection pool behind a test database when the
+// test finishes. t.TempDir registers its RemoveAll cleanup *before* this one is
+// registered and cleanups run LIFO, so the pool is already closed by the time
+// the temporary directory is removed.
+//
+// Without it the pool outlives the test: SQLite runs in WAL mode (see
+// sqliteDSNPragmas), so a pooled connection can recreate the -wal/-shm sidecars
+// while RemoveAll is walking the directory. That races into
+// "TempDir RemoveAll cleanup: unlinkat ...: directory not empty" and, once the
+// main database file is gone underneath a still-open connection, into
+// "disk I/O error (522)" (observed flaking in CI on
+// TestApproveInteractionConfirmationAppliesOverrides).
+func closeChatsTestDB(t *testing.T, DB *gorm.DB) {
+	t.Helper()
+	if DB == nil {
+		return
+	}
+	t.Cleanup(func() {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return
+		}
+		_ = sqlDB.Close()
+	})
 }
 
 func createUserForChatsTest(t *testing.T, DB *gorm.DB, name string, isAdmin bool) *database.User {
