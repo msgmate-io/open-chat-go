@@ -715,7 +715,7 @@ func BackendRouting(
 		routes = filteredRoutes
 
 		for _, route := range routes {
-			fmt.Printf("Serving route: %s\n", route)
+			logging.Debugf("Serving route: %s", route)
 			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
 		}
 		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

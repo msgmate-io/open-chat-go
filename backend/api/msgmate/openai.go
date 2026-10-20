@@ -112,25 +112,28 @@ type ToolCallsResult struct {
 	ToolCalls []ToolCall
 }
 
+// printToolDefinition dumps one tool definition at debug level. It used to
+// write to stdout, which bypassed LOG_LEVEL entirely and made every chat
+// interaction print the full registry regardless of the configured level.
 func printToolDefinition(tool Tool) {
-	fmt.Println("=== TOOL DEFINITION ===")
-	fmt.Printf("Name: %s\n", tool.GetToolName())
-	fmt.Printf("Type: %s\n", tool.GetToolType())
-	fmt.Printf("Description: %s\n", tool.GetToolDescription())
-	fmt.Printf("Requires Init: %v\n", tool.GetRequiresInit())
-	fmt.Printf("Requires Confirmation: %v\n", tool.GetRequiresConfirmation())
+	logging.Debugf("=== TOOL DEFINITION ===")
+	logging.Debugf("Name: %s", tool.GetToolName())
+	logging.Debugf("Type: %s", tool.GetToolType())
+	logging.Debugf("Description: %s", tool.GetToolDescription())
+	logging.Debugf("Requires Init: %v", tool.GetRequiresInit())
+	logging.Debugf("Requires Confirmation: %v", tool.GetRequiresConfirmation())
 
-	// Print parameters
-	fmt.Println("Parameters:")
+	// Parameters.
+	logging.Debugf("Parameters:")
 	params := tool.GetToolParameters()
 	paramsJson, _ := json.MarshalIndent(params, "  ", "  ")
-	fmt.Printf("  %s\n", string(paramsJson))
+	logging.Debugf("  %s", string(paramsJson))
 
-	// Print the constructed tool definition
+	// The constructed tool definition.
 	toolDef, _ := json.MarshalIndent(tool.ConstructTool(), "  ", "  ")
-	fmt.Println("Full Tool Definition:")
-	fmt.Printf("  %s\n", string(toolDef))
-	fmt.Println("=====================")
+	logging.Debugf("Full Tool Definition:")
+	logging.Debugf("  %s", string(toolDef))
+	logging.Debugf("=====================")
 }
 
 func buildConfirmationSuggestion(toolName string, toolInput interface{}, continueAfterExecute bool) string {
@@ -258,11 +261,11 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 			return
 		}
 
-		// Pretty print response body for debugging
+		// Pretty print response body for debugging.
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		var prettyJSON bytes.Buffer
 		if err := json.Indent(&prettyJSON, bodyBytes, "", "    "); err == nil {
-			fmt.Printf("Response body:\n%s\n", prettyJSON.String())
+			logging.Debugf("Response body:\n%s", prettyJSON.String())
 		}
 
 		// Create new reader from the body bytes for further processing
@@ -383,12 +386,12 @@ func streamChatCompletion(
 		}
 
 		// Add verbose logging of all tools
-		fmt.Println("=== REGISTERED TOOLS ===")
+		logging.Debugf("=== REGISTERED TOOLS ===")
 		for toolName, tool := range toolMap {
-			fmt.Printf("Tool registered: %s\n", toolName)
+			logging.Debugf("Tool registered: %s", toolName)
 			printToolDefinition(tool)
 		}
-		fmt.Println("=======================")
+		logging.Debugf("=======================")
 
 		if toolCallMaxTotal < 1 {
 			toolCallMaxTotal = DefaultToolCallMaxTotal
@@ -562,9 +565,9 @@ func streamChatCompletion(
 			RecordContextUsage(meta.ChatUUID, lastContextReport)
 
 			// Make initial request (with provider retries when enabled).
-			fmt.Println("\n=== STARTING NEW REQUEST ROUND ===")
-			fmt.Printf("Current tool-call counts: total=%d/%d failed=%d/%d\n", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
-			fmt.Printf("Context budget: %d/%d chars (~%d tokens, %d%%)\n", lastContextReport.UsedChars, lastContextReport.BudgetChars, lastContextReport.EstimatedTokens, lastContextReport.UsedPercent)
+			logging.Debugf("\n=== STARTING NEW REQUEST ROUND ===")
+			logging.Debugf("Current tool-call counts: total=%d/%d failed=%d/%d", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
+			logging.Debugf("Context budget: %d/%d chars (~%d tokens, %d%%)", lastContextReport.UsedChars, lastContextReport.BudgetChars, lastContextReport.EstimatedTokens, lastContextReport.UsedPercent)
 			maxAttempts := effectiveProviderRetryAttempts(retryOpts)
 			attempts := 0
 			for {
@@ -862,7 +865,7 @@ func streamChatCompletion(
 					details["sandbox_capacity"] = true
 				}
 				toolCallDetails = append(toolCallDetails, details)
-				fmt.Println("Called tool: ", call.name, "with result: ", call.result)
+				logging.Debugf("Called tool: %s with result: %v", call.name, call.result)
 			}
 			// ci#724: charge only the calls that actually did work; a
 			// bookkeeping call (see above) never shortens the turn that
@@ -900,10 +903,10 @@ func streamChatCompletion(
 			}
 
 			currentMessagesIndented, _ := json.MarshalIndent(currentMessages, "", "    ")
-			fmt.Println("Current messages: ", string(currentMessagesIndented))
+			logging.Debugf("Current messages: %s", string(currentMessagesIndented))
 
 			// Instead, we'll continue the loop but with logging
-			fmt.Println("Tool processing complete for this round. Continuing conversation...")
+			logging.Debugf("Tool processing complete for this round. Continuing conversation...")
 			continue
 		}
 	}()
@@ -1586,9 +1589,9 @@ func processParsedToolCall(
 	// carry it through on every emission of this call.
 	callReason := ExtractToolCallReason(toolInput)
 
-	fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", name)
-	fmt.Printf("Tool ID: %s\n", id)
-	fmt.Printf("Arguments: %s\n", arguments)
+	logging.Debugf("\n=== EXECUTING TOOL: %s ===", name)
+	logging.Debugf("Tool ID: %s", id)
+	logging.Debugf("Arguments: %s", arguments)
 
 	contentSignature := fmt.Sprintf("%s:%s", name, strings.TrimSpace(arguments))
 	if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
