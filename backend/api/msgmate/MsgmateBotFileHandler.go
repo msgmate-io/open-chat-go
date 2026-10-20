@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"strings"
+
+	"backend/logging"
 )
 
 // maxInlineTextAttachmentBytes caps how large a text/* attachment may be before
@@ -42,7 +43,7 @@ func (fh *FileHandlerImpl) ProcessAttachments(attachments []interface{}, backend
 					// For images, convert to base64 and use vision format
 					base64Data, contentType, err := fh.RetrieveFileData(fileID)
 					if err != nil {
-						log.Printf("Error retrieving image data for %s: %v", fileID, err)
+						logging.Errorf("Error retrieving image data for %s: %v", fileID, err)
 						continue
 					}
 
@@ -61,16 +62,16 @@ func (fh *FileHandlerImpl) ProcessAttachments(attachments []interface{}, backend
 						// limit.
 						base64Data, _, err := fh.RetrieveFileData(fileID)
 						if err != nil {
-							log.Printf("Error retrieving text file data for %s: %v", fileID, err)
+							logging.Errorf("Error retrieving text file data for %s: %v", fileID, err)
 							continue
 						}
 						fileBytes, err := base64.StdEncoding.DecodeString(base64Data)
 						if err != nil {
-							log.Printf("Error decoding text file data for %s: %v", fileID, err)
+							logging.Errorf("Error decoding text file data for %s: %v", fileID, err)
 							continue
 						}
 						if len(fileBytes) > maxInlineTextAttachmentBytes {
-							log.Printf("Text attachment %s too large to inline (%d bytes > %d), skipping", fileID, len(fileBytes), maxInlineTextAttachmentBytes)
+							logging.Infof("Text attachment %s too large to inline (%d bytes > %d), skipping", fileID, len(fileBytes), maxInlineTextAttachmentBytes)
 							continue
 						}
 						contentArray = append(contentArray, map[string]interface{}{
@@ -81,7 +82,7 @@ func (fh *FileHandlerImpl) ProcessAttachments(attachments []interface{}, backend
 						// For OpenAI backend, use file ID approach
 						openAIFileID, err := fh.getOpenAIFileID(fileID)
 						if err != nil {
-							log.Printf("Error getting OpenAI file ID for %s: %v", fileID, err)
+							logging.Errorf("Error getting OpenAI file ID for %s: %v", fileID, err)
 							continue
 						}
 
@@ -89,7 +90,7 @@ func (fh *FileHandlerImpl) ProcessAttachments(attachments []interface{}, backend
 							// Upload file to OpenAI if not already uploaded
 							openAIFileID, err = fh.UploadToOpenAI(fileID, mimeType)
 							if err != nil {
-								log.Printf("Error uploading file to OpenAI for %s: %v", fileID, err)
+								logging.Errorf("Error uploading file to OpenAI for %s: %v", fileID, err)
 								continue
 							}
 						}
@@ -103,7 +104,7 @@ func (fh *FileHandlerImpl) ProcessAttachments(attachments []interface{}, backend
 						})
 					} else {
 						// For non-OpenAI backends, skip file attachments for now
-						log.Printf("File attachments not supported for backend %s, skipping file %s", backend, fileID)
+						logging.Infof("File attachments not supported for backend %s, skipping file %s", backend, fileID)
 					}
 				}
 			}
@@ -236,7 +237,7 @@ func (fh *FileHandlerImpl) UploadToOpenAI(fileID, mimeType string) (string, erro
 		return "", fmt.Errorf("error decoding response: %w", err)
 	}
 
-	log.Printf("Successfully uploaded file %s to OpenAI with ID: %s", fileID, openAIResp.ID)
+	logging.Debugf("Successfully uploaded file %s to OpenAI with ID: %s", fileID, openAIResp.ID)
 
 	return openAIResp.ID, nil
 }

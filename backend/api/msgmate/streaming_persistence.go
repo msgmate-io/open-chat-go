@@ -2,12 +2,13 @@ package msgmate
 
 import (
 	"encoding/json"
-	"log"
 	"time"
 
 	"backend/database"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 const (
@@ -57,7 +58,7 @@ func newPartialMessagePersister(chatUUID, sessionID string, senderID uint) *part
 		row.ReceiverId = chat.User1Id
 	}
 	if err := db.Create(row).Error; err != nil {
-		log.Printf("streaming persistence: failed to create snapshot row (chat %s): %v", chatUUID, err)
+		logging.Errorf("streaming persistence: failed to create snapshot row (chat %s): %v", chatUUID, err)
 		return nil
 	}
 	return &partialMessagePersister{
@@ -112,13 +113,13 @@ func (p *partialMessagePersister) flush(seq int64, text string, reasoning []stri
 	// the JSON columns explicitly so the stored text matches what the field
 	// serializer writes and reads back.
 	if reasoningJSON, err := json.Marshal(reasoning); err != nil {
-		log.Printf("streaming persistence: failed to marshal reasoning (chat %s): %v", p.chatUUID, err)
+		logging.Errorf("streaming persistence: failed to marshal reasoning (chat %s): %v", p.chatUUID, err)
 	} else {
 		updates["reasoning"] = string(reasoningJSON)
 	}
 	if len(toolCallsJSON) > 0 {
 		if encoded, err := json.Marshal(toolCallsJSON); err != nil {
-			log.Printf("streaming persistence: failed to marshal tool calls (chat %s): %v", p.chatUUID, err)
+			logging.Errorf("streaming persistence: failed to marshal tool calls (chat %s): %v", p.chatUUID, err)
 		} else {
 			updates["tool_calls"] = string(encoded)
 		}
@@ -126,7 +127,7 @@ func (p *partialMessagePersister) flush(seq int64, text string, reasoning []stri
 
 	result := p.db.Model(&database.StreamingMessage{}).Where("id = ?", p.rowID).Updates(updates)
 	if result.Error != nil {
-		log.Printf("streaming persistence: failed to update snapshot (chat %s): %v", p.chatUUID, result.Error)
+		logging.Errorf("streaming persistence: failed to update snapshot (chat %s): %v", p.chatUUID, result.Error)
 		return
 	}
 	p.lastFlush = time.Now()
@@ -139,7 +140,7 @@ func (p *partialMessagePersister) dispose() {
 		return
 	}
 	if err := p.db.Unscoped().Delete(&database.StreamingMessage{}, p.rowID).Error; err != nil {
-		log.Printf("streaming persistence: failed to delete snapshot row (chat %s): %v", p.chatUUID, err)
+		logging.Errorf("streaming persistence: failed to delete snapshot row (chat %s): %v", p.chatUUID, err)
 	}
 }
 
@@ -152,6 +153,6 @@ func cleanStaleStreamingMessages() {
 	}
 	cutoff := time.Now().Add(-streamingSnapshotStaleAfter)
 	if err := db.Unscoped().Where("updated_at < ?", cutoff).Delete(&database.StreamingMessage{}).Error; err != nil {
-		log.Printf("streaming persistence: stale snapshot cleanup failed: %v", err)
+		logging.Errorf("streaming persistence: stale snapshot cleanup failed: %v", err)
 	}
 }
