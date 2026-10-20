@@ -88,7 +88,7 @@ func TestSeedModelConfigsMatchesDefaultJSONAndBotAccess(t *testing.T) {
 	setExtraModelsJSONForTest(t, "")
 
 	dbPath := filepath.Join(t.TempDir(), "defaults.db")
-	DB := SetupDatabase(DBConfig{
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: dbPath,
 		Debug:    false,
@@ -189,7 +189,10 @@ func TestSeedModelConfigsLoadsExtraModelsOnRestartWithExistingDB(t *testing.T) {
 	repoExtraPath := filepath.Join("data", "extra_default_models_config.json")
 	setExtraModelsJSONForTest(t, repoExtraPath)
 
-	DB := SetupDatabase(DBConfig{
+	// The pool is also registered via SetupTestDatabase so a t.Fatalf before the
+	// explicit close below (the restart needs the file unlocked) cannot leave it
+	// open across t.TempDir's RemoveAll.
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: dbPath,
 		Debug:    false,
@@ -254,8 +257,11 @@ func TestSeedModelConfigsLoadsExtraModelsOnRestartWithExistingDB(t *testing.T) {
 	})
 	setExtraModelsJSONForTest(t, extraPath)
 
-	// Second boot against the already-initialized DB file.
-	DB2 := SetupDatabase(DBConfig{
+	// Second boot against the already-initialized DB file. The first boot's pool
+	// was closed explicitly above (the restart needs the file unlocked), so both
+	// handles are registered for the t.TempDir ordering described on
+	// SetupTestDatabase - CloseTestDB is idempotent for the first one.
+	DB2 := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: dbPath,
 		Debug:    false,
@@ -321,7 +327,7 @@ func TestSeedModelConfigsAcceptsInlineExtraModelsJSON(t *testing.T) {
 	  }
 	]`)
 
-	DB := SetupDatabase(DBConfig{
+	DB := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "inline_extra.db"),
 		Debug:    false,

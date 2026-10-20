@@ -299,6 +299,73 @@ upsert, so it must never be fatal:
   interactions and history) and raise it or add retention when it approaches the
   limit.
 
+#### Test helpers close their SQLite pool before `t.TempDir` removes the directory (ci#920)
+
+A test helper that points SQLite at `filepath.Join(t.TempDir(), ...)` and never
+closes the `gorm` pool leaves the pool alive past the test. Because the database
+runs in WAL mode (`sqliteDSNPragmas`,
+`backend/database/db_sqlite_driver_default.go`), a pooled connection can recreate
+the `-wal`/`-shm` sidecars while `t.TempDir`'s `RemoveAll` walks the directory,
+racing into
+
+```
+TempDir RemoveAll cleanup: unlinkat /tmp/Test.../001: directory not empty
+```
+
+and, once the database file is unlinked underneath a still-open connection, into
+`disk I/O error (522)`.
+
+- `database.SetupTestDatabase(t, cfg)` / `database.CloseTestDB(t, DB)`
+  (`backend/database/testdb.go`) are the shared helpers. `t.TempDir` registers its
+  `RemoveAll` cleanup *before* the helper registers the pool close and cleanups
+  run LIFO, so the close always precedes `RemoveAll`. Use
+  `SetupTestDatabase` instead of `SetupDatabase` in tests; a site that opens the
+  pool itself (`gorm.Open`, `openSQLite`) registers `CloseTestDB(t, DB)` right
+  after the successful open.
+- `CloseTestDB` is nil-safe and tolerates a site that closes its own pool, since
+  `database/sql` `Close` is idempotent - so it never double-closes.
+- The ordering rationale lives in exactly one place instead of a per-package
+  `closeXTestDB` copy; `backend/database/testdb_test.go` pins the close-before-
+  `RemoveAll` ordering and the idempotent re-close.
+- The audit is held in place by `TestTempDirSQLiteHelpersCloseTheirPool` in the
+  same file: it scans the backend module's `*_test.go` files and fails when a
+  file binds `t.TempDir()` to a SQLite pool (`SetupDatabase(`, `gorm.Open(`,
+  `openSQLite(`) without referencing `SetupTestDatabase(`/`CloseTestDB(`, a
+  package-local `close*TestDB(` helper (the shape the #919 `api/chats` fix ships,
+  verified by applying that patch), or both `.DB()` and `.Close()` when it
+  unwraps the pool itself. Requiring both halves there matters: a file that
+  closes some unrelated handle and never touches the pool is exactly the shape
+  `api/chats/browser_token_access_test.go` had. A new helper copied from a stale
+  one fails there instead of flaking CI intermittently, which is the only failure
+  mode this bug has.
+- The scan skips the vendored/private checkouts (dot-dirs, `clients/`, `ci/`, plus
+  `node_modules`/`vendor`/`frontend`/`dist`/`build`) for the same reason
+  `backend/docguard` does: `openchat-integrations sync` and
+  `openchat-integrations setup` materialize another repository's tree under
+  `clients/integrations/` and `development/ci/`, and their tests cannot be fixed
+  from here. Without that skip the guard went red on any tree that had synced
+  (the integration `bootstrap_test.go` files bind `t.TempDir()` to a pool they
+  never close), which is a false positive on someone else's code, not a
+  regression in ours.
+- `knownTempDirPoolViolations` in that file is the only escape hatch: it lists
+  files whose fix is owned by an in-flight PR (currently #919 for `api/chats`),
+  and the guard fails on an entry that no longer violates, so the exception has
+  to be deleted with the fix rather than quietly outliving it.
+- Known limitation of that scan, deliberate and *not* closed here: the predicate
+  is per *file*, so a file that calls `SetupTestDatabase(` for one helper and a
+  bare `SetupDatabase(` for another is exempted wholesale. The hole is latent
+  today - the only three bare call sites on the tree are the `#919` ones and none
+  of those files calls `SetupTestDatabase(` - but it is real. Closing it needs a
+  per-function scan plus string-literal stripping (the guard's own fixtures embed
+  `SetupDatabase(`/`gorm.Open(` literals, so naive occurrence counting would
+  false-positive on the guard file itself). Worth a follow-up, not a bolt-on.
+  Two further reasons the accepted `close*TestDB(` form is weaker than the
+  "package-local helper" label suggests, both pointing the same way: it is a
+  raw-text match, so a fixture or comment *spelling out* `closeChatsTestDB(`
+  would exempt the guard file itself, and it fires on the helper's *declaration*
+  alone - nothing checks that the helper is ever called, or called by every
+  helper in the file. Same per-file hole, one more accepted token.
+
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
 Expired sessions were never removed: `resolveValidSessionFromRequest` in

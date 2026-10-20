@@ -17,6 +17,7 @@ func newLeaseTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
+	database.CloseTestDB(t, db)
 	if err := db.AutoMigrate(&database.WorkspaceLease{}); err != nil {
 		t.Fatalf("failed to migrate workspace lease: %v", err)
 	}
