@@ -509,6 +509,12 @@ func BackendRouting(
 	// Effective native-coder provider admission state (ci#620): the cap that is
 	// actually in force plus the current in-flight/queue counts.
 	v1PrivateApis.HandleFunc("GET /admin/provider-admission", admin.GetProviderAdmissionStatus)
+	// Pool-level DNS/egress readiness gate (ci#613, follow-up of the ci#546
+	// shared-sandbox networking design): the verdict a pooled backing sandbox
+	// has to pass before it accepts leases, plus the ingestion of the in-pod
+	// probe report that decides it.
+	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-egress", admin.GetSandboxPoolEgressStatus)
+	v1PrivateApis.HandleFunc("POST /admin/sandbox-pool-egress/report", admin.IngestSandboxPoolEgressReport)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings", admin.ListIntegrationSettings)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings/{integration_name}", admin.GetIntegrationSettings)
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/{integration_name}", admin.SaveIntegrationSettings)
