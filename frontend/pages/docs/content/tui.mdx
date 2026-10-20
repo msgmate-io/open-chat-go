@@ -35,6 +35,33 @@ integration, the subcommand is not registered.
   same terminal session. When a chat is pre-bound (see below) the TUI attaches
   to it directly instead of creating a new one.
 
+## Status and control
+
+While a turn is running the TUI renders a compact status footer driven by
+`GET /api/v1/chats/{chat_uuid}/status` (the same response the web integration
+consumes): `is_active`, `state`, `latest_message_finished`, optional
+auto-continuation (`auto_continue`, `auto_continue_turns` / `auto_continue_max`,
+`auto_continue_stop_reason`), `stalled` (with `stall_reason`,
+`stall_age_seconds`, `stall_threshold_seconds`), `queued_replies` and
+`auto_continue_incomplete_retries`.
+
+- **Poll cadence** — poll `/status` about every 2s *while `is_active`* and stop
+  as soon as the turn finishes; there is no need to poll an idle chat.
+- **Follow the stream** — `GET /api/v1/chats/{chat_uuid}/messages/streaming`
+  returns the in-flight assistant snapshot (with a `seq`). Poll it at a faster
+  cadence (~500ms) to render output that arrives between message polls, then
+  let the authoritative message from `messages/list` replace the snapshot once
+  the turn lands.
+- **Stop a turn** — press `Esc` (or `Ctrl-C`) to `POST
+  /api/v1/chats/{chat_uuid}/signals/interrupt`. The interrupt cancels the live
+  bot-reply task, drops the replies queued behind it, and asks a detached chat
+  backend (for example an external coding agent) to abort its generation; work
+  the stopped turn already persisted is preserved.
+- **Queue instead of interrupting** — sending a message while a turn is live is
+  queued by default (`delivery_mode: "queued"`, surfaced as `queued_replies`);
+  `delivery_mode: "interrupt"` stops the live turn and starts the new one
+  immediately, which is what a "send now" affordance uses.
+
 ## Configuration
 
 Servers and tokens are stored in a device-scoped JSON file under the platform's

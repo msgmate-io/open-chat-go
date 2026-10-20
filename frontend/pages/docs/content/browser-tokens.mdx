@@ -80,6 +80,36 @@ non-interaction chats. Shared-interaction endpoints
 (`GET /api/interaction/{chat_share_uuid}[/messages|/status]`) remain public
 capability URLs and need no token.
 
+## Audience-bound tokens (`coder-tui`)
+
+Some deployments mint short-lived tokens for a **non-browser** audience instead
+of the `browser-api` default. The audience travels in
+`POST /api/v1/user/browser-token` and each audience has its own default-deny
+allowlist. The `coder-tui` audience backs the TUI that an integrating
+deployment forwards into a per-chat coding sandbox, so it may call, as the
+minting user and only for chats they take part in:
+
+| Method | Route |
+| --- | --- |
+| `GET` | `/api/v1/user/self` |
+| `GET` | `/api/v1/chats/list` |
+| `GET` | `/api/v1/chats/{chat_uuid}` |
+| `GET` | `/api/v1/chats/{chat_uuid}/messages/list` |
+| `POST` | `/api/v1/chats/{chat_uuid}/messages/send` |
+| `GET` | `/api/v1/chats/{chat_uuid}/status` |
+| `GET` | `/api/v1/chats/{chat_uuid}/messages/streaming` |
+| `POST` | `/api/v1/chats/{chat_uuid}/signals/{signal}` |
+| `POST` | `/api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute` |
+| `POST` | `/api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/reject` |
+| `GET` | `/api/v1/contacts/default-bot` |
+
+Unlike the browser allowlist it includes `messages/send`, the confirm-action
+routes and — for the live status footer, streamed turns and stop key documented
+in [Terminal UI (TUI)](/docs/tui) — the status, streaming and signal routes. A
+leaked sandbox configuration therefore only reaches these routes as the minting
+user; the wildcard `{signal}` segment is restricted by the same chat
+participation check the handler applies.
+
 ## Server configuration
 
 | Env var | Default | Purpose |
