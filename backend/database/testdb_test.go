@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -73,6 +74,13 @@ var poolOpenCalls = []string{"SetupDatabase(", "gorm.Open(", "openSQLite("}
 // the test: the shared helpers.
 var poolCloseCalls = []string{"SetupTestDatabase(", "CloseTestDB("}
 
+// packageCloseHelperPattern is the third accepted form: a package-local close
+// helper such as `closeChatsTestDB(t, DB)`, which is how the api/chats fix
+// registers the pool close. Those files never call CloseTestDB themselves, so
+// without this the guard would keep flagging them *after* their fix lands - the
+// guard has to agree with the fix it is policing.
+var packageCloseHelperPattern = regexp.MustCompile(`close[A-Za-z0-9_]*TestDB\(`)
+
 // unwrappedPoolCloseCalls are the fallback for a site that needs the *sql.DB
 // handle for something else (holding a write lock, asserting a pragma): it has
 // to unwrap the pool and close it itself. Both halves are required, so an
@@ -134,6 +142,14 @@ func TestTempDirSQLiteHelpersCloseTheirPool(t *testing.T) {
 // scanForTempDirPoolsWithoutClose returns the workspace-relative paths of every
 // *_test.go file under root that opens a SQLite pool over t.TempDir() without
 // referencing an accepted pool-close form.
+//
+// The predicate is deliberately per *file*: one accepted close marker exempts
+// the whole file, so a file that migrates one helper to SetupTestDatabase while
+// leaving a bare SetupDatabase in another helper is not caught. That is a known
+// hole, not an oversight - closing it needs a per-function scan and
+// string-literal stripping (the fixtures below embed the open calls as literals,
+// so counting occurrences would flag this file). See the ci#920 note in
+// DEVELOPMENT.md before tightening it.
 func scanForTempDirPoolsWithoutClose(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -161,7 +177,7 @@ func scanForTempDirPoolsWithoutClose(t *testing.T, root string) []string {
 		if !strings.Contains(source, "TempDir") || !containsAny(source, poolOpenCalls) {
 			return nil
 		}
-		if containsAny(source, poolCloseCalls) || containsAll(source, unwrappedPoolCloseCalls) {
+		if containsAny(source, poolCloseCalls) || packageCloseHelperPattern.MatchString(source) || containsAll(source, unwrappedPoolCloseCalls) {
 			return nil
 		}
 		relative, err := filepath.Rel(root, path)
@@ -259,6 +275,22 @@ func TestUnwrapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = pool.Close() })
+}
+`,
+		// Fine: the api/chats fix shape - a package-local close helper, with no
+		// direct SetupTestDatabase/CloseTestDB call in this file.
+		"pkghelper_test.go": `package fixtures
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestPkgHelper(t *testing.T) {
+	DB := database.SetupDatabase(database.DBConfig{
+		FilePath: filepath.Join(t.TempDir(), "pkghelper.db"),
+	})
+	closeFixturesTestDB(t, DB)
 }
 `,
 		// Irrelevant: a TempDir test with no pool at all.

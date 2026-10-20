@@ -270,16 +270,26 @@ and, once the database file is unlinked underneath a still-open connection, into
 - The audit is held in place by `TestTempDirSQLiteHelpersCloseTheirPool` in the
   same file: it scans the backend module's `*_test.go` files and fails when a
   file binds `t.TempDir()` to a SQLite pool (`SetupDatabase(`, `gorm.Open(`,
-  `openSQLite(`) without referencing `SetupTestDatabase(`/`CloseTestDB(`, or
-  both `.DB()` and `.Close()` when it unwraps the pool itself. Requiring both
-  halves there matters: a file that closes some unrelated handle and never
-  touches the pool is exactly the shape `api/chats/browser_token_access_test.go`
-  had. A new helper copied from a stale one fails there instead of flaking CI
-  intermittently, which is the only failure mode this bug has.
+  `openSQLite(`) without referencing `SetupTestDatabase(`/`CloseTestDB(`, a
+  package-local `close*TestDB(` helper (the shape the #919 `api/chats` fix ships,
+  verified by applying that patch), or both `.DB()` and `.Close()` when it
+  unwraps the pool itself. Requiring both halves there matters: a file that
+  closes some unrelated handle and never touches the pool is exactly the shape
+  `api/chats/browser_token_access_test.go` had. A new helper copied from a stale
+  one fails there instead of flaking CI intermittently, which is the only failure
+  mode this bug has.
 - `knownTempDirPoolViolations` in that file is the only escape hatch: it lists
   files whose fix is owned by an in-flight PR (currently #919 for `api/chats`),
   and the guard fails on an entry that no longer violates, so the exception has
   to be deleted with the fix rather than quietly outliving it.
+- Known limitation of that scan, deliberate and *not* closed here: the predicate
+  is per *file*, so a file that calls `SetupTestDatabase(` for one helper and a
+  bare `SetupDatabase(` for another is exempted wholesale. The hole is latent
+  today - the only three bare call sites on the tree are the `#919` ones and none
+  of those files calls `SetupTestDatabase(` - but it is real. Closing it needs a
+  per-function scan plus string-literal stripping (the guard's own fixtures embed
+  `SetupDatabase(`/`gorm.Open(` literals, so naive occurrence counting would
+  false-positive on the guard file itself). Worth a follow-up, not a bolt-on.
 
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
