@@ -31,6 +31,10 @@ CREATED_STARVED = "1970-01-12T13:45:00Z"  # 100s old: older than the 60s grace
 CREATED_FRESH = "1970-01-12T13:46:00Z"  # 40s old: still inside the grace window
 LABELS = [{"name": "test"}]
 
+RECONCILER = os.path.join(HERE, "pr_ci_superseded_reconcile.py")
+with io.open(RECONCILER, encoding="utf-8") as _handle:
+    SOURCE = _handle.read()
+
 
 def run(run_id, status="completed", attempt=1, created_at=None):
     payload = {"id": run_id, "status": status, "run_attempt": attempt}
@@ -196,7 +200,10 @@ class ReconcileTests(unittest.TestCase):
         api = FakeApi(runs=[run(CURRENT), run(NEWER, status="queued", created_at=fresh)])
         code, summary = self.reconcile(api, wait_seconds=0, yield_seconds=60)
         self.assertEqual(code, 3)
-        self.assertIn("timeout:", summary)
+        # ci#659 integration: exit 3 is the *budget* expiry (the replacement was
+        # still inside its grace window, so yielding was not allowed to end the
+        # wait), and that path is labelled `budget-expired:` - never `timeout:`.
+        self.assertTrue(summary.startswith("budget-expired:"))
         self.assertEqual(self.cancelled, [])
 
     def test_replacement_without_a_created_at_is_not_a_reason_to_yield(self):
@@ -265,6 +272,67 @@ class ReconcileTests(unittest.TestCase):
         self.assertIsNone(mod.parse_epoch(""))
         self.assertIsNone(mod.parse_epoch("not-a-timestamp"))
         self.assertEqual(mod.parse_epoch("1970-01-01T00:00:00Z"), 0.0)
+
+    def test_budget_expiry_is_its_own_verdict_not_a_replacement_verdict(self):
+        """A budget expiry must be self-identifying in the logs (review of #890).
+
+        Exit 3 means "no replacement ever got to testify in time"; exit 1 means
+        "a replacement run really concluded non-green". Both leave the gate red,
+        so the log line is the only thing that tells the latent-red case from a
+        genuine failure. Keep the distinct `budget-expired:` token, and make sure
+        a replacement that *does* conclude non-green never uses it.
+        """
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        code, summary = self.reconcile(api, wait_seconds=0)
+        self.assertEqual(code, 3)
+        self.assertTrue(summary.startswith("budget-expired:"))
+        self.assertIn("still in_progress", summary)
+
+        code, summary = self.reconcile(
+            FakeApi(runs=[run(CURRENT)], jobs={}), wait_seconds=0
+        )
+        self.assertEqual(code, 3)
+        self.assertTrue(summary.startswith("budget-expired:"))
+
+        code, summary = self.reconcile(
+            FakeApi(
+                runs=[run(CURRENT), run(NEWER)],
+                jobs={NEWER: [gate(conclusion="failure")]},
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("budget-expired", summary)
+
+    def test_budget_expiry_warns_in_the_actions_log(self):
+        """`continue-on-error: true` hides a non-zero exit, so annotate instead."""
+        api = FakeApi(runs=[run(CURRENT), run(NEWER, status="in_progress")], jobs={})
+        mod._FETCH = api
+        env = {
+            "GITHUB_TOKEN": "token",
+            "PR_CI_SUPERSEDED_WAIT_SECONDS": "0",
+        }
+        stdout = io.StringIO()
+        try:
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch.object(sys, "stdout", stdout):
+                    code = mod.main(
+                        [
+                            "--repo",
+                            "msgmate-io/open-chat-go",
+                            "--pr",
+                            "835",
+                            "--head-sha",
+                            HEAD,
+                            "--run-id",
+                            str(CURRENT),
+                        ]
+                    )
+        finally:
+            mod._FETCH = mod.fetch_json
+        self.assertEqual(code, 3)
+        self.assertIn("::warning::", stdout.getvalue())
+        self.assertIn("budget", stdout.getvalue())
+        self.assertIn("accepted=false", stdout.getvalue())
 
     def test_api_error_fails_closed(self):
         mod._FETCH = FakeApi(error=ValueError("boom"))
@@ -504,6 +572,29 @@ class WorkflowWiringTests(unittest.TestCase):
             "vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '%d'" % mod.DEFAULT_WAIT_SECONDS,
             self.gate,
         )
+
+    def test_budget_expiry_is_labelled_and_the_default_is_not_a_bare_literal(self):
+        """Don't let the budget decay back into an unexplained constant.
+
+        A hand-entered "slowest observed run" is a lie the moment runner timings
+        shift, so the invariant asserted here is the one that holds forever: the
+        script default and the workflow fallback are the same number, and the
+        expiry path carries a distinct, greppable token plus a warning annotation
+        instead of being silently indistinguishable from a real failure.
+        """
+        self.assertIsInstance(mod.DEFAULT_WAIT_SECONDS, int)
+        self.assertIn("budget-expired:", SOURCE)
+        self.assertIn("::warning::", SOURCE)
+        self.assertLess(SOURCE.index("budget-expired:"), SOURCE.index("::warning::"))
+        # The default must be a named constant, not a number inlined at the
+        # argparse call site, so the two files cannot drift apart silently.
+        self.assertNotIn("or 1500", SOURCE)
+        self.assertNotIn("or 3600", SOURCE)
+
+    def test_no_stale_timeout_wording_remains(self):
+        """Exit 3 is a budget expiry, so it must not read as a run timeout."""
+        self.assertNotIn('"timeout:', SOURCE)
+        self.assertIn("budget-expired:", SOURCE)
 
 
 if __name__ == "__main__":
