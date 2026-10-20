@@ -938,6 +938,19 @@ one-line note about the current shortfall:
   for the private runbook and for run evidence; closing a gap in prose without
   closing it in the registry no longer matches what the gate reports.
 
+While a gap is still open the agent needs to know what to do *instead* of the
+opencode capability it misses, and that mitigation is data too:
+`backend/nativecoder/parityfallbacks.go` keeps one fallback line per gap id
+(`ParityFallbackFor`, `ParityFallbackGuidanceLines`,
+`RenderParityFallbackMarkdown`, `ParityFallbackJSON`). Each line names at least
+one tool of `CoderSurfaceTools()`, so the guidance can only point at a tool the
+coder actually ships, and `ValidateParityFallbackGuidance` /
+`UncoveredParityGapIDs` fail when a new gap is registered without a mitigation, a
+mitigation names no shipped tool, or a *closed* gap still carries a workaround
+(that would tell the agent to avoid a capability the coder already has). That
+keeps ci#394 honest in both directions: the registry says what is missing, the
+fallback table says how the coder copes until it is added.
+
 Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
