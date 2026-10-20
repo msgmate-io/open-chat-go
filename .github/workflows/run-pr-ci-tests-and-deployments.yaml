@@ -2496,11 +2496,15 @@ jobs:
       # redis_cpu_request_missing - an unbudgeted, unschedulable redis takes the
       # queue/state endpoint down and leaves fresh interactions dead on arrival.
       # Pin the read-only contract checker, the emitted strategic-merge patch and
-      # the checked-in patch artifact so they cannot drift apart.
+      # the checked-in patch artifact so they cannot drift apart. The compose
+      # profiles (docker-compose*.yaml) carry the same numbers, so their half of
+      # the contract and its regression test run here too.
       - name: Redis probe budget contract unit tests
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
+          python3 -m unittest development/scripts/test_redis_compose_readiness_contract.py -v
+          python3 development/scripts/redis_compose_readiness_contract.py
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup

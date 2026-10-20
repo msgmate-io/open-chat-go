@@ -47,11 +47,26 @@ services:
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6380}:6379"
+    # ci#722 (coder-sandbox readiness gate, ci#666/#638): the queue/state
+    # endpoint must never be evicted merely because a contended node is busy.
+    # An explicit, contention-tolerant budget (sustained failure tolerated
+    # >= 60s: interval 5s x retries 12) and a timeout above the 1s/3s default
+    # keep a healthy redis in the pool under load, and the CPU reservation
+    # below gives redis a scheduling guarantee behind the agent workloads -
+    # the same contract the live Deployment is patched with
+    # (`development/redis-readiness/ci-722-redis-probes.patch.json`).
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout: 2s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+        reservations:
+          cpus: "0.1"
     networks:
       - app-network
 

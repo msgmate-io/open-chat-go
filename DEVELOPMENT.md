@@ -71,6 +71,25 @@ the operator's call. Its regression test,
 `development/scripts/test_redis_readiness_contract.py`, runs in the Pin Freshness
 Gate too.
 
+The compose profiles are the second consumer of that same redis, so the `ci#722`
+numbers are mirrored there as well: `docker-compose.yaml`, `docker-compose.ci.yaml`
+and `docker-compose.pro.yaml` carry a healthcheck of `interval: 5s`,
+`timeout: 2s`, `retries: 12` and `start_period: 5s` — a budget that tolerates a
+minute of sustained failure — plus a `deploy.resources` reservation of `0.1` CPU
+with a `0.5` CPU limit. A healthcheck that gives up after a few seconds of
+contention marks the container unhealthy and a redis without a CPU reservation is
+starved behind the agent workloads on a shared runner; either way the queue/state
+endpoint disappears under load and freshly dispatched interactions are dead on
+arrival. `development/scripts/redis_compose_readiness_contract.py` is the compose
+half of the contract: stdlib-only (the Pin Freshness Gate has no PyYAML), it
+extracts the `redis` service with a small block-mapping parser, re-derives the
+same finding ids (`probe_missing`, `probe_timeout_too_low`,
+`probe_budget_too_short`, `startup_probe_missing`, `redis_cpu_request_missing`,
+…), prints GitHub `::error::` annotations and exits non-zero while any check
+fails, so a flapping redis healthcheck cannot silently come back. Its regression
+test, `development/scripts/test_redis_compose_readiness_contract.py`, runs in the
+Pin Freshness Gate next to the Kubernetes half.
+
 The PR-CI progress comments follow the same rule. Every job that upserts the
 `<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
 `repository`/`PR number` pair: pass it through step `env` with the event context
