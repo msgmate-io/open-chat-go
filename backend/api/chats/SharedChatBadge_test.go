@@ -22,7 +22,9 @@ func setupBadgeTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	DB := database.SetupDatabase(cfg)
+	closeChatsTestDB(t, DB)
+	return DB
 }
 
 func createInteractionChatForBadge(t *testing.T, DB *gorm.DB, owner, bot *database.User) (*database.Chat, *database.SharedChatInstance) {
