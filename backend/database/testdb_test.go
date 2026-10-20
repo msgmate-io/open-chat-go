@@ -79,6 +79,11 @@ var poolCloseCalls = []string{"SetupTestDatabase(", "CloseTestDB("}
 // registers the pool close. Those files never call CloseTestDB themselves, so
 // without this the guard would keep flagging them *after* their fix lands - the
 // guard has to agree with the fix it is policing.
+//
+// It is a raw-text match like every other marker here, so it fires on the
+// helper's *declaration* even if nothing calls it, and a literal spelling the
+// name out would fake it. That is the per-file hole documented below, with one
+// more accepted token - not a narrower guarantee than the rest.
 var packageCloseHelperPattern = regexp.MustCompile(`close[A-Za-z0-9_]*TestDB\(`)
 
 // unwrappedPoolCloseCalls are the fallback for a site that needs the *sql.DB

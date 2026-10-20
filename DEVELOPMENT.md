@@ -290,6 +290,12 @@ and, once the database file is unlinked underneath a still-open connection, into
   per-function scan plus string-literal stripping (the guard's own fixtures embed
   `SetupDatabase(`/`gorm.Open(` literals, so naive occurrence counting would
   false-positive on the guard file itself). Worth a follow-up, not a bolt-on.
+  Two further reasons the accepted `close*TestDB(` form is weaker than the
+  "package-local helper" label suggests, both pointing the same way: it is a
+  raw-text match, so a fixture or comment *spelling out* `closeChatsTestDB(`
+  would exempt the guard file itself, and it fires on the helper's *declaration*
+  alone - nothing checks that the helper is ever called, or called by every
+  helper in the file. Same per-file hole, one more accepted token.
 
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
