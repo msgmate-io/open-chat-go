@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -402,5 +404,85 @@ func TestResolveConfigSourceInlineYAML(t *testing.T) {
 	}
 	if _, err := loadOpenChatConfig(content, "inline --config YAML"); err != nil {
 		t.Fatalf("long single-line inline YAML failed to load: %v", err)
+	}
+}
+
+// TestLoadOpenChatConfigResolvesLinkedFiles covers ci#759: a config value may
+// link a text file with a "$file.<path>" marker instead of inlining it, which
+// lets authors keep markdown prompts and other long artifacts as real files in
+// their config directory. Paths resolve relative to the config file.
+func TestLoadOpenChatConfigResolvesLinkedFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	body := "# System prompt\n\nBe helpful.\n"
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "system.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write linked file: %v", err)
+	}
+	raw := []byte("env:\n  SYSTEM_PROMPT: \"$file.prompts/system.md\"\n  OTHER: inline\n")
+
+	cfg, err := loadOpenChatConfig(raw, filepath.Join(dir, "open-chat.yaml"))
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected a $file. link: %v", err)
+	}
+	if got := cfg.Env["SYSTEM_PROMPT"]; got != body {
+		t.Fatalf("linked file content not substituted: %#v", got)
+	}
+	if got := cfg.Env["OTHER"]; got != "inline" {
+		t.Fatalf("unrelated value changed: %#v", got)
+	}
+}
+
+// TestLoadOpenChatConfigLinkedFileJSON guards the JSON fast-path: minified JSON
+// (what the CI config publisher emits) must resolve "$file." links exactly like
+// the YAML variant instead of handing the literal marker to the runtime.
+func TestLoadOpenChatConfigLinkedFileJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("linked notes"), 0o644); err != nil {
+		t.Fatalf("write linked file: %v", err)
+	}
+	raw := []byte("{\"env\":{\"NOTES\":\"$file.notes.md\"}}")
+
+	cfg, err := loadOpenChatConfig(raw, filepath.Join(dir, "open-chat.json"))
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected a JSON $file. link: %v", err)
+	}
+	if got := cfg.Env["NOTES"]; got != "linked notes" {
+		t.Fatalf("JSON $file. link did not resolve: %#v", got)
+	}
+}
+
+// TestLoadOpenChatConfigLinkedFileErrors makes sure a broken link fails the boot
+// with a message naming the problem instead of silently passing the marker (or
+// a binary blob) through to the runtime.
+func TestLoadOpenChatConfigLinkedFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "binary.md"), []byte("text\x00binary"), 0o644); err != nil {
+		t.Fatalf("write binary file: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{"missing file", "env:\n  PROMPT: \"$file.nope.md\"\n", "nope.md"},
+		{"directory", "env:\n  PROMPT: \"$file.prompts\"\n", "is a directory"},
+		{"binary file", "env:\n  PROMPT: \"$file.binary.md\"\n", "not a text file"},
+		{"escapes config dir", "env:\n  PROMPT: \"$file.../outside.md\"\n", "outside the config directory"},
+		{"absolute path", "env:\n  PROMPT: \"$file./etc/hostname\"\n", "relative to the config directory"},
+		{"embedded marker", "env:\n  SCRIPT: |\n    echo \"$file.notes.md\"\n", "entire config value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadOpenChatConfig([]byte(tc.raw), filepath.Join(dir, "open-chat.yaml"))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected an error mentioning %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }
