@@ -47,6 +47,17 @@ test. The classifier is pinned by
 `development/scripts/tests/test_sandbox_provider_failure.sh`, which runs in the
 Pin Freshness Gate.
 
+The `PR Test Merge Requirement` gate is **label-driven and fail-closed** for every
+requested suite: when a suite's job reports `skipped` while the label that
+requests it (`test`, `ai-test-mock`, `e2e`, `sandbox-test`, …) is live on the pull
+request — or, for the Go tests, while the job's own `should_test` output says it
+was requested — the gate errors out instead of accepting the missing run. A suite
+that was *not* requested stays a pass. Cancelled runs are only accepted when a
+replacement run for the same commit adopted their verdict. The
+`run-pr-ci-ai-mock-tests` case in that gate is pinned by
+`development/scripts/test_pr_ci_ai_mock_gate.py` (stdlib-only, runs in the Pin
+Freshness Gate) so the label guard cannot silently regress to `skipped) ;;`.
+
 #### Autonomous approval and merge of green consolidation PRs
 
 A consolidation PR is always authored by the automation identity, which cannot
