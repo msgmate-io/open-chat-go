@@ -427,6 +427,7 @@ pinned tree still compile) is `development/scripts/check_frozen_workspace.py`.
 | `full` | every integration | private manifest fragment |
 | `full-ci` | every integration | full private CI tooling + Helm chart |
 | `full-android` | every integration | private CI tooling + mobile client |
+| `full-development` | every integration | private CI tooling + Helm chart + mobile client + LLM coding context |
 
 ```bash
 # Local development (compose runs the integration-sync service for you)
@@ -482,6 +483,39 @@ checks out (unless the caller pinned it in
 `tool_init.coder_select_workspace.git_repo`/`git_branch`, which stays
 authoritative), so a re-run for a pull request resumes that PR's branch instead
 of the bot's default.
+
+#### Pre-provisioned development set-up (ci#756)
+
+A native coder chat can have its checkout **fully prepared before the agent's
+first turn** instead of making the model install tooling ad hoc. The sandbox
+runs the resolution in `backend/nativecoder/devsetup.go`:
+`coder_dev_setup` declares a plan, core renders it into the existing
+`coder_sandbox_setup_commands` key, and the sandbox runs that script after the
+clone and before the LLM starts. The script pulls the repository's submodules
+and runs `openchat-integrations prepare --profile <profile>`
+(see `profile_setup.yaml`), so the profile's extra checkouts (private CI
+tooling, Helm chart, mobile client, LLM coding context) are already
+materialized.
+
+The plan is configurable per use-case, highest precedence first:
+
+- an explicit `coder_sandbox_setup_commands` script always wins and is never
+  rewritten;
+- per-agent / per-interaction shared config `coder_dev_setup` — a profile name
+  string (`coder_dev_setup: full-ci`), a boolean (`true` = `full-development`)
+  or a map with `enabled`, `profile`, `submodules`, `repos` and `commands`;
+- the built-in per-repository default (`DefaultDevSetupProfiles`):
+  `open-chat-go-mobile` → `full-android`, `open-chat-go-helm-chart` and
+  `open-chat-go-llm-coding-context` → `full-ci`, `open-chat-go-build-tools` →
+  `core-only`, `open-chat-go` and `open-chat-go-ci` → `full-development`. An
+  unknown repository gets no plan;
+- `OCI_MSGMATE_CODER_DEV_SETUP=0` disables the per-repo default fleet-wide and is
+  the rollback knob for a ci.msgmate.io deployment (an explicit `coder_dev_setup`
+  block or `coder_sandbox_setup_commands` still applies). Non-coder
+  interactions are never touched.
+
+The content of the plan is not secret: it only names the profile and the
+generated shell, so ci.msgmate.io stores it as an ordinary shared-config value.
 
 ### Custom integration profiles
 
