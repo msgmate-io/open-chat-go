@@ -423,9 +423,13 @@ func ProviderAdmissionStatus() []ProviderAdmissionSnapshot {
 	return out
 }
 
-// logProviderAdmissionState writes one line per (key, effective policy) change,
-// plus one line whenever the key is saturated, so the effective value and the
-// current in-flight count are visible in the backend log. It never logs a key.
+// logProviderAdmissionState writes one line per (key, effective policy) change
+// at debug level, plus one line whenever the key is saturated at warn level, so
+// the effective value and the current in-flight count are visible in the backend
+// log. Neither line is a failure: the change line is routine bookkeeping and
+// stays quiet even at the default info level (the ci#645 "no log heaviness"
+// rule), while a genuinely saturated key is worth a warning. It never logs a
+// key.
 func logProviderAdmissionState(snapshot ProviderAdmissionSnapshot) {
 	providerAdmissionMu.Lock()
 	signature := fmt.Sprintf("%d|%s", snapshot.MaxConcurrency, snapshot.Source)
@@ -435,13 +439,13 @@ func logProviderAdmissionState(snapshot ProviderAdmissionSnapshot) {
 	providerAdmissionMu.Unlock()
 
 	if changed {
-		logging.Errorf("[provider_admission] key=%s effective_max_concurrency=%d in_flight=%d queue_waiting=%d source=%s queue_timeout=%s (ci#620)",
+		logging.Debugf("[provider_admission] key=%s effective_max_concurrency=%d in_flight=%d queue_waiting=%d source=%s queue_timeout=%s (ci#620)",
 			snapshot.Key, snapshot.MaxConcurrency, snapshot.InFlight, snapshot.QueueWaiting, snapshot.Source,
 			snapshot.QueueTimeout.Round(time.Millisecond))
 		return
 	}
 	if snapshot.Saturated {
-		logging.Debugf("[provider_admission] key=%s saturated: in_flight=%d at effective_max_concurrency=%d queue_waiting=%d (ci#620)",
+		logging.Warnf("[provider_admission] key=%s saturated: in_flight=%d at effective_max_concurrency=%d queue_waiting=%d (ci#620)",
 			snapshot.Key, snapshot.InFlight, snapshot.MaxConcurrency, snapshot.QueueWaiting)
 	}
 }
