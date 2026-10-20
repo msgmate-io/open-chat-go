@@ -461,19 +461,29 @@ func f11() { _ = o.Stdout.Fd() }
 			want: 1,
 		},
 		{
-			name: "a local that shadows the import is still reported (documented limit)",
+			name: "a local that shadows the os import is still reported (documented limit)",
 			source: `package p
 
 import "os"
 
-type Sink struct{}
-
-func (Sink) WriteString(string) (int, error) { return 0, nil }
-
 func f12() {
-	s := Sink{}
+	os := struct{ Stdout int }{}
 	_ = os.Stdout
-	_ = s
+}
+`,
+			want: 1,
+		},
+		{
+			name: "a bare Stdout selector under a dot os import is still reported (documented limit)",
+			source: `package p
+
+import . "os"
+
+type sink struct{ Fd int }
+
+func f13() {
+	var Stdout sink
+	_ = Stdout.Fd
 }
 `,
 			want: 1,
