@@ -71,6 +71,33 @@ the operator's call. Its regression test,
 `development/scripts/test_redis_readiness_contract.py`, runs in the Pin Freshness
 Gate too.
 
+That patch only fixes the *live* object, though, and the Deployment is re-rendered
+on every deploy from the private Helm chart (`msgmate-io/open-chat-go-helm-chart`,
+`backend/templates/redis.yaml`), which still renders the kubelet probe defaults
+and no CPU request — so the gate finding comes straight back after the next
+`helm upgrade`. The chart half of the fix is carried in this repository as
+`development/redis-readiness/ci-722-chart.patch` plus the rendered before/after
+fixtures next to it (`chart-redis-template.{before,after}.yaml`, captured from the
+chart template and the chart's own redis values), and
+`development/scripts/redis_chart_readiness_contract.py` renders that Go-template
+subset and checks the result against the same contract as the live checker — so
+"the chart renders a redis container the readiness gate would accept" is checkable
+before any deploy:
+
+```bash
+development/scripts/redis_chart_readiness_contract.py \
+  --chart-file development/redis-readiness/chart-redis-template.after.yaml
+development/scripts/redis_chart_readiness_contract.py --chart-dir /path/to/open-chat-go-helm-chart
+```
+
+The automation identity has no write access to the chart repository, so an
+operator applies the patch at the chart root
+(`git apply development/redis-readiness/ci-722-chart.patch`) and then the same
+`kubectl patch` shown by the gate; until the chart is updated, a redeploy
+re-introduces the finding. The chart checker and its regression test
+(`development/scripts/test_redis_chart_readiness_contract.py`, stdlib-only like
+its sibling) run in the Pin Freshness Gate.
+
 The PR-CI progress comments follow the same rule. Every job that upserts the
 `<!-- open-chat-pr-ci-progress -->` comment must address an explicit, non-empty
 `repository`/`PR number` pair: pass it through step `env` with the event context
