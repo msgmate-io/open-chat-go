@@ -239,8 +239,22 @@ func TestProviderAdmissionLogLevels(t *testing.T) {
 		_ = logging.Configure(logging.Options{Level: "info", Format: "text", Writer: io.Discard})
 	})
 
-	routine := ProviderAdmissionSnapshot{Key: "log-level-key", MaxConcurrency: 3, InFlight: 0, Source: "test"}
-	saturated := ProviderAdmissionSnapshot{Key: "log-level-key", MaxConcurrency: 3, InFlight: 3, Source: "test"}
+	// Derive both snapshots from a real limiter instead of hand-building the
+	// struct: Saturated is computed by the limiter (in_flight >= effective cap)
+	// and a literal that forgets to set it silently disarms the assertion below,
+	// which is exactly how this test went red in CI (got "" for the warn line).
+	policy := ProviderAdmissionConfig{MaxConcurrency: 1, Source: "test"}
+	limiter := providerAdmissionLimiterFor("log-level-key", policy)
+	routine := limiter.snapshot()
+	release, _, err := limiter.acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(release)
+	saturated := limiter.snapshot()
+	if !saturated.Saturated {
+		t.Fatalf("snapshot = %+v, want a saturated limiter at its cap", saturated)
+	}
 
 	// At info the routine change line is silenced.
 	buf.Reset()
