@@ -11,7 +11,8 @@ head) or when a replacement run for the same commit reached the gate job with a
 real verdict, whose conclusion is adopted. Everything else fails closed.
 
 Exit codes: 0 accept, 1 replacement gate not green, 2 missing, 3 timeout/budget
-expiry, 4 usage/API error. The last stdout line is `accepted=true|false`.
+expiry, 4 usage/API error, 5 yielded (this run released the concurrency group
+ for a starved replacement). The last stdout line is `accepted=true|false`.
 
 Exit 3 is a *budget* expiry, not a replacement verdict: no replacement run ever
 got to testify before the wait budget ran out. Its summary starts with the
@@ -22,11 +23,25 @@ from a replacement run that really came back non-green (exit 1).
 A replacement gate job that was itself `cancelled` cannot testify about the
 commit and is skipped, but every other non-`success` verdict (including
 `skipped`, `failure` and `timed_out`) is adopted and rejects the gate.
+
+Waiting for a replacement is futile when the replacement cannot start. The
+workflow concurrency group (`pr-ci-<number>-<head sha>`) is held by THIS run
+until it completes, and the `always()`-gated gate job keeps a cancelled run
+alive for the whole wait budget; a replacement that is still `pending` after
+`PR_CI_SUPERSEDED_YIELD_SECONDS` is therefore starving behind us, and waiting
+only extends the hold (observed as run 39407027496 keeping 39407028825 in
+`pending` for 12+ minutes with an empty repository queue). Such a run cancels
+itself to hand the group over (`yield_group`) and reports `accepted=false`, so
+the replacement run's gate produces the verdict - like a superseded deployment
+run - while a cancel that does not take effect keeps the gate red (a `409` just
+means the run is already cancelling; ending this last, `always()`-gated job is
+itself what lets the run complete and release the group).
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -65,6 +80,7 @@ DEFAULT_WAIT_SECONDS = 3600
 
 _SLEEP = time.sleep
 _MONOTONIC = time.monotonic
+_NOW = time.time
 
 
 def fetch_json(url, token, timeout=30):
@@ -82,8 +98,33 @@ def fetch_json(url, token, timeout=30):
 
 _FETCH = fetch_json
 
+
+def post_json(url, token, timeout=30):
+    """POST to the API with an empty body (used only to cancel this run)."""
+    request = urllib.request.Request(
+        url,
+        method="POST",
+        data=b"",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read()
+        return json.loads(body) if body else {}
+
+
+_POST = post_json
+
 PAGE_SIZE = 100
 MAX_PAGES = 20
+
+# Run states in which a replacement has not begun executing, so it is either
+# about to start or - the case this module acts on - blocked behind this run's
+# own concurrency group.
+YIELD_STATUSES = ("pending", "queued", "requested", "waiting")
 
 
 def api(repo, path, token):
@@ -167,6 +208,59 @@ def gate_verdict(runs, repo, token):
     return None, None
 
 
+def parse_epoch(value):
+    """Epoch seconds of an ISO-8601 `created_at`, or None when unparseable."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def starved_replacement(candidates, now, min_age, statuses=YIELD_STATUSES):
+    """The newer same-SHA run that cannot start while this run holds the group.
+
+    Only a run that has not begun executing and has been in that state for
+    `min_age` seconds qualifies: a replacement is allowed a moment to start, and
+    a run that is already `in_progress` is making progress on its own. Runs
+    without a parseable `created_at` are ignored (never a reason to yield).
+    """
+    if min_age <= 0:
+        return None
+    for run in candidates:
+        if run.get("status") not in statuses:
+            continue
+        created = parse_epoch(run.get("created_at"))
+        if created is not None and now - created >= min_age:
+            return run
+    return None
+
+
+def cancel_run(repo, run_id, token):
+    return _POST(API + "/repos/" + repo + "/actions/runs/%s/cancel" % run_id, token)
+
+
+def yield_group(args, run, token):
+    """Cancel this run so a starved replacement can start, and stop waiting.
+
+    The replacement's gate is the authority from here on, and the caller reports
+    `accepted=false`: if the cancel does not take effect the gate stays red
+    rather than letting an untested commit look mergeable.
+    """
+    try:
+        cancel_run(args.repo, args.run_id, token)
+    except urllib.error.HTTPError as error:
+        if error.code != 409:  # 409: already cancelling / already cancelled
+            raise
+    return 5, (
+        "yielded: replacement run %s for %s is still %s behind this run's "
+        "concurrency group; cancelling this run so the replacement can start."
+        % (run.get("id"), args.head_sha[:12], run.get("status"))
+    )
+
+
 def reconcile(args, token):
     """Return (exit_code, summary) for the cancelled run described by `args`."""
     pull = api(args.repo, "/pulls/%d" % args.pr, token)
@@ -193,6 +287,9 @@ def reconcile(args, token):
                 run.get("id"),
                 conclusion,
             )
+        starved = starved_replacement(candidates, _NOW(), args.yield_seconds)
+        if starved is not None:
+            return yield_group(args, starved, token)
         if _MONOTONIC() >= deadline:
             if not candidates:
                 return 3, "budget-expired: no replacement run for %s within %ds." % (
@@ -223,6 +320,11 @@ def main(argv=None):
         "--wait-seconds",
         type=int,
         default=int(os.environ.get("PR_CI_SUPERSEDED_WAIT_SECONDS") or DEFAULT_WAIT_SECONDS),
+    )
+    parser.add_argument(
+        "--yield-seconds",
+        type=int,
+        default=int(os.environ.get("PR_CI_SUPERSEDED_YIELD_SECONDS") or 60),
     )
     args = parser.parse_args(argv)
 

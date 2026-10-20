@@ -317,7 +317,19 @@ jobs:
     runs-on: ubuntu-latest
     # ci#734: a relay dry-run dispatch must stay lightweight - it only inspects
     # the relay routing and never starts the test/deploy pipeline.
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '' && github.event.inputs.DRY_RUN != 'true') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
+    # ci#659: never read the event payload's label snapshot here. `gh pr create
+    # -l ...` (and the default `test` label that `no_labels_guidance` attaches in
+    # a second API call) land after the event was emitted, so an `opened` payload
+    # is label-free and a burst of per-label events carries only a partial
+    # snapshot. Gating this job on the payload skipped it while
+    # `pr-test-merge-requirement` (always() gated) read the live label list and
+    # failed with "PR CI did not run for this commit with the test label" for a
+    # commit whose suites were never asked to run (run 39373933834, PR #880).
+    # Start on every pull-request event and let the live snapshot resolved below
+    # - published as the `should_*` outputs every suite and deploy job consumes -
+    # decide what actually runs.
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '' && github.event.inputs.DRY_RUN != 'true') || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -344,6 +356,7 @@ jobs:
       should_ai_test_mock: ${{ steps.context.outputs.should_ai_test_mock }}
       should_ai_test_real: ${{ steps.context.outputs.should_ai_test_real }}
       should_test_core_only: ${{ steps.context.outputs.should_test_core_only }}
+      should_android_build_test: ${{ steps.context.outputs.should_android_build_test }}
       image_url: ${{ steps.image.outputs.image_url }}
       android_release_run_url: ${{ steps.android_release_dispatch.outputs.android_release_run_url }}
       dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
@@ -451,6 +464,7 @@ jobs:
             SHOULD_AI_TEST_MOCK="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-mock' || true)"
             SHOULD_AI_TEST_REAL="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-real' || true)"
             SHOULD_TEST_CORE_ONLY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test-core-only' || true)"
+            SHOULD_ANDROID_BUILD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'slow-android-build-test' || true)"
             # Production promotion PRs (base.ref == 'production') always run the
             # full suite. Their labels are added in one burst right after the PR
             # is opened, so each per-label event payload carries only a partial
@@ -471,6 +485,7 @@ jobs:
               SHOULD_AI_TEST_MOCK="ai-test-mock"
               SHOULD_AI_TEST_REAL="ai-test-real"
               SHOULD_TEST_CORE_ONLY="test-core-only"
+              SHOULD_ANDROID_BUILD_TEST="slow-android-build-test"
             fi
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
             DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
@@ -498,6 +513,7 @@ jobs:
             SHOULD_AI_TEST_MOCK=""
             SHOULD_AI_TEST_REAL=""
             SHOULD_TEST_CORE_ONLY=""
+            SHOULD_ANDROID_BUILD_TEST=""
             RAW_PR_NAME="$DEPLOYMENT_NAME"
             DISPATCH_REF="$TARGET_REF"
             IS_SAME_REPO_PR="true"
@@ -571,6 +587,7 @@ jobs:
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
           echo "should_ai_test_real=$SHOULD_AI_TEST_REAL" >> "$GITHUB_OUTPUT"
           echo "should_test_core_only=$SHOULD_TEST_CORE_ONLY" >> "$GITHUB_OUTPUT"
+          echo "should_android_build_test=$SHOULD_ANDROID_BUILD_TEST" >> "$GITHUB_OUTPUT"
           echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
           echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
           echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} e2e=${SHOULD_E2E_TEST:-false} sandbox=${SHOULD_SANDBOX_TEST:-false} sandbox-tags=${SHOULD_SANDBOX_TAGS:-<all>} build=${SHOULD_BUILD:-false} release-android=${SHOULD_RELEASE_ANDROID:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
@@ -1085,7 +1102,7 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
       (github.event.pull_request.base.ref == 'production' ||
-      contains(github.event.pull_request.labels.*.name, 'test'))))
+      needs.run-pr-ci-tests-and-deployments.outputs.should_test != '')))
     strategy:
       fail-fast: false
       matrix:
@@ -1289,7 +1306,7 @@ jobs:
       needs.build-backend-image-once.result == 'success' &&
       github.event_name == 'pull_request' && github.event.action != 'closed' &&
       (github.event.pull_request.base.ref == 'production' ||
-      contains(github.event.pull_request.labels.*.name, 'ai-test-mock'))
+      needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
@@ -1662,7 +1679,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
+        (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
@@ -1771,7 +1788,7 @@ jobs:
       (needs.sandbox-android-image-ensure.result == 'success' || needs.sandbox-android-image-ensure.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
+        (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     steps:
       - name: Free runner disk space
         uses: jlumbroso/free-disk-space@main
@@ -2223,6 +2240,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
           PR_CI_SUPERSEDED_WAIT_SECONDS: ${{ vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '3600' }}
+          # ci#659: a cancelled run holds the `pr-ci-<PR>-<SHA>` concurrency
+          # group for as long as this `always()`-gated job waits, so a
+          # replacement run for the SAME commit can be starved by us (observed
+          # on #892: run 39407028825 stayed `pending` for 12+ minutes with an
+          # empty repository queue). Once a replacement has been unable to
+          # start for this many seconds the reconciler cancels this run to hand
+          # the group over and reports accepted=false; the replacement run's
+          # gate owns the verdict from then on.
+          PR_CI_SUPERSEDED_YIELD_SECONDS: ${{ vars.PR_CI_SUPERSEDED_YIELD_SECONDS || '60' }}
         run: |
           set -uo pipefail
           set +e
@@ -2472,10 +2498,21 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_provider_failure.sh
 
-      # ci#745: every PR-CI progress-comment step must address an explicit,
-      # non-empty repository/PR target and must skip (instead of 404-looping)
-      # when that target is empty. Pins the workflow wiring; the helper's
-      # runtime behaviour is covered by the hermetic shell test below it.
+      # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
+      # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
+      # networking design). Pin the in-pod probe script contract (single-line
+      # JSON report, non-zero exit for an unhealthy pool, --print-only never
+      # failing the caller, no credential material) so a broken pool can never be
+      # handed out silently.
+      - name: Sandbox pool egress gate unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_pool_egress_gate.sh
+
+      # ci#745: the PR-CI progress-comment step must thread its repository/PR
+      # context explicitly and must skip (instead of 404-looping) when that
+      # context is empty. Pin the contract so the empty-URL red job cannot
+      # come back.
       - name: PR CI progress-comment target unit tests
         run: |
           set -euo pipefail
@@ -2501,6 +2538,23 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
+
+      # ci#722 (continued): the live patch above is undone by the next
+      # `helm upgrade`, because the private Helm chart still renders the redis
+      # container with the kubelet probe defaults and no CPU request. Render that
+      # template and check it against the same contract, so the recurring
+      # re-failure (and the ci#638 queue/state eviction) has to be fixed in the
+      # chart, not only in the live object.
+      - name: Redis chart readiness contract unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_redis_chart_readiness_contract.py -v
+
+      - name: Redis chart readiness contract (checked-in chart template)
+        run: |
+          set -euo pipefail
+          python3 development/scripts/redis_chart_readiness_contract.py \
+            --chart-file development/redis-readiness/chart-redis-template.after.yaml
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup
@@ -2564,6 +2618,16 @@ jobs:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    # ci#774 follow-up: record exactly what was dispatched - the ref, that
+    # ref's commit, the HTTP status and the response body - so the waiter can
+    # prove the run it observes is this dispatch and can print the response
+    # body when the CI repository never turns the dispatch into a run.
+    outputs:
+      dispatch_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_ref }}
+      dispatch_ref_sha: ${{ steps.dispatch_ci_deploy.outputs.dispatch_ref_sha }}
+      dispatch_status: ${{ steps.dispatch_ci_deploy.outputs.dispatch_status }}
+      dispatch_response: ${{ steps.dispatch_ci_deploy.outputs.dispatch_response }}
+      dispatch_target_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_target_ref }}
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -2601,6 +2665,12 @@ jobs:
           done
 
       - name: Dispatch deployment workflow in CI repository
+        id: dispatch_ci_deploy
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          SRC_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
+          DISPATCH_TARGET_REF: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          DISPATCH_PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
         run: |
           set -euo pipefail
           payload="$(
@@ -2632,6 +2702,42 @@ jobs:
                 }
               }'
           )"
+          # ci#774 follow-up: a PR deploy must deploy the PR head, so verify the ref
+          # this dispatch carries against the live head of the source PR. The
+          # pr-deploy-<n> concurrency supersedes a stale approve job, but this makes
+          # the stale case fail loudly instead of dispatching an outdated sha that
+          # the waiter could then never match.
+          if [ -n "${DISPATCH_PR_NUMBER:-}" ] && [ -n "${DISPATCH_TARGET_REF:-}" ]; then
+            live_head_sha="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SRC_REPO}/pulls/${DISPATCH_PR_NUMBER}" \
+              | jq -r '.head.sha // ""')" || live_head_sha=""
+            if [ -z "$live_head_sha" ]; then
+              echo "::error::Could not resolve the head sha of PR #${DISPATCH_PR_NUMBER} in ${SRC_REPO}; refusing to dispatch an unverified deploy."
+              exit 1
+            fi
+            if [ "$live_head_sha" != "$DISPATCH_TARGET_REF" ]; then
+              echo "::error::PR #${DISPATCH_PR_NUMBER} head is ${live_head_sha} but this run would dispatch the outdated ref ${DISPATCH_TARGET_REF}; refusing a stale deploy."
+              exit 1
+            fi
+            echo "Dispatch target verified against PR #${DISPATCH_PR_NUMBER} head ${live_head_sha}."
+          fi
+          # A workflow_dispatch run reports the dispatched ref as head_branch and that
+          # ref's commit as head_sha; resolve the commit now so the waiter can reject a
+          # run that was not created by this dispatch.
+          dispatch_ref_sha="$(curl -fsSL \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CI_REPO}/commits/${CI_REF}" \
+            | jq -r '.sha // ""')" || dispatch_ref_sha=""
+          if [ -z "$dispatch_ref_sha" ]; then
+            echo "::warning::Could not resolve the commit of CI ref '${CI_REF}' in ${CI_REPO}; the waiter will match the dispatched ref only."
+          else
+            echo "Dispatching approved deploy from CI ref '${CI_REF}' @ ${dispatch_ref_sha}."
+          fi
           status_code="$(curl -s -o /tmp/ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -2643,6 +2749,24 @@ jobs:
             cat /tmp/ci_deploy_dispatch.json || true
             exit 1
           fi
+          # A 204 returns an empty body; the waiter prints this body when the
+          # dispatch is rejected or never turns into a run (ci#774 follow-up).
+          {
+            echo "dispatch_ref=$CI_REF"
+            echo "dispatch_ref_sha=$dispatch_ref_sha"
+            echo "dispatch_target_ref=$DISPATCH_TARGET_REF"
+            echo "dispatch_status=$status_code"
+            echo "dispatch_response=$(tr '\n' ' ' < /tmp/ci_deploy_dispatch.json | cut -c1-900)"
+          } >> "$GITHUB_OUTPUT"
+          # A 204 only means GitHub accepted the request: a mis-targeted or
+          # silently rejected dispatch (wrong ref, missing workflow_dispatch
+          # trigger, run-name that does not embed the dispatch id) creates no run
+          # at all and used to surface only as a 25-minute "run never appeared"
+          # timeout in the waiter job with nothing to diagnose. Record exactly what
+          # was dispatched here; the waiter fails fast (CI_DISPATCH_GRACE_SECONDS,
+          # default 60s), verifies the run it observes was created from that ref/sha
+          # and prints this response body plus the recent dispatched run titles.
+          echo "::notice::Deploy dispatch accepted (HTTP 204): repo='${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}' ref='${CI_REF:-main}' dispatch_id='${DISPATCH_RUN_ID:-none}' target='${DEPLOYMENT_NAME:-none}' response_body=$(cat /tmp/ci_deploy_dispatch.json 2>/dev/null || echo '(empty)')."
 
       - name: Dispatch build and release workflow in source repository
         if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true'
@@ -2804,6 +2928,11 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      DISPATCH_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_ref }}
+      DISPATCH_REF_SHA: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_ref_sha }}
+      DISPATCH_STATUS: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_status }}
+      DISPATCH_RESPONSE: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_response }}
+      DISPATCH_TARGET_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_target_ref }}
     steps:
       - name: Wait for dispatched CI deployment workflow
         timeout-minutes: 30
@@ -2834,16 +2963,36 @@ jobs:
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
+          # Accept any dispatched run of the expected deployment title created
+          # at/after the dispatch (5 min of clock-skew slack) in addition to an
+          # exact DISPATCH_RUN_ID match, so a receiving-repo run-name template
+          # cannot make this loop spin with nothing to match.
+          match_since=$(( $(date +%s) - 300 ))
+          # A run that never appears means the dispatch was dropped or used the
+          # wrong ref - never a slow deploy - so do not burn the 25-minute window.
+          first_miss_at=""
+          # ci#774 follow-up: this is the dispatch grace, not a deploy budget. A
+          # dispatched run appears within seconds; when the CI repository rejects
+          # the dispatch or never creates the run, the waiter must fail fast (and
+          # print the dispatch response body) instead of burning the full
+          # CI_WAIT_MAX_SECONDS / ~90 poll attempts. Overridable for debugging.
+          miss_fail_seconds="${CI_DISPATCH_GRACE_SECONDS:-60}"
           poll_interval=15
           # Cover a full 12-25 minute deploy instead of the old ~5 minute bound,
           # which falsely failed while the dispatched deploy was still running.
           deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          if [ -n "${DISPATCH_STATUS:-}" ] && [ "$DISPATCH_STATUS" != "204" ]; then
+            echo "::error::The CI deploy dispatch was rejected (HTTP ${DISPATCH_STATUS}); no deployment run will be created."
+            echo "Dispatch ref: ${DISPATCH_REF:-<unknown>}${DISPATCH_REF_SHA:+ @ ${DISPATCH_REF_SHA}}"
+            echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+            exit 1
+          fi
           attempt=0
 
           while :; do
             attempt=$((attempt + 1))
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
               break
             fi
 
@@ -2853,11 +3002,18 @@ jobs:
               continue
             fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" --argjson since "$match_since" '
               def candidates:
-                [.workflow_runs[]
-                | select((.display_title // "") | endswith($dispatch_id))
-                | select((.display_title // "") | startswith("Deploy " + $deployment))];
+                (( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] ) | unique_by(.id));
               (if $pr != "" then
                 [candidates[] | select((.display_title // "") | contains("PR#" + $pr))][0]
                 // candidates[0]
@@ -2865,17 +3021,46 @@ jobs:
                 [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
                 // candidates[0]
               end)
-              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url] | @tsv end
+              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url, (.head_branch // ""), (.head_sha // "")] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent dispatched CI deploy run titles (for diagnosis):"
+                jq -r '[.workflow_runs[]? | (.display_title // .name // "unknown")] | .[:10] | .[]' <<< "$runs_json" 2>/dev/null || true
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run 'Deploy ${DEPLOYMENT_NAME}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              # No matching run at all is a dispatch/ref problem, not a slow
+              # deploy. Fail fast and point at the 'Dispatch Approved Deploy' job
+              # notice, which records the dispatch ref, target and response body
+              # (ci#774).
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "Dispatched ref: ${DISPATCH_REF:-<unknown>}${DISPATCH_REF_SHA:+ @ ${DISPATCH_REF_SHA}} target=${DISPATCH_TARGET_REF:-<unknown>}"
+                echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+                echo "::error::No CI deployment run for 'Deploy ${DEPLOYMENT_NAME}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the 'Dispatch Approved Deploy' job notice for the dispatch ref, target and response body - a silently dropped or wrong-ref dispatch looks identical to a very slow deploy."
+                exit 1
+              fi
               interruptible_sleep "$poll_interval"
               continue
             fi
 
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+            IFS=$'\t' read -r run_id run_status run_conclusion run_url run_ref run_sha <<< "$run_line"
+            echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none} ref=${run_ref:-none} sha=${run_sha:-none}"
+            # ci#774 follow-up: the observed run must belong to the ref/sha this job
+            # dispatched, otherwise a run created from another commit would be
+            # observed here and reported as this PR's deploy.
+            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] && [ "$run_ref" != "$DISPATCH_REF" ]; then
+              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'."
+              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+              exit 1
+            fi
+            if [ -n "${DISPATCH_REF_SHA:-}" ] && [ -n "${run_sha:-}" ] && [ "$run_sha" != "$DISPATCH_REF_SHA" ]; then
+              echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA}."
+              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+              exit 1
+            fi
 
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep "$poll_interval"
@@ -3828,6 +4013,14 @@ jobs:
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          # Accept a run of the expected deployment title created at/after the
+          # dispatch (5 min slack) in addition to an exact DISPATCH_RUN_ID match,
+          # so a run-name template mismatch cannot cause a 25-minute spin, and fail
+          # fast when no run appears at all - that is a dispatch/ref problem, not a
+          # slow deploy (ci#774).
+          match_since=$(( $(date +%s) - 300 ))
+          first_miss_at=""
+          miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
           # (25 min) of polling, with the job capped 5 min above that.
@@ -3837,7 +4030,7 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
               break
             fi
 
@@ -3847,21 +4040,36 @@ jobs:
               continue
             fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --argjson since "$match_since" '
               [
-                .workflow_runs[]
-                | select((.display_title // .name // "") | endswith($dispatch_id))
-                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                ( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] )
+                | unique_by(.id)
+                | .[]
                 | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
-              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
-                echo "Recent CI workflow titles:"
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent CI workflow titles (for diagnosis):"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run '${expected_title_prefix}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for '${expected_title_prefix}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the merged-deploy dispatch step notice for the dispatch ref, target and response body."
+                exit 1
               fi
               interruptible_sleep "$poll_interval"
               continue
@@ -4010,6 +4218,14 @@ jobs:
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          # Accept a run of the expected deployment title created at/after the
+          # dispatch (5 min slack) in addition to an exact DISPATCH_RUN_ID match,
+          # so a run-name template mismatch cannot cause a 25-minute spin, and fail
+          # fast when no run appears at all - that is a dispatch/ref problem, not a
+          # slow deploy (ci#774).
+          match_since=$(( $(date +%s) - 300 ))
+          first_miss_at=""
+          miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
           # (25 min) of polling, with the job capped 5 min above that.
@@ -4019,7 +4235,7 @@ jobs:
           while :; do
             attempt=$((attempt + 1))
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s waiting for the dispatched CI deployment workflow."
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
               break
             fi
 
@@ -4029,21 +4245,36 @@ jobs:
               continue
             fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --argjson since "$match_since" '
               [
-                .workflow_runs[]
-                | select((.display_title // .name // "") | endswith($dispatch_id))
-                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                ( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] )
+                | unique_by(.id)
+                | .[]
                 | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt ${attempt}: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
-              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
-                echo "Recent CI workflow titles:"
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent CI workflow titles (for diagnosis):"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run '${expected_title_prefix}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for '${expected_title_prefix}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the merged-deploy dispatch step notice for the dispatch ref, target and response body."
+                exit 1
               fi
               interruptible_sleep "$poll_interval"
               continue
