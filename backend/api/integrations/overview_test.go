@@ -9,6 +9,7 @@ import (
 )
 
 func TestOverviewIncludesIntegrationDefaultBots(t *testing.T) {
+	requireIntegration(t, "ssh")
 	db := setupIntegrationsTestDB(t)
 	admin := createUserForIntegrationsTest(t, db, "admin.overview@example.com", true)
 
@@ -46,6 +47,7 @@ func TestOverviewIncludesIntegrationDefaultBots(t *testing.T) {
 }
 
 func TestListIncludesDefaultBotCount(t *testing.T) {
+	requireIntegration(t, "ssh")
 	db := setupIntegrationsTestDB(t)
 	admin := createUserForIntegrationsTest(t, db, "admin.list@example.com", true)
 
