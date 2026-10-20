@@ -889,7 +889,7 @@ The `trigger-open-chat-coding-interaction.yaml` workflow in the private
 start another coding agent: it shells out through `coder_bash`
 (`gh workflow run`) and relies on GitHub to deliver the trigger. It stays
 supported as the reproducible, auditable fallback, but it is **deprecated as the
-primary route** for the development lead.
+primary route** for the `msgmate-coder` lead agent.
 
 The native route is the in-server agent-dispatch surface documented in
 `backend/api/bots/AgentDispatch.go`, exposed to the native coder (and through the
