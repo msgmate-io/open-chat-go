@@ -37,7 +37,13 @@ func applySharedConfigDefaults(config map[string]interface{}) map[string]interfa
 	// suppressed by the empty list.
 	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
 	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
-	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withConsolidation)
+	// ci#757: a native coder/dev-agent chat also defaults to the hive-mind
+	// dispatch family so a development lead can start/steer peer agents natively
+	// instead of the deprecated trigger-coding-interaction GitHub workflow. The
+	// merge is skipped for a non-coder config and for an operator-narrowed
+	// non-empty `tools` list, which always wins.
+	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
+	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withDispatch)
 	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
 }
 
