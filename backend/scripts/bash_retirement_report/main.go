@@ -25,9 +25,12 @@
 //	go run ./backend/scripts/bash_retirement_report calls.jsonl --format=json
 //	go run ./backend/scripts/bash_retirement_report calls.jsonl --format=text
 //
-// Output defaults to pretty JSON on stdout; `--format=text` prints a short
-// human summary for pasting into a ticket comment. The job is read-only and
-// performs no network calls: it only classifies the command shapes it is given.
+// Output defaults to pretty JSON on stdout: the coverage report plus the
+// per-phase exit gates derived from it (`phases`, `ready_to_close`), so one run
+// answers both "how covered are we" and "may this phase close".
+// `--format=text` prints a short human summary for pasting into a ticket
+// comment. The job is read-only and performs no network calls: it only
+// classifies the command shapes it is given.
 package main
 
 import (
@@ -79,16 +82,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	envelope := buildEnvelope(report)
+
 	switch strings.ToLower(*format) {
 	case "json", "":
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(report); err != nil {
+		if err := encoder.Encode(envelope); err != nil {
 			fmt.Fprintf(os.Stderr, "encode report: %v\n", err)
 			os.Exit(1)
 		}
 	case "text":
-		fmt.Print(renderText(report))
+		fmt.Print(renderText(envelope))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown --format %q (want json or text)\n", *format)
 		os.Exit(2)
@@ -120,6 +125,27 @@ func flagsFirst(args []string) []string {
 // rather than after an `=`.
 func isValueFlag(arg string) bool {
 	return arg == "--format" || arg == "-format"
+}
+
+// reportEnvelope is the program's output shape: the coverage report plus the
+// per-phase exit gates derived from it (ci#514).
+type reportEnvelope struct {
+	Report nativecoder.BashCoverageReport        `json:"report"`
+	Phases []nativecoder.BashRetirementPhaseGate `json:"phases"`
+	// ReadyToClose is true only when every phase that retires a category has
+	// met its exit criteria against this sample.
+	ReadyToClose bool `json:"ready_to_close"`
+}
+
+// buildEnvelope pairs a coverage report with the phase exit gates derived from
+// it, so JSON and text output always agree on `phases` and `ready_to_close`.
+func buildEnvelope(report nativecoder.BashCoverageReport) reportEnvelope {
+	phases := nativecoder.EvaluateBashRetirementPhases(report)
+	return reportEnvelope{
+		Report:       report,
+		Phases:       phases,
+		ReadyToClose: nativecoder.BashRetirementReadyToClose(phases),
+	}
 }
 
 // readReport consumes a JSONL export and computes the coverage report.
@@ -158,7 +184,8 @@ func readReport(input io.Reader) (nativecoder.BashCoverageReport, error) {
 }
 
 // renderText renders the report as a short ticket-comment summary.
-func renderText(report nativecoder.BashCoverageReport) string {
+func renderText(envelope reportEnvelope) string {
+	report := envelope.Report
 	var b strings.Builder
 	fmt.Fprintf(&b, "coder_bash retirement coverage (plan v%d, threshold %.0f%%)\n",
 		report.Version, report.Threshold*100)
@@ -178,5 +205,21 @@ func renderText(report nativecoder.BashCoverageReport) string {
 	if len(report.OutstandingCategories) > 0 {
 		fmt.Fprintf(&b, "\nstill outstanding: %s\n", strings.Join(report.OutstandingCategories, ", "))
 	}
+	fmt.Fprintf(&b, "\nphase exit gates:\n")
+	for _, phase := range envelope.Phases {
+		status := "open"
+		if len(phase.Categories) == 0 {
+			status = "n/a (definition phase)"
+		} else if phase.Ready {
+			status = "ready"
+		} else if !phase.Measured {
+			status = "unmeasured"
+		}
+		fmt.Fprintf(&b, "  %-28s %s\n", phase.ID, status)
+		for _, blocker := range phase.Blockers {
+			fmt.Fprintf(&b, "      blocked: %s\n", blocker)
+		}
+	}
+	fmt.Fprintf(&b, "\nready to close the retirement: %t\n", envelope.ReadyToClose)
 	return b.String()
 }
