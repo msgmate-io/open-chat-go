@@ -16,7 +16,7 @@ import (
 // openStartupBusyTestDB opens another process' view of the same SQLite file.
 func openStartupBusyTestDB(t *testing.T, path string) *gorm.DB {
 	t.Helper()
-	return database.SetupDatabase(database.DBConfig{
+	return database.SetupTestDatabase(t, database.DBConfig{
 		Backend:  "sqlite",
 		FilePath: path,
 		ResetDB:  false,

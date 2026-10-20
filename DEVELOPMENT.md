@@ -239,6 +239,35 @@ upsert, so it must never be fatal:
   interactions and history) and raise it or add retention when it approaches the
   limit.
 
+#### Test helpers close their SQLite pool before `t.TempDir` removes the directory (ci#920)
+
+A test helper that points SQLite at `filepath.Join(t.TempDir(), ...)` and never
+closes the `gorm` pool leaves the pool alive past the test. Because the database
+runs in WAL mode (`sqliteDSNPragmas`,
+`backend/database/db_sqlite_driver_default.go`), a pooled connection can recreate
+the `-wal`/`-shm` sidecars while `t.TempDir`'s `RemoveAll` walks the directory,
+racing into
+
+```
+TempDir RemoveAll cleanup: unlinkat /tmp/Test.../001: directory not empty
+```
+
+and, once the database file is unlinked underneath a still-open connection, into
+`disk I/O error (522)`.
+
+- `database.SetupTestDatabase(t, cfg)` / `database.CloseTestDB(t, DB)`
+  (`backend/database/testdb.go`) are the shared helpers. `t.TempDir` registers its
+  `RemoveAll` cleanup *before* the helper registers the pool close and cleanups
+  run LIFO, so the close always precedes `RemoveAll`. Use
+  `SetupTestDatabase` instead of `SetupDatabase` in tests; a site that opens the
+  pool itself (`gorm.Open`, `openSQLite`) registers `CloseTestDB(t, DB)` right
+  after the successful open.
+- `CloseTestDB` is nil-safe and tolerates a site that closes its own pool, since
+  `database/sql` `Close` is idempotent - so it never double-closes.
+- The ordering rationale lives in exactly one place instead of a per-package
+  `closeXTestDB` copy; `backend/database/testdb_test.go` pins the close-before-
+  `RemoveAll` ordering and the idempotent re-close.
+
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
 Expired sessions were never removed: `resolveValidSessionFromRequest` in

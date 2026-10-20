@@ -19,6 +19,7 @@ func openBusyTestDB(t *testing.T, path string) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open sqlite database: %v", err)
 	}
+	CloseTestDB(t, DB)
 	return DB
 }
 
@@ -107,6 +108,7 @@ func TestOpenSQLiteSetsBusyTimeoutAndWAL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open sqlite database: %v", err)
 	}
+	CloseTestDB(t, DB)
 
 	var busyTimeout int
 	if err := DB.Raw("PRAGMA busy_timeout").Scan(&busyTimeout).Error; err != nil {
