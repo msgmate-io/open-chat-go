@@ -41,6 +41,12 @@ type providerAdmissionResponse struct {
 	// how many sandboxes fit and the resulting agents-per-pool bound. A byte
 	// field of 0 means "not measured yet" and no bound is applied.
 	SandboxMemoryBudget msgmate.SandboxMemoryBudget `json:"sandbox_memory_budget"`
+	// SandboxCredentials is the credential-lifecycle half of the same
+	// shared-sandbox decision (ci#614): the effective per-agent/pool scope, the
+	// credential TTL relative to the ci#616/ci#662 reaper idle TTL, and whether
+	// a pool pod restart replays provisioning for every workspace bound to the
+	// pool. Reference/metadata only: it never carries a token value.
+	SandboxCredentials msgmate.SandboxCredentialConfig `json:"sandbox_credentials"`
 }
 
 // @doc:provider-admission-status
@@ -72,6 +78,10 @@ func GetProviderAdmissionStatus(w http.ResponseWriter, r *http.Request) {
 		// (the admin surface has no chat context), so it reports the
 		// deployment-wide levers and the default reserve.
 		SandboxMemoryBudget: msgmate.ResolveSandboxMemoryBudget(nil),
+		// ci#614: same shape for the credential lifecycle. The admin surface
+		// has no chat context, so this reports the deployment-wide levers, the
+		// per-agent default scope and the restart re-provision rule.
+		SandboxCredentials: msgmate.ResolveSandboxCredentialConfig(nil),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
