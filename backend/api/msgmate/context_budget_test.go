@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // hugeOutputTool returns a fixed-size payload, standing in for a `coder_list`
@@ -265,6 +266,63 @@ func TestTruncateToolResultKeepsTailAndCountsOmittedCommands(t *testing.T) {
 	// A result that fits its budget is untouched.
 	if plain, truncated := truncateToolResultForTool(`{"results":[]}`, "coder_bash", limits); truncated || plain != `{"results":[]}` {
 		t.Fatalf("a small result must be untouched, got %q (truncated=%t)", plain, truncated)
+	}
+}
+
+// TestTruncateToolResultStaysValidUTF8 covers ci#680 for multi-byte output: a
+// budget cut lands on an arbitrary byte offset, and a tail slice taken at a raw
+// byte offset can start mid-rune. The elided tool message then carries invalid
+// UTF-8 and is rejected by the provider - i.e. the guard meant to avoid
+// "exceeded maximum context" would instead produce an unparseable request.
+func TestTruncateToolResultStaysValidUTF8(t *testing.T) {
+	limits := ToolResultLimits{
+		Default: 600,
+		PerTool: map[string]int{"coder_read": 600},
+		Source:  ToolResultLimitSourceConfig,
+	}
+	// 3 bytes per rune, so every budget boundary here is misaligned.
+	result := strings.Repeat("é", 2000)
+
+	for _, budget := range []int{601, 602, 603, 604, 605, 700} {
+		limits.PerTool["coder_read"] = budget
+		truncated, ok := truncateToolResultForTool(result, "coder_read", limits)
+		if !ok {
+			t.Fatalf("expected a %d-rune result to be truncated at a %d-char budget", len([]rune(result)), budget)
+		}
+		if len(truncated) > budget {
+			t.Fatalf("budget %d: the elided result must respect its budget, got %d chars", budget, len(truncated))
+		}
+		if !utf8.ValidString(truncated) {
+			t.Fatalf("budget %d: the elided result must stay valid UTF-8, got %q", budget, truncated)
+		}
+		marker := strings.Index(truncated, "\n\n[tool output truncated:")
+		if marker < 0 {
+			t.Fatalf("budget %d: expected the explicit truncation marker, got %q", budget, truncated)
+		}
+		// Both kept slices must stand on rune boundaries: a torn rune at the
+		// end of the head (or the start of the tail) is exactly what a raw
+		// byte offset produces and what the provider rejects.
+		if head := truncated[:marker]; !utf8.ValidString(head) {
+			t.Fatalf("budget %d: the kept head must end on a rune boundary, got %q", budget, head)
+		}
+		notice := truncated[marker:]
+		if end := strings.Index(notice, ".]"); end >= 0 && !utf8.ValidString(notice[end+2:]) {
+			t.Fatalf("budget %d: the kept tail must start on a rune boundary, got %q", budget, notice[end+2:])
+		}
+	}
+
+	// tailOfString keeps the tail aligned to a rune boundary.
+	if got := tailOfString("abcde", 3); got != "cde" {
+		t.Fatalf("expected the last 3 bytes, got %q", got)
+	}
+	if got := tailOfString("aéé", 4); got != "éé" || !utf8.ValidString(got) {
+		t.Fatalf("expected a rune-aligned tail, got %q", got)
+	}
+	if got := tailOfString("aéé", 0); got != "" {
+		t.Fatalf("a zero budget must keep nothing, got %q", got)
+	}
+	if got := tailOfString("short", 100); got != "short" {
+		t.Fatalf("a result under the budget must be kept whole, got %q", got)
 	}
 }
 

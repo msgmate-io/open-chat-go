@@ -1514,7 +1514,12 @@ func shrinkOversizedContextMessages(messages []map[string]interface{}, maxChars 
 		for key, value := range message {
 			clone[key] = value
 		}
-		clone["content"] = content[:maxChars] + notice
+		// headOfString keeps this last-resort cut on a UTF-8 rune boundary: the
+		// content that reaches here is usually an oversized tool result, i.e.
+		// source files, diffs or sandbox logs where non-ASCII is normal, and a
+		// torn rune would make the retry request itself unparseable - the very
+		// failure this fallback exists to survive (ci#680).
+		clone["content"] = headOfString(content, maxChars) + notice
 		out[i] = clone
 		changed = true
 	}
