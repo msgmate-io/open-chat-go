@@ -347,5 +347,64 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("accepted=false", step)
 
 
+class LiveLabelGatingTests(unittest.TestCase):
+    """Every CI job must decide from the live label snapshot, not the payload (ci#659).
+
+    The gate job was switched to the live label list first, but the jobs it gates
+    kept reading `github.event.pull_request.labels.*.name` from the event payload.
+    `gh pr create -l ...` and the default `test` label added by
+    `no_labels_guidance` attach labels in a *second* API call, so an `opened`
+    payload is label-free: the entry job (`run-pr-ci-tests-and-deployments`) was
+    skipped while the always()-gated `PR Test Merge Requirement` read the live
+    list and failed with "PR CI did not run for this commit with the test label"
+    for a commit whose suites were never asked to run (run 39373933834 on PR
+    #880, whose sibling run 39373933693 had been cancelled by concurrency).
+    """
+
+    WORKFLOW = os.path.abspath(
+        os.path.join(os.path.dirname(HERE), "..", ".github", "workflows", WORKFLOW_FILE)
+    )
+    ENTRY_JOB = "  run-pr-ci-tests-and-deployments:"
+    LABEL_GATED_JOBS = (
+        "  run-pr-ci-go-tests:",
+        "  run-pr-ci-ai-mock-tests:",
+        "  sandbox-android-image-ensure:",
+        "  run-pr-ci-android-build:",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        with io.open(cls.WORKFLOW, encoding="utf-8") as handle:
+            cls.workflow = handle.read()
+
+    def job_header(self, job):
+        """Everything from the job key up to its `steps:` block."""
+        start = self.workflow.index("\n" + job)
+        return self.workflow[start : self.workflow.index("\n    steps:", start)]
+
+    def test_entry_job_starts_on_every_pull_request_event(self):
+        header = self.job_header(self.ENTRY_JOB)
+        entry_if = [line for line in header.splitlines() if line.startswith("    if:")]
+        self.assertEqual(len(entry_if), 1, "the entry job must keep exactly one if:")
+        self.assertNotIn("pull_request.labels", entry_if[0])
+        self.assertIn("github.event.action != 'closed'", entry_if[0])
+
+    def test_label_gated_jobs_read_the_live_snapshot_outputs(self):
+        for job in self.LABEL_GATED_JOBS:
+            header = self.job_header(job)
+            self.assertNotIn(
+                "github.event.pull_request.labels",
+                header,
+                "%s must not gate on the event payload label snapshot" % job.strip(),
+            )
+            self.assertIn("needs.run-pr-ci-tests-and-deployments.outputs.", header, job)
+
+    def test_entry_job_publishes_the_outputs_they_consume(self):
+        header = self.job_header(self.ENTRY_JOB)
+        for output in ("should_test", "should_ai_test_mock", "should_android_build_test"):
+            line = "      %s: ${{ steps.context.outputs.%s }}" % (output, output)
+            self.assertIn(line, header)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
