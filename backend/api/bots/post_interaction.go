@@ -128,6 +128,18 @@ func runPostInteractionActions(db *gorm.DB, queueClient *asynq.Client, queueInsp
 			if err := runPlanAutoImplement(db, queueClient, queueInspector, loaded, action, text); err != nil {
 				log.Printf("post-interaction: plan_auto_implement failed for chat %s: %v", loaded.UUID, err)
 			}
+		case postActionKindPullRequestReview:
+			// ci#622: the review role's durable output is a pull request review,
+			// not an issue comment, so the review bot's turn ends with a review
+			// on the fixture PR instead of a comment nobody asserted on.
+			review, ok := decodePostActionPullRequestReview(action)
+			if !ok {
+				log.Printf("post-interaction: skipping invalid pull request review action for chat %s", loaded.UUID)
+				continue
+			}
+			if err := runPullRequestReview(review, text); err != nil {
+				log.Printf("post-interaction: github_pull_request_review failed for chat %s: %v", loaded.UUID, err)
+			}
 		default:
 			comment, ok := decodePostActionGithubComment(action)
 			if !ok {
@@ -164,7 +176,7 @@ func loadChatPostActions(configData []byte) []map[string]interface{} {
 	selected := make([]map[string]interface{}, 0, len(raw))
 	for _, action := range raw {
 		switch kind, _ := action["kind"].(string); kind {
-		case "", postActionKindGithubComment, postActionKindPlanAutoImplement:
+		case "", postActionKindGithubComment, postActionKindPlanAutoImplement, postActionKindPullRequestReview:
 			selected = append(selected, action)
 		}
 	}
