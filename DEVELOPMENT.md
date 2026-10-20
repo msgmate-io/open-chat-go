@@ -278,6 +278,15 @@ and, once the database file is unlinked underneath a still-open connection, into
   `api/chats/browser_token_access_test.go` had. A new helper copied from a stale
   one fails there instead of flaking CI intermittently, which is the only failure
   mode this bug has.
+- The scan skips the vendored/private checkouts (dot-dirs, `clients/`, `ci/`, plus
+  `node_modules`/`vendor`/`frontend`/`dist`/`build`) for the same reason
+  `backend/docguard` does: `openchat-integrations sync` and
+  `openchat-integrations setup` materialize another repository's tree under
+  `clients/integrations/` and `development/ci/`, and their tests cannot be fixed
+  from here. Without that skip the guard went red on any tree that had synced
+  (the integration `bootstrap_test.go` files bind `t.TempDir()` to a pool they
+  never close), which is a false positive on someone else's code, not a
+  regression in ours.
 - `knownTempDirPoolViolations` in that file is the only escape hatch: it lists
   files whose fix is owned by an in-flight PR (currently #919 for `api/chats`),
   and the guard fails on an entry that no longer violates, so the exception has

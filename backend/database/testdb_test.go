@@ -155,6 +155,10 @@ func TestTempDirSQLiteHelpersCloseTheirPool(t *testing.T) {
 // string-literal stripping (the fixtures below embed the open calls as literals,
 // so counting occurrences would flag this file). See the ci#920 note in
 // DEVELOPMENT.md before tightening it.
+//
+// Vendored/private checkouts are skipped (dot-dirs, `clients/`, `ci/`, plus the
+// build dirs): their tests belong to another repository and a failure there is
+// not fixable from here.
 func scanForTempDirPoolsWithoutClose(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -164,8 +168,20 @@ func scanForTempDirPoolsWithoutClose(t *testing.T, root string) []string {
 			return err
 		}
 		if entry.IsDir() {
+			// Vendored/private checkouts are not part of the public repo and
+			// not ours to police - the same set docguard skips. `clients/`
+			// and `.integrations/` hold the gitignored integration checkouts
+			// `openchat-integrations sync` materializes, `ci/` is the private
+			// profile checkout, and the dot-dirs cover the caches. CI flagged
+			// 15 files under `clients/integrations/` before this: the public
+			// module cannot fix a private integration's tests, so scanning
+			// them only made the guard red for everyone who had synced.
+			if path != root && strings.HasPrefix(entry.Name(), ".") {
+				return fs.SkipDir
+			}
 			switch entry.Name() {
-			case ".git", "node_modules", "vendor", "frontend", "dist", "build":
+			case "node_modules", "vendor", "frontend", "dist", "build",
+				"clients", "ci":
 				return fs.SkipDir
 			}
 			return nil
@@ -311,6 +327,24 @@ func TestNoPool(t *testing.T) {
 	for name, content := range fixtures {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
 			t.Fatalf("failed to write fixture %s: %v", name, err)
+		}
+	}
+
+	// The same leaking shape under a vendored/private checkout must be skipped:
+	// those tests live in another repository, so flagging them would leave the
+	// guard permanently red for anyone who ran `openchat-integrations sync`.
+	vendored := []string{
+		filepath.Join("clients", "integrations", "mcp_integration", "bootstrap_test.go"),
+		filepath.Join("ci", "integration", "leak_test.go"),
+		filepath.Join(".integrations", "cached_test.go"),
+	}
+	for _, rel := range vendored {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("failed to create %s: %v", filepath.Dir(rel), err)
+		}
+		if err := os.WriteFile(path, []byte(fixtures["leak_test.go"]), 0o600); err != nil {
+			t.Fatalf("failed to write fixture %s: %v", rel, err)
 		}
 	}
 
