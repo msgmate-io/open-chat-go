@@ -53,6 +53,11 @@ import (
 //  4. The effective cap and the current in-flight/queue counts are logged and
 //     exposed (`ProviderAdmissionStatus`), so the loop can self-throttle and an
 //     operator can see what actually took effect.
+//  5. A saturation message names the bound that **actually decided** the cap
+//     (`ProviderSaturationError.Advice`, `LimitingSource` on the policy and the
+//     snapshot), not just the env lever: when the ci#602 pool bound is what
+//     clamped the cap down, raising the env var can never help and the message
+//     has to say so (ci#620 follow-up).
 
 const (
 	// DefaultProviderMaxConcurrency is the in-flight cap used when neither the
@@ -101,6 +106,26 @@ func (c ProviderAdmissionConfig) String() string {
 		c.MaxConcurrency, c.Source, c.QueueTimeout.Round(time.Millisecond))
 }
 
+// LimitingSource returns the single bound that decided MaxConcurrency, in the
+// same vocabulary as Source's tokens (`env:KEY`, `agent:KEY`, `pool:KEY`) or
+// "default" when nothing was configured. ResolveProviderAdmissionConfig appends
+// a clamp to Source whenever a bound lowers the cap, so the bound that won is
+// always the last token — `env:OCI_…+pool:coder_sandbox_max_agents_per_pool`
+// means the pool bound won and the env lever is *not* the one to raise.
+func (c ProviderAdmissionConfig) LimitingSource() string {
+	return providerAdmissionLimitingSource(c.Source)
+}
+
+// providerAdmissionLimitingSource extracts the winning bound from a resolved
+// policy source (see ProviderAdmissionConfig.LimitingSource). It returns "" for
+// an empty source so callers can fall back to the deployment lever.
+func providerAdmissionLimitingSource(source string) string {
+	if index := strings.LastIndex(source, "+"); index >= 0 {
+		source = source[index+1:]
+	}
+	return strings.TrimSpace(source)
+}
+
 // ProviderSaturationError reports that no admission slot became available within
 // the queue timeout. It is a distinct type so callers can tell back-pressure
 // from a provider failure.
@@ -110,14 +135,51 @@ type ProviderSaturationError struct {
 	InFlight       int
 	QueueWaiting   int
 	Waited         time.Duration
+	// Source is the resolved policy source the limiter was running with (eg
+	// "env:OCI_…+pool:coder_sandbox_max_agents_per_pool"). It is what lets a
+	// saturation message name the bound that actually decided the cap instead of
+	// always pointing at the env lever. Empty for a hand-built policy.
+	Source string
 }
 
 func (e *ProviderSaturationError) Error() string {
 	return fmt.Sprintf(
-		"provider %s is saturated: %d in-flight request(s) at max_concurrency=%d, %d queued, no slot within %s — raise %s or reduce concurrent agents",
+		"provider %s is saturated: %d in-flight request(s) at max_concurrency=%d, %d queued, no slot within %s — %s",
 		e.Key, e.InFlight, e.MaxConcurrency, e.QueueWaiting, e.Waited.Round(time.Millisecond),
-		ProviderMaxConcurrencyEnvKey,
+		e.Advice(),
 	)
+}
+
+// LimitingSource returns the single bound that decided the effective cap
+// (`env:KEY`, `agent:KEY`, `pool:KEY` or "default"), or "" when the error was
+// built without a resolved policy.
+func (e *ProviderSaturationError) LimitingSource() string {
+	return providerAdmissionLimitingSource(e.Source)
+}
+
+// Advice is the "turn this lever" half of the message. It names the bound that
+// actually limited the cap: a ci#602 pool clamp or a per-agent key means the
+// deployment env lever is *not* what an operator should raise, because raising
+// it would change nothing.
+func (e *ProviderSaturationError) Advice() string {
+	kind, key, hasKey := strings.Cut(e.LimitingSource(), ":")
+	if !hasKey || strings.TrimSpace(key) == "" {
+		// No resolved source (or the plain "default"): name the deployment lever.
+		return fmt.Sprintf("raise %s or reduce concurrent agents", ProviderMaxConcurrencyEnvKey)
+	}
+	key = strings.TrimSpace(key)
+	switch kind {
+	case "pool":
+		return fmt.Sprintf(
+			"effective_max_concurrency=%d is clamped by the pooled sandbox bound %s (ci#602) — raising %s has no effect until %s is raised; raise %s or reduce concurrent agents",
+			e.MaxConcurrency, key, ProviderMaxConcurrencyEnvKey, key, key)
+	case "agent":
+		return fmt.Sprintf(
+			"effective_max_concurrency=%d comes from the agent config key %s (the deployment lever %s is unset); raise %s or reduce concurrent agents",
+			e.MaxConcurrency, key, ProviderMaxConcurrencyEnvKey, key)
+	default: // "env:<key>": the deployment lever is the bound to turn.
+		return fmt.Sprintf("raise %s (effective_max_concurrency=%d) or reduce concurrent agents", key, e.MaxConcurrency)
+	}
 }
 
 // providerAdmissionConfigInt reads a positive integer from a shared config,
@@ -211,6 +273,12 @@ type ProviderAdmissionSnapshot struct {
 	QueueWaitMax   time.Duration `json:"queue_wait_max"`
 	SaturatedTotal int64         `json:"saturated_total"`
 	Saturated      bool          `json:"saturated"`
+	// LimitingSource is the single bound that decided MaxConcurrency
+	// (`env:KEY`, `agent:KEY`, `pool:KEY` or "default"), ie the token of Source
+	// that actually won. Config_source keeps the full provenance
+	// (`env:…+pool:…`); this is the machine-readable answer to "which lever
+	// does an operator raise?" (ci#620 follow-up).
+	LimitingSource string `json:"limiting_source"`
 }
 
 // providerAdmissionLimiter is a per-key in-flight limiter that can be resized at
@@ -342,6 +410,7 @@ func (l *providerAdmissionLimiter) acquire(ctx context.Context) (func(), time.Du
 			inFlight := l.inFlight
 			waiting := l.waiting
 			cap := l.max
+			source := l.source
 			l.mu.Unlock()
 			return nil, waited, &ProviderSaturationError{
 				Key:            l.key,
@@ -349,6 +418,7 @@ func (l *providerAdmissionLimiter) acquire(ctx context.Context) (func(), time.Du
 				InFlight:       inFlight,
 				QueueWaiting:   waiting,
 				Waited:         waited,
+				Source:         source,
 			}
 		case <-ctx.Done():
 			l.mu.Lock()
@@ -392,6 +462,7 @@ func (l *providerAdmissionLimiter) snapshot() ProviderAdmissionSnapshot {
 		QueueWaitMax:   l.queueWaitMax,
 		SaturatedTotal: l.saturatedTotal,
 		Saturated:      l.max > 0 && l.inFlight >= l.max,
+		LimitingSource: providerAdmissionLimitingSource(l.source),
 	}
 }
 
@@ -439,14 +510,14 @@ func logProviderAdmissionState(snapshot ProviderAdmissionSnapshot) {
 	providerAdmissionMu.Unlock()
 
 	if changed {
-		logging.Debugf("[provider_admission] key=%s effective_max_concurrency=%d in_flight=%d queue_waiting=%d source=%s queue_timeout=%s (ci#620)",
+		logging.Debugf("[provider_admission] key=%s effective_max_concurrency=%d in_flight=%d queue_waiting=%d source=%s limiting_source=%s queue_timeout=%s (ci#620)",
 			snapshot.Key, snapshot.MaxConcurrency, snapshot.InFlight, snapshot.QueueWaiting, snapshot.Source,
-			snapshot.QueueTimeout.Round(time.Millisecond))
+			snapshot.LimitingSource, snapshot.QueueTimeout.Round(time.Millisecond))
 		return
 	}
 	if snapshot.Saturated {
-		logging.Warnf("[provider_admission] key=%s saturated: in_flight=%d at effective_max_concurrency=%d queue_waiting=%d (ci#620)",
-			snapshot.Key, snapshot.InFlight, snapshot.MaxConcurrency, snapshot.QueueWaiting)
+		logging.Warnf("[provider_admission] key=%s saturated: in_flight=%d at effective_max_concurrency=%d limiting_source=%s queue_waiting=%d (ci#620)",
+			snapshot.Key, snapshot.InFlight, snapshot.MaxConcurrency, snapshot.LimitingSource, snapshot.QueueWaiting)
 	}
 }
 
