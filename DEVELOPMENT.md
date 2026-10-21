@@ -540,55 +540,19 @@ and the state filter combined with the sibling filters and search) and the
 "chat list state filter is part of the request key (ci#761)" block in
 `frontend/packages/ui/src/components/chat/chat-list.test.tsx`.
 
-### A native interaction that cannot start is reported, never a silent idle (ci#609)
+### Coding-agent, sandbox and CI-relay documentation is private
 
-When the sandbox node was saturated, a dispatched native `msgmate_coder`
-interaction could stay `state=idle` with `newest_agent_msg=none` **forever**: no
-bot message, no `Unschedulable: … Insufficient cpu` provisioning error, nothing
-the operator or the external auto-continue dispatcher could act on. The loop just
-printed `[loop] state=idle continuations=0 newest_agent_msg=none finished=false`
-until it gave up, and the dispatched work looked frozen and lost.
+The native coding-agent, sandbox, provider-admission, auto-consolidation,
+dev-lead/CI-failure-relay and context-budgeting documentation is owned by the
+private `msgmate_coder` integration and lives with its code
+(`open-chat-go-msgmate-coder`, `docs/`). It is served to a running coding
+interaction through the integration `coder_docs` tool.
 
-The core now detects that condition from durable state and reports it
-(`backend/api/chats/interaction_stall.go`). An interaction is **stalled** when
-
-- it is an interaction chat;
-- **nothing is live** for it - no `bot:reply` task active/pending/scheduled/retry
-  (including a reply queued behind a live turn, ci#656), and no external chat
-  backend reporting a running generation;
-- its newest message is still the prompt (the agent never produced a turn after
-  it) and does not wait on the user (no pending confirmation - a parked
-  confirmation is a decision, never a stall);
-- and that prompt has rested longer than the stall window.
-
-`ResolveInteractionStatus` then annotates the deterministic status with
-`stalled`, `stall_reason` (`stall_no_first_turn`), `stall_age_seconds` and
-`stall_threshold_seconds`, and the trusted agent-dispatch view
-(`GET /api/v1/agents/interactions…`) carries the same fields - so the external
-dispatcher loop can turn an idle-timeout into a failure naming the interaction
-URL instead of stopping silently, and a lead agent can tell a silent freeze from
-healthy idle work.
-
-Reading `GET /api/v1/chats/{chat_uuid}/status` (the endpoint the loop polls)
-also **posts one visible, persisted bot error** for a stalled chat: `finished` +
-`error` metadata with `failure_reason=stall_no_first_turn` and an
-`interaction_stall` detail block. The message states the observed age, the
-resolved window and what to do (re-dispatch, or continue once capacity is free),
-and it makes the interaction resolve as `failed` instead of `idle`. The report is
-idempotent (a `interaction_stall_report` marker on the message), so polling the
-status cannot spam the transcript.
-
-The stall window is resolved with the ci#620 precedence **deployment env →
-per-agent shared config → dispatch metadata → default**:
-
-- `OCI_INTERACTION_STALL_AFTER_SECONDS` (deployment-wide; `0` disables the
-  guard);
-- `interaction_stall_after_seconds` in the agent's shared config (or in its
-  `agent_dispatch` block);
-- default `10m`, matching the window the external dispatcher loop observes
-  before it gives up.
-
-Regression tests: `backend/api/chats/interaction_stall_test.go`.
+This repository keeps only generic material: setup, build, profiles and the
+integration contract. The generic extension points an integration uses are the
+versioned integration event envelope and sink in the public integration
+interface (`docs/integration-events.md`), the integration-owned route
+registration (`Definition.RouteRegistrar`) and its own tool/CLI definitions.
 
 ### Clone the repository
 
@@ -736,44 +700,6 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
 
-### Agent and CI automation lives in the private integration
-
-Sandbox provisioning, the agent fleet orchestration, CI event routing and the
-hive-mind dispatch tool families are owned by the private `msgmate_coder`
-integration (see its `docs/`), not by this repository. Only the generic
-integration contract (integration profiles, event envelopes, route/handler
-registration) is described below.
-
-#### First-class docker tooling (ci#787)
-
-Coding sandboxes are routinely provisioned **without a docker daemon**, and the
-worst failure mode was agents improvising around it: `docker compose up`,
-`docker run`, repeated `docker build` retries, occasionally installing a daemon
-inside the sandbox. That burns sandbox time, hides the real blocker and can leak
-host state. Docker work therefore goes through a typed surface instead of
-hand-written shell commands:
-
-- the registry in `backend/nativecoder/dockertooling.go` is the single source of
-  truth: every tool is named `docker_sandbox_*` and owned by the
-  `docker_sandbox` integration (`check`, `ps`, `logs`, `build`, `run`, `compose`,
-  `exec`), declares typed arguments, the raw shell shapes it retires, and a
-  policy (read-only, bounded output, `--rm`, never `--privileged`, no implicit
-  credentials);
-- `development/scripts/coder_docker.sh` is the one supported shell entry point
-  when the typed tools are not wired up yet, and it doubles as the readiness
-  probe (`coder_docker.sh check`);
-- `development/scripts/check_coder_sandbox_readiness.sh` reports docker as a
-  **soft** requirement: a missing CLI or unreachable daemon is guidance, not a
-  readiness failure, while a missing wrapper is a hard failure because it would
-  push agents back to raw docker commands;
-- the `integration_clis` phase of the bash-retirement plan points at the whole
-  docker registry, so `docker ps`/`docker build`/`docker compose` shell usage is
-  retired rather than tolerated.
-
-When no daemon is reachable: report the gap in the PR or issue body, keep the
-change, run the fast docker-free checks (unit tests, `gofmt`, lint), and let PR
-CI be the authoritative gate for image builds, compose up and e2e suites.
-**Never install or start a docker daemon inside the sandbox.**
 
 ### Custom integration profiles
 
@@ -948,177 +874,3 @@ Also useful:
 
 - [Build tools README](../development/build-tools/README.md) — the `openchat-integrations` CLI.
 
-### Bot/agent runbooks are private, never in this repository
-
-This guide is **human-facing only**: setup, build, run, test, deploy,
-contributing and public architecture. The operational runbooks for the
-development bots - how the lead and consolidation agents moderate a fleet, how
-the coding agents are admitted, budgeted, compacted and continued, the PR label
-policy and the CI-failure routing - are **not** kept in this repository.
-
-They live in the private integration that owns the agents
-(`msgmate-io/open-chat-go-msgmate-coder`, `docs/agent/`) and are served to a
-native `msgmate_coder` interaction at runtime by the integration's `coder_docs`
-tool, which is part of the default coder tool surface (`action: "list"` to see
-the pages, `action: "read"` to fetch one). Nothing is embedded or mirrored
-here, so the guidance reaches the agent that needs it without shipping to the
-public repo. That repository's README documents the mechanism.
-
-Maintainers who need the runbooks get access to the private integration
-repository (or ask a coder agent to quote a page through `coder_docs`). Do not
-add agent runbooks, playbooks or an agent-doc tree back to this repository:
-`go test ./docguard/` in `backend/` fails when agent-only documentation
-reappears publicly.
-
-### Native bot runtimes on the ci deployment (ci#584)
-
-The development bots of the ci deployment run on the native `msgmate-coder`
-runtimes. The flip lives in `backend/nativecoder/rollout.go`: the fleet moves
-family by family (plan, then repl/coding, then review, then admin, then the
-coordinating `msgmate-coder` lead last), every family keeps the retired opencode
-runtime configured but out of rotation for the rollback window, and the opencode
-integration is only dropped once every family has been native and stable and a
-rollback was proven on a non-critical family. `RetirementBlockers` is the
-machine-checked go/no-go for that last step and `RenderNativeBotRolloutMarkdown`
-renders the table the private runbook shows. Runtime selection in a
-runtime-selector message maps the older bot names onto the native runtime via
-`LegacyRuntimeBotAliases`, which is derived from the same registry, so retiring a
-family is a one-line change with a test behind it.
-
-The API side of the same rollout is staged by `NATIVE_CODER_CUTOVER`
-(`fallback` | `native` | `retired`, unset means `fallback`) and implemented in
-`backend/api/msgmate/runtime_cutover.go`:
-
-- `fallback` keeps the opencode bots offered as the immediate rollback.
-- `native` is the canary window: the fleet is served natively, the opencode
-  choices stay visible until the flip is signed off.
-- `retired` drops every non-native runtime choice from a runtime-selector
-  payload and refuses to resolve an external `chat_backend: opencode`, so a
-  stale chat config or a reinstalled integration cannot route a chat back onto
-  the retired runtime.
-
-The stage is read per request, so a rollout (or a rollback) is an env change on
-the deployment, no rebuild and no data migration. `publish-open-chat-config.yaml`
-(vault-sync, `DRY_RUN=true` first) is the path for that change. The ci deployment
-profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
-rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
-`backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
-forward makes `retired` unreachable no matter what the vault says.
-
-### Native coder / opencode capability parity (ci#394)
-
-The second half of the replacement goal is *capability*: flipping the fleet is
-pointless while the native `msgmate_coder` agent still misses parts of the
-opencode surface it replaces. `backend/nativecoder/opencodeparity.go` keeps that
-gap list as data - the nine gaps of ci#394 with their sequencing phase
-(`now`/`next`/`later`), status (`open`/`partial`/`closed`), the coder tool that
-closes the gap, the opencode capability it replaces, the tracker tickets and a
-one-line note about the current shortfall:
-
-- `ValidateOpenCodeParityPlan` fails on a malformed registry (duplicate or
-  unknown ids, unknown phase/status, a tool claimed by two gaps, or a `closed`
-  gap naming a tool the coder does not ship), and the unit tests call it for the
-  shipped registry.
-- `RetirementParityBlockers` is the capability gate: while any blocking gap is
-  open it returns one line per gap, and `RetirementReadiness` composes it with
-  the mechanical `RetirementBlockers` above, so "can we drop opencode?" is a
-  single call. Both must be empty.
-- `ParityRetentionEntries` turns the open gaps into the `RetainedParity` reason
-  the migration state requires, so a family still on opencode because of a gap
-  is a recorded exception instead of a silent default.
-- `RenderOpenCodeParityMarkdown` and `OpenCodeParityJSON` render the same data
-  for the private runbook and for run evidence; closing a gap in prose without
-  closing it in the registry no longer matches what the gate reports.
-
-While a gap is still open the agent needs to know what to do *instead* of the
-opencode capability it misses, and that mitigation is data too:
-`backend/nativecoder/parityfallbacks.go` keeps one fallback line per gap id
-(`ParityFallbackFor`, `ParityFallbackGuidanceLines`,
-`RenderParityFallbackMarkdown`, `ParityFallbackJSON`). Each line names at least
-one tool of `CoderSurfaceTools()`, so the guidance can only point at a tool the
-coder actually ships, and `ValidateParityFallbackGuidance` /
-`UncoveredParityGapIDs` fail when a new gap is registered without a mitigation, a
-mitigation names no shipped tool, or a *closed* gap still carries a workaround
-(that would tell the agent to avoid a capability the coder already has). That
-keeps ci#394 honest in both directions: the registry says what is missing, the
-fallback table says how the coder copes until it is added.
-
-Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
-allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
-image and structured reads, session compaction, and only then the large pieces
-(sub-agents, code search/LSP, per-workspace MCP).
-
-### A/B validation of the opencode -> native flip (ci#583, umbrella ci#585)
-
-Before a bot family is flipped from its opencode-era bot to the native
-`msgmate-coder` replacement, the two are run side by side on the same tickets
-and compared axis by axis. That evidence is data, not prose:
-`backend/nativecoder/abvalidation.go` holds the comparison axes (ticket
-implemented, PR opened with CI labels, auto-sandbox used, no `chat_backend`
-fallback, auto-continue completed the turn, no parked turn) and the gate over the
-recorded paired runs.
-
-- `ABValidationCases()` is the empty state ci#583 starts from; `ABValidationTemplate()`
-  is the fill-in skeleton (one row per family and run, pairing pre-filled), and
-  `ValidateABValidationPlan` rejects a plan with an unknown family, a family
-  paired against the wrong runtime or a foreign legacy bot, an unknown axis, or a
-  family with no paired run.
-- `ABValidationFamilyBlockers` / `ABValidationFlipAllowed` gate a single family
-  (too few runs, a missing outcome, or a native regression on an axis the legacy
-  run passed); `ABValidationBlockers` adds the fleet-wide ci#581 parity gaps, so
-  "may we start the rollout?" is one call.
-- `ABValidationSignOff` derives the `ABValidationDone` field of the ci#585
-  retirement gate from the evidence via `ABValidatedRetirementState`, so the
-  umbrella flag is a fact about the paired runs instead of a hand-set boolean.
-- `MigrationUmbrellaSteps` derives the ci#585 checklist (parity, config delta,
-  A/B, rollout, retire) from the same registries, so the umbrella cannot claim
-  progress the repository does not support; a blocked step carries the first
-  blocker as its detail.
-
-`go run ./backend/scripts/ab_validation_report/` renders the table, with
-`--format=json|text` and `--umbrella` for the checklist; it takes JSONL paired
-runs (blank lines and `#` comments ignored) and is read-only - it never
-dispatches a bot and never touches the deployment.
-
-### opencode retirement umbrella (ci#585)
-
-`backend/nativecoder/opencoderetirement.go` gates the retirement of the opencode
-integration on the flipped fleet. `backend/nativecoder/retirementevidence.go`
-breaks the same gate down per umbrella step (`OpencodeRetirementEvidence`): each
-checklist entry of the ticket gets the status the gate implies and the blocker
-lines that belong to it, and `RenderOpencodeRetirementEvidenceMarkdown` renders
-that table for a ticket comment. Because the rows are derived from
-`OpencodeRetirementBlockers`, a step cannot be reported as signed off while its
-blocker is still listed.
-
-The config half of the same umbrella (ci#582) is the *delta* the flip publishes:
-`backend/nativecoder/retirementdelta.go` renders the per-bot runtime mutations
-from the same flip registry - `OpencodeRetirementFlipDelta`,
-`OpencodeRetirementRollbackDelta`, `OpencodeRetirementDeltaJSON` - together with
-the ordered apply plan (`OpencodeRetirementDeltaApplyPlan`), which goes through
-the vault-sync path `publish-open-chat-config.yaml` with `DRY_RUN=true` first.
-`ValidateOpencodeRetirementDeltas` fails unless the rollback delta is the exact
-inverse of the flip delta, and `PendingOpencodeRetirementFlipDelta` reports the
-entries still outstanding for the observed fleet, so the delta, the gate and the
-deployment never disagree. The read-only job
-`backend/scripts/opencode_retirement_report` prints the per-step evidence
-(`--format=markdown`, `--format=json`) or the flip delta (`--format=delta`) for a
-ticket comment; `--require-ready` turns the gate into a non-zero exit for a
-scripted check.
-
-## Decoupled integration builds (ci#423)
-
-Once an integration's shipped packages no longer import `backend/...` (verified by
-`development/scripts/check_integration_decoupling.py`), it can be built against its
-minimal compile inputs only:
-
-- pass `decoupled: true` to `.github/workflows/reusable-integration-module-ci.yaml`, or
-- set `DECOUPLED=true` when calling `development/scripts/integration_module_ci.sh` directly.
-
-That path skips profile materialization, so the compile inputs are the integration
-module plus the pinned `clients/go_integration_interface` module, and it enforces the
-decoupling guard (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`). It is the
-per-integration prebuild precondition from the ci#345 design
-(`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
-for the remaining integrations lives in
-`frontend/pages/docs/content/integration-development.mdx`.
