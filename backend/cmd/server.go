@@ -1226,6 +1226,19 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		if integrationScheduler != nil {
 			defer integrationScheduler.Shutdown()
 		}
+		// ci#747 (RC1, depends on ci#744): seed the declarative self-message
+		// schedules (OPEN_CHAT_SELF_MESSAGE_SCHEDULES) in the same single-owner
+		// gate as the integration scheduler, so a configured actor re-fires its
+		// own loop instead of idling until a human re-dispatches it. The runtime
+		// is a no-op (nil, nil) when nothing is configured.
+		selfMessageRuntime, err := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
+		if err != nil {
+			return err
+		}
+		if selfMessageRuntime != nil {
+			defer selfMessageRuntime.Shutdown()
+			logging.Infof("Self-message self-resume schedules active (ci#744/ci#747)")
+		}
 	} else {
 		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
