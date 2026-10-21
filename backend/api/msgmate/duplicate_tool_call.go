@@ -25,10 +25,11 @@ const (
 		"%s]"
 
 	// duplicateToolCallNarrowHint is the tool-specific "what to do instead"
-	// hint appended to the frame.
+	// hint appended to the frame, used when a tool has no entry in the map
+	// below.
 	duplicateToolCallNarrowHint = " For %s, narrow the range instead (" +
 		"`coder_read` with `offset`/`limit`, `coder_list` with `depth`, " +
-		"`coder_grep` with `path`/`include`, `coder_bash` redirecting to a file)."
+		"`coder_grep` with `path`/`include`, a typed tool instead of `coder_bash`)."
 )
 
 // duplicateToolCallHints maps a tool name to the concrete alternative to a
@@ -37,7 +38,8 @@ var duplicateToolCallHints = map[string]string{
 	"coder_read": " For coder_read, read a narrower `offset`/`limit` range or a different file.",
 	"coder_list": " For coder_list, list a shallower `depth` or a subdirectory instead of the whole tree.",
 	"coder_grep": " For coder_grep, narrow the pattern and pass an explicit `path`/`include`.",
-	"coder_bash": " For coder_bash, run a narrower command or redirect the output to a file and read the ranges you need.",
+	"coder_bash": " For coder_bash, run a narrower command, redirect the output to a file and read the ranges you need, " +
+		"or use the typed tool for this kind of work (see the bash-coverage hint).",
 	"coder_git":  " For coder_git, ask for a smaller range (`limit`, a single `path`, or one commit).",
 	"coder_glob": " For coder_glob, use a tighter pattern so the match set is smaller.",
 }
