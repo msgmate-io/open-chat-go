@@ -135,8 +135,35 @@ the *network* half, but the pool must be bounded by the same bound the port
 allocation is derived from (`coder_sandbox_max_agents_per_pool` /
 `..._max_shared_workspaces`, default 4): the slot count **is** the max-agents
 bound, so a pool cannot be sized for 20 agents and allocate 4 slots. The memory
-half lives in the sibling budget resolver (ci#662); per-workspace cgroups remain
-a follow-up.
+half lives in the sibling budget resolver (ci#662).
+
+## Resource bound (the second half of `MaxWorkspaces`)
+
+`MaxWorkspaces` bounds *how many* agents share one pod, not *how much* one of
+them may consume; a single agent compiling a large tree can still starve the
+others. `cgroupguard.go` is that second bound as policy, in the same
+"policy + validation first, provisioning later" shape as the network half:
+
+- one cgroup v2 slice per workspace under a configurable slice root
+  (`open-chat-pool-workspace-<uuid>.slice`), with per-workspace `cpu.max`,
+  `memory.max` and `pids.max` (defaults: half a core, 2 GiB, 512 pids);
+- the pod budget is what the slices are carved from, and an enabled guard whose
+  per-workspace limits would oversubscribe it is **refused** (`ErrInvalidCgroupPolicy`)
+  rather than silently overcommitting the node;
+- a pool without cgroup v2 delegation fails closed
+  (`ErrWorkspaceCgroupUnavailable`) instead of running unbounded; the guard is on
+  by default and the opt-out is the explicit lever
+  `OCI_MSGMATE_CODER_SANDBOX_CGROUP_GUARD=0`;
+- the two bounds agree at the call site: `EffectiveMaxWorkspaces` takes the
+  smaller of the network bound and the resource bound, as this note requires;
+- a full guard is a named signal (`CgroupExhaustedError` /
+  `IsCgroupExhausted`, `pool_cgroup_exhausted`) that reuses the same remedy list
+  (spill to another pool pod, then a dedicated sandbox).
+
+The guard is process-local bookkeeping (`CgroupGuard`, mirroring
+`PortAllocator`: idempotent per workspace, released on lease teardown); writing
+the slices themselves and injecting the returned env belong to the shared
+sandbox provisioning path. Per-workspace **disk** quota remains a follow-up.
 
 ## Failure modes (and what the operator sees)
 
@@ -150,6 +177,10 @@ a follow-up.
 | sensitive repo on a shared pool | denied by the repo gate with a reason | `SharedNetnsPermitted` reason |
 | N agents, one node saturated | the ci#691 capacity cooldown applies (unchanged) | capacity error placeholder |
 | all port blocks of a pool in use | the lease is refused with `ErrPoolNetworkCapacity`; the lease path may spill to another pool pod or fall back to a dedicated sandbox | `PoolNetworkExhaustedError` / `IsPoolNetworkExhausted`, and `exhaustion_signal` in the admin plan status |
+| pool without cgroup v2 delegation | the resource guard **fails closed**: no unbounded workspace is provisioned | `ErrWorkspaceCgroupUnavailable`, reported by `CgroupGuard.ReportLines()` |
+| per-workspace limits over the pod budget | the policy is refused with both numbers named instead of overcommitting the node | `ErrInvalidCgroupPolicy` |
+| every resource slice of a pool in use | the lease is refused; same remedy list as the network bound | `CgroupExhaustedError` / `IsCgroupExhausted`, signal `pool_cgroup_exhausted` |
+| guard disabled by lever | workspaces run unbounded (explicit, recorded opt-out) | `CgroupGuard.ReportLines()` says "unbounded" |
 
 ## Follow-ups (ticket, do not implement here)
 
@@ -159,8 +190,9 @@ a follow-up.
    remains and the resolver's default already covers it.
 2. **Per-workspace netns provider (`slirp4netns`/user-netns)** — the true
    isolation option for a shared pod, with the `loopback_alias` fallback.
-3. **Per-workspace cgroup/disk quota** in the pool (the memory half of ci#662,
-   extended to the shared case).
+3. **Per-workspace disk quota** in the pool — the CPU/memory/pids half is
+   implemented as policy in `cgroupguard.go` (see "Resource bound" above);
+   disk is still unbounded and needs the same fail-closed treatment.
 4. **Inject the policy env in the coder tool path** — `Policy.EnvFor` is ready;
    the wiring into workspace provisioning belongs to the shared-sandbox ticket's
    provisioning code (ci#602), not to this design note.
