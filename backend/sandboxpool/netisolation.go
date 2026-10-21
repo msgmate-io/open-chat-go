@@ -249,7 +249,7 @@ func (e *PoolNetworkExhaustedError) Signal() string { return PoolNetworkExhauste
 // Remediations lists the ways out in the order the lease path should try them:
 // another pool pod first, a dedicated sandbox as the fallback.
 func (e *PoolNetworkExhaustedError) Remediations() []string {
-	return []string{RemediationSpillPoolPod, RemediationDedicatedSandbox}
+	return exhaustionRemediations()
 }
 
 // AsPoolNetworkExhausted extracts the exhaustion signal from err, wrapping

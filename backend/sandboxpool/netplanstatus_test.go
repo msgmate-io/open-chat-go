@@ -1,6 +1,7 @@
 package sandboxpool
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,11 @@ func TestNetworkPlanStatusRendersPolicy(t *testing.T) {
 	if status.Exhausted {
 		t.Error("plan reported exhausted with a free slot")
 	}
+	// The ci#792 signal is set only for a full pool: an advisory field that is
+	// always populated would train automation to ignore it.
+	if status.ExhaustionSignal != "" || len(status.ExhaustionRemediations) != 0 {
+		t.Errorf("signal/remediations = %q/%v on a pool with free slots", status.ExhaustionSignal, status.ExhaustionRemediations)
+	}
 	if strings.Join(status.Notes, " ") == "" {
 		t.Error("plan carries no notes")
 	}
@@ -99,6 +105,26 @@ func TestNetworkPlanStatusReportsExhaustion(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(status.Notes, " "), "ErrPoolNetworkCapacity") {
 		t.Errorf("exhaustion note missing the sentinel: %v", status.Notes)
+	}
+	// The surfaceable half of the ci#792 signal: a stable name and the ordered ways
+	// out, so automation does not have to parse the note.
+	if status.ExhaustionSignal != PoolNetworkExhaustedSignal {
+		t.Errorf("exhaustion_signal = %q, want %q", status.ExhaustionSignal, PoolNetworkExhaustedSignal)
+	}
+	if got := status.ExhaustionRemediations; len(got) != 2 ||
+		got[0] != RemediationSpillPoolPod || got[1] != RemediationDedicatedSandbox {
+		t.Errorf("exhaustion_remediations = %v, want the spill then the dedicated fallback", got)
+	}
+	// The wire names are the contract the admin API publishes, so pin them: a
+	// renamed tag would silently break the automation that reads a name.
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	for _, marker := range []string{`"exhaustion_signal":"` + PoolNetworkExhaustedSignal + `"`, `"exhaustion_remediations":[`} {
+		if !strings.Contains(string(encoded), marker) {
+			t.Errorf("status JSON %s is missing %s", encoded, marker)
+		}
 	}
 
 	// The view is read-only: it must not have consumed or freed any block.
