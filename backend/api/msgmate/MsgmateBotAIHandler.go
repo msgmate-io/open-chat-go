@@ -801,6 +801,12 @@ func (aih *AIHandlerImpl) buildOpenAIMessages(paginatedMessages *client.Paginate
 // have aged out of the context window survive in the model context. It is a
 // no-op when summary is empty.
 func injectContextSummary(messages []map[string]interface{}, summary string) []map[string]interface{} {
+	// ci#793: a persisted compaction summary must not reach the model as a
+	// durable "the reads were evicted, re-read them" directive - that is what
+	// turned each turn into the same git show/git grep re-fetch loop. The
+	// summary is stabilized (findings kept verbatim, volatile directives
+	// stripped, an explicit no-re-fetch rule appended) before injection.
+	summary, _ = SanitizeCompactionSummary(summary)
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		return messages
