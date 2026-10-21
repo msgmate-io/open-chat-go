@@ -25,4 +25,10 @@ func TestServerBootArmsSelfMessageSchedules(t *testing.T) {
 			t.Errorf("backend/cmd/server.go no longer references %q: an idle interaction would never self-resume (ci#747 RC1)", needle)
 		}
 	}
+	// ci#785: an unknown configured bot must NOT abort the boot. The r56 branch
+	// returned an error here, so every CI deployment (whose database has no
+	// development-lead bot user) failed to start the backend at all.
+	if strings.Contains(boot, "self-message scheduler failed to start: %w") {
+		t.Errorf("backend/cmd/server.go aborts the boot when the configured self-message bot is unknown (ci#785)")
+	}
 }

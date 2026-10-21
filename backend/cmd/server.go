@@ -1239,13 +1239,17 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	// queue scheduler, so exactly one instance seeds the tasks.
 	if c.Bool("run-scheduler") {
 		selfMessageRuntime, selfErr := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
-		if selfErr != nil {
-			return fmt.Errorf("self-message scheduler failed to start: %w", selfErr)
-		}
-		if selfMessageRuntime != nil {
+		switch {
+		case selfErr != nil:
+			// ci#744 / ci#785: self-messaging is an optional convenience on top of
+			// the queue scheduler. A deployment that does not know the configured
+			// bot (for example a fresh CI database where the bot user was never
+			// seeded) must not lose its backend to it: log loudly and keep serving.
+			logging.Errorf("self-message schedules disabled, idle interactions will not self-resume: %v", selfErr)
+		case selfMessageRuntime != nil:
 			defer selfMessageRuntime.Shutdown()
 			logging.Infof("Armed the self-message schedules (ci#744); idle interactions now self-resume")
-		} else {
+		default:
 			logging.Infof("No self-message schedules configured (%s unset)", msgmate.SelfMessageScheduleEnvVar)
 		}
 	}
