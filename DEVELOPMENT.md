@@ -1152,10 +1152,32 @@ non-empty array. Enable the `hive_mind_*` tools (plus the `mcp:` interaction
 history tools) for lead/dev-agent chats; a leaf worker agent that only
 implements one issue does not need the dispatch family.
 
+**As of the native-dispatch default, step 1 is automatic.** A native
+coder/dev-agent config (see `nativecoder.IsCoderAgentConfig`) now receives the
+`hive_mind_agent_*` / observe / state / influence family by default, applied
+where the coder defaults are applied (`api/bots` + `api/chats`), so a fresh
+deployment works without hand-editing every agent. Overrides, in order of
+precedence:
+
+- an **explicit non-empty `tools` list always wins** - narrowing an agent keeps
+  the deprecated workflow route the only dispatch path for that agent
+  (`EvaluateDevAgentDispatchReadiness` reports `LegacyRouteRequired`);
+- per-agent shared-config `dev_agent_hivemind: false` turns the default off for
+  one config;
+- deployment-wide kill switch `OPENCHAT_DEV_AGENT_HIVEMIND_TOOLS=off`
+  (also `0`/`false`/`no`/`disabled`).
+
+Non-coder configs are never touched, so end-user chats cannot start agents.
+Use `nativecoder.EvaluateHiveMindUsage` on historical run records to check
+whether the family is actually being *used* (chats using the hive mind,
+per-tool call counts, unused tools, coverage) instead of assuming adoption.
+
 ### Migration order
 
 1. Enable and verify the native tools for the lead/dev-agent chats on
-   ci.msgmate.io (a dispatch -> observe -> continue/stop round-trip).
+   ci.msgmate.io (a dispatch -> observe -> continue/stop round-trip). Enabling
+   is now the default for native coder/dev-agent configs, so this reduces to
+   verifying the live round-trip on the deployed instance.
 2. Keep both routes until the native route is verified live.
 3. Then retire the workflow from the lead's prompt/config in one consolidation
    PR and record the version that flipped it, so the change is revertible.
