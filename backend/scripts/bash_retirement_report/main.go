@@ -1,6 +1,6 @@
 // Command bash_retirement_report is the measurement job of the coder_bash
-// retirement plan (ci#514): the phase 0 coverage metric and the phase 1 GitHub
-// exit criterion.
+// retirement plan (ci#514): the phase 0 coverage metric, the phase 1 GitHub
+// exit criterion and the per-phase exit gates derived from them.
 //
 // It reads historical native-coder tool calls and buckets every `coder_bash` /
 // `coder_git` call by category and by repository, then prints the coverage
@@ -33,10 +33,12 @@
 //	go run ./backend/scripts/bash_retirement_report calls.jsonl --format=json
 //	go run ./backend/scripts/bash_retirement_report calls.jsonl --format=text
 //
-// Output defaults to pretty JSON on stdout (`github_phase1` carries the phase 1
-// readiness metric); `--format=text` prints a short human summary for pasting
-// into a ticket comment. The job is read-only and performs no network calls: it
-// only classifies the command shapes it is given.
+// Output defaults to pretty JSON on stdout: the coverage report plus the
+// per-phase exit gates derived from it (`phases`, `ready_to_close`); the phase 1
+// readiness metric rides along under `github_phase1`, so a reader can consume
+// the coverage numbers exactly as before. `--format=text` prints a short human
+// summary for pasting into a ticket comment. The job is read-only and performs
+// no network calls: it only classifies the command shapes it is given.
 package main
 
 import (
@@ -61,13 +63,19 @@ type reportLine struct {
 	Date      string          `json:"date,omitempty"`
 }
 
-// retirementReport is the job's output: the phase 0 coverage metric plus the
-// phase 1 GitHub exit criterion measured on the same samples.
+// retirementReport is the job's output: the phase 0 coverage metric, the
+// phase 1 GitHub exit criterion measured on the same samples, and the per-phase
+// exit gates (ci#514) that turn the metric into "may this phase close?".
 type retirementReport struct {
 	nativecoder.BashCoverageReport
 	// GitHubPhase1 is the phase 1 readiness metric, emitted as its own object
 	// so a reader can consume the coverage numbers exactly as before.
 	GitHubPhase1 nativecoder.GitHubShellTranslationReport `json:"github_phase1"`
+	// Phases carries one machine-checked exit gate per plan phase.
+	Phases []nativecoder.BashRetirementPhaseGate `json:"phases"`
+	// ReadyToClose is true only when every phase that retires a category has
+	// met its exit criteria against this sample.
+	ReadyToClose bool `json:"ready_to_close"`
 }
 
 func main() {
@@ -115,8 +123,8 @@ func main() {
 	}
 }
 
-// flagsFirst reorders `args` so that flags precede positional arguments,
-// letting the job accept `calls.jsonl --format=text` as documented.
+// flagsFirst moves flag arguments ahead of positional ones so the documented
+// `job calls.jsonl --format=text` form works with the stdlib flag package.
 func flagsFirst(args []string) []string {
 	flags := make([]string, 0, len(args))
 	positional := make([]string, 0, len(args))
@@ -124,7 +132,6 @@ func flagsFirst(args []string) []string {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") && arg != "-" {
 			flags = append(flags, arg)
-			// Carry an explicit `--format text` value along with the flag.
 			if !strings.Contains(arg, "=") && isValueFlag(arg) && i+1 < len(args) {
 				i++
 				flags = append(flags, args[i])
@@ -143,7 +150,8 @@ func isValueFlag(arg string) bool {
 }
 
 // readSamples consumes a JSONL export into the sample slice both metrics are
-// computed from, so phase 0 and phase 1 always see exactly the same evidence.
+// computed from, so phase 0, phase 1 and the exit gates always see exactly the
+// same evidence.
 func readSamples(input io.Reader) ([]nativecoder.BashCallSample, error) {
 	samples := []nativecoder.BashCallSample{}
 	scanner := bufio.NewScanner(input)
@@ -178,16 +186,23 @@ func readSamples(input io.Reader) ([]nativecoder.BashCallSample, error) {
 	return samples, nil
 }
 
-// buildReport computes both plan metrics over one sample set.
+// buildReport computes both plan metrics and the phase exit gates over one
+// sample set, so JSON and text output always agree on `phases` and
+// `ready_to_close`.
 func buildReport(samples []nativecoder.BashCallSample) retirementReport {
+	coverage := nativecoder.ComputeBashCoverage(samples)
+	phases := nativecoder.EvaluateBashRetirementPhases(coverage)
 	return retirementReport{
-		BashCoverageReport: nativecoder.ComputeBashCoverage(samples),
+		BashCoverageReport: coverage,
 		GitHubPhase1:       nativecoder.MeasureGitHubShellTranslation(samples),
+		Phases:             phases,
+		ReadyToClose:       nativecoder.BashRetirementReadyToClose(phases),
 	}
 }
 
 // renderText renders the report as a short ticket-comment summary: the phase 0
-// coverage table followed by the phase 1 GitHub exit criterion.
+// coverage table, the phase 1 GitHub exit criterion and the per-phase exit
+// gates.
 func renderText(report retirementReport) string {
 	coverage := report.BashCoverageReport
 	var b strings.Builder
@@ -210,6 +225,7 @@ func renderText(report retirementReport) string {
 		fmt.Fprintf(&b, "\nstill outstanding: %s\n", strings.Join(coverage.OutstandingCategories, ", "))
 	}
 	b.WriteString(renderGitHubPhase1Text(report.GitHubPhase1))
+	b.WriteString(renderPhaseGatesText(report.Phases, report.ReadyToClose))
 	return b.String()
 }
 
@@ -233,6 +249,30 @@ func renderGitHubPhase1Text(report nativecoder.GitHubShellTranslationReport) str
 	for _, example := range report.ResidualExamples {
 		fmt.Fprintf(&b, "  keeps shell: %s\n", example)
 	}
+	return b.String()
+}
+
+// renderPhaseGatesText renders the machine-checked exit gate of every plan phase
+// plus the overall close verdict, so a ticket comment can be pasted straight
+// from `--format=text`.
+func renderPhaseGatesText(phases []nativecoder.BashRetirementPhaseGate, readyToClose bool) string {
+	var b strings.Builder
+	b.WriteString("\nphase exit gates:\n")
+	for _, phase := range phases {
+		status := "open"
+		if len(phase.Categories) == 0 {
+			status = "n/a (definition phase)"
+		} else if phase.Ready {
+			status = "ready"
+		} else if !phase.Measured {
+			status = "unmeasured"
+		}
+		fmt.Fprintf(&b, "  %-28s %s\n", phase.ID, status)
+		for _, blocker := range phase.Blockers {
+			fmt.Fprintf(&b, "      blocked: %s\n", blocker)
+		}
+	}
+	fmt.Fprintf(&b, "\nready to close the retirement: %t\n", readyToClose)
 	return b.String()
 }
 
