@@ -59,11 +59,13 @@ services:
     # The budget uses the non-swarm keys (`cpus`/`mem_limit`) that
     # `docker compose up` actually honours and that the sandbox overlay
     # (`docker-compose.sandbox.yaml` in the private CI repo) also pins with
-    # the SAME env-overridable values. Expressing it as
+    # the SAME env-overridable values. Expressing the *limit* as
     # deploy.resources.limits here instead makes compose reject the merged
     # project ("can't set distinct values on 'mem_limit' and
     # 'deploy.resources.limits.memory'"), which kept the sandbox stack from
-    # starting (r56 regression, ci#785).
+    # starting (r56 regression, ci#785). The scheduling *reservation* stays
+    # under deploy.resources.reservations, which has no top-level counterpart
+    # and therefore merges cleanly.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -72,6 +74,10 @@ services:
       start_period: 5s
     cpus: "${REDIS_CPUS:-0.5}"
     mem_limit: "${REDIS_MEM_LIMIT:-512m}"
+    deploy:
+      resources:
+        reservations:
+          cpus: "${REDIS_CPU_RESERVATION:-0.1}"
     networks:
       - app-network
 

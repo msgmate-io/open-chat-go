@@ -89,6 +89,27 @@ def _scalar(value):
     return value
 
 
+#: ``${VAR}`` / ``${VAR:-default}`` / ``${VAR-default}`` compose interpolation.
+_INTERP_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}]*)\}$")
+
+
+def unquote_scalar(value):
+    """Resolve a compose scalar to the value `docker compose` would use here.
+
+    Values are quoted in the compose profiles so the numeric budgets stay
+    scalar strings; env interpolation (`${REDIS_CPUS:-0.5}`) resolves to its
+    default because the contract check runs without the deployment's
+    environment.
+    """
+    if value is None:
+        return None
+    text = _scalar(str(value))
+    match = _INTERP_RE.match(text)
+    if match:
+        return match.group(1) or None
+    return text
+
+
 def _indent_of(raw):
     return len(raw) - len(raw.lstrip())
 
@@ -173,7 +194,7 @@ def duration_seconds(value, default=None):
         return default
     if isinstance(value, (int, float)):
         return float(value)
-    text = str(value).strip()
+    text = unquote_scalar(value) or ""
     if not text:
         return default
     total = 0.0
@@ -196,7 +217,7 @@ def retry_count(value, default=DEFAULT_RETRIES):
         return default
     if isinstance(value, int):
         return value
-    text = str(value).strip()
+    text = unquote_scalar(value) or ""
     if not text:
         return default
     try:
@@ -209,7 +230,7 @@ def milli_cpus(value):
     """Milli-CPU for "0.5" / "500m" / 1, or None when unset/unparseable."""
     if value is None:
         return None
-    text = str(value).strip()
+    text = unquote_scalar(value) or ""
     if not text:
         return None
     try:
@@ -254,7 +275,13 @@ def evaluate(service):
 
     resources = _nested(service, "deploy", "resources")
     request = milli_cpus(_nested(resources, "reservations").get("cpus"))
-    limit = milli_cpus(_nested(resources, "limits").get("cpus"))
+    # The CPU *limit* is read from either dialect: the swarm
+    # `deploy.resources.limits.cpus` or the non-swarm service-level `cpus`
+    # that `docker compose up` honours (and that merges cleanly with the
+    # sandbox overlay, ci#785).
+    limit = milli_cpus(
+        _nested(resources, "limits").get("cpus") or service.get("cpus")
+    )
     if not request:
         findings.append(CPU_FINDING)
     elif request < MIN_REDIS_CPU_RESERVATION_MILLI:

@@ -94,6 +94,15 @@ services:
 """
 
 
+def _nested_get(mapping, *keys):
+    current = mapping
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
 class ShippedProfilesTest(unittest.TestCase):
     """Every redis-bearing compose profile of this repo meets ci#722."""
 
@@ -138,9 +147,15 @@ class ShippedProfilesTest(unittest.TestCase):
                     contract.milli_cpus(resources["reservations"]["cpus"]),
                     expected["request_milli"],
                 )
+                # The limit may be declared in either dialect: the swarm
+                # `deploy.resources.limits.cpus` or the non-swarm
+                # service-level `cpus` (ci#785: the latter merges cleanly
+                # with the sandbox overlay).
+                limit_value = (
+                    _nested_get(resources, "limits", "cpus") or service.get("cpus")
+                )
                 self.assertGreaterEqual(
-                    contract.milli_cpus(resources["limits"]["cpus"]),
-                    expected["limit_milli"],
+                    contract.milli_cpus(limit_value), expected["limit_milli"]
                 )
 
 
@@ -210,6 +225,26 @@ class StructureTest(unittest.TestCase):
             "        reservations:\n          cpus: 100m\n"
         )
         self.assertEqual([], contract.check_text(text))
+
+    def test_non_swarm_dialect_and_interpolation_clear_the_contract(self):
+        # ci#785: the redis budget in docker-compose.ci.yaml is declared with
+        # the non-swarm keys `cpus`/`mem_limit` (env-overridable), because a
+        # swarm-style `deploy.resources.limits` there makes compose reject the
+        # merged project against the sandbox overlay. The contract must accept
+        # that dialect and resolve the echoed defaults.
+        text = (
+            "services:\n  redis:\n    image: redis:7-alpine\n"
+            "    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n"
+            "      interval: 5s\n      timeout: 2s\n      retries: 12\n"
+            "      start_period: 5s\n"
+            '    cpus: "${REDIS_CPUS:-0.5}"\n'
+            '    mem_limit: "${REDIS_MEM_LIMIT:-512m}"\n'
+            "    deploy:\n      resources:\n        reservations:\n"
+            '          cpus: "${REDIS_CPU_RESERVATION:-0.1}"\n'
+        )
+        self.assertEqual([], contract.check_text(text))
+        self.assertEqual(500.0, contract.milli_cpus("${REDIS_CPUS:-0.5}"))
+        self.assertEqual(100.0, contract.milli_cpus("${REDIS_CPU_RESERVATION:-0.1}"))
 
     def test_absent_healthcheck_fields_use_compose_defaults(self):
         text = (
