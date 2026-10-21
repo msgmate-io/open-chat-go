@@ -2211,6 +2211,77 @@ jobs:
             | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
           echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
 
+      - name: Require a linked open-chat-go-ci leaf issue
+        # ci#813: every feature/bugfix PR implements exactly one leaf issue in
+        # the private tracker; consolidation PRs must list every leaf issue they
+        # close. GitHub cannot auto-close a cross-repository issue, so this gate
+        # and the post-merge closure in the auto-consolidation runner own the
+        # invariant. Keep this regex in sync with nativecoder.LinkedIssueNumbers.
+        env:
+          LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::warning::Fork PR: linked-issue gate skipped; a maintainer must verify the leaf-issue link."
+            exit 0
+          fi
+          if [ "${{ github.event.pull_request.base.ref }}" = "production" ]; then
+            echo "Production promotion PR: linked-issue gate exempt."
+            exit 0
+          fi
+          consolidation=false
+          case "${{ github.event.pull_request.head.ref }}" in
+            chore/consolidate*) consolidation=true ;;
+          esac
+          if [ "$consolidation" != true ]; then
+            if grep -qx 'dependencies' "${RUNNER_TEMP}/pr-labels.txt"; then
+              echo "Dependency PR: linked-issue gate exempt."
+              exit 0
+            fi
+            if grep -qx 'no-issue' "${RUNNER_TEMP}/pr-labels.txt"; then
+              echo "no-issue PR: linked-issue gate exempt."
+              exit 0
+            fi
+          fi
+          jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          mapfile -t issues < <(
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+' "${RUNNER_TEMP}/pr-body.md" \
+              | sed -E 's/.*#([0-9]+).*/\1/' \
+              | sort -n -u
+          )
+          if [ "${#issues[@]}" -eq 0 ]; then
+            echo "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line."
+            exit 1
+          fi
+          if [ "$consolidation" != true ] && [ "${#issues[@]}" -ne 1 ]; then
+            echo "::error::A feature/bugfix PR must close exactly one leaf issue; found ${#issues[@]}. Split the work or use a consolidation PR."
+            exit 1
+          fi
+          for number in "${issues[@]}"; do
+            issue="$(curl -fsSL \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/msgmate-io/open-chat-go-ci/issues/${number}")" || {
+                echo "::error::Linked issue ci#${number} was not found in msgmate-io/open-chat-go-ci."
+                exit 1
+              }
+            if jq -e '.pull_request' >/dev/null <<<"$issue"; then
+              echo "::error::ci#${number} is a pull request, not an issue."
+              exit 1
+            fi
+            state="$(jq -r '.state' <<<"$issue")"
+            if [ "$state" != "open" ]; then
+              echo "::error::Linked issue ci#${number} is ${state}; link an open leaf issue."
+              exit 1
+            fi
+            if jq -e '.labels[]? | select(.name == "umbrella")' >/dev/null <<<"$issue"; then
+              echo "::error::ci#${number} is an umbrella issue; link a leaf child issue."
+              exit 1
+            fi
+            echo "Linked CI issue ci#${number} is open and not an umbrella."
+          done
+
       # ci#659: a cancelled CI run is not a test failure . The workflow concurrency
       # group is keyed by PR number *and* head SHA with `cancel-in-progress: true`,
       # and the later job "Cancel superseded workflow runs for this PR" cancels
