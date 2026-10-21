@@ -1,0 +1,21 @@
+{
+  "integrations": {
+    "github.com/msgmate-io/go-client-integration": {
+      "backend": 0,
+      "backend_packages": [],
+      "directory": "go_client_integration",
+      "packages": 239,
+      "test_backend": 0,
+      "test_packages": 239
+    },
+    "github.com/msgmate-io/rest-api-tool-integration": {
+      "backend": 0,
+      "backend_packages": [],
+      "directory": "rest_api_tool_integration",
+      "packages": 228,
+      "test_backend": 0,
+      "test_packages": 228
+    }
+  },
+  "version": 1
+}
