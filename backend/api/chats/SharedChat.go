@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/database"
 	"backend/server/util"
+	"backend/sharecensor"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ type SharedChatPublishResponse struct {
 	AccessMode     string `json:"access_mode"`
 	TargetUsername string `json:"target_username,omitempty"`
 	TargetUserUUID string `json:"target_user_uuid,omitempty"`
+	ContentMode    string `json:"content_mode"`
 }
 
 // publishChatRequest optionally scopes a share. An omitted/empty body keeps
@@ -26,6 +28,8 @@ type SharedChatPublishResponse struct {
 type publishChatRequest struct {
 	// AccessMode is "public" (default) or "user".
 	AccessMode string `json:"access_mode"`
+	// ContentMode selects the share exposure: "censored" (default) or "unsecure".
+	ContentMode string `json:"content_mode"`
 	// TargetUsername/TargetUserUUID identify the single user a "user" share is
 	// scoped to.
 	TargetUsername string `json:"target_username"`
@@ -68,6 +72,7 @@ func findShareTargetUser(DB *gorm.DB, username, userUUID string) (database.User,
 type PublicInteractionChat struct {
 	UUID               string                 `json:"uuid"`
 	ChatShareUUID      string                 `json:"chat_share_uuid"`
+	ContentMode        string                 `json:"content_mode"`
 	ChatType           string                 `json:"chat_type"`
 	PublishedAt        string                 `json:"published_at"`
 	Partner            interface{}            `json:"partner"`
@@ -79,7 +84,7 @@ type PublicInteractionChat struct {
 	FollowUp *PublicFollowUp `json:"follow_up,omitempty"`
 }
 
-func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, accessMode string, targetUserID *uint) (database.SharedChatInstance, error) {
+func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, accessMode string, targetUserID *uint, contentMode string) (database.SharedChatInstance, error) {
 	accessMode = normalizeShareAccessMode(accessMode)
 	var share database.SharedChatInstance
 	query := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, owningUserID)
@@ -92,6 +97,12 @@ func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, ac
 	}
 	err := query.First(&share).Error
 	if err == nil {
+		if sharecensor.NormalizeContentMode(share.ContentMode) != contentMode {
+			share.ContentMode = contentMode
+			if err := DB.Model(&share).Update("content_mode", contentMode).Error; err != nil {
+				return database.SharedChatInstance{}, err
+			}
+		}
 		return share, nil
 	}
 	if err != gorm.ErrRecordNotFound {
@@ -102,6 +113,7 @@ func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, ac
 		ChatId:        chat.ID,
 		OwningUserId:  owningUserID,
 		ChatShareUUID: uuid.NewString(),
+		ContentMode:   contentMode,
 		AccessMode:    accessMode,
 		TargetUserId:  targetUserID,
 	}
@@ -157,6 +169,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessMode := normalizeShareAccessMode(payload.AccessMode)
+	contentMode := sharecensor.NormalizeContentMode(payload.ContentMode)
 	var targetUserID *uint
 	targetUsername := ""
 	targetUserUUID := ""
@@ -171,7 +184,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		targetUserUUID = target.UUID
 	}
 
-	share, err := ensureOwnedChatShare(DB, chat, user.ID, accessMode, targetUserID)
+	share, err := ensureOwnedChatShare(DB, chat, user.ID, accessMode, targetUserID, contentMode)
 	if err != nil {
 		http.Error(w, "Failed to publish chat", http.StatusInternalServerError)
 		return
@@ -181,6 +194,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(SharedChatPublishResponse{
 		ChatUUID:       chat.UUID,
 		ChatShareUUID:  share.ChatShareUUID,
+		ContentMode:    share.ContentMode,
 		AccessMode:     share.AccessMode,
 		TargetUsername: targetUsername,
 		TargetUserUUID: targetUserUUID,
@@ -283,10 +297,25 @@ func (h *ChatsHandler) GetSharedInteraction(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// A censored share must not expose the model configuration beyond the
+	// non-sensitive knobs: the system prompt and the tool init parameters may
+	// embed credentials or private workspace paths, so they are dropped (and the
+	// raw shared config is never returned as-is in censored mode).
+	censored := share.IsCensored()
+	if censored {
+		for _, key := range []string{"system_prompt", "tool_init"} {
+			delete(interactionDetails, key)
+		}
+		if _, ok := config.(map[string]interface{}); ok {
+			config = interactionDetails
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(PublicInteractionChat{
 		UUID:          chat.UUID,
 		ChatShareUUID: share.ChatShareUUID,
+		ContentMode:   sharecensor.NormalizeContentMode(share.ContentMode),
 		ChatType:      chat.ChatType,
 		PublishedAt:   share.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		Partner: map[string]interface{}{
@@ -304,6 +333,7 @@ type SharedInteractionAccessResponse struct {
 	Authenticated bool   `json:"authenticated"`
 	HasAccess     bool   `json:"has_access"`
 	ChatUUID      string `json:"chat_uuid,omitempty"`
+	ContentMode   string `json:"content_mode,omitempty"`
 }
 
 // GetSharedInteractionAccess reports whether the current viewer is
@@ -330,7 +360,8 @@ func (h *ChatsHandler) GetSharedInteractionAccess(w http.ResponseWriter, r *http
 
 	shareUUID := r.PathValue("chat_share_uuid")
 	if shareUUID != "" {
-		if chat, _, chatErr := getSharedChatByUUID(DB, shareUUID); chatErr == nil {
+		if chat, accessShare, chatErr := getSharedChatByUUID(DB, shareUUID); chatErr == nil {
+			response.ContentMode = accessShare.ContentMode
 			response.ChatUUID = chat.UUID
 			if user != nil && (chat.User1Id == user.ID || chat.User2Id == user.ID) {
 				response.HasAccess = true
@@ -371,7 +402,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 		return
 	}
 
-	chat, _, err := getSharedChatByUUID(DB, shareUUID)
+	chat, share, err := getSharedChatByUUID(DB, shareUUID)
 	if err != nil {
 		http.Error(w, "Shared chat not found", http.StatusNotFound)
 		return
@@ -412,7 +443,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeSharedMessagesJSON(w, response, share.IsCensored())
 }
 
 func findOwnedChat(DB *gorm.DB, userID uint, chatUUID string) (database.Chat, error) {
@@ -451,4 +482,21 @@ func getSharedChatByUUID(DB *gorm.DB, shareUUID string) (database.Chat, database
 	}
 
 	return chat, share, nil
+}
+
+// writeSharedMessagesJSON serialises a shared message payload and, when the
+// owning share is in the default censored content mode, strips tool-call
+// arguments/results, meta-data, reasoning and any secret-looking key before the
+// bytes are written to the response.
+func writeSharedMessagesJSON(w http.ResponseWriter, v interface{}, censored bool) error {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if censored {
+		raw = sharecensor.CensorSharedJSON(raw)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, err = w.Write(raw)
+	return err
 }

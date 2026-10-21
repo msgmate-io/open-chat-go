@@ -43,6 +43,9 @@
 #   REQUIRE_DECOUPLED    "true"/"false" - fail when the module still imports
 #                        backend/... in its shipped packages (default: false,
 #                        report only while the ci#423 migration is incremental)
+#   DECOUPLED            "true"/"false" - skip profile materialization and build
+#                        the module against its minimal compile inputs, i.e. the
+#                        per-integration prebuild precondition (ci#423)
 #   FROZEN               "true"/"false" - use the pinned lock (default: true)
 #   GO_TEST_TIMEOUT      per-package test timeout (default: 10m)
 set -euo pipefail
@@ -55,6 +58,10 @@ WORKSPACE_PATH="${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative 
 INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-core-only}"
 RUN_TESTS="${RUN_TESTS:-true}"
 FROZEN="${FROZEN:-true}"
+# ci#423: once an integration's shipped packages are decoupled, its compile inputs
+# no longer need the materialized profile - only the interface module next to it.
+# DECOUPLED=true builds exactly those inputs and enforces the decoupling guard.
+DECOUPLED="${DECOUPLED:-false}"
 GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-10m}"
 
 step() { printf '\n=== %s\n' "$*"; }
@@ -72,15 +79,23 @@ if [ -e "$WORKSPACE_PATH" ] && [ ! -d "$WORKSPACE_PATH" ]; then
   exit 1
 fi
 
-step "Materialize workspace (profile: $INTEGRATION_PROFILE, frozen: $FROZEN)"
-BUILD_TOOLS="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
-PREPARE_ARGS=(prepare --profile "$INTEGRATION_PROFILE")
-if [ "$FROZEN" = "true" ]; then
-  PREPARE_ARGS+=(--frozen)
+if [ "$DECOUPLED" = "true" ]; then
+  # ci#423: nothing to materialize - a decoupled module compiles from the
+  # interface module plus its own dependencies, so the profile repos (and their
+  # transitive backend/... graph) stay out of the build entirely.
+  step "Decoupled build: skipping profile materialization (ci#423)"
+  echo "compile inputs: $WORKSPACE_PATH + the pinned interface module only"
 else
-  PREPARE_ARGS+=(--update)
+  step "Materialize workspace (profile: $INTEGRATION_PROFILE, frozen: $FROZEN)"
+  BUILD_TOOLS="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
+  PREPARE_ARGS=(prepare --profile "$INTEGRATION_PROFILE")
+  if [ "$FROZEN" = "true" ]; then
+    PREPARE_ARGS+=(--frozen)
+  else
+    PREPARE_ARGS+=(--update)
+  fi
+  "$BUILD_TOOLS" "${PREPARE_ARGS[@]}"
 fi
-"$BUILD_TOOLS" "${PREPARE_ARGS[@]}"
 
 step "Place the pull-request checkout at $WORKSPACE_PATH"
 mkdir -p "$WORKSPACE_PATH"
@@ -90,6 +105,22 @@ if command -v rsync >/dev/null 2>&1; then
 else
   find "$WORKSPACE_PATH" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   (cd "$INTEGRATION_SRC" && tar --exclude=.git -cf - .) | (cd "$WORKSPACE_PATH" && tar -xf -)
+fi
+
+if [ "$DECOUPLED" = "true" ]; then
+  # ci#423: fail fast and with a clear message when a module that still replaces
+  # or imports backend/... is pushed down the decoupled path; otherwise the
+  # missing materialized profile only surfaces as a confusing import error.
+  step "Decoupled preflight: module must not import backend/... (ci#423)"
+  PREFLIGHT_GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
+  if [ -f "$PREFLIGHT_GUARD" ] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 "$PREFLIGHT_GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
+      echo "::error::decoupled build requires a module that no longer imports backend/... (ci#423)" >&2
+      exit 1
+    fi
+  else
+    echo "skipped: guard script or python3 unavailable"
+  fi
 fi
 
 step "Go module checks in $WORKSPACE_PATH"
@@ -138,21 +169,26 @@ fi
 # ci#345 design). The migration is incremental, so this is a report by default;
 # REQUIRE_DECOUPLED=true turns remaining coupling into a failure and is meant for
 # an integration whose go.mod cleanup has already landed.
-step "Integration decoupling report (ci#423)"
-GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
-if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
-  # Measure the materialized workspace: that layout has the relative `replace`
-  # targets next to it, so `go list -deps` resolves exactly like the build above.
-  # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
-  if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
-    if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
-      echo "::error::integration is still coupled to backend/... (ci#423)" >&2
-      exit 1
+#
+# DECOUPLED=true already enforced the guard before the build, so there is nothing
+# left to report (and the guard must not run twice).
+if [ "$DECOUPLED" != "true" ]; then
+  step "Integration decoupling report (ci#423)"
+  GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
+  if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
+    # Measure the materialized workspace: that layout has the relative `replace`
+    # targets next to it, so `go list -deps` resolves exactly like the build above.
+    # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
+    if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
+      if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
+        echo "::error::integration is still coupled to backend/... (ci#423)" >&2
+        exit 1
+      fi
+      echo "note: coupling is reported, not enforced (set REQUIRE_DECOUPLED=true to enforce)"
     fi
-    echo "note: coupling is reported, not enforced (set REQUIRE_DECOUPLED=true to enforce)"
+  else
+    echo "skipped: guard script or python3 unavailable"
   fi
-else
-  echo "skipped: guard script or python3 unavailable"
 fi
 
 echo

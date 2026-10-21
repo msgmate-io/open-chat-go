@@ -72,7 +72,7 @@ func TestMobileProxyRewritesWebSocketUpgradeOrigin(t *testing.T) {
 	withMobileProxyRuntimeConfig(t, upstream.URL)
 
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/ssh/servers/server-1/shell/ws", nil)
@@ -113,7 +113,7 @@ func TestMobileProxyKeepsOriginForNonUpgradeRequests(t *testing.T) {
 	withMobileProxyRuntimeConfig(t, upstream.URL)
 
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/list", nil)
@@ -144,7 +144,7 @@ func TestMobileProxyForwardsBrowserSchemeToUpstream(t *testing.T) {
 	withMobileProxyRuntimeConfig(t, upstream.URL)
 
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/account_management/config", nil)

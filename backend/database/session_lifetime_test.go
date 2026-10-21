@@ -12,7 +12,7 @@ import (
 
 func setupSessionLifetimeDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db := SetupDatabase(DBConfig{
+	db := SetupTestDatabase(t, DBConfig{
 		Backend:  "sqlite",
 		FilePath: filepath.Join(t.TempDir(), "session_lifetime_test.db"),
 		ResetDB:  true,

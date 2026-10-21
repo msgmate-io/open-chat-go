@@ -18,7 +18,7 @@ func setupStreamingPersistenceTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	return database.SetupTestDatabase(t, cfg)
 }
 
 // TestStreamingSnapshotPersistsToolCalls guards ci#332 item 7: persisting a

@@ -2,6 +2,7 @@ package files
 
 import (
 	"backend/database"
+	"backend/logging"
 	"backend/server/util"
 	"bytes"
 	"encoding/base64"
@@ -129,7 +130,7 @@ func (h *FilesHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	if reuploadToOpenAI {
 		openAIFileID, err = h.uploadToOpenAI(filePath, header.Filename, header.Header.Get("Content-Type"))
 		if err != nil {
-			fmt.Printf("Error uploading to OpenAI: %v\n", err)
+			logging.Warnf("Error uploading to OpenAI: %v", err)
 			// Don't fail the upload if OpenAI upload fails
 		}
 	}
@@ -317,7 +318,7 @@ func (h *FilesHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	// Delete file from disk
 	if err := os.Remove(uploadedFile.StorageURL); err != nil {
 		// Log error but continue with database cleanup
-		fmt.Printf("Error deleting file from disk: %v\n", err)
+		logging.Warnf("Error deleting file from disk: %v", err)
 	}
 
 	// Delete from database

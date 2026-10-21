@@ -13,17 +13,17 @@ func TestToolCallBudgetSnapshotIsRecordedAndStable(t *testing.T) {
 	createdAt := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	config := map[string]interface{}{
 		"model":                "qwen3-4b-instruct-2507_vllm",
-		"tool_call_max_total":  400,
-		"tool_call_max_failed": 25,
+		"tool_call_max_total":  600,
+		"tool_call_max_failed": 30,
 	}
 
-	SnapshotToolCallBudget(config, 400, 25, createdAt)
+	SnapshotToolCallBudget(config, 600, 30, createdAt)
 
 	snapshot, ok := ToolCallBudgetSnapshot(config)
 	if !ok {
 		t.Fatalf("expected a tool-call budget snapshot on the chat config, got none: %#v", config)
 	}
-	if snapshot.MaxTotal != 400 || snapshot.MaxFailed != 25 {
+	if snapshot.MaxTotal != 600 || snapshot.MaxFailed != 30 {
 		t.Fatalf("unexpected snapshot caps: total=%d failed=%d", snapshot.MaxTotal, snapshot.MaxFailed)
 	}
 	if snapshot.SnapshotAt != createdAt.Format(time.RFC3339) {
@@ -36,7 +36,7 @@ func TestToolCallBudgetSnapshotIsRecordedAndStable(t *testing.T) {
 	if !ok {
 		t.Fatal("expected the snapshot to survive a second pass")
 	}
-	if again.MaxTotal != 400 || again.MaxFailed != 25 {
+	if again.MaxTotal != 600 || again.MaxFailed != 30 {
 		t.Fatalf("the snapshot was overwritten: total=%d failed=%d", again.MaxTotal, again.MaxFailed)
 	}
 	if again.SnapshotAt != snapshot.SnapshotAt {
@@ -46,14 +46,14 @@ func TestToolCallBudgetSnapshotIsRecordedAndStable(t *testing.T) {
 	// The resolved budget reports the snapshot as structured state, so the caps
 	// no longer live only inside an abort error string.
 	resolved := ResolveToolCallBudget(config, nil)
-	if resolved.MaxTotal != 400 || resolved.MaxFailed != 25 {
+	if resolved.MaxTotal != 600 || resolved.MaxFailed != 30 {
 		t.Fatalf("expected the snapshot caps to be effective, got total=%d failed=%d", resolved.MaxTotal, resolved.MaxFailed)
 	}
-	if resolved.SnapshotMaxTotal != 400 || resolved.SnapshotMaxFailed != 25 {
+	if resolved.SnapshotMaxTotal != 600 || resolved.SnapshotMaxFailed != 30 {
 		t.Fatalf("expected the resolved budget to report the snapshot, got %+v", resolved)
 	}
 	meta := resolved.Metadata()
-	if meta["snapshot_max_total"] != 400 || meta["snapshot_max_failed"] != 25 {
+	if meta["snapshot_max_total"] != 600 || meta["snapshot_max_failed"] != 30 {
 		t.Fatalf("expected the snapshot in the structured metadata, got %#v", meta)
 	}
 	if meta["source"] != ToolCallBudgetSourceChatSnapshot {
@@ -88,15 +88,15 @@ func TestCapRaiseReachesAlreadyCreatedChat(t *testing.T) {
 	}
 
 	botConfigRaised := map[string]interface{}{
-		"tool_call_max_total":  400,
-		"tool_call_max_failed": 25,
+		"tool_call_max_total":  600,
+		"tool_call_max_failed": 30,
 	}
 
 	resolved := ResolveToolCallBudget(chatCreatedUnderOldCaps, botConfigRaised)
-	if resolved.MaxTotal != 400 {
+	if resolved.MaxTotal != 600 {
 		t.Fatalf("expected the raised total cap to reach the existing chat, got %d", resolved.MaxTotal)
 	}
-	if resolved.MaxFailed != 25 {
+	if resolved.MaxFailed != 30 {
 		t.Fatalf("expected the raised failed cap to reach the existing chat, got %d", resolved.MaxFailed)
 	}
 	if resolved.Source != ToolCallBudgetSourceBotConfig {
@@ -109,16 +109,16 @@ func TestCapRaiseReachesAlreadyCreatedChat(t *testing.T) {
 // config that is lower than a chat's declared budget cannot shrink it.
 func TestResolveToolCallBudgetKeepsDeclaredChatBudget(t *testing.T) {
 	config := map[string]interface{}{
-		"tool_call_max_total":  400,
-		"tool_call_max_failed": 25,
+		"tool_call_max_total":  600,
+		"tool_call_max_failed": 30,
 	}
-	SnapshotToolCallBudget(config, 400, 25, time.Now())
+	SnapshotToolCallBudget(config, 600, 30, time.Now())
 
 	resolved := ResolveToolCallBudget(config, map[string]interface{}{
 		"tool_call_max_total":  12,
 		"tool_call_max_failed": 3,
 	})
-	if resolved.MaxTotal != 400 || resolved.MaxFailed != 25 {
+	if resolved.MaxTotal != 600 || resolved.MaxFailed != 30 {
 		t.Fatalf("a chat's declared budget was lowered: total=%d failed=%d", resolved.MaxTotal, resolved.MaxFailed)
 	}
 }

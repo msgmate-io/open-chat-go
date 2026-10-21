@@ -39,7 +39,7 @@ func writeBotConfigFile(t *testing.T, payload map[string]interface{}) string {
 
 func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -102,7 +102,7 @@ func TestApplyBotBootstrapConfigFilesCreatesRuntimeAndContact(t *testing.T) {
 
 func TestApplyBotBootstrapConfigFilesRequiresOwner(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	path := writeBotConfigFile(t, map[string]interface{}{
 		"primary_owner": "missing_owner",
@@ -127,7 +127,7 @@ func TestApplyBotBootstrapConfigFilesRequiresOwner(t *testing.T) {
 
 func TestApplyBotBootstrapConfigFilesIsIdempotent(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -176,7 +176,7 @@ func TestApplyBotBootstrapConfigFilesIsIdempotent(t *testing.T) {
 
 func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -250,7 +250,7 @@ func TestApplyBotBootstrapConfigFilesDoesNotOverwriteExistingRuntime(t *testing.
 
 func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -325,7 +325,7 @@ func TestApplyBotBootstrapConfigFilesOverwritesExistingRuntimeWhenEnabled(t *tes
 
 func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -365,7 +365,7 @@ func TestApplyBotBootstrapConfigFilesAllowsMissingPasswordForExistingBot(t *test
 
 func TestApplyBotBootstrapConfigFilesMissingPasswordRequiresExistingBot(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -393,7 +393,7 @@ func TestApplyBotBootstrapConfigFilesMissingPasswordRequiresExistingBot(t *testi
 
 func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create owner user: %v", err)
@@ -427,7 +427,7 @@ func TestApplyBotBootstrapConfigFilesSupportsBotEmail(t *testing.T) {
 
 func TestApplyBotBootstrapConfigFilesSupportsAdditionalOwners(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "primary_owner", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create primary owner user: %v", err)
@@ -488,7 +488,7 @@ func TestApplyBotBootstrapConfigFilesSupportsAdditionalOwners(t *testing.T) {
 
 func TestApplyBotBootstrapConfigFilesAllowsSinglePrimaryOwner(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if err, _ := util.CreateUser(DB, "fallback_owner", "OwnerPass1!", false); err != nil {
 		t.Fatalf("failed to create fallback owner user: %v", err)
@@ -523,7 +523,7 @@ func TestApplyBotBootstrapConfigFilesAllowsSinglePrimaryOwner(t *testing.T) {
 
 func TestApplyIntegrationBotBootstrapConfigsCreatesDedicatedRandomPasswordBot(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	admin, err := ensureBootstrapUser(DB, bootstrapUserSpec{
 		Label:          "root-credentials",
@@ -573,7 +573,7 @@ func TestApplyIntegrationBotBootstrapConfigsCreatesDedicatedRandomPasswordBot(t 
 
 func TestApplyIntegrationBotBootstrapConfigsNeverOverwritesExistingRuntime(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	owner, err := ensureBootstrapUser(DB, bootstrapUserSpec{
 		Label:          "root-credentials",
@@ -625,7 +625,7 @@ func TestApplyIntegrationBotBootstrapConfigsNeverOverwritesExistingRuntime(t *te
 
 func TestApplyIntegrationBotBootstrapConfigsRestrictsAllowedModelBackends(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
 		Label:          "root-credentials",
@@ -708,7 +708,7 @@ func TestApplyIntegrationBotBootstrapConfigsRestrictsAllowedModelBackends(t *tes
 
 func TestSyncBotsInheritingDefaultModelAccess(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	raw, _ := json.Marshal(map[string]interface{}{"model": "shared-model", "backend": "openai"})
 	if err := DB.Create(&database.ModelConfig{
@@ -753,7 +753,7 @@ func TestSyncBotsInheritingDefaultModelAccess(t *testing.T) {
 
 func TestSyncBotsInheritingDefaultModelAccessResolvesBotUser(t *testing.T) {
 	config := setupBotConfigTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	raw, _ := json.Marshal(map[string]interface{}{"model": "shared-model", "backend": "openai"})
 	if err := DB.Create(&database.ModelConfig{
