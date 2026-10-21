@@ -1121,3 +1121,20 @@ deployment never disagree. The read-only job
 (`--format=markdown`, `--format=json`) or the flip delta (`--format=delta`) for a
 ticket comment; `--require-ready` turns the gate into a non-zero exit for a
 scripted check.
+
+## Decoupled integration builds (ci#423)
+
+Once an integration's shipped packages no longer import `backend/...` (verified by
+`development/scripts/check_integration_decoupling.py`), it can be built against its
+minimal compile inputs only:
+
+- pass `decoupled: true` to `.github/workflows/reusable-integration-module-ci.yaml`, or
+- set `DECOUPLED=true` when calling `development/scripts/integration_module_ci.sh` directly.
+
+That path skips profile materialization, so the compile inputs are the integration
+module plus the pinned `clients/go_integration_interface` module, and it enforces the
+decoupling guard (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`). It is the
+per-integration prebuild precondition from the ci#345 design
+(`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
+for the remaining integrations lives in
+`frontend/pages/docs/content/integration-development.mdx`.

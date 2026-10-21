@@ -57,6 +57,15 @@ on:
         required: false
         type: boolean
         default: true
+      decoupled:
+        description: >-
+          ci#423: build against the integration's minimal compile inputs only
+          (skip profile materialization) and require the decoupling guard to
+          pass. Set this for an integration whose `replace backend` cleanup has
+          landed; it is the per-integration prebuild precondition.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -95,4 +104,5 @@ jobs:
           WORKSPACE_PATH: ${{ inputs.workspace_path }}
           INTEGRATION_PROFILE: ${{ inputs.profile }}
           RUN_TESTS: ${{ inputs.run_tests }}
+          DECOUPLED: ${{ inputs.decoupled }}
         run: bash development/scripts/integration_module_ci.sh
