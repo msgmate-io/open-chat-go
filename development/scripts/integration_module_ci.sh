@@ -43,6 +43,9 @@
 #   REQUIRE_DECOUPLED    "true"/"false" - fail when the module still imports
 #                        backend/... in its shipped packages (default: false,
 #                        report only while the ci#423 migration is incremental)
+#   DECOUPLED            "true"/"false" - skip profile materialization and build
+#                        the module against its minimal compile inputs, i.e. the
+#                        per-integration prebuild precondition (ci#423)
 #   FROZEN               "true"/"false" - use the pinned lock (default: true)
 #   GO_TEST_TIMEOUT      per-package test timeout (default: 10m)
 set -euo pipefail
@@ -55,6 +58,10 @@ WORKSPACE_PATH="${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative 
 INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-core-only}"
 RUN_TESTS="${RUN_TESTS:-true}"
 FROZEN="${FROZEN:-true}"
+# ci#423: once an integration's shipped packages are decoupled, its compile inputs
+# no longer need the materialized profile - only the interface module next to it.
+# DECOUPLED=true builds exactly those inputs and enforces the decoupling guard.
+DECOUPLED="${DECOUPLED:-false}"
 GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-10m}"
 
 step() { printf '\n=== %s\n' "$*"; }
@@ -72,15 +79,23 @@ if [ -e "$WORKSPACE_PATH" ] && [ ! -d "$WORKSPACE_PATH" ]; then
   exit 1
 fi
 
-step "Materialize workspace (profile: $INTEGRATION_PROFILE, frozen: $FROZEN)"
-BUILD_TOOLS="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
-PREPARE_ARGS=(prepare --profile "$INTEGRATION_PROFILE")
-if [ "$FROZEN" = "true" ]; then
-  PREPARE_ARGS+=(--frozen)
+if [ "$DECOUPLED" = "true" ]; then
+  # ci#423: nothing to materialize - a decoupled module compiles from the
+  # interface module plus its own dependencies, so the profile repos (and their
+  # transitive backend/... graph) stay out of the build entirely.
+  step "Decoupled build: skipping profile materialization (ci#423)"
+  echo "compile inputs: $WORKSPACE_PATH + the pinned interface module only"
 else
-  PREPARE_ARGS+=(--update)
+  step "Materialize workspace (profile: $INTEGRATION_PROFILE, frozen: $FROZEN)"
+  BUILD_TOOLS="$(bash "$REPO_ROOT/development/scripts/build_tools.sh")"
+  PREPARE_ARGS=(prepare --profile "$INTEGRATION_PROFILE")
+  if [ "$FROZEN" = "true" ]; then
+    PREPARE_ARGS+=(--frozen)
+  else
+    PREPARE_ARGS+=(--update)
+  fi
+  "$BUILD_TOOLS" "${PREPARE_ARGS[@]}"
 fi
-"$BUILD_TOOLS" "${PREPARE_ARGS[@]}"
 
 step "Place the pull-request checkout at $WORKSPACE_PATH"
 mkdir -p "$WORKSPACE_PATH"
@@ -145,7 +160,10 @@ if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
   # targets next to it, so `go list -deps` resolves exactly like the build above.
   # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
   if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
-    if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
+    # A decoupled build only makes sense on a decoupled module: DECOUPLED=true
+    # therefore enforces the guard unless REQUIRE_DECOUPLED says otherwise.
+    REQUIRE_DECOUPLED="${REQUIRE_DECOUPLED:-$DECOUPLED}"
+    if [ "$REQUIRE_DECOUPLED" = "true" ]; then
       echo "::error::integration is still coupled to backend/... (ci#423)" >&2
       exit 1
     fi

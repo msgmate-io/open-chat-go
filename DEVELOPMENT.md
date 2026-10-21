@@ -996,3 +996,20 @@ implements one issue does not need the dispatch family.
 2. Keep both routes until the native route is verified live.
 3. Then retire the workflow from the lead's prompt/config in one consolidation
    PR and record the version that flipped it, so the change is revertible.
+
+## Decoupled integration builds (ci#423)
+
+Once an integration's shipped packages no longer import `backend/...` (verified by
+`development/scripts/check_integration_decoupling.py`), it can be built against its
+minimal compile inputs only:
+
+- pass `decoupled: true` to `.github/workflows/reusable-integration-module-ci.yaml`, or
+- set `DECOUPLED=true` when calling `development/scripts/integration_module_ci.sh` directly.
+
+That path skips profile materialization, so the compile inputs are the integration
+module plus the pinned `clients/go_integration_interface` module, and it enforces the
+decoupling guard (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`). It is the
+per-integration prebuild precondition from the ci#345 design
+(`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
+for the remaining integrations lives in
+`frontend/pages/docs/content/integration-development.mdx`.
