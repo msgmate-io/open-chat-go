@@ -147,9 +147,16 @@ others. `cgroupguard.go` is that second bound as policy, in the same
 - one cgroup v2 slice per workspace under a configurable slice root
   (`open-chat-pool-workspace-<uuid>.slice`), with per-workspace `cpu.max`,
   `memory.max` and `pids.max` (defaults: half a core, 2 GiB, 512 pids);
+- per-workspace **disk** is bounded too, because disk has no cgroup v2
+  controller: the workspace gets a 4 GiB quota (`OCI_MSGMATE_CODER_SANDBOX_DISK_QUOTA_MB`)
+  on a path under the configured disk root, enforced by the pool's quota backend
+  (`project_quota`, or the portable `loopback` image). A pool that reports no
+  usable backend fails closed on its own sentinel
+  (`ErrWorkspaceDiskQuotaUnavailable`), and a filled quota is a named signal
+  (`DiskQuotaExceededError` / `IsDiskQuotaExceeded`, `pool_disk_quota_exceeded`);
 - the pod budget is what the slices are carved from, and an enabled guard whose
   per-workspace limits would oversubscribe it is **refused** (`ErrInvalidCgroupPolicy`)
-  rather than silently overcommitting the node;
+  rather than silently overcommitting the node — cpu, memory *and* disk;
 - a pool without cgroup v2 delegation fails closed
   (`ErrWorkspaceCgroupUnavailable`) instead of running unbounded; the guard is on
   by default and the opt-out is the explicit lever
@@ -162,8 +169,8 @@ others. `cgroupguard.go` is that second bound as policy, in the same
 
 The guard is process-local bookkeeping (`CgroupGuard`, mirroring
 `PortAllocator`: idempotent per workspace, released on lease teardown); writing
-the slices themselves and injecting the returned env belong to the shared
-sandbox provisioning path. Per-workspace **disk** quota remains a follow-up.
+the slices and the quota entries themselves, and injecting the returned env
+(`WorkspaceCgroupPlan.Env()`), belong to the shared sandbox provisioning path.
 
 ## Failure modes (and what the operator sees)
 
@@ -178,8 +185,10 @@ sandbox provisioning path. Per-workspace **disk** quota remains a follow-up.
 | N agents, one node saturated | the ci#691 capacity cooldown applies (unchanged) | capacity error placeholder |
 | all port blocks of a pool in use | the lease is refused with `ErrPoolNetworkCapacity`; the lease path may spill to another pool pod or fall back to a dedicated sandbox | `PoolNetworkExhaustedError` / `IsPoolNetworkExhausted`, and `exhaustion_signal` in the admin plan status |
 | pool without cgroup v2 delegation | the resource guard **fails closed**: no unbounded workspace is provisioned | `ErrWorkspaceCgroupUnavailable`, reported by `CgroupGuard.ReportLines()` |
-| per-workspace limits over the pod budget | the policy is refused with both numbers named instead of overcommitting the node | `ErrInvalidCgroupPolicy` |
+| pool without a disk-quota backend | the resource guard **fails closed** too: disk has no cgroup controller, so it needs its own mechanism | `ErrWorkspaceDiskQuotaUnavailable`, reported by `CgroupGuard.ReportLines()` |
+| per-workspace limits over the pod budget | the policy is refused with both numbers named instead of overcommitting the node (cpu, memory and disk) | `ErrInvalidCgroupPolicy` |
 | every resource slice of a pool in use | the lease is refused; same remedy list as the network bound | `CgroupExhaustedError` / `IsCgroupExhausted`, signal `pool_cgroup_exhausted` |
+| a workspace fills its disk quota | the write fails; raise the quota, spill to another pool pod or go dedicated | `DiskQuotaExceededError` / `IsDiskQuotaExceeded`, signal `pool_disk_quota_exceeded` |
 | guard disabled by lever | workspaces run unbounded (explicit, recorded opt-out) | `CgroupGuard.ReportLines()` says "unbounded" |
 
 ## Follow-ups (ticket, do not implement here)
@@ -190,9 +199,11 @@ sandbox provisioning path. Per-workspace **disk** quota remains a follow-up.
    remains and the resolver's default already covers it.
 2. **Per-workspace netns provider (`slirp4netns`/user-netns)** — the true
    isolation option for a shared pod, with the `loopback_alias` fallback.
-3. **Per-workspace disk quota** in the pool — the CPU/memory/pids half is
-   implemented as policy in `cgroupguard.go` (see "Resource bound" above);
-   disk is still unbounded and needs the same fail-closed treatment.
+3. **Writing the disk quota in the provisioning path** — the per-workspace disk
+   *policy* is implemented in `cgroupguard.go` (see "Resource bound" above,
+   `DiskQuotaTarget` / `DiskQuotaBackend`); creating the project-quota entry or
+   the loopback image, and enforcing it, is provisioning work (ci#602) and must
+   consume `WorkspaceCgroupPlan.Env()` rather than re-deriving the numbers.
 4. **Inject the policy env in the coder tool path** — `Policy.EnvFor` is ready;
    the wiring into workspace provisioning belongs to the shared-sandbox ticket's
    provisioning code (ci#602), not to this design note.

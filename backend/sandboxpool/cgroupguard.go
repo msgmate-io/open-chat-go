@@ -9,11 +9,13 @@ package sandboxpool
 // extended to the shared case).
 //
 // This file is that bound as policy: it turns a configured pool budget into a
-// per-workspace cgroup v2 slice (cpu.max / memory.max / pids.max) and injects
-// the slice in the session environment, in the same "policy + validation first,
+// per-workspace cgroup v2 slice (cpu.max / memory.max / pids.max), plus the
+// per-workspace disk quota the cgroup hierarchy does not carry, and injects both
+// in the session environment, in the same "policy + validation first,
 // provisioning later" shape as netisolation.go. Nothing here writes to cgroupfs;
 // the guard refuses to hand a plan to a pool that cannot offer cgroup v2
-// delegation, so the wiring only happens on a pool that can honour it.
+// delegation or a disk-quota backend, so the wiring only happens on a pool that
+// can honour it.
 //
 // Agreement with the network bound. The two bounds must not disagree: whichever
 // is smaller wins at the call site (EffectiveMaxWorkspaces), and an enabled guard
@@ -25,12 +27,16 @@ package sandboxpool
 //  1. cgroup v2 unavailable - an enabled guard returns
 //     ErrWorkspaceCgroupUnavailable rather than running unbounded.
 //  2. non-v2 hierarchy - cgroup v1 has no unified accounting; refused.
-//  3. oversubscribed budget - per-workspace x MaxWorkspaces over the pool
-//     budget: refused, naming both numbers.
-//  4. degenerate limits - cpu/mem/pids below the MinCgroup* floors are refused.
-//  5. slot exhaustion - more live workspaces than slices: CgroupExhaustedError,
+//  3. no disk-quota backend - disk has no cgroup v2 controller, so an enabled
+//     guard returns ErrWorkspaceDiskQuotaUnavailable when the pool reports no
+//     usable filesystem quota mechanism, rather than leaving disk unbounded.
+//  4. oversubscribed budget - per-workspace x MaxWorkspaces over the pool
+//     budget (cpu, memory or disk): refused, naming both numbers.
+//  5. degenerate limits - cpu/mem/pids/disk below the MinCgroup* floors are
+//     refused.
+//  6. slot exhaustion - more live workspaces than slices: CgroupExhaustedError,
 //     so the lease path can spill to another pool pod or go dedicated.
-//  6. unsafe slice root - a root that is not one plain path segment is refused,
+//  7. unsafe slice root - a root that is not one plain path segment is refused,
 //     so the derived slice path cannot escape cgroupfs.
 
 import (
@@ -57,6 +63,15 @@ const (
 	EnvCgroupMemoryMB = "OCI_MSGMATE_CODER_SANDBOX_CGROUP_MEMORY_MB"
 	// EnvCgroupPidsMax is the per-workspace pids.max budget.
 	EnvCgroupPidsMax = "OCI_MSGMATE_CODER_SANDBOX_CGROUP_PIDS"
+	// EnvDiskQuotaMB is the per-workspace disk budget. Disk has no cgroup v2
+	// controller, so this is enforced by the filesystem quota backend.
+	EnvDiskQuotaMB = "OCI_MSGMATE_CODER_SANDBOX_DISK_QUOTA_MB"
+	// EnvDiskQuotaBackend names the pool's disk-quota mechanism (empty/unknown
+	// makes an enabled guard fail closed).
+	EnvDiskQuotaBackend = "OCI_MSGMATE_CODER_SANDBOX_DISK_QUOTA_BACKEND"
+	// EnvCgroupPoolDiskMB is the pod disk budget the per-workspace quotas are
+	// carved from.
+	EnvCgroupPoolDiskMB = "OCI_MSGMATE_CODER_SANDBOX_CGROUP_POOL_DISK_MB"
 	// EnvCgroupMaxWorkspaces is the resource-side ceiling per pool pod.
 	EnvCgroupMaxWorkspaces = "OCI_MSGMATE_CODER_SANDBOX_CGROUP_MAX_WORKSPACES"
 	// EnvCgroupPoolCPUQuotaMillicores is the pod budget the slices are carved from.
@@ -93,6 +108,28 @@ const (
 	DefaultCgroupMemoryMB = 2048
 	// DefaultCgroupPidsMax bounds the process/thread count per workspace.
 	DefaultCgroupPidsMax = 512
+	// DefaultCgroupDiskMB is 4 GiB per workspace.
+	DefaultCgroupDiskMB = 4096
+	// DefaultDiskRoot is where the per-workspace trees live; a workspace's quota
+	// target hangs under it.
+	DefaultDiskRoot = "/workspaces"
+	// DefaultDiskQuotaBackend is the project-quota mechanism of the node's
+	// filesystem; a pool that cannot use it must say so (fail closed).
+	DefaultDiskQuotaBackend = DiskQuotaBackendProjectQuota
+	// EnvDiskWorkspaceQuotaBytes is how the disk quota reaches the session.
+	EnvDiskWorkspaceQuotaBytes = "CODER_DISK_QUOTA_MAX_BYTES"
+	// EnvDiskWorkspaceBackend is how the quota backend reaches the session.
+	EnvDiskWorkspaceBackend = "CODER_DISK_QUOTA_BACKEND"
+	// EnvDiskWorkspaceTarget is the path the quota applies to.
+	EnvDiskWorkspaceTarget = "CODER_DISK_QUOTA_TARGET"
+	// DiskQuotaExceededSignal is the machine-readable name of a filled quota.
+	DiskQuotaExceededSignal = "pool_disk_quota_exceeded"
+	// DiskQuotaBackendProjectQuota is the xfs/ext4 project-quota backend
+	// (`prjquota` on the pool filesystem, `xfs_quota`/`quotactl` to set it).
+	DiskQuotaBackendProjectQuota = "project_quota"
+	// DiskQuotaBackendLoopback is the portable backend: a per-workspace
+	// loopback ext4 image, whose size is the quota.
+	DiskQuotaBackendLoopback = "loopback"
 	// DefaultCgroupMaxWorkspaces is the ci#546 ceiling unless configured lower.
 	DefaultCgroupMaxWorkspaces = DefaultNetworkMaxWorkspaces
 	// DefaultCgroupPoolCPUQuotaMillicores is the self-consistent pod budget
@@ -101,12 +138,16 @@ const (
 	DefaultCgroupPoolCPUQuotaMillicores = DefaultCgroupCPUQuotaMillicores * DefaultCgroupMaxWorkspaces
 	// DefaultCgroupPoolMemoryMB is the same, for memory.
 	DefaultCgroupPoolMemoryMB = DefaultCgroupMemoryMB * DefaultCgroupMaxWorkspaces
+	// DefaultCgroupPoolDiskMB is the same, for disk.
+	DefaultCgroupPoolDiskMB = DefaultCgroupDiskMB * DefaultCgroupMaxWorkspaces
 	// MinCgroupCPUQuotaMillicores keeps a slice schedulable.
 	MinCgroupCPUQuotaMillicores = 100
 	// MinCgroupMemoryMB keeps a slice from OOMing on start-up.
 	MinCgroupMemoryMB = 128
 	// MinCgroupPidsMax keeps a slice able to run a shell and a compiler.
 	MinCgroupPidsMax = 32
+	// MinCgroupDiskMB keeps a workspace able to check out and build.
+	MinCgroupDiskMB = 1024
 	// bytesPerMB converts the human budget into cgroup bytes.
 	bytesPerMB = 1 << 20
 )
@@ -116,17 +157,25 @@ var (
 	// ErrWorkspaceCgroupUnavailable means the guard is enabled but the pool
 	// cannot offer cgroup v2 delegation. Never a silent downgrade.
 	ErrWorkspaceCgroupUnavailable = errors.New("sandbox pool resources: per-workspace cgroup v2 delegation is not available on this pool")
+	// ErrWorkspaceDiskQuotaUnavailable means the guard is enabled but the pool
+	// reports no usable disk-quota backend. Disk has no cgroup v2 controller, so
+	// this is a separate failure from the cgroup one and equally fails closed.
+	ErrWorkspaceDiskQuotaUnavailable = errors.New("sandbox pool resources: no per-workspace disk quota backend is available on this pool")
 	// ErrInvalidCgroupPolicy means the resolved guard policy cannot be applied.
 	ErrInvalidCgroupPolicy = errors.New("sandbox pool resources: invalid cgroup guard policy")
 	// ErrCgroupCapacity means every slice of this pool pod is taken.
 	ErrCgroupCapacity = errors.New("sandbox pool resources: no free cgroup slice for another workspace")
+	// ErrDiskQuotaExceeded means a workspace's disk quota is full.
+	ErrDiskQuotaExceeded = errors.New("sandbox pool resources: workspace disk quota is exhausted")
 )
 
 // IsPoolResourceFailure reports whether err came from this guard.
 func IsPoolResourceFailure(err error) bool {
 	return errors.Is(err, ErrWorkspaceCgroupUnavailable) ||
+		errors.Is(err, ErrWorkspaceDiskQuotaUnavailable) ||
 		errors.Is(err, ErrInvalidCgroupPolicy) ||
-		errors.Is(err, ErrCgroupCapacity)
+		errors.Is(err, ErrCgroupCapacity) ||
+		errors.Is(err, ErrDiskQuotaExceeded)
 }
 
 // CgroupGuardPolicy is the bounded resource policy of one pool pod. The guard is
@@ -147,17 +196,29 @@ type CgroupGuardPolicy struct {
 	MemoryMB int
 	// PidsMax is the per-workspace process/thread budget.
 	PidsMax int
+	// DiskMB is the per-workspace disk budget. Disk is not a cgroup v2
+	// controller, so it is enforced through DiskQuotaBackend instead of the
+	// slice and fails closed on its own sentinel.
+	DiskMB int
+	// DiskQuotaBackend names the mechanism enforcing DiskMB (empty = none
+	// available, refused while enabled).
+	DiskQuotaBackend string
+	// DiskRoot is the parent directory the per-workspace trees live under.
+	DiskRoot string
 	// MaxWorkspaces is the resource-side ceiling per pool pod.
 	MaxWorkspaces int
 	// PoolCPUQuotaMillicores is the pod cpu budget (0 = unbounded, refused).
 	PoolCPUQuotaMillicores int
 	// PoolMemoryMB is the pod memory budget (0 = unbounded, refused).
 	PoolMemoryMB int
+	// PoolDiskMB is the pod disk budget (0 = unbounded, refused).
+	PoolDiskMB int
 }
 
 // DefaultCgroupGuardPolicy returns the bounded default: on, cgroup v2, half a
 // core and 2 GiB per workspace, at most 8 workspaces, carved from a pod budget
-// that is exactly per-workspace x ceiling.
+// that is exactly per-workspace x ceiling, with a 4 GiB per-workspace disk quota
+// over the node's project-quota backend.
 func DefaultCgroupGuardPolicy() CgroupGuardPolicy {
 	return CgroupGuardPolicy{
 		Enabled:                true,
@@ -167,9 +228,13 @@ func DefaultCgroupGuardPolicy() CgroupGuardPolicy {
 		CPUQuotaMillicores:     DefaultCgroupCPUQuotaMillicores,
 		MemoryMB:               DefaultCgroupMemoryMB,
 		PidsMax:                DefaultCgroupPidsMax,
+		DiskMB:                 DefaultCgroupDiskMB,
+		DiskQuotaBackend:       DefaultDiskQuotaBackend,
+		DiskRoot:               DefaultDiskRoot,
 		MaxWorkspaces:          DefaultCgroupMaxWorkspaces,
 		PoolCPUQuotaMillicores: DefaultCgroupPoolCPUQuotaMillicores,
 		PoolMemoryMB:           DefaultCgroupPoolMemoryMB,
+		PoolDiskMB:             DefaultCgroupPoolDiskMB,
 	}
 }
 
@@ -189,6 +254,9 @@ func CgroupGuardPolicyFromEnv() CgroupGuardPolicy {
 	if v, ok := envPositiveInt(EnvCgroupPidsMax); ok {
 		p.PidsMax = v
 	}
+	if v, ok := envPositiveInt(EnvDiskQuotaMB); ok {
+		p.DiskMB = v
+	}
 	if v, ok := envPositiveInt(EnvCgroupMaxWorkspaces); ok {
 		p.MaxWorkspaces = v
 	}
@@ -197,6 +265,12 @@ func CgroupGuardPolicyFromEnv() CgroupGuardPolicy {
 	}
 	if v, ok := envPositiveInt(EnvCgroupPoolMemoryMB); ok {
 		p.PoolMemoryMB = v
+	}
+	if v, ok := envPositiveInt(EnvCgroupPoolDiskMB); ok {
+		p.PoolDiskMB = v
+	}
+	if raw := strings.TrimSpace(os.Getenv(EnvDiskQuotaBackend)); raw != "" {
+		p.DiskQuotaBackend = raw
 	}
 	if raw := strings.TrimSpace(os.Getenv(EnvCgroupSliceRoot)); raw != "" {
 		p.SliceRoot = raw
@@ -231,14 +305,76 @@ func (p CgroupGuardPolicy) Validate() error {
 	if p.MaxWorkspaces < 1 {
 		return fmt.Errorf("%w: max workspaces %d must be at least 1", ErrInvalidCgroupPolicy, p.MaxWorkspaces)
 	}
-	if p.PoolCPUQuotaMillicores < 1 || p.PoolMemoryMB < 1 {
-		return fmt.Errorf("%w: the pod budget must be configured (cpu %dm, memory %dMB)", ErrInvalidCgroupPolicy, p.PoolCPUQuotaMillicores, p.PoolMemoryMB)
+	// Disk has no cgroup v2 controller, so it is validated on its own sentinel
+	// and its own backend: a pool that cannot enforce a quota is refused rather
+	// than left with an unbounded workspace (failure mode 3).
+	if !IsKnownDiskQuotaBackend(p.DiskQuotaBackend) {
+		return fmt.Errorf("%w (backend %q, supported: %s, %s)", ErrWorkspaceDiskQuotaUnavailable, p.DiskQuotaBackend, DiskQuotaBackendProjectQuota, DiskQuotaBackendLoopback)
+	}
+	if v := DiskRoot(p.DiskRoot); v != "" {
+		if err := validateDiskRoot(v); err != nil {
+			return err
+		}
+	}
+	if p.DiskMB < MinCgroupDiskMB {
+		return fmt.Errorf("%w: disk %dMB per workspace is below the %dMB floor", ErrInvalidCgroupPolicy, p.DiskMB, MinCgroupDiskMB)
+	}
+	if p.PoolCPUQuotaMillicores < 1 || p.PoolMemoryMB < 1 || p.PoolDiskMB < 1 {
+		return fmt.Errorf("%w: the pod budget must be configured (cpu %dm, memory %dMB, disk %dMB)", ErrInvalidCgroupPolicy, p.PoolCPUQuotaMillicores, p.PoolMemoryMB, p.PoolDiskMB)
 	}
 	if want := p.CPUQuotaMillicores * p.MaxWorkspaces; want > p.PoolCPUQuotaMillicores {
 		return fmt.Errorf("%w: %dm x %d workspaces = %dm over the %dm pod cpu budget", ErrInvalidCgroupPolicy, p.CPUQuotaMillicores, p.MaxWorkspaces, want, p.PoolCPUQuotaMillicores)
 	}
 	if want := p.MemoryMB * p.MaxWorkspaces; want > p.PoolMemoryMB {
 		return fmt.Errorf("%w: %dMB x %d workspaces = %dMB over the %dMB pod memory budget", ErrInvalidCgroupPolicy, p.MemoryMB, p.MaxWorkspaces, want, p.PoolMemoryMB)
+	}
+	if want := p.DiskMB * p.MaxWorkspaces; want > p.PoolDiskMB {
+		return fmt.Errorf("%w: %dMB x %d workspaces = %dMB over the %dMB pod disk budget", ErrInvalidCgroupPolicy, p.DiskMB, p.MaxWorkspaces, want, p.PoolDiskMB)
+	}
+	return nil
+}
+
+// IsKnownDiskQuotaBackend reports whether a pool can enforce a disk quota with
+// the named backend; an unknown or empty backend must fail closed.
+func IsKnownDiskQuotaBackend(backend string) bool {
+	switch strings.TrimSpace(backend) {
+	case DiskQuotaBackendProjectQuota, DiskQuotaBackendLoopback:
+		return true
+	default:
+		return false
+	}
+}
+
+// DiskRoot normalises the configured disk root.
+func DiskRoot(raw string) string {
+	return strings.TrimSpace(raw)
+}
+
+// DiskQuotaTarget is the absolute path a workspace's quota applies to. It is
+// derived from DiskRoot and the workspace name and returned clean so a caller
+// cannot walk out of the root.
+func (p CgroupGuardPolicy) DiskQuotaTarget(name string) string {
+	return p.diskTarget(name)
+}
+
+func (p CgroupGuardPolicy) diskTarget(name string) string {
+	root := DiskRoot(p.DiskRoot)
+	if root == "" {
+		root = DefaultDiskRoot
+	}
+	return strings.TrimRight(root, "/") + "/" + name
+}
+
+// validateDiskRoot keeps every quota target inside one configured absolute root:
+// relative roots are refused so a misconfigured root cannot point at "/".
+func validateDiskRoot(root string) error {
+	if !strings.HasPrefix(root, "/") {
+		return fmt.Errorf("%w: disk root %q must be absolute", ErrInvalidCgroupPolicy, root)
+	}
+	for _, segment := range strings.Split(root, "/") {
+		if segment == ".." || segment == "." {
+			return fmt.Errorf("%w: disk root %q must not contain navigation", ErrInvalidCgroupPolicy, root)
+		}
 	}
 	return nil
 }
@@ -332,7 +468,61 @@ func IsCgroupExhausted(err error) bool {
 	return errors.Is(err, ErrCgroupCapacity)
 }
 
-// WorkspaceCgroupPlan is one workspace's slice and limits.
+// DiskQuotaExceededError is the named "this workspace filled its disk quota"
+// signal. Disk is not a cgroup controller, so it has its own sentinel and its
+// own signal name, but the same shape as CgroupExhaustedError: a lease/tool path
+// reads a name instead of parsing a message, and the remedies lead with the
+// shared ci#546 vocabulary.
+type DiskQuotaExceededError struct {
+	// WorkspaceUUID is the workspace whose quota filled.
+	WorkspaceUUID string
+	// QuotaBytes is the configured per-workspace quota.
+	QuotaBytes int64
+	// Backend is the mechanism that reported the quota as full.
+	Backend string
+	// Target is the path the quota applies to.
+	Target string
+}
+
+func (e *DiskQuotaExceededError) Error() string {
+	return fmt.Sprintf("%v: %s (%dMB quota via %s at %s)", ErrDiskQuotaExceeded, e.WorkspaceUUID, e.QuotaBytes/bytesPerMB, e.Backend, e.Target)
+}
+
+// Unwrap keeps ErrDiskQuotaExceeded the sentinel errors.Is matches.
+func (e *DiskQuotaExceededError) Unwrap() error { return ErrDiskQuotaExceeded }
+
+// Signal is the stable condition name for status views and metrics.
+func (e *DiskQuotaExceededError) Signal() string { return DiskQuotaExceededSignal }
+
+// Remediations is the ordered way out of a filled quota: give the workspace a
+// bigger quota, spill it to another pool pod, or give it a dedicated sandbox.
+func (e *DiskQuotaExceededError) Remediations() []string {
+	return []string{"raise " + EnvDiskQuotaMB, RemediationSpillPoolPod, RemediationDedicatedSandbox}
+}
+
+// AsDiskQuotaExceeded extracts the disk-quota signal from err.
+func AsDiskQuotaExceeded(err error) (*DiskQuotaExceededError, bool) {
+	var target *DiskQuotaExceededError
+	if errors.As(err, &target) {
+		return target, true
+	}
+	return nil, false
+}
+
+// IsDiskQuotaExceeded reports whether err means "this workspace's disk quota is
+// full". A bare ErrDiskQuotaExceeded counts too, as the pre-signal spelling.
+func IsDiskQuotaExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	if _, ok := AsDiskQuotaExceeded(err); ok {
+		return true
+	}
+	return errors.Is(err, ErrDiskQuotaExceeded)
+}
+
+// WorkspaceCgroupPlan is one workspace's slice and limits, plus its disk quota
+// target (which the slice cannot carry).
 type WorkspaceCgroupPlan struct {
 	// WorkspaceUUID is the workspace the slice belongs to.
 	WorkspaceUUID string
@@ -344,6 +534,12 @@ type WorkspaceCgroupPlan struct {
 	MemoryMaxBytes int64
 	// PidsMax is the workspace process/thread budget.
 	PidsMax int
+	// DiskQuotaBytes is the workspace disk budget in bytes.
+	DiskQuotaBytes int64
+	// DiskQuotaTarget is the path the disk quota applies to.
+	DiskQuotaTarget string
+	// DiskQuotaBackend is the mechanism enforcing the disk quota.
+	DiskQuotaBackend string
 	// MaxWorkspaces is the pool ceiling the plan was carved from.
 	MaxWorkspaces int
 }
@@ -356,12 +552,15 @@ func (p WorkspaceCgroupPlan) Env() map[string]string {
 		EnvCgroupWorkspaceCPUMillicores:  strconv.Itoa(p.CPUQuotaMillicores),
 		EnvCgroupWorkspaceMemoryMaxBytes: strconv.FormatInt(p.MemoryMaxBytes, 10),
 		EnvCgroupWorkspacePidsMax:        strconv.Itoa(p.PidsMax),
+		EnvDiskWorkspaceQuotaBytes:       strconv.FormatInt(p.DiskQuotaBytes, 10),
+		EnvDiskWorkspaceBackend:          p.DiskQuotaBackend,
+		EnvDiskWorkspaceTarget:           p.DiskQuotaTarget,
 	}
 }
 
 // Describe renders the plan as one line.
 func (p WorkspaceCgroupPlan) Describe() string {
-	return fmt.Sprintf("cgroup %s: %dm cpu, %dMB mem, %d pids (%s)", p.WorkspaceUUID, p.CPUQuotaMillicores, p.MemoryMaxBytes/bytesPerMB, p.PidsMax, p.SlicePath)
+	return fmt.Sprintf("cgroup %s: %dm cpu, %dMB mem, %d pids (%s); disk %dMB quota via %s at %s", p.WorkspaceUUID, p.CPUQuotaMillicores, p.MemoryMaxBytes/bytesPerMB, p.PidsMax, p.SlicePath, p.DiskQuotaBytes/bytesPerMB, p.DiskQuotaBackend, p.DiskQuotaTarget)
 }
 
 // ReportLines renders the plan for a human report, env names only.
@@ -447,6 +646,9 @@ func (g *CgroupGuard) Apply(workspaceUUID string) (WorkspaceCgroupPlan, error) {
 		CPUQuotaMillicores: g.policy.CPUQuotaMillicores,
 		MemoryMaxBytes:     int64(g.policy.MemoryMB) * bytesPerMB,
 		PidsMax:            g.policy.PidsMax,
+		DiskQuotaBytes:     int64(g.policy.DiskMB) * bytesPerMB,
+		DiskQuotaTarget:    g.policy.diskTarget(uuid),
+		DiskQuotaBackend:   g.policy.DiskQuotaBackend,
 		MaxWorkspaces:      g.policy.MaxWorkspaces,
 	}
 	g.active[uuid] = plan
@@ -485,13 +687,16 @@ func (g *CgroupGuard) ReportLines() []string {
 	p := g.policy
 	lines := []string{
 		fmt.Sprintf("cgroup guard: enabled=%t version=%s slice root=%s", p.Enabled, p.Version, p.SliceRoot),
-		fmt.Sprintf("limits per workspace: %dm cpu, %dMB mem, %d pids", p.CPUQuotaMillicores, p.MemoryMB, p.PidsMax),
+		fmt.Sprintf("limits per workspace: %dm cpu, %dMB mem, %d pids, %dMB disk", p.CPUQuotaMillicores, p.MemoryMB, p.PidsMax, p.DiskMB),
+		fmt.Sprintf("disk quota backend: %s (targets under %s)", p.DiskQuotaBackend, DiskRoot(p.DiskRoot)),
 		fmt.Sprintf("pod budget: %dm cpu, %dMB mem -> ceiling %d workspaces", p.PoolCPUQuotaMillicores, p.PoolMemoryMB, EffectiveMaxWorkspaces(NetworkPolicy{MaxWorkspaces: p.MaxWorkspaces}, p)),
 	}
 	if !p.Enabled {
 		lines = append(lines, "guard disabled by "+EnvCgroupGuard+": workspaces run unbounded (explicit opt-out)")
 	} else if !p.Available {
 		lines = append(lines, "cgroup v2 unavailable on this pool -> lease refused ("+ErrWorkspaceCgroupUnavailable.Error()+")")
+	} else if !IsKnownDiskQuotaBackend(p.DiskQuotaBackend) {
+		lines = append(lines, "no usable disk quota backend on this pool -> lease refused ("+ErrWorkspaceDiskQuotaUnavailable.Error()+")")
 	}
 	active := g.ActiveWorkspaces()
 	if len(active) == 0 {

@@ -24,6 +24,12 @@ func TestDefaultCgroupGuardPolicyIsSelfConsistent(t *testing.T) {
 	if p.PoolMemoryMB != p.MemoryMB*p.MaxWorkspaces {
 		t.Errorf("default pod memory budget %d is not per-workspace x ceiling", p.PoolMemoryMB)
 	}
+	if p.PoolDiskMB != p.DiskMB*p.MaxWorkspaces {
+		t.Errorf("default pod disk budget %d is not per-workspace x ceiling", p.PoolDiskMB)
+	}
+	if !IsKnownDiskQuotaBackend(p.DiskQuotaBackend) {
+		t.Errorf("default disk quota backend %q must be usable", p.DiskQuotaBackend)
+	}
 	if int64(p.MemoryMB)*bytesPerMB != int64(DefaultCgroupMemoryMB)*bytesPerMB {
 		t.Errorf("memory budget does not convert to bytes")
 	}
@@ -112,6 +118,46 @@ func TestCgroupGuardPolicyFailsClosed(t *testing.T) {
 			want:   ErrInvalidCgroupPolicy,
 			substr: "over the 8192MB pod memory budget",
 		},
+		{
+			name:   "no disk quota backend",
+			mutate: func(p *CgroupGuardPolicy) { p.DiskQuotaBackend = "" },
+			want:   ErrWorkspaceDiskQuotaUnavailable,
+			substr: "no per-workspace disk quota backend",
+		},
+		{
+			name:   "unknown disk quota backend",
+			mutate: func(p *CgroupGuardPolicy) { p.DiskQuotaBackend = "nfs-xattr" },
+			want:   ErrWorkspaceDiskQuotaUnavailable,
+			substr: "nfs-xattr",
+		},
+		{
+			name:   "relative disk root",
+			mutate: func(p *CgroupGuardPolicy) { p.DiskRoot = "workspaces" },
+			want:   ErrInvalidCgroupPolicy,
+			substr: "must be absolute",
+		},
+		{
+			name:   "disk root escapes its parent",
+			mutate: func(p *CgroupGuardPolicy) { p.DiskRoot = "/workspaces/../etc" },
+			want:   ErrInvalidCgroupPolicy,
+			substr: "must not contain navigation",
+		},
+		{
+			name:   "degenerate disk limit",
+			mutate: func(p *CgroupGuardPolicy) { p.DiskMB = MinCgroupDiskMB - 1 },
+			want:   ErrInvalidCgroupPolicy,
+			substr: "disk 1023MB per workspace is below the 1024MB floor",
+		},
+		{
+			name: "oversubscribed disk budget",
+			mutate: func(p *CgroupGuardPolicy) {
+				p.DiskMB = 4096
+				p.MaxWorkspaces = 8
+				p.PoolDiskMB = 8192
+			},
+			want:   ErrInvalidCgroupPolicy,
+			substr: "over the 8192MB pod disk budget",
+		},
 	}
 
 	for _, tc := range cases {
@@ -191,6 +237,15 @@ func TestCgroupGuardAppliesOneSlicePerWorkspace(t *testing.T) {
 	if plan.MemoryMaxBytes != int64(p.MemoryMB)*bytesPerMB {
 		t.Errorf("MemoryMaxBytes = %d, want %d", plan.MemoryMaxBytes, int64(p.MemoryMB)*bytesPerMB)
 	}
+	if plan.DiskQuotaBytes != int64(p.DiskMB)*bytesPerMB {
+		t.Errorf("DiskQuotaBytes = %d, want %d", plan.DiskQuotaBytes, int64(p.DiskMB)*bytesPerMB)
+	}
+	if plan.DiskQuotaBackend != p.DiskQuotaBackend {
+		t.Errorf("DiskQuotaBackend = %q, want %q", plan.DiskQuotaBackend, p.DiskQuotaBackend)
+	}
+	if want := "/workspaces/chat-a"; plan.DiskQuotaTarget != want {
+		t.Errorf("DiskQuotaTarget = %q, want %q", plan.DiskQuotaTarget, want)
+	}
 	if plan.MaxWorkspaces != 3 {
 		t.Errorf("MaxWorkspaces = %d, want 3", plan.MaxWorkspaces)
 	}
@@ -208,6 +263,9 @@ func TestCgroupGuardAppliesOneSlicePerWorkspace(t *testing.T) {
 		EnvCgroupWorkspaceCPUMillicores:  "500",
 		EnvCgroupWorkspaceMemoryMaxBytes: "2147483648",
 		EnvCgroupWorkspacePidsMax:        "512",
+		EnvDiskWorkspaceQuotaBytes:       "4294967296",
+		EnvDiskWorkspaceBackend:          DiskQuotaBackendProjectQuota,
+		EnvDiskWorkspaceTarget:           "/workspaces/chat-a",
 	}
 	for key, want := range wantEnv {
 		if env[key] != want {
@@ -301,6 +359,75 @@ func TestCgroupGuardExhaustionSignal(t *testing.T) {
 	}
 }
 
+func TestDiskQuotaExceededSignal(t *testing.T) {
+	p := DefaultCgroupGuardPolicy()
+	plan := WorkspaceCgroupPlan{
+		WorkspaceUUID:    "chat-a",
+		DiskQuotaBytes:   int64(p.DiskMB) * bytesPerMB,
+		DiskQuotaBackend: p.DiskQuotaBackend,
+		DiskQuotaTarget:  p.diskTarget("chat-a"),
+	}
+	err := &DiskQuotaExceededError{
+		WorkspaceUUID: plan.WorkspaceUUID,
+		QuotaBytes:    plan.DiskQuotaBytes,
+		Backend:       plan.DiskQuotaBackend,
+		Target:        plan.DiskQuotaTarget,
+	}
+	if !errors.Is(err, ErrDiskQuotaExceeded) {
+		t.Errorf("the signal must match its sentinel: %v", err)
+	}
+	if !IsDiskQuotaExceeded(err) || !IsPoolResourceFailure(err) {
+		t.Errorf("IsDiskQuotaExceeded/IsPoolResourceFailure must match the signal: %v", err)
+	}
+	signal, ok := AsDiskQuotaExceeded(fmt.Errorf("write /workspaces/chat-a/out: %w", err))
+	if !ok {
+		t.Fatalf("AsDiskQuotaExceeded must see through wrapping: %v", err)
+	}
+	if signal.WorkspaceUUID != "chat-a" || signal.QuotaBytes != plan.DiskQuotaBytes {
+		t.Errorf("signal fields %+v do not describe the workspace", signal)
+	}
+	if signal.Signal() != DiskQuotaExceededSignal {
+		t.Errorf("Signal() = %q, want %q", signal.Signal(), DiskQuotaExceededSignal)
+	}
+	remediations := signal.Remediations()
+	if len(remediations) != 3 || remediations[0] != "raise "+EnvDiskQuotaMB ||
+		remediations[1] != RemediationSpillPoolPod || remediations[2] != RemediationDedicatedSandbox {
+		t.Errorf("remediations %v must lead with raising the quota, then the shared vocabulary", remediations)
+	}
+	if text := err.Error(); !strings.Contains(text, DiskQuotaExceededSignal+"") && !strings.Contains(text, ErrDiskQuotaExceeded.Error()) {
+		t.Errorf("error %q must keep the sentinel prefix", text)
+	}
+	if !strings.Contains(err.Error(), "/workspaces/chat-a") || !strings.Contains(err.Error(), p.DiskQuotaBackend) {
+		t.Errorf("error %q must name the target and the backend", err)
+	}
+	if strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "token") {
+		t.Errorf("the signal must carry no credential material: %q", err)
+	}
+
+	if IsDiskQuotaExceeded(nil) {
+		t.Error("IsDiskQuotaExceeded(nil) must be false")
+	}
+	if IsDiskQuotaExceeded(errors.New("other")) {
+		t.Error("IsDiskQuotaExceeded must not match an unrelated error")
+	}
+	if IsDiskQuotaExceeded(fmt.Errorf("%w: quota", ErrInvalidCgroupPolicy)) {
+		t.Error("IsDiskQuotaExceeded must not match a policy error")
+	}
+	if _, ok := AsDiskQuotaExceeded(fmt.Errorf("%w: quota", ErrInvalidCgroupPolicy)); ok {
+		t.Error("AsDiskQuotaExceeded must not extract a signal from a policy error")
+	}
+	// The bare sentinel counts too: the pre-signal spelling of the same state.
+	if !IsDiskQuotaExceeded(fmt.Errorf("quota tool: %w", ErrDiskQuotaExceeded)) {
+		t.Error("IsDiskQuotaExceeded must match the bare sentinel through wrapping")
+	}
+	if IsCgroupExhausted(err) {
+		t.Error("IsCgroupExhausted must not match a disk signal")
+	}
+	if IsDiskQuotaExceeded(fmt.Errorf("%w: x", ErrCgroupCapacity)) {
+		t.Error("IsDiskQuotaExceeded must not match a cgroup exhaustion")
+	}
+}
+
 func TestEffectiveMaxWorkspacesIsTheSmallerBound(t *testing.T) {
 	guard := DefaultCgroupGuardPolicy()
 	cases := []struct {
@@ -329,6 +456,7 @@ func TestCgroupGuardPolicyFromEnv(t *testing.T) {
 		EnvCgroupGuard, EnvCgroupAvailable, EnvCgroupCPUQuotaMillicores,
 		EnvCgroupMemoryMB, EnvCgroupPidsMax, EnvCgroupMaxWorkspaces,
 		EnvCgroupPoolCPUQuotaMillicores, EnvCgroupPoolMemoryMB, EnvCgroupSliceRoot,
+		EnvDiskQuotaMB, EnvDiskQuotaBackend, EnvCgroupPoolDiskMB,
 	}
 	for _, key := range keys {
 		t.Setenv(key, "")
@@ -371,6 +499,28 @@ func TestCgroupGuardPolicyFromEnv(t *testing.T) {
 	t.Setenv(EnvCgroupMemoryMB, "8192")
 	if err := CgroupGuardPolicyFromEnv().Validate(); !errors.Is(err, ErrInvalidCgroupPolicy) {
 		t.Errorf("an oversubscribed env policy must be refused, got %v", err)
+	}
+
+	// The disk levers move the quota and its backend the same way.
+	t.Setenv(EnvCgroupMemoryMB, "1024")
+	t.Setenv(EnvDiskQuotaMB, "2048")
+	t.Setenv(EnvCgroupPoolDiskMB, "8192")
+	t.Setenv(EnvDiskQuotaBackend, "loopback")
+	disk := CgroupGuardPolicyFromEnv()
+	if disk.DiskMB != 2048 || disk.DiskQuotaBackend != DiskQuotaBackendLoopback {
+		t.Errorf("disk levers did not resolve: %+v", disk)
+	}
+	if err := disk.Validate(); err != nil {
+		t.Errorf("a lever-consistent disk policy must validate: %v", err)
+	}
+	if target := disk.DiskQuotaTarget("chat-a"); target != "/workspaces/chat-a" {
+		t.Errorf("DiskQuotaTarget = %q, want the default root", target)
+	}
+
+	// A pool that reports a backend this code does not know fails closed.
+	t.Setenv(EnvDiskQuotaBackend, "guess")
+	if err := CgroupGuardPolicyFromEnv().Validate(); !errors.Is(err, ErrWorkspaceDiskQuotaUnavailable) {
+		t.Errorf("an unknown disk backend must be refused, got %v", err)
 	}
 }
 
