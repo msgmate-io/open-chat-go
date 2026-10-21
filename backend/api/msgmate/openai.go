@@ -91,8 +91,12 @@ const (
 	ToolCallStatusSucceeded           = "succeeded"
 	ToolCallStatusFailed              = "failed"
 	ToolCallStatusPendingConfirmation = "pending_confirmation"
-	DefaultToolCallMaxTotal           = 12
-	DefaultToolCallMaxFailed          = 3
+	// Fleet-wide floor for the per-turn tool-call budget. The effective cap is
+	// the maximum of the chat snapshot, the chat/bot config and this default, so
+	// a higher floor raises chats that were created with the old 100-call cap
+	// without losing an explicitly declared larger budget (ci#709).
+	DefaultToolCallMaxTotal           = 500
+	DefaultToolCallMaxFailed          = 20
 	DefaultContextRetryTailMessages   = 14
 	DefaultToolResultMaxCharsForModel = 12000
 
