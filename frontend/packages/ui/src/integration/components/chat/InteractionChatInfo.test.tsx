@@ -7,7 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("vike-react/usePageContext", () => ({ usePageContext: () => ({}) }));
 vi.mock("vike/client/router", () => ({ navigate: vi.fn() }));
 
-import { InteractionChatInfo } from "./InteractionChatInfo";
+import {
+  ChatDetailsDialog,
+  ChatDetailsDialogHeader,
+  InteractionChatInfo,
+} from "./InteractionChatInfo";
+import { Dialog } from "../../../components/dialog";
 
 const interactionChat = {
   chat_type: "interaction",
@@ -75,5 +80,61 @@ describe("InteractionChatInfo merged model chip", () => {
     const html = renderToStaticMarkup(<InteractionChatInfo chat={interactionChat} hideModelDisplay />);
 
     expect(html).not.toContain("gpt-4o");
+  });
+});
+
+// ci#788 moves the chat details out of the header into their own modal: the
+// header must stay compact (no inline tabbed panel, no expansion toggle) and
+// the details surface must render inside a centered dialog.
+describe("InteractionChatInfo chat details modal", () => {
+  it("keeps the details panel out of the header until the modal is opened", () => {
+    const html = renderToStaticMarkup(<InteractionChatInfo chat={interactionChat} />);
+
+    // The tabbed surface only exists inside the (closed) modal.
+    expect(html).not.toContain('role="tablist"');
+    expect(html).not.toContain("chat-details-panel-overview");
+  });
+
+  it("exposes a dialog opener instead of an in-place expansion toggle", () => {
+    const html = renderToStaticMarkup(<InteractionChatInfo chat={interactionChat} />);
+
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html).toContain(`aria-controls="interaction-chat-details"`);
+    expect(html).not.toContain('aria-expanded="true"');
+  });
+
+  it("renders the modal header with its title and description", () => {
+    const html = renderToStaticMarkup(
+      <Dialog open>
+        <ChatDetailsDialogHeader />
+      </Dialog>,
+    );
+
+    expect(html).toContain("Chat details");
+    expect(html).toContain("Overview of this chat");
+  });
+
+  it("describes the shared view as read-only", () => {
+    const html = renderToStaticMarkup(
+      <Dialog open>
+        <ChatDetailsDialogHeader isSharedView />
+      </Dialog>,
+    );
+
+    expect(html).toContain("Read-only overview of this shared chat.");
+  });
+
+  it("renders nothing when there is no chat to describe", () => {
+    const html = renderToStaticMarkup(
+      <ChatDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        chat={null}
+        activeTab="overview"
+        onTabChange={() => undefined}
+      />,
+    );
+
+    expect(html).toBe("");
   });
 });

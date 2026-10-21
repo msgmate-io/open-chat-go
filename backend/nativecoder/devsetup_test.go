@@ -105,6 +105,51 @@ func TestDevSetupScriptProvisionsSubmoduleFree(t *testing.T) {
 	}
 }
 
+// TestDevSetupScriptRetriesPublicFallbackProfile pins the ci#756 contract: the
+// default profile is the batteries-included `full-development` one, but the
+// generated script must still degrade to the last public profile when the
+// private integrations manifest does not know it yet (otherwise every coding
+// sandbox fails to start on an unknown profile).
+func TestDevSetupScriptRetriesPublicFallbackProfile(t *testing.T) {
+	spec := DevSetupSpecForRepo("msgmate-io/open-chat-go")
+	if spec.Profile != DevSetupProfileDefault {
+		t.Fatalf("default profile = %q, want %q", spec.Profile, DevSetupProfileDefault)
+	}
+	script := DevSetupScript(spec)
+	first := "prepare --profile " + DevSetupProfileDefault
+	second := "prepare --profile " + DevSetupProfileFallback
+	if !strings.Contains(script, first+" || ") {
+		t.Fatalf("script must retry the fallback profile, got %q", script)
+	}
+	if strings.Index(script, first) > strings.Index(script, second) {
+		t.Fatalf("script must try the requested profile first, got %q", script)
+	}
+	// The fallback itself must not be retried again (no unbounded chain).
+	if strings.Contains(script, second+" || "+second) {
+		t.Fatalf("fallback profile must not be retried twice, got %q", script)
+	}
+}
+
+// TestDevSetupPrepareCommand pins the rendering of the provisioning snippet for
+// the explicit per-interaction profiles.
+func TestDevSetupPrepareCommand(t *testing.T) {
+	cases := []struct{ profile, want string }{
+		{"", ".venv/bin/openchat-integrations prepare"},
+		{DevSetupProfileFallback, ".venv/bin/openchat-integrations prepare --profile full-ci"},
+		{
+			"full-development",
+			".venv/bin/openchat-integrations prepare --profile full-development || " +
+				".venv/bin/openchat-integrations prepare --profile full-ci",
+		},
+	}
+	for _, tc := range cases {
+		got := devSetupPrepareCommand(".venv/bin/openchat-integrations", tc.profile)
+		if got != tc.want {
+			t.Fatalf("profile %q: got %q, want %q", tc.profile, got, tc.want)
+		}
+	}
+}
+
 // TestDevSetupScriptWarnsWhenUnprovisionable checks that a checkout with
 // neither the script nor the submodule reports the gap instead of silently
 // handing an unprepared workspace to the model.
