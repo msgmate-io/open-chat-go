@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           SANDBOX_DIR="clients/integrations/docker_sandbox_integration/sandboxes/${TEMPLATE}"
           test -f "${SANDBOX_DIR}/Dockerfile" || { echo "::error::no Dockerfile for template ${TEMPLATE}"; exit 1; }
-          HASH="$(find "${SANDBOX_DIR}" -type f ! -name 'recent-repo-changes-summary.md' -print0 \
+          HASH="$(find "${SANDBOX_DIR}" -type f -print0 \
             | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
           IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-${TEMPLATE}-${HASH}" >> "$GITHUB_OUTPUT"
