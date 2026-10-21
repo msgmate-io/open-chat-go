@@ -24,6 +24,10 @@ one). `backend/docguard` fails the build if agent-only sections reappear here
 - Bounded continuation after a cap or a transient failure, and the per-turn tool
   budget defaults in `backend/api/msgmate` (`DefaultToolCallMaxTotal`,
   `DefaultToolCallMaxFailed`; ci#709).
+- One lane of one ticket has exactly one owning interaction; a duplicate
+  dispatch is refused rather than started.
+- Stopping or resuming an agent the operator does not own goes through the
+  GitHub workflow route, which needs no chat ownership.
 
 ## Where the operator playbooks live
 
@@ -32,3 +36,5 @@ fleet may route to, budget/compaction rules, the label and CI-failure routing
 policies: all of that is agent-facing and therefore private. Maintainers get it from the private
 integration repository, or by asking a coder agent to quote a page through
 `coder_docs`. Do not add those sections back to this file.
+
+No secrets, tokens or user data are recorded here by design.
