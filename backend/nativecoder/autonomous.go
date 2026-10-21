@@ -94,7 +94,34 @@ func CoderInteractionFromConfig(config map[string]interface{}) string {
 	if config == nil {
 		return CoderInteractionInteractive
 	}
-	return NormalizeCoderInteraction(stringValue(config[CoderInteractionConfigKey]))
+	if raw, exists := config[CoderInteractionConfigKey]; exists {
+		// An explicit chat-level mode always wins, including an explicit
+		// `interactive` that deliberately keeps the per-action gate.
+		return NormalizeCoderInteraction(stringValue(raw))
+	}
+	// ci#622: a dispatcher may state the mode on the coder session itself
+	// (tool_init.coder_select_workspace.interaction), which the integration
+	// applies to that session. The core has to read that declaration too -
+	// otherwise it keeps the per-action gate on a chat whose dispatcher asked
+	// for an autonomous run, and a headless interaction parks on a
+	// confirmation (the ci#506 failure mode that resurfaced as the ci#622
+	// `development-lead` selfcheck failure).
+	return NormalizeCoderInteraction(selectorInteractionFromConfig(config))
+}
+
+// selectorInteractionFromConfig returns the `interaction` value declared on the
+// coder workspace selector inside a chat's tool_init, or "" when the chat does
+// not configure a native coder session.
+func selectorInteractionFromConfig(config map[string]interface{}) string {
+	toolInit, ok := config["tool_init"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	selector, ok := toolInit["coder_select_workspace"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return stringValue(selector["interaction"])
 }
 
 // CoderInteractionAutonomousForConfig reports whether a chat shared config

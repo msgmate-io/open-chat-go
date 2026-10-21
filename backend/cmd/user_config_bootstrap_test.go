@@ -61,7 +61,7 @@ func TestLoadUserBootstrapConfigsFromSpecEmpty(t *testing.T) {
 }
 
 func TestApplyUserBootstrapConfigFilesCreatesUsers(t *testing.T) {
-	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupUserConfigTestDB(t))
 
 	spec := `[
 		{"username": "bootstrap_admin", "password": "StrongPass1!", "is_admin": true},
@@ -98,7 +98,7 @@ func TestApplyUserBootstrapConfigFilesCreatesUsers(t *testing.T) {
 }
 
 func TestApplyUserBootstrapConfigFilesSetsEmail(t *testing.T) {
-	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupUserConfigTestDB(t))
 
 	// Simulate a user that already exists (e.g. the singleton admin) whose
 	// default email (== username) we want to correct via bootstrap.
@@ -132,7 +132,7 @@ func TestApplyUserBootstrapConfigFilesSetsEmail(t *testing.T) {
 }
 
 func TestApplyUserBootstrapConfigFilesRejectsMissingFields(t *testing.T) {
-	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupUserConfigTestDB(t))
 
 	if err := applyUserBootstrapConfigFiles(DB, []string{`[{"password": "StrongPass1!"}]`}, true); err == nil {
 		t.Fatalf("expected error for missing username")
@@ -143,7 +143,7 @@ func TestApplyUserBootstrapConfigFilesRejectsMissingFields(t *testing.T) {
 }
 
 func TestApplyUserBootstrapConfigFilesPreconfiguresTwoFactor(t *testing.T) {
-	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupUserConfigTestDB(t))
 
 	spec := `[
 		{"username": "mfa_user", "password": "StrongPass1!", "two_factor_secret": "jbswy3dpehpk3pxp"}
@@ -165,7 +165,7 @@ func TestApplyUserBootstrapConfigFilesPreconfiguresTwoFactor(t *testing.T) {
 }
 
 func TestApplyUserBootstrapConfigFilesSeedsRecoveryCodesIdempotently(t *testing.T) {
-	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupUserConfigTestDB(t))
 
 	spec := `[
 		{
@@ -212,7 +212,7 @@ func TestApplyUserBootstrapConfigFilesSeedsRecoveryCodesIdempotently(t *testing.
 }
 
 func TestApplyUserBootstrapConfigFilesRejectsInvalidTwoFactorSecret(t *testing.T) {
-	DB := database.SetupDatabase(*setupUserConfigTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupUserConfigTestDB(t))
 
 	spec := `[
 		{"username": "bad_mfa_user", "password": "StrongPass1!", "two_factor_secret": "not-base32-1"}

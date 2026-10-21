@@ -1,6 +1,7 @@
 package server
 
 import (
+	"backend/logging"
 	"backend/runtimecfg"
 	"crypto/sha1"
 	"encoding/hex"
@@ -312,7 +313,7 @@ func registerFrontendProxies(mux *http.ServeMux, proxies []FrontendProxy, common
 		wrapped := commonMiddlewares(handler)
 
 		for _, prefix := range p.Prefixes {
-			fmt.Printf("Proxying %s -> %s (%s)\n", prefix, p.Target, p.Name)
+			logging.Debugf("Proxying %s -> %s (%s)", prefix, p.Target, p.Name)
 			mux.Handle(prefix, wrapped)
 		}
 	}

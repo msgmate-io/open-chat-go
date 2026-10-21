@@ -5,6 +5,7 @@ import (
 	"backend/database"
 	"backend/nativecoder"
 	"backend/server/util"
+	"backend/sharecensor"
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
@@ -337,7 +338,9 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 	listedChat := convertChatToListedChat(user, chat)
 	if data.AutoShare {
-		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID, "public", nil)
+		// Auto-share always starts censored: the safe content mode is the
+		// default and can only be widened explicitly through the share API.
+		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID, "public", nil, sharecensor.ContentModeCensored)
 		if shareErr != nil {
 			http.Error(w, "Failed to auto-share chat", http.StatusInternalServerError)
 			return

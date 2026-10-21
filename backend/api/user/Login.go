@@ -250,7 +250,7 @@ func LoginUser(DB *gorm.DB, email string, password string, twoFactorCode string,
 	q := DB.First(&user, "email = ? OR username = ?", identifier, identifier)
 
 	if q.Error != nil {
-		fmt.Println(q.Error)
+		logging.Errorf("login lookup failed for %q: %v", identifier, q.Error)
 		return q.Error, "", false, database.User{}
 	}
 

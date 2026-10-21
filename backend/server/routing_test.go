@@ -17,7 +17,7 @@ import (
 func setupBadgeRoutingDB(t *testing.T) (*gorm.DB, string) {
 	t.Helper()
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	owner := createAutomatedUser(t, DB, "owner@example.com", false)
 	botUser := createAutomatedUser(t, DB, "bot@example.com", false)
@@ -101,7 +101,7 @@ func TestInteractionBadgeRoutesServeFromAPIAliasAndPublicPath(t *testing.T) {
 // credentials and without touching the database.
 func TestLivenessProbeIsPubliclyReachable(t *testing.T) {
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 
@@ -119,7 +119,7 @@ func TestLivenessProbeIsPubliclyReachable(t *testing.T) {
 
 func TestInteractionBadgeAliasUnknownShareRendersNotFoundSVG(t *testing.T) {
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 

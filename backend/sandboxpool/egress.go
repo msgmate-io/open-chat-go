@@ -89,6 +89,11 @@ const (
 	DefaultRecycleAfterFailures = 3
 )
 
+// ProbeScriptPath is the in-pod probe that produces the authoritative report.
+// It lives in the repository because the pool pod is provisioned from it, and it
+// is named here so the admin surface and the pool start path agree on one path.
+const ProbeScriptPath = "development/scripts/sandbox-pool-egress-gate.sh"
+
 // DefaultEgressTargets are the endpoints a pooled sandbox must reach to behave
 // like a dedicated pod: cluster DNS (which the kubelet/CoreDNS of the pool
 // namespace answers) plus the GitHub and GitHub API endpoints the credential
@@ -253,9 +258,14 @@ type GateStatus struct {
 	AdmittedLeases    int64    `json:"admitted_leases"`
 	BlockedLeases     int64    `json:"blocked_leases"`
 	LastError         string   `json:"last_error,omitempty"`
-	Targets           []string `json:"targets"`
-	ProbeTimeoutMS    int64    `json:"probe_timeout_ms"`
-	ReportTTLMS       int64    `json:"report_ttl_ms"`
+	// PortAudit is the per-workspace port-block audit of the pooled sandboxes
+	// (ci#616). It is present only once a port auditor is attached, is best
+	// effort and never changes the gate's state: drift is a diagnosable
+	// condition, not a reason to refuse a lease.
+	PortAudit      *PortAuditStatus `json:"port_audit,omitempty"`
+	Targets        []string         `json:"targets"`
+	ProbeTimeoutMS int64            `json:"probe_timeout_ms"`
+	ReportTTLMS    int64            `json:"report_ttl_ms"`
 }
 
 // Gate is the process-wide (per-pool) readiness gate. All methods are safe for
@@ -284,6 +294,10 @@ type Gate struct {
 	now    func() time.Time
 	lookup func(ctx context.Context, host string) ([]string, error)
 	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// portAuditor, when set, contributes the ci#616 per-workspace port-block
+	// audit to the gate status. It is advisory only and never gates a lease.
+	portAuditor *PortAuditor
 }
 
 var (
@@ -660,7 +674,31 @@ func (g *Gate) Status(force bool) GateStatus {
 	if !g.healthySince.IsZero() {
 		status.HealthySince = g.healthySince.UTC().Format(time.RFC3339)
 	}
+	if g.portAuditor != nil {
+		// Best effort and advisory: a degraded audit contributes an empty,
+		// secret-free view and never turns the gate unhealthy (ci#616).
+		portAudit := g.portAuditor.Status()
+		status.PortAudit = &portAudit
+	}
 	return status
+}
+
+// SetPortAuditor attaches the per-workspace port-block auditor whose findings
+// are surfaced in Status (ci#616). Passing nil detaches it again. The auditor is
+// advisory: it is reported next to the gate's state and never influences
+// Admit/ProbeAndAdmit, so port drift stays a diagnosable condition instead of a
+// lease refusal.
+func (g *Gate) SetPortAuditor(auditor *PortAuditor) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.portAuditor = auditor
+}
+
+// PortAuditor returns the attached port auditor, if any.
+func (g *Gate) PortAuditor() *PortAuditor {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.portAuditor
 }
 
 // remediationFor explains how to fix a failed probe. It mentions no credential
