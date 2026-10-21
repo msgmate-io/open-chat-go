@@ -376,6 +376,12 @@ jobs:
     if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
     strategy:
       fail-fast: false
+      # The sandbox backend and the CI runner fleet share one provider key; the
+      # full matrix at once saturates the key's in-flight credit and every test
+      # fails with HTTP 402 ("would exceed your available credits given your
+      # current in-flight requests"). Cap the matrix so the suite is reliable
+      # while the shared key is in use (ci#803 audit).
+      max-parallel: 3
       matrix:
         test: ${{ fromJson(needs.discover.outputs.tests) }}
     env:
