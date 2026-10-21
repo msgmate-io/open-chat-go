@@ -917,11 +917,4 @@ Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
 (sub-agents, code search/LSP, per-workspace MCP).
-### Coding-agent sandboxes and dispatch live in the private integration
-
-Sandbox provisioning, the development-lead loop, CI-failure routing and the
-hive-mind dispatch tool families are owned by the private `msgmate_coder`
-integration (see its `docs/`), not by this repository. Only the generic
-integration contract (integration profiles, event envelopes, route/handler
-registration) is described below.
 
