@@ -2513,6 +2513,17 @@ jobs:
       # non-empty repository/PR target and must skip (instead of 404-looping)
       # when that target is empty. Pins the workflow wiring; the helper's
       # runtime behaviour is covered by the hermetic shell test below it.
+      # ci#612: a *pooled* workspace must get its own network namespace, and a
+      # sensitive repo must never be handed a pooled slot (follow-up of the
+      # ci#546 shared sandbox networking design). Pin the in-pod namespace
+      # script contract (deterministic per-workspace namespace, exec prefix,
+      # slirp sidecar keeping egress/DNS, sibling-port isolation refusal,
+      # --print-only never failing, no credential material).
+      - name: Sandbox workspace netns unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_workspace_netns.sh
+
       - name: PR CI progress-comment target unit tests
         run: |
           set -euo pipefail
