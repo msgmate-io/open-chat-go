@@ -26,8 +26,10 @@ type WebSearchInput struct {
 // WebFetchToolDef fetches a URL and returns readable text/code plus metadata.
 // It is the shared fetch tool available to any bot that lists `web_fetch`.
 var WebFetchToolDef = ToolDefinition{
-	Name:           "web_fetch",
-	Description:    "Fetch a URL and return its readable text content (HTML is converted to plain text). Use it to read web pages, documentation or API responses.",
+	Name: "web_fetch",
+	Description: "Fetch a URL and return its readable text content (HTML is converted to plain text). Use it to read web pages, documentation or API responses. " +
+		"Do not guess URLs: a 404/410 is reported as a not-found error and repeated fetches of the same dead URL are not retried - " +
+		"use web_search to find the current URL instead, and never fetch a URL twice in one turn.",
 	InputType:      WebFetchInput{},
 	RequiredParams: []string{"url"},
 	Parameters: map[string]interface{}{
