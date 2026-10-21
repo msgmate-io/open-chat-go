@@ -2509,6 +2509,19 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_pool_egress_gate.sh
 
+      # ci#787: coding sandboxes are routinely provisioned without a docker
+      # daemon, and the old failure mode was agents improvising raw docker shell
+      # commands (compose up, run, repeated build retries, occasionally
+      # installing a daemon). Pin the contract of the one supported wrapper: a
+      # missing CLI / unreachable daemon reports guidance and exits 3 instead of
+      # a raw docker error, the command's own exit status survives the output
+      # capping, output stays bounded, `run` always passes --rm, and the wrapper
+      # subcommands stay in sync with the typed docker_sandbox_* registry.
+      - name: Coder docker tooling wrapper unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_coder_docker.sh
+
       # ci#745: the PR-CI progress-comment step must thread its repository/PR
       # context explicitly and must skip (instead of 404-looping) when that
       # context is empty. Pin the contract so the empty-URL red job cannot
