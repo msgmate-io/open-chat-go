@@ -7,12 +7,13 @@ import "testing"
 // cancels instead of duplicating.
 func TestCapContinuationForOutcome(t *testing.T) {
 	tests := []struct {
-		name     string
-		outcome  *TurnOutcome
-		attempts int
-		chainKey string
-		want     bool
-		reason   string
+		name           string
+		outcome        *TurnOutcome
+		transientInfra bool
+		attempts       int
+		chainKey       string
+		want           bool
+		reason         string
 	}{
 		{
 			name:     "failed tool call cap continues once",
@@ -36,11 +37,12 @@ func TestCapContinuationForOutcome(t *testing.T) {
 			reason:   TurnContinuationToolCap,
 		},
 		{
-			name:     "provider error with transient failures continues",
-			outcome:  &TurnOutcome{Reason: TurnEndedProviderError, TransientFailures: 1},
-			chainKey: "chat-1",
-			want:     true,
-			reason:   TurnContinuationTransient,
+			name:           "provider error with transient failures continues",
+			outcome:        &TurnOutcome{Reason: TurnEndedProviderError, TransientFailures: 1},
+			transientInfra: true,
+			chainKey:       "chat-1",
+			want:           true,
+			reason:         TurnContinuationTransient,
 		},
 		{
 			name:     "provider error without transient failure stays explicit",
@@ -61,6 +63,12 @@ func TestCapContinuationForOutcome(t *testing.T) {
 			want:     false,
 		},
 		{
+			name:     "confirmable pause is never continued",
+			outcome:  &TurnOutcome{Reason: TurnEndedConfirmablePause},
+			chainKey: "chat-1",
+			want:     false,
+		},
+		{
 			name:     "nil outcome is never continued",
 			chainKey: "chat-1",
 			want:     false,
@@ -74,7 +82,7 @@ func TestCapContinuationForOutcome(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CapContinuationForOutcome(tc.outcome, tc.attempts, tc.chainKey)
+			got := CapContinuationForOutcome(tc.outcome, tc.transientInfra, tc.attempts, tc.chainKey)
 			if got.Required != tc.want {
 				t.Fatalf("Required = %t, want %t (%+v)", got.Required, tc.want, got)
 			}
