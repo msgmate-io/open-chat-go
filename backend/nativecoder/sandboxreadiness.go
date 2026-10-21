@@ -142,9 +142,46 @@ func SandboxProfileSetupLines(profile string) []string {
 		// which reads it to decide whether provisioning already happened.
 		`if [ -d .git ]; then openchat_sandbox_profile='` + SandboxProfileFile + `'; else openchat_sandbox_profile="$HOME/.openchat-sandbox-profile"; fi`,
 		`if [ -x development/scripts/build_tools.sh ] && [ ! -f "$openchat_sandbox_profile" ]; then`,
-		`  cli="$(development/scripts/build_tools.sh)" && "$cli" prepare --profile ` + normalized + ` && printf '%s\n' '` + normalized + `' > "$openchat_sandbox_profile"`,
+		`  cli="$(development/scripts/build_tools.sh)" && ` + devSetupPrepareCommand(`"$cli"`, normalized) + ` && printf '%s\n' '` + normalized + `' > "$openchat_sandbox_profile"`,
 		`fi`,
 	}
+}
+
+// devSetupProfileCandidates returns the integration profiles to try, in order,
+// for a resolved dev-set-up profile: the requested profile first and
+// DevSetupProfileFallback second (deduplicated).
+//
+// ci#756: the membership of the `full-development` profile ships with the
+// *private* integrations manifest, which is materialized from the private `ci`
+// repository. A public checkout (and therefore a public CI run) may resolve the
+// default profile before that manifest knows it, so provisioning retries the
+// last public profile instead of failing the whole sandbox set-up.
+func devSetupProfileCandidates(profile string) []string {
+	if profile == "" || profile == DevSetupProfileFallback {
+		return []string{profile}
+	}
+	return []string{profile, DevSetupProfileFallback}
+}
+
+// devSetupPrepareCommand renders the shell snippet that provisions profile
+// through cmd, retrying the fallback profile when the requested one is unknown
+// to the integrations manifest.
+func devSetupPrepareCommand(cmd, profile string) string {
+	parts := make([]string, 0, 2)
+	for _, candidate := range devSetupProfileCandidates(profile) {
+		if candidate == "" {
+			continue
+		}
+		parts = append(parts, cmd+" prepare --profile "+candidate)
+	}
+	if len(parts) == 0 {
+		return cmd + " prepare"
+	}
+	command := parts[0]
+	for _, part := range parts[1:] {
+		command += " || " + part
+	}
+	return command
 }
 
 // sandboxToolchainTools are the binaries this policy can point an agent at.
