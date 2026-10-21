@@ -18,19 +18,22 @@ import (
 const actionTasksMaxChats = 300
 
 // actionTasksScanBatchSize is how many candidate chats are loaded and scanned
-// per batch while walking the user's chats. Batching keeps a single request from
-// materializing the whole candidate set, and lets a paged request stop as soon
-// as its page is full instead of scanning every owned chat (ci#801).
+// per batch while walking the user's chats. Batching bounds how many candidate
+// chats (and their participant preloads) one poll materializes at once; the full
+// walk is still required because pending-ness is derived from message metadata,
+// so `total` stays authoritative and only the row payload is windowed (ci#801).
 const actionTasksScanBatchSize = 60
 
 // actionTasksMaxPageSize caps the `limit` query parameter so a caller cannot ask
 // for an unbounded page.
-const actionTasksMaxPageSize = 200
+const actionTasksMaxPageSize = actionTasksMaxChats
 
 // actionTasksDefaultPageSize is the number of rows returned when the client does
-// not ask for an explicit page. Clients keep an authoritative total via the
-// `count` field and can page from there (ci#801).
-const actionTasksDefaultPageSize = 25
+// not ask for an explicit page. It intentionally equals the scan cap so that
+// omitting the new parameters keeps the exact response payload existing clients
+// already get; paginating clients pass an explicit `limit` and read `total` for
+// the authoritative count (ci#801).
+const actionTasksDefaultPageSize = actionTasksMaxPageSize
 
 // actionTasksPage is the resolved pagination window of one action-tasks request.
 type actionTasksPage struct {
@@ -163,7 +166,7 @@ type ActionTasksResponse struct {
 //	@Security     SessionAuth
 //	@Param        count_only query int false "Only return the count (1/0)" default(0)
 //	@Param        scope query string false "Admin only: 'all' to list every user's pending actions" default()
-//	@Param        limit query int false "Maximum number of rows to return" default(25)
+//	@Param        limit query int false "Maximum number of rows to return" default(300)
 //	@Param        offset query int false "Number of rows to skip" default(0)
 //	@Success      200 {object} chats.ActionTasksResponse "Pending action tasks"
 //	@Failure      400 {string} string "Unable to get database or user"
@@ -187,9 +190,10 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The scan above is already bounded (batched, capped at actionTasksMaxChats
-	// chats), so the total is authoritative for every request; only the row
-	// payload is windowed (ci#801).
+	// The scan walks at most actionTasksMaxChats chats, so `total` is the pending
+	// count inside that window (the pre-existing cap) and is independent of the
+	// requested page. Windowed rows skip the per-row partner/tool-call
+	// serialization for off-page tasks (ci#801).
 	total := len(tasks)
 	response := ActionTasksResponse{
 		Count:  total,
