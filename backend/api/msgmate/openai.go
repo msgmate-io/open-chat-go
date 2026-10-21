@@ -1115,7 +1115,11 @@ func processStreamingRequest(
 	// runs when this attempt is done (streamed out or failed), and the effective
 	// cap plus the current in-flight count are logged so the admission decision
 	// is observable.
-	admissionRelease, admissionErr := admitProviderRequest(ctx, meta.ProviderAdmissionKey, meta.ProviderAdmission)
+	admissionRelease, admissionErr := admitProviderRequest(ctx, meta.ProviderAdmissionKey, meta.ProviderAdmission, providerAdmissionSlotMeta{
+		RequestID: providerAdmissionRequestID(meta.ChatUUID, meta.Attempt),
+		ChatID:    meta.ChatUUID,
+		Attempt:   meta.Attempt,
+	})
 	if admissionErr != nil {
 		reportProviderRequestResult(middlewareCtx, meta.Attempt, 0, admissionErr, 0, nil, nil)
 		return nil, admissionErr

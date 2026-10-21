@@ -40,8 +40,10 @@ var duplicateToolCallHints = map[string]string{
 	"coder_grep": " For coder_grep, narrow the pattern and pass an explicit `path`/`include`.",
 	"coder_bash": " For coder_bash, run a narrower command, redirect the output to a file and read the ranges you need, " +
 		"or use the typed tool for this kind of work (see the bash-coverage hint).",
-	"coder_git":  " For coder_git, ask for a smaller range (`limit`, a single `path`, or one commit).",
-	"coder_glob": " For coder_glob, use a tighter pattern so the match set is smaller.",
+	"coder_git":      " For coder_git, ask for a smaller range (`limit`, a single `path`, or one commit).",
+	"coder_glob":     " For coder_glob, use a tighter pattern so the match set is smaller.",
+	"webfetch":       " For webfetch, do not re-fetch the same URL: a 404/410 means the page does not exist, so look the current URL up with coder_websearch (or read the repository) instead of guessing another path.",
+	"coder_webfetch": " For coder_webfetch, do not re-fetch the same URL: a 404/410 means the page does not exist, so look the current URL up with coder_websearch (or read the repository) instead of guessing another path.",
 }
 
 // DuplicateToolCallNotice returns the one-line notice that opens a replayed

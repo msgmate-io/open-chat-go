@@ -65,6 +65,29 @@ printf '{"text":"HTTP 402 payment required"}\n' > "$case_dir/b.last_bot.json"
 assert_class account "every reply on an account error is an account failure"
 
 # --- unreachable: transient provider infrastructure -------------------------
+# ci#769: an uncapped matrix saturates the shared key's in-flight credit and the
+# provider answers 402 "would exceed your available credits given your current
+# in-flight requests". That is a self-clearing concurrency rejection, not a
+# drained balance: classifying it as `account` skipped the retry for every test
+# at once and turned the whole guard issue red.
+new_case
+printf '{"text":"provider error: HTTP 402 This request would exceed your available credits given your current in-flight requests"}\n' > "$case_dir/a.last_bot.json"
+assert_class unreachable "an in-flight-credit 402 is transient, not a drained balance (ci#769)"
+
+new_case
+printf '{"text":"HTTP 402: available credits given your current in-flight requests"}\n' > "$case_dir/a.last_bot.json"
+assert_class unreachable "the in-flight-credit phrase alone is transient even with a bare 402"
+
+new_case
+printf '{"text":"402 would exceed your available credits"}\n' > "$case_dir/a.last_bot.json"
+printf '{"text":"HTTP 402 This request would exceed your available credits given your current in-flight requests"}\n' > "$case_dir/b.last_bot.json"
+assert_class unreachable "every reply on an in-flight-credit 402 is transient"
+
+new_case
+printf '{"text":"HTTP 402 This request would exceed your available credits given your current in-flight requests"}\n' > "$case_dir/a.last_bot.json"
+printf '{"text":"I edited the wrong file and the test asserts failed"}\n' > "$case_dir/b.last_bot.json"
+assert_class "" "an in-flight 402 mixed with a coder failure still stays a code failure"
+
 new_case
 printf '{"text":"I can'"'"'t reach my AI provider right now. This looks like a temporary network problem reaching the AI provider."}\n' > "$case_dir/a.last_bot.json"
 assert_class unreachable "the bot's provider-unreachable text is transient"

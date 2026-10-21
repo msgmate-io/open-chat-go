@@ -5,6 +5,8 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +16,59 @@ import (
 // actionTasksMaxChats caps how many owned chats are scanned for pending action
 // tasks in a single request.
 const actionTasksMaxChats = 300
+
+// actionTasksScanBatchSize is how many candidate chats are loaded and scanned
+// per batch while walking the user's chats. Batching bounds how many candidate
+// chats (and their participant preloads) one poll materializes at once; the full
+// walk is still required because pending-ness is derived from message metadata,
+// so `total` stays authoritative and only the row payload is windowed (ci#801).
+const actionTasksScanBatchSize = 60
+
+// actionTasksMaxPageSize caps the `limit` query parameter so a caller cannot ask
+// for an unbounded page.
+const actionTasksMaxPageSize = actionTasksMaxChats
+
+// actionTasksDefaultPageSize is the number of rows returned when the client does
+// not ask for an explicit page. It intentionally equals the scan cap so that
+// omitting the new parameters keeps the exact response payload existing clients
+// already get; paginating clients pass an explicit `limit` and read `total` for
+// the authoritative count (ci#801).
+const actionTasksDefaultPageSize = actionTasksMaxPageSize
+
+// actionTasksPage is the resolved pagination window of one action-tasks request.
+type actionTasksPage struct {
+	Limit     int
+	Offset    int
+	CountOnly bool
+}
+
+// parseActionTasksPage resolves the action-tasks pagination parameters. limit
+// falls back to actionTasksDefaultPageSize and is clamped to
+// actionTasksMaxPageSize; offset is clamped to >= 0.
+func parseActionTasksPage(values url.Values) actionTasksPage {
+	page := actionTasksPage{
+		Limit:     actionTasksDefaultPageSize,
+		CountOnly: strings.TrimSpace(values.Get("count_only")) == "1",
+	}
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			switch {
+			case parsed <= 0:
+				page.Limit = actionTasksDefaultPageSize
+			case parsed > actionTasksMaxPageSize:
+				page.Limit = actionTasksMaxPageSize
+			default:
+				page.Limit = parsed
+			}
+		}
+	}
+	if raw := strings.TrimSpace(values.Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			page.Offset = parsed
+		}
+	}
+	return page
+}
 
 // Action task kinds surfaced by pendingActionsForMessage.
 const (
@@ -87,21 +142,32 @@ type ActionTaskRow struct {
 }
 
 // ActionTasksResponse is the payload of the action-tasks endpoint.
+//
+// Count is the authoritative number of pending tasks and stays equal to Total;
+// it is kept as the legacy field every existing client already reads. Rows holds
+// the requested page only, so a client can show the first page and resolve tasks
+// one by one while Count keeps the badge honest (ci#801).
 type ActionTasksResponse struct {
-	Count int             `json:"count"`
-	Rows  []ActionTaskRow `json:"rows"`
+	Count   int             `json:"count"`
+	Total   int             `json:"total"`
+	Limit   int             `json:"limit"`
+	Offset  int             `json:"offset"`
+	HasMore bool            `json:"has_more"`
+	Rows    []ActionTaskRow `json:"rows"`
 }
 
-// GetActionTasks returns every owned chat that currently waits on a user action.
+// GetActionTasks returns the chats that currently wait on a user action.
 //
 //	@Summary      Get pending action tasks
-//	@Description  List owned chats/interactions that currently require a user action. Admins may pass scope=all to inspect pending actions across all users.
+//	@Description  List owned chats/interactions that currently require a user action. Admins may pass scope=all to inspect pending actions across all users. Paged with limit/offset; `count`/`total` stay the authoritative number of pending tasks regardless of the requested page.
 //	@Tags         chats
 //	@Accept       json
 //	@Produce      json
 //	@Security     SessionAuth
 //	@Param        count_only query int false "Only return the count (1/0)" default(0)
 //	@Param        scope query string false "Admin only: 'all' to list every user's pending actions" default()
+//	@Param        limit query int false "Maximum number of rows to return" default(300)
+//	@Param        offset query int false "Number of rows to skip" default(0)
 //	@Success      200 {object} chats.ActionTasksResponse "Pending action tasks"
 //	@Failure      400 {string} string "Unable to get database or user"
 //	@Failure      500 {string} string "Unable to resolve action tasks"
@@ -113,7 +179,7 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	countOnly := strings.TrimSpace(r.URL.Query().Get("count_only")) == "1"
+	page := parseActionTasksPage(r.URL.Query())
 	// The admin-wide scope is opt-in and hard-gated on the admin flag; regular
 	// users always stay scoped to their own chats.
 	adminScope := user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
@@ -124,11 +190,27 @@ func (h *ChatsHandler) GetActionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := ActionTasksResponse{Count: len(tasks), Rows: []ActionTaskRow{}}
-	if !countOnly {
-		for _, task := range tasks {
+	// The scan walks at most actionTasksMaxChats chats, so `total` is the pending
+	// count inside that window (the pre-existing cap) and is independent of the
+	// requested page. Windowed rows skip the per-row partner/tool-call
+	// serialization for off-page tasks (ci#801).
+	total := len(tasks)
+	response := ActionTasksResponse{
+		Count:  total,
+		Total:  total,
+		Limit:  page.Limit,
+		Offset: page.Offset,
+		Rows:   []ActionTaskRow{},
+	}
+	if !page.CountOnly && page.Offset < total {
+		end := page.Offset + page.Limit
+		if end > total {
+			end = total
+		}
+		for _, task := range tasks[page.Offset:end] {
 			response.Rows = append(response.Rows, buildActionTaskRow(user, task.Chat, task.Message, task.Actions, adminScope))
 		}
+		response.HasMore = len(response.Rows) > 0 && page.Offset+len(response.Rows) < total
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -193,25 +275,13 @@ type pendingActionTask struct {
 // honoring the acting user's dismissals. When adminScope is set every chat is
 // scanned; otherwise only chats the user participates in. Browser tokens are
 // restricted to interaction chats regardless of scope.
+//
+// The chat scan is batched: candidate chats are loaded actionTasksScanBatchSize
+// at a time (and capped at actionTasksMaxChats) so a poll never materializes the
+// whole candidate set with its participant preloads at once (ci#801). The full
+// scan is still required because pending-ness is derived from message metadata in
+// Go, so the returned task list is what makes `count`/`total` authoritative.
 func collectPendingActionTasks(DB *gorm.DB, user *database.User, adminScope bool, browserToken bool) ([]pendingActionTask, error) {
-	var query *gorm.DB
-	if adminScope {
-		query = DB.Model(&database.Chat{})
-	} else {
-		query = DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
-	}
-	if browserToken {
-		query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
-	}
-
-	var chats []database.Chat
-	if err := query.Preload("User1").Preload("User2").
-		Order("updated_at DESC").
-		Limit(actionTasksMaxChats).
-		Find(&chats).Error; err != nil {
-		return nil, err
-	}
-
 	// Dismissals are per-user. Loading the acting admin's own dismissals means
 	// the admin-wide scope stops surfacing tasks the admin has acknowledged,
 	// while other users keep seeing their own pending state.
@@ -220,17 +290,53 @@ func collectPendingActionTasks(DB *gorm.DB, user *database.User, adminScope bool
 		return nil, err
 	}
 
-	tasks := make([]pendingActionTask, 0, len(chats))
-	for _, chat := range chats {
-		message, actions, ok := latestPendingActionMessage(DB, chat.ID)
-		if !ok {
-			continue
+	tasks := make([]pendingActionTask, 0, actionTasksScanBatchSize)
+	scannedChats := 0
+	for scannedChats < actionTasksMaxChats {
+		batchSize := actionTasksScanBatchSize
+		if remaining := actionTasksMaxChats - scannedChats; remaining < batchSize {
+			batchSize = remaining
 		}
-		taskKey := actionTaskKey(chat.UUID, message.UUID)
-		if _, skip := dismissed[taskKey]; skip {
-			continue
+
+		query := DB.Model(&database.Chat{})
+		if !adminScope {
+			query = query.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
 		}
-		tasks = append(tasks, pendingActionTask{Chat: chat, Message: message, Actions: actions})
+		if browserToken {
+			query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
+		}
+
+		var chats []database.Chat
+		if err := query.Preload("User1").Preload("User2").
+			// `id DESC` breaks `updated_at` ties so the batched offset walk
+			// cannot skip or duplicate a chat between batches.
+			Order("updated_at DESC").Order("id DESC").
+			Offset(scannedChats).
+			Limit(batchSize).
+			Find(&chats).Error; err != nil {
+			return nil, err
+		}
+		if len(chats) == 0 {
+			break
+		}
+		scannedChats += len(chats)
+
+		for _, chat := range chats {
+			message, actions, ok := latestPendingActionMessage(DB, chat.ID)
+			if !ok {
+				continue
+			}
+			taskKey := actionTaskKey(chat.UUID, message.UUID)
+			if _, skip := dismissed[taskKey]; skip {
+				continue
+			}
+			tasks = append(tasks, pendingActionTask{Chat: chat, Message: message, Actions: actions})
+		}
+
+		// A short batch means the candidate set is exhausted.
+		if len(chats) < batchSize {
+			break
+		}
 	}
 	return tasks, nil
 }

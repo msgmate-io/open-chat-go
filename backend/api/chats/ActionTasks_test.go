@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"backend/database"
@@ -146,7 +148,15 @@ func withActionTasksUser(req *http.Request, DB *gorm.DB, user *database.User) *h
 }
 
 func actionTasksRequest(DB *gorm.DB, user *database.User, browserToken bool) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("GET", "/api/v1/chats/action-tasks", nil)
+	return actionTasksRequestQuery(DB, user, browserToken, "")
+}
+
+func actionTasksRequestQuery(DB *gorm.DB, user *database.User, browserToken bool, rawQuery string) *httptest.ResponseRecorder {
+	target := "/api/v1/chats/action-tasks"
+	if rawQuery != "" {
+		target += "?" + rawQuery
+	}
+	req := httptest.NewRequest("GET", target, nil)
 	if browserToken {
 		req = browserTokenContext(req, DB, user)
 	} else {
@@ -354,5 +364,163 @@ func TestDismissActionTaskRejectsForeignChat(t *testing.T) {
 
 	if rr.Code != 404 {
 		t.Fatalf("expected 404 for a chat not owned by the user, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestParseActionTasksPageNormalizesParams(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantLimit int
+		wantSkip  int
+		wantCount bool
+	}{
+		{name: "defaults", query: "", wantLimit: actionTasksDefaultPageSize},
+		{name: "explicit", query: "limit=5&offset=10", wantLimit: 5, wantSkip: 10},
+		{name: "zero limit falls back", query: "limit=0", wantLimit: actionTasksDefaultPageSize},
+		{name: "negative limit falls back", query: "limit=-3", wantLimit: actionTasksDefaultPageSize},
+		{name: "garbage falls back", query: "limit=abc&offset=xyz", wantLimit: actionTasksDefaultPageSize},
+		{name: "limit clamped", query: "limit=9999", wantLimit: actionTasksMaxPageSize},
+		{name: "negative offset clamped", query: "offset=-7", wantLimit: actionTasksDefaultPageSize},
+		{name: "count only", query: "count_only=1&limit=1", wantLimit: 1, wantCount: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			page := parseActionTasksPage(url.Values{})
+			if test.query != "" {
+				parsed, err := url.ParseQuery(test.query)
+				if err != nil {
+					t.Fatalf("failed to parse query %q: %v", test.query, err)
+				}
+				page = parseActionTasksPage(parsed)
+			}
+			if page.Limit != test.wantLimit {
+				t.Fatalf("expected limit %d, got %d", test.wantLimit, page.Limit)
+			}
+			if page.Offset != test.wantSkip {
+				t.Fatalf("expected offset %d, got %d", test.wantSkip, page.Offset)
+			}
+			if page.CountOnly != test.wantCount {
+				t.Fatalf("expected count_only %v, got %v", test.wantCount, page.CountOnly)
+			}
+		})
+	}
+}
+
+// createPendingActionTaskChats creates one chat with a pending action task per
+// call and returns the created chats in creation order.
+func createPendingActionTaskChats(t *testing.T, DB *gorm.DB, owner, bot *database.User, count int) []database.Chat {
+	t.Helper()
+	chats := make([]database.Chat, 0, count)
+	for i := 0; i < count; i++ {
+		chat := createChatOfType(t, DB, owner, bot, "conversation")
+		createActionTaskMessage(t, DB, chat, bot, owner, `{"opencode_permission":{"status":"pending"}}`)
+		chats = append(chats, chat)
+	}
+	return chats
+}
+
+func TestGetActionTasksPagesRowsAndKeepsAuthoritativeTotal(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "actions-page-owner@example.com", false)
+	bot := createUserForChatsTest(t, DB, "actions-page-bot@example.com", false)
+	chats := createPendingActionTaskChats(t, DB, owner, bot, 5)
+
+	seen := map[string]int{}
+	for offset := 0; offset < 6; offset += 2 {
+		response := decodeActionTasks(t, actionTasksRequestQuery(DB, owner, false, fmt.Sprintf("limit=2&offset=%d", offset)))
+		if response.Count != 5 || response.Total != 5 {
+			t.Fatalf("offset=%d: expected authoritative total 5, got count=%d total=%d", offset, response.Count, response.Total)
+		}
+		if response.Limit != 2 || response.Offset != offset {
+			t.Fatalf("offset=%d: expected echoed window limit=2 offset=%d, got limit=%d offset=%d", offset, offset, response.Limit, response.Offset)
+		}
+		wantRows := 2
+		wantMore := true
+		switch {
+		case offset == 4:
+			wantRows = 1
+			wantMore = false
+		case offset == 6:
+			wantRows = 0
+			wantMore = false
+		}
+		if len(response.Rows) != wantRows {
+			t.Fatalf("offset=%d: expected %d rows, got %d", offset, wantRows, len(response.Rows))
+		}
+		if response.HasMore != wantMore {
+			t.Fatalf("offset=%d: expected has_more=%v, got %v", offset, wantMore, response.HasMore)
+		}
+		for _, row := range response.Rows {
+			if previous, duplicate := seen[row.ChatUUID]; duplicate {
+				t.Fatalf("chat %q appeared in both offsets %d and %d", row.ChatUUID, previous, offset)
+			}
+			seen[row.ChatUUID] = offset
+		}
+	}
+
+	if len(seen) != len(chats) {
+		t.Fatalf("expected the pages to cover all %d chats, got %d", len(chats), len(seen))
+	}
+	for _, chat := range chats {
+		if _, ok := seen[chat.UUID]; !ok {
+			t.Fatalf("chat %q was never returned by any page", chat.UUID)
+		}
+	}
+}
+
+func TestGetActionTasksCountOnlyReturnsTotalWithoutRows(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "actions-count-page@example.com", false)
+	bot := createUserForChatsTest(t, DB, "actions-count-page-bot@example.com", false)
+	createPendingActionTaskChats(t, DB, owner, bot, 3)
+
+	response := decodeActionTasks(t, actionTasksRequestQuery(DB, owner, false, "count_only=1&limit=1"))
+	if response.Count != 3 || response.Total != 3 {
+		t.Fatalf("expected count_only to still report the total 3, got count=%d total=%d", response.Count, response.Total)
+	}
+	if len(response.Rows) != 0 {
+		t.Fatalf("expected no rows for count_only, got %d", len(response.Rows))
+	}
+	if response.HasMore {
+		t.Fatal("expected count_only to never advertise has_more")
+	}
+}
+
+func TestGetActionTasksClampsPageLimit(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "actions-clamp@example.com", false)
+	bot := createUserForChatsTest(t, DB, "actions-clamp-bot@example.com", false)
+	createPendingActionTaskChats(t, DB, owner, bot, 3)
+
+	response := decodeActionTasks(t, actionTasksRequestQuery(DB, owner, false, "limit=9999"))
+	if response.Limit != actionTasksMaxPageSize {
+		t.Fatalf("expected limit clamped to %d, got %d", actionTasksMaxPageSize, response.Limit)
+	}
+	if len(response.Rows) != 3 {
+		t.Fatalf("expected the clamped limit to still return all 3 tasks, got %d", len(response.Rows))
+	}
+	if response.HasMore {
+		t.Fatal("expected has_more=false when the page covers every task")
+	}
+}
+
+// A page request must be served by walking the candidate chats in batches: with
+// more chats than one batch, every pending task still has to be found so the
+// total stays authoritative (ci#801).
+func TestGetActionTasksFindsTasksBeyondFirstScanBatch(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "actions-batch@example.com", false)
+	bot := createUserForChatsTest(t, DB, "actions-batch-bot@example.com", false)
+	chatCount := actionTasksScanBatchSize + 5
+	createPendingActionTaskChats(t, DB, owner, bot, chatCount)
+
+	response := decodeActionTasks(t, actionTasksRequestQuery(DB, owner, false, fmt.Sprintf("limit=%d", actionTasksMaxPageSize)))
+	if response.Total != chatCount {
+		t.Fatalf("expected the batched scan to find all %d tasks, got %d", chatCount, response.Total)
+	}
+	if len(response.Rows) != chatCount {
+		t.Fatalf("expected %d rows, got %d", chatCount, len(response.Rows))
 	}
 }
