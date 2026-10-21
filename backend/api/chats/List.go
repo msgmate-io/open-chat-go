@@ -262,8 +262,10 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Exclude by tag/category. A chat carrying any excluded tag is hidden, so
-		// `exclude_tags=automation,trigger` drops automation- and trigger-generated
-		// chats. COALESCE keeps chats with no tags (NULL) in the result.
+		// `exclude_tags=automation` drops internally generated automation chats
+		// (ci#746: git-triggered coding interactions are no longer tagged
+		// `trigger`, so they are visible by default). COALESCE keeps chats with no
+		// tags (NULL) in the result.
 		if excludeParam := strings.TrimSpace(r.URL.Query().Get("exclude_tags")); excludeParam != "" {
 			for _, tag := range strings.Split(excludeParam, ",") {
 				tag = strings.TrimSpace(tag)
