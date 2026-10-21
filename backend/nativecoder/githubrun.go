@@ -19,11 +19,13 @@ const (
 
 // GitHubRunListCall is the typed equivalent of `gh run list [flags]`.
 type GitHubRunListCall struct {
-	Repo     string // --repo / -R
-	Workflow string // --workflow / -w
-	Branch   string // --branch / -b
-	Status   string // --status / -s (queued|in_progress|completed|...)
-	Limit    int    // --limit / -L (gh default 10)
+	Repo       string // --repo / -R
+	Workflow   string // --workflow / -w
+	Branch     string // --branch / -b
+	Status     string // --status / -s (queued|in_progress|completed|...)
+	Limit      int    // --limit / -L (gh default 10)
+	JSONFields string // the --json field list
+	Watch      bool   // --watch (blocking poll: stays on the typed await surface)
 }
 
 // GitHubRunViewCall is the typed equivalent of `gh run view <ref> [flags]`,
@@ -35,6 +37,7 @@ type GitHubRunViewCall struct {
 	JSONFields string // the --json field list
 	ExitStatus bool   // --exit-status
 	Failed     bool   // --log-failed
+	Watch      bool   // --watch (blocking poll: stays on the typed await surface)
 }
 
 // GitHubRunTranslation is one successful `gh run` -> typed-tool translation.
@@ -112,6 +115,10 @@ func translateGhRunList(args []string) GitHubRunListCall {
 	call := GitHubRunListCall{Limit: 10}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--watch" {
+			call.Watch = true
+			continue
+		}
 		if i+1 < len(args) {
 			switch a {
 			case "--repo", "-R":
@@ -134,6 +141,10 @@ func translateGhRunList(args []string) GitHubRunListCall {
 				if n, err := strconv.Atoi(args[i+1]); err == nil && n > 0 {
 					call.Limit = n
 				}
+				i++
+				continue
+			case "--json":
+				call.JSONFields = strings.TrimSpace(args[i+1])
 				i++
 				continue
 			}
@@ -164,6 +175,8 @@ func translateGhRunView(args []string) GitHubRunViewCall {
 			call.Failed = true
 		case "--exit-status":
 			call.ExitStatus = true
+		case "--watch":
+			call.Watch = true
 		default:
 			if call.RunID == "" && !strings.HasPrefix(a, "-") {
 				call.RunID = a
