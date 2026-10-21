@@ -1453,7 +1453,16 @@ func createBotInteraction(
 	// never start work without an approval). An explicit request field asking for
 	// confirmation always wins; the config key is consumed here so it is not
 	// forwarded to the chat backend as shared config.
-	requireConfirmation := req.RequireConfirmation || consumeRequireConfirmationDefault(effectiveConfig)
+	//
+	// A dispatch that asked to run headless (`agent_dispatch.autonomous` or
+	// `approve_confirmations`) never gets the pre-start widget: nobody watches
+	// that interaction, so the widget can only park it until its timeout and the
+	// role produces nothing (ci#506 confirmation_parking, ci#622 selfcheck).
+	requireConfirmation := nativecoder.HeadlessDispatchRequiresConfirmation(
+		req.RequireConfirmation,
+		consumeRequireConfirmationDefault(effectiveConfig),
+		effectiveConfig,
+	)
 	// The management-scope declaration is a bot-only key consumed here too so it
 	// is never forwarded to the chat backend as shared config (ci#540 follow-up).
 	consumeAgentScopeTagsDefault(effectiveConfig)
@@ -1501,6 +1510,14 @@ func createBotInteraction(
 	if branch := nativecoder.AutoSandboxBranchForInteraction(req.Tags, req.ToolInit); branch != "" {
 		effectiveConfig = nativecoder.WithAutoSandboxBranch(effectiveConfig, branch)
 	}
+	// ci#622: the dispatch that created this interaction is the trusted headless
+	// surface, so a dispatched `autonomous: true` / `approve_confirmations: true`
+	// interaction must also state the mode the coder integration reads. A
+	// dispatch that only recorded the flag under `agent_dispatch` (and requested
+	// no explicit `coder_interaction`) would otherwise keep the per-action gate
+	// and park every `coder_bash` call until its timeout. An already configured
+	// mode always wins; a hand-made or non-coder interaction is untouched.
+	effectiveConfig = nativecoder.WithHeadlessDispatchNoPark(effectiveConfig)
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
