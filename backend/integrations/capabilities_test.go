@@ -60,12 +60,12 @@ func TestEventSinkReceivesRawKindPayload(t *testing.T) {
 	RegisterEventSink("runtime-selector", sink)
 
 	var s EventSink = sink
-	payload := json.RawMessage(`{"repo":"msgmate-io/open-chat-go","pr_number":42}`)
-	res, err := s.HandleIntegrationEvent(context.Background(), "ci_failure", payload)
+	payload := json.RawMessage(`{"resource":"example","count":42}`)
+	res, err := s.HandleIntegrationEvent(context.Background(), "example_event", payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if sink.kind != "ci_failure" || string(sink.payload) != string(payload) {
+	if sink.kind != "example_event" || string(sink.payload) != string(payload) {
 		t.Fatalf("sink did not receive the raw payload: kind=%q payload=%s", sink.kind, sink.payload)
 	}
 	if res == nil {
@@ -73,7 +73,7 @@ func TestEventSinkReceivesRawKindPayload(t *testing.T) {
 	}
 
 	sink.err = errors.New("boom")
-	if _, err := s.HandleIntegrationEvent(context.Background(), "ci_failure", payload); err == nil {
+	if _, err := s.HandleIntegrationEvent(context.Background(), "example_event", payload); err == nil {
 		t.Fatal("expected the sink error to be returned")
 	}
 }
