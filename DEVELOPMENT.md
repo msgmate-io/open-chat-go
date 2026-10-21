@@ -64,7 +64,13 @@ that cannot be reached (HTTP 408/429/5xx or a connection-level error, transient
 provider infrastructure, matched case-insensitively like the Go comparison) apart
 from a real coder-sandbox regression, so the
 summary names the cause once instead of leaving one identical failure row per
-test. The classifier is pinned by
+test. An in-flight-credit 402 (`would exceed your available credits given your
+current in-flight requests`) is classified as transient, not as a drained
+balance: the key does have balance and the rejection clears as soon as the
+concurrent requests drain, so it keeps its retry instead of being frozen as an
+account failure (ci#769 — an uncapped matrix tripped it for every test at once,
+so no test ever got its retry and the whole guard issue went red). The classifier
+is pinned by
 `development/scripts/tests/test_sandbox_provider_failure.sh`, which runs in the
 Pin Freshness Gate.
 

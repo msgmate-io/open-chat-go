@@ -13,6 +13,10 @@
 #                (HTTP 408/429/5xx, connection-level failures). Retrying burns
 #                another full sandbox run per test, so this is reported as
 #                transient provider infrastructure instead (ci#740 follow-up).
+#                An HTTP 402 caused by the provider's *in-flight credit* cap
+#                belongs here too: it clears as soon as the concurrent requests
+#                drain, so it is transient and must be retried rather than read
+#                as a drained balance (ci#769).
 #   (empty)      not a pure provider failure: at least one reply is missing or
 #                looks like an ordinary failure, so the test verdict stands.
 #
@@ -24,6 +28,18 @@
 # the error first (`strings.ToLower`), so the matching here is case-insensitive
 # as well: the real texts are "net/http: TLS handshake timeout" and io's
 # "unexpected EOF", both of which the backend retries.
+
+# A 402 that names the provider's *in-flight credit* cap is not a drained
+# balance: the key does have credit, it is only rejecting the request because
+# too many sibling requests are in flight against the same key. That clears by
+# itself as soon as those requests drain, so it must be retried instead of being
+# frozen as an account failure (ci#769: an uncapped sandbox matrix tripped this
+# on every test at once, so no test ever got its retry and the guard issue went
+# all-red). Checked before the account pattern on purpose: the in-flight 402 is
+# the more specific signal and must win over the generic "HTTP 402".
+sandbox_provider_inflight_pattern='would exceed your available credits'
+sandbox_provider_inflight_pattern+='|available credits given your current in-flight'
+sandbox_provider_inflight_pattern+='|in-flight request|in flight request|in-flight credit'
 
 # A drained balance or a bad key: never retry, always infrastructure.
 sandbox_provider_account_pattern='HTTP (401|402)|positive balance|insufficient_quota|invalid_api_key'
@@ -49,11 +65,17 @@ sandbox_provider_failure_class() {
   for file in "$dir"/*.last_bot.json; do
     [ -f "$file" ] || continue
     files=$(( files + 1 ))
+    # An in-flight-credit 402 is the transient class, so it must be tested before
+    # the account pattern: the generic "HTTP 402" arm of that pattern would
+    # otherwise freeze a self-clearing concurrency rejection as a drained
+    # balance, and the workflow skips the retry for account failures (ci#769).
+    if grep -qiE "$sandbox_provider_inflight_pattern" "$file"; then
+      unreachable_hits=$(( unreachable_hits + 1 ))
     # Account wins over unreachable: a drained balance is sometimes surfaced as
     # a 429, which must not be retried as a transient outage. Both matchings are
     # case-insensitive because the backend lowercases the provider error before
     # comparing it against the same markers.
-    if grep -qiE "$sandbox_provider_account_pattern" "$file"; then
+    elif grep -qiE "$sandbox_provider_account_pattern" "$file"; then
       account_hits=$(( account_hits + 1 ))
     elif grep -qiE "$sandbox_provider_unreachable_pattern" "$file"; then
       unreachable_hits=$(( unreachable_hits + 1 ))
