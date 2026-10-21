@@ -454,55 +454,19 @@ and the state filter combined with the sibling filters and search) and the
 "chat list state filter is part of the request key (ci#761)" block in
 `frontend/packages/ui/src/components/chat/chat-list.test.tsx`.
 
-### A native interaction that cannot start is reported, never a silent idle (ci#609)
+### Coding-agent, sandbox and CI-relay documentation is private
 
-When the sandbox node was saturated, a dispatched native `msgmate_coder`
-interaction could stay `state=idle` with `newest_agent_msg=none` **forever**: no
-bot message, no `Unschedulable: … Insufficient cpu` provisioning error, nothing
-the operator or the external auto-continue dispatcher could act on. The loop just
-printed `[loop] state=idle continuations=0 newest_agent_msg=none finished=false`
-until it gave up, and the dispatched work looked frozen and lost.
+The native coding-agent, sandbox, provider-admission, auto-consolidation,
+dev-lead/CI-failure-relay and context-budgeting documentation is owned by the
+private `msgmate_coder` integration and lives with its code
+(`open-chat-go-msgmate-coder`, `docs/`). It is served to a running coding
+interaction through the integration `coder_docs` tool.
 
-The core now detects that condition from durable state and reports it
-(`backend/api/chats/interaction_stall.go`). An interaction is **stalled** when
-
-- it is an interaction chat;
-- **nothing is live** for it - no `bot:reply` task active/pending/scheduled/retry
-  (including a reply queued behind a live turn, ci#656), and no external chat
-  backend reporting a running generation;
-- its newest message is still the prompt (the agent never produced a turn after
-  it) and does not wait on the user (no pending confirmation - a parked
-  confirmation is a decision, never a stall);
-- and that prompt has rested longer than the stall window.
-
-`ResolveInteractionStatus` then annotates the deterministic status with
-`stalled`, `stall_reason` (`stall_no_first_turn`), `stall_age_seconds` and
-`stall_threshold_seconds`, and the trusted agent-dispatch view
-(`GET /api/v1/agents/interactions…`) carries the same fields - so the external
-dispatcher loop can turn an idle-timeout into a failure naming the interaction
-URL instead of stopping silently, and a lead agent can tell a silent freeze from
-healthy idle work.
-
-Reading `GET /api/v1/chats/{chat_uuid}/status` (the endpoint the loop polls)
-also **posts one visible, persisted bot error** for a stalled chat: `finished` +
-`error` metadata with `failure_reason=stall_no_first_turn` and an
-`interaction_stall` detail block. The message states the observed age, the
-resolved window and what to do (re-dispatch, or continue once capacity is free),
-and it makes the interaction resolve as `failed` instead of `idle`. The report is
-idempotent (a `interaction_stall_report` marker on the message), so polling the
-status cannot spam the transcript.
-
-The stall window is resolved with the ci#620 precedence **deployment env →
-per-agent shared config → dispatch metadata → default**:
-
-- `OCI_INTERACTION_STALL_AFTER_SECONDS` (deployment-wide; `0` disables the
-  guard);
-- `interaction_stall_after_seconds` in the agent's shared config (or in its
-  `agent_dispatch` block);
-- default `10m`, matching the window the external dispatcher loop observes
-  before it gives up.
-
-Regression tests: `backend/api/chats/interaction_stall_test.go`.
+This repository keeps only generic material: setup, build, profiles and the
+integration contract. The generic extension points an integration uses are the
+versioned integration event envelope and sink in the public integration
+interface (`docs/integration-events.md`), the integration-owned route
+registration (`Definition.RouteRegistrar`) and its own tool/CLI definitions.
 
 ### Clone the repository
 
@@ -649,39 +613,6 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
-
-### Native coding-agent sandboxes
-
-The native `msgmate_coder` coding agents can run each chat in a **fully
-isolated, per-chat coding sandbox** instead of a shared bootstrap workspace.
-The chat-init `coder_select_workspace` `auto_sandbox` option provisions the
-sandbox through the sandbox integration, which owns the Docker and Kubernetes
-backends; on Kubernetes it is an ephemeral privileged pod with its own
-persistent workspace and state PVCs, so the checkout survives restarts and stays
-**continuable** across messages for its TTL. A periodic reaper tears the backing
-pod and PVCs down when the sandbox expires.
-
-The sandbox target is selectable three ways, per field, with precedence
-**chat-init input → per-agent shared config → deployment env**:
-
-- chat-init: `sandbox_backend`, `sandbox_template`, `sandbox_image`,
-  `sandbox_workspace_size`;
-- per-agent shared config: `coder_sandbox_backend`, `coder_sandbox_template`,
-  `coder_sandbox_image`, `coder_sandbox_workspace_size`;
-- deployment env: `OCI_MSGMATE_CODER_TEMP_SANDBOX_BACKEND` and its
-  `_TEMPLATE` / `_IMAGE` / `_WORKSPACE_SIZE` counterparts.
-
-When no backend is configured (or no sandbox integration is present), the
-legacy first-enabled-SSH-server behavior is kept, so existing deployments are
-unaffected. The OpenCode-based coding bots remain the default/backup route and
-are not modified by the native sandbox flow.
-
-The checkout a per-chat sandbox lands on is selectable from the dispatch too:
-an explicit `repo:<owner/name>` and `branch:<name>` tag pin what it clones and
-checks out (unless the caller pinned it in
-`tool_init.coder_select_workspace.git_repo`/`git_branch`, which stays
-authoritative), so a re-run for a pull request resumes that PR's branch instead
-of the bot's default.
 
 ### Custom integration profiles
 
@@ -855,144 +786,3 @@ area they cover:
 Also useful:
 
 - [Build tools README](../development/build-tools/README.md) — the `openchat-integrations` CLI.
-
-### Bot/agent runbooks are private, never in this repository
-
-This guide is **human-facing only**: setup, build, run, test, deploy,
-contributing and public architecture. The operational runbooks for the
-development bots - how the lead and consolidation agents moderate a fleet, how
-the coding agents are admitted, budgeted, compacted and continued, the PR label
-policy and the CI-failure routing - are **not** kept in this repository.
-
-They live in the private integration that owns the agents
-(`msgmate-io/open-chat-go-msgmate-coder`, `docs/agent/`) and are served to a
-native `msgmate_coder` interaction at runtime by the integration's `coder_docs`
-tool, which is part of the default coder tool surface (`action: "list"` to see
-the pages, `action: "read"` to fetch one). Nothing is embedded or mirrored
-here, so the guidance reaches the agent that needs it without shipping to the
-public repo. That repository's README documents the mechanism.
-
-Maintainers who need the runbooks get access to the private integration
-repository (or ask a coder agent to quote a page through `coder_docs`). Do not
-add agent runbooks, playbooks or an agent-doc tree back to this repository:
-`go test ./docguard/` in `backend/` fails when agent-only documentation
-reappears publicly.
-
-### Native bot runtimes on the ci deployment (ci#584)
-
-The development bots of the ci deployment run on the native `msgmate-coder`
-runtimes. The flip lives in `backend/nativecoder/rollout.go`: the fleet moves
-family by family (plan, then repl/coding, then review, then admin, then the
-coordinating `msgmate-coder` lead last), every family keeps the retired opencode
-runtime configured but out of rotation for the rollback window, and the opencode
-integration is only dropped once every family has been native and stable and a
-rollback was proven on a non-critical family. `RetirementBlockers` is the
-machine-checked go/no-go for that last step and `RenderNativeBotRolloutMarkdown`
-renders the table the private runbook shows. Runtime selection in a
-runtime-selector message maps the older bot names onto the native runtime via
-`LegacyRuntimeBotAliases`, which is derived from the same registry, so retiring a
-family is a one-line change with a test behind it.
-
-The API side of the same rollout is staged by `NATIVE_CODER_CUTOVER`
-(`fallback` | `native` | `retired`, unset means `fallback`) and implemented in
-`backend/api/msgmate/runtime_cutover.go`:
-
-- `fallback` keeps the opencode bots offered as the immediate rollback.
-- `native` is the canary window: the fleet is served natively, the opencode
-  choices stay visible until the flip is signed off.
-- `retired` drops every non-native runtime choice from a runtime-selector
-  payload and refuses to resolve an external `chat_backend: opencode`, so a
-  stale chat config or a reinstalled integration cannot route a chat back onto
-  the retired runtime.
-
-The stage is read per request, so a rollout (or a rollback) is an env change on
-the deployment, no rebuild and no data migration. `publish-open-chat-config.yaml`
-(vault-sync, `DRY_RUN=true` first) is the path for that change. The ci deployment
-profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
-rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
-`backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
-forward makes `retired` unreachable no matter what the vault says.
-
-### Native coder / opencode capability parity (ci#394)
-
-The second half of the replacement goal is *capability*: flipping the fleet is
-pointless while the native `msgmate_coder` agent still misses parts of the
-opencode surface it replaces. `backend/nativecoder/opencodeparity.go` keeps that
-gap list as data - the nine gaps of ci#394 with their sequencing phase
-(`now`/`next`/`later`), status (`open`/`partial`/`closed`), the coder tool that
-closes the gap, the opencode capability it replaces, the tracker tickets and a
-one-line note about the current shortfall:
-
-- `ValidateOpenCodeParityPlan` fails on a malformed registry (duplicate or
-  unknown ids, unknown phase/status, a tool claimed by two gaps, or a `closed`
-  gap naming a tool the coder does not ship), and the unit tests call it for the
-  shipped registry.
-- `RetirementParityBlockers` is the capability gate: while any blocking gap is
-  open it returns one line per gap, and `RetirementReadiness` composes it with
-  the mechanical `RetirementBlockers` above, so "can we drop opencode?" is a
-  single call. Both must be empty.
-- `ParityRetentionEntries` turns the open gaps into the `RetainedParity` reason
-  the migration state requires, so a family still on opencode because of a gap
-  is a recorded exception instead of a silent default.
-- `RenderOpenCodeParityMarkdown` and `OpenCodeParityJSON` render the same data
-  for the private runbook and for run evidence; closing a gap in prose without
-  closing it in the registry no longer matches what the gate reports.
-
-Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
-allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
-image and structured reads, session compaction, and only then the large pieces
-(sub-agents, code search/LSP, per-workspace MCP).
-## Native agent dispatch - retiring the workflow-only dispatch route (ci#757)
-
-The `trigger-open-chat-coding-interaction.yaml` workflow in the private
-`msgmate-io/open-chat-go-ci` repository is the *legacy* way for a lead agent to
-start another coding agent: it shells out through `coder_bash`
-(`gh workflow run`) and relies on GitHub to deliver the trigger. It stays
-supported as the reproducible, auditable fallback, but it is **deprecated as the
-primary route** for the coordinating `msgmate-coder` agent.
-
-The native route is the in-server agent-dispatch surface documented in
-`backend/api/bots/AgentDispatch.go`, exposed to the native coder (and through the
-hive-mind integration) as the `hive_mind_agent_*` tool family. It mirrors the
-workflow inputs (task message, repo/issue tags, `autonomous`,
-`approve_confirmations`, auto-continue + completion/human markers,
-workspace/sandbox) and adds the continue/stop lifecycle, so a lead agent starts,
-observes, steers and stops peers without a GitHub round-trip and without a
-second, structurally different trigger path to keep in sync:
-
-- `hive_mind_agent_dispatch` - start a named bot with a task, tags, autonomous
-  and auto-continue options; returns the `chat_uuid` to watch.
-- `hive_mind_agent_list` / `hive_mind_agent_get` - list the in-flight and
-  finished interactions and read one transcript.
-- `hive_mind_agent_continue` / `hive_mind_agent_stop` - nudge or stop a peer.
-- `hive_mind_observe_list` / `hive_mind_observe_get` - snapshot what other
-  interactions produced (a plan, a PR, a blocker).
-- `hive_mind_state_get` / `hive_mind_state_set` - durable state that survives a
-  reaped sandbox.
-- `hive_mind_influence` - queue an intervention on an observed interaction.
-
-### Recalling old chat context
-
-Past development chats stay searchable through the interaction-history tools
-(`mcp:open-chat-opencode-mcp:openchat_list_interactions`,
-`openchat_get_interaction`, `openchat_search_interactions`,
-`openchat_search_interaction_messages`), so "what did we already try on this
-issue?" is answerable from inside a dev-agent chat instead of by scrolling the
-server UI.
-
-### Enabling the tools selectively
-
-The families are opt-in per bot/chat through the shared-config `tools` key. An
-**empty** `tools: []` means "not configured": the key is dropped so the
-compiled-in defaults apply (ci#617). To narrow a chat deliberately, list a
-non-empty array. Enable the `hive_mind_*` tools (plus the `mcp:` interaction
-history tools) for lead/dev-agent chats; a leaf worker agent that only
-implements one issue does not need the dispatch family.
-
-### Migration order
-
-1. Enable and verify the native tools for the lead/dev-agent chats on
-   ci.msgmate.io (a dispatch -> observe -> continue/stop round-trip).
-2. Keep both routes until the native route is verified live.
-3. Then retire the workflow from the lead's prompt/config in one consolidation
-   PR and record the version that flipped it, so the change is revertible.
