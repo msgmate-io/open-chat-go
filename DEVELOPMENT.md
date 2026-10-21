@@ -540,11 +540,11 @@ and the state filter combined with the sibling filters and search) and the
 "chat list state filter is part of the request key (ci#761)" block in
 `frontend/packages/ui/src/components/chat/chat-list.test.tsx`.
 
-### Coding-agent, sandbox and CI-relay documentation is private
+### Coding-agent and sandbox documentation is private
 
-The native coding-agent, sandbox, provider-admission, auto-consolidation,
-dev-lead/CI-failure-relay and context-budgeting documentation is owned by the
-private `msgmate_coder` integration and lives with its code
+The native coding-agent and sandbox documentation, including provider
+concurrency limits, automatic consolidation and context budgeting, is owned by
+the private `msgmate_coder` integration and lives with its code
 (`open-chat-go-msgmate-coder`, `docs/`). It is served to a running coding
 interaction through the integration `coder_docs` tool.
 
