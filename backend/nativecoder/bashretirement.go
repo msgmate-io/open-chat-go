@@ -292,8 +292,12 @@ var bashUsageCategories = []BashUsageCategory{
 			"ssh coder@10.0.0.5 'ls /workspace'",
 			"helm upgrade --install open-chat ./chart",
 		},
-		TargetTools: []string{"kubernetes_get", "kubernetes_describe", "kubernetes_logs", "docker_sandbox_ps", "docker_sandbox_exec", "ssh_run"},
-		Policy:      "read for get/describe/logs/ps; write for exec/up/upgrade, per integration",
+		TargetTools: []string{
+			"kubernetes_get", "kubernetes_describe", "kubernetes_logs",
+			DockerToolCheck, DockerToolPS, DockerToolLogs, DockerToolBuild, DockerToolRun, DockerToolCompose, DockerToolExec,
+			"ssh_run",
+		},
+		Policy: "read for get/describe/logs/ps; write for exec/up/upgrade, per integration",
 		Notes: []string{
 			"each tool is owned by its integration (ci#423 Host boundary), never absorbed by the core",
 		},
