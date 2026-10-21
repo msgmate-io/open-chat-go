@@ -590,8 +590,16 @@ python3 -m venv .venv
 .venv/bin/openchat-integrations check --profile full
 ```
 
-- Profiles: `core-only` (default), `default`, `full`, `full-ci` and
-  `full-android`. Override with `INTEGRATION_PROFILE`.
+- Profiles: `core-only` (default), `default`, `full`, `full-ci`,
+  `full-android` and `full-development`. Override with `INTEGRATION_PROFILE`.
+- `full-development` is the profile native coder sandboxes pull by default
+  (ci#756): it is the batteries-included development set-up — private CI
+  tooling, Helm chart, mobile client and the optional LLM coding context — so a
+  development agent starts on a fully prepared checkout. Because the private
+  profile membership ships from the private `ci` repository, the generated
+  coder set-up script retries `full-ci` when the manifest does not know
+  `full-development` yet (see *Coding-agent and sandbox documentation is
+  private* above).
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
