@@ -96,6 +96,30 @@ the transcript and the admin status can say which world it is in.
   `localhost` **and** private egress, but each pair costs a userspace network
   stack; that is why it is the `isolated` option rather than the pool default.
 
+### netns capability: probe, don't assume
+
+The pool never assumes it can create a netns, and it never assumes it cannot:
+`ProbeNetnsCapability` (`netnsprobe.go`) inspects the pod read-only and reports a
+named mechanism, so `netns` mode either works or fails with a readable reason.
+
+- `slirp4netns` plus `/dev/net/tun` is the preferred mechanism; if either is
+  missing, unprivileged user namespaces (`/proc/sys/kernel/unprivileged_userns_clone`,
+  or already being inside one) are the fallback.
+- The verdict is **fail-closed**: an unavailable probe reports
+  `netns_provider=unavailable`, the missing facts, and the same
+  `WorkspaceIsolationUnavailable` signal an operator already knows.
+- The report is deterministic (facts sorted and de-duplicated), so a diff of two
+  reports is a real host change and not map ordering.
+- `OCI_MSGMATE_CODER_SANDBOX_NETWORK_NETNS_AVAILABLE` and
+  `OCI_MSGMATE_CODER_SANDBOX_NETWORK_NETNS_PROVIDER` pin the verdict for a
+  deployment that must not depend on the host; a pinned lever wins over the
+  probe, and a denied capability never keeps a leftover provider on the wire.
+  When only availability is pinned, the provider reads `declared` — "someone
+  promised" is deliberately not the same claim as "the host proved".
+- `NetworkPlanStatus` (`netplanstatus.go`) exposes `netns_available`,
+  `netns_provider` and both raw levers, so the pod can be diagnosed from the
+  admin surface without shelling into it.
+
 ## Service discovery of the shared sandbox
 
 The coder target binding is the **pool pod**, not the chat: `EnvTargetAddr`
@@ -198,7 +222,10 @@ the slices and the quota entries themselves, and injecting the returned env
    `lo` range) at pod start; if that is not available, only `shared_ports`
    remains and the resolver's default already covers it.
 2. **Per-workspace netns provider (`slirp4netns`/user-netns)** — the true
-   isolation option for a shared pod, with the `loopback_alias` fallback.
+   isolation option for a shared pod, with the `loopback_alias` fallback. The
+   capability *probe* and its levers exist (`netnsprobe.go`, see "netns
+   capability" above); actually creating the netns in the lease/provisioning
+   path is still the remaining work.
 3. **Writing the disk quota in the provisioning path** — the per-workspace disk
    *policy* is implemented in `cgroupguard.go` (see "Resource bound" above,
    `DiskQuotaTarget` / `DiskQuotaBackend`); creating the project-quota entry or

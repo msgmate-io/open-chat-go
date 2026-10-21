@@ -128,6 +128,15 @@ const (
 	// EnvNetworkIsolationRepos is a comma-separated list of "owner/name" repos (or
 	// whole owners, "owner/*") that may never share a network namespace.
 	EnvNetworkIsolationRepos = "OCI_MSGMATE_CODER_SANDBOX_NETWORK_ISOLATION_REPOS"
+	// EnvNetworkNetnsAvailable records the pool's probe result: "1"/"true" means
+	// the pod really can create a per-workspace network namespace, "0"/"false"
+	// (the default) means it cannot. Without this lever the pool had no way to
+	// declare the capability and mode netns failed closed on every lease.
+	EnvNetworkNetnsAvailable = "OCI_MSGMATE_CODER_SANDBOX_NETWORK_NETNS_AVAILABLE"
+	// EnvNetworkNetnsProvider names the mechanism the probe used to establish
+	// EnvNetworkNetnsAvailable (slirp4netns, userns, ...). Advisory: it is
+	// reported, never trusted, and it is what an operator greps for in the pod.
+	EnvNetworkNetnsProvider = "OCI_MSGMATE_CODER_SANDBOX_NETWORK_NETNS_PROVIDER"
 )
 
 // Defaults of the bounded shared policy.
@@ -289,6 +298,9 @@ type NetworkPolicy struct {
 	LoopbackPrefix string
 	// NetnsAvailable reports whether the pool can create per-workspace netns.
 	NetnsAvailable bool
+	// NetnsProvider names the mechanism behind NetnsAvailable (advisory). Empty
+	// means the pool only declared availability without naming a provider.
+	NetnsProvider string
 	// IsolationRepos are repos/owners that always require netns mode.
 	IsolationRepos []string
 	// ReservedPorts are ports no block may cover.
@@ -335,6 +347,36 @@ func NetworkPolicyFromEnv() NetworkPolicy {
 	}
 	if raw := strings.TrimSpace(os.Getenv(EnvNetworkIsolationRepos)); raw != "" {
 		policy.IsolationRepos = splitList(raw)
+	}
+	// The netns capability has two sources, in this order: the explicit
+	// deployment lever (an operator who probed the pod, and the only source a
+	// rollout can pin) and, when it is unset, the read-only host probe. Either
+	// way the resolved value is a declared fact, never an optimistic default:
+	// netns mode still fails closed while NetnsAvailable is false.
+	probe := HostNetnsCapability()
+	if raw := strings.TrimSpace(os.Getenv(EnvNetworkNetnsAvailable)); raw != "" {
+		policy.NetnsAvailable = !isFalsey(raw)
+		if !policy.NetnsAvailable {
+			policy.NetnsProvider = ""
+		}
+	} else {
+		policy.NetnsAvailable = probe.Available
+	}
+	if !policy.NetnsAvailable {
+		// A provider names the mechanism behind an available capability. A denied
+		// or unproven capability must never carry a leftover provider lever: the
+		// status wire would read "netns_available=false, netns_provider=slirp4netns".
+		policy.NetnsProvider = ""
+		return policy
+	}
+	if raw := strings.TrimSpace(os.Getenv(EnvNetworkNetnsProvider)); raw != "" {
+		policy.NetnsProvider = raw
+	} else if probe.Available {
+		// Only adopt the probed mechanism when the probe actually established
+		// one; a lever that merely asserts availability keeps an empty provider
+		// and is rendered as "declared" (see networkProviderName) instead of
+		// claiming a mechanism the host did not prove.
+		policy.NetnsProvider = probe.Provider
 	}
 	return policy
 }
@@ -730,15 +772,16 @@ func (a *PortAllocator) ReportLines() []string {
 	sort.Slice(allocated, func(i, j int) bool { return allocated[i].PortStart < allocated[j].PortStart })
 
 	lines := []string{
-		fmt.Sprintf("sandbox_network mode=%s loopback_aliases=%t port_base=%d block_size=%d slots=%d max_workspaces=%d loopback_prefix=%s reserved_ports=%s netns_available=%t",
+		fmt.Sprintf("sandbox_network mode=%s loopback_aliases=%t port_base=%d block_size=%d slots=%d max_workspaces=%d loopback_prefix=%s reserved_ports=%s netns_available=%t netns_provider=%s",
 			a.policy.Mode, a.policy.LoopbackAliases, a.policy.PortBase, a.policy.PortBlockSize,
 			a.slots, a.policy.MaxWorkspaces, a.policy.LoopbackPrefix,
-			intList(a.policy.ReservedPorts), a.policy.NetnsAvailable),
+			intList(a.policy.ReservedPorts), a.policy.NetnsAvailable, networkProviderName(a.policy)),
 		fmt.Sprintf("sandbox_network live_workspaces=%d free_blocks=%d", len(allocated), a.slots-len(allocated)),
 		fmt.Sprintf("sandbox_network isolation_repos=%s", strings.Join(a.policy.IsolationRepos, ",")),
-		fmt.Sprintf("sandbox_network replay_env %s %s %s %s %s %s %s",
+		fmt.Sprintf("sandbox_network replay_env %s %s %s %s %s %s %s %s %s",
 			EnvNetworkMode, EnvNetworkLoopbackAliases, EnvNetworkPortBase, EnvNetworkPortBlockSize,
-			EnvNetworkMaxWorkspaces, EnvNetworkLoopbackPrefix, EnvNetworkIsolationRepos),
+			EnvNetworkMaxWorkspaces, EnvNetworkLoopbackPrefix, EnvNetworkIsolationRepos,
+			EnvNetworkNetnsAvailable, EnvNetworkNetnsProvider),
 		fmt.Sprintf("sandbox_network dns_egress=ci#613_gate dns_gate_env=%s", EnvTargets),
 	}
 	for _, plan := range allocated {
@@ -748,6 +791,20 @@ func (a *PortAllocator) ReportLines() []string {
 	return lines
 }
 
+// networkProviderName renders the declared mechanism behind NetnsAvailable. An
+// available netns without a named provider stays callable (the env lever may
+// only declare availability), so the report spells that state out instead of
+// printing an empty value that reads like a missing field.
+func networkProviderName(policy NetworkPolicy) string {
+	if name := strings.TrimSpace(policy.NetnsProvider); name != "" {
+		return name
+	}
+	if policy.NetnsAvailable {
+		return NetnsProviderDeclared
+	}
+	return NetnsProviderUnavailable
+}
+
 // NetworkFailureModes returns the bounded, documented failure modes of the
 // policy, for the admin surface and the tool error that explains a refusal.
 func NetworkFailureModes(policy NetworkPolicy) []string {
@@ -755,7 +812,8 @@ func NetworkFailureModes(policy NetworkPolicy) []string {
 		fmt.Sprintf("block exhaustion: more than %d live workspaces per pool -> lease refused (%s)", policy.MaxWorkspaces, ErrPoolNetworkCapacity),
 		"reserved or privileged port inside a block -> block skipped, never handed out",
 		"loopback alias collision -> impossible while blocks are unique (alias derives from the block index)",
-		fmt.Sprintf("per-workspace netns requested but unavailable -> refused, never downgraded (%s)", ErrWorkspaceIsolationUnavailable),
+		fmt.Sprintf("per-workspace netns requested but unavailable -> refused, never downgraded (%s); the pool declares support with %s and names the mechanism with %s (the host probe reports both when the levers are unset)",
+			ErrWorkspaceIsolationUnavailable, EnvNetworkNetnsAvailable, EnvNetworkNetnsProvider),
 		fmt.Sprintf("sensitive repo/scope in %s mode -> refused, needs %s or a dedicated sandbox (%s)", NetworkModeShared, NetworkModeNetns, ErrSharedNetnsDenied),
 		"hard-coded port outside the block -> not preventable here; PORT and the block are reported so the agent can move the port",
 		"localhost assumption -> injected as CODER_LOCALHOST; a literal 127.0.0.1 bind stays shared in shared mode",

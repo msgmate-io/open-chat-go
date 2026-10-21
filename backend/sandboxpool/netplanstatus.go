@@ -1,9 +1,11 @@
 package sandboxpool
 
 import (
+	"fmt"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,6 +39,10 @@ type NetworkPlanStatus struct {
 	ReservedPorts []int `json:"reserved_ports"`
 	// NetnsAvailable reports whether the pool can create per-workspace netns.
 	NetnsAvailable bool `json:"netns_available"`
+	// NetnsProvider names the mechanism behind NetnsAvailable (slirp4netns,
+	// userns, or "declared" when only the env lever asserted it). It is what an
+	// operator greps for in the pod, so the probe verdict is actionable.
+	NetnsProvider string `json:"netns_provider"`
 	// IsolationRepos are the repos/owners that always require netns mode.
 	IsolationRepos []string `json:"isolation_repos,omitempty"`
 
@@ -80,6 +86,11 @@ type NetworkPlanStatus struct {
 	EnvMaxWorkspaces   string `json:"env_max_workspaces"`
 	EnvLoopbackPrefix  string `json:"env_loopback_prefix"`
 	EnvIsolationRepos  string `json:"env_isolation_repos"`
+	// EnvNetnsAvailable / EnvNetnsProvider are the raw netns capability levers.
+	// Empty EnvNetnsAvailable means the value came from the read-only host probe
+	// rather than from a pinned deployment lever.
+	EnvNetnsAvailable string `json:"env_netns_available"`
+	EnvNetnsProvider  string `json:"env_netns_provider"`
 }
 
 // leversFromEnv mirrors the deployment levers of the plan.
@@ -92,6 +103,8 @@ func leversFromEnv() map[string]string {
 		"workspace": os.Getenv(EnvNetworkMaxWorkspaces),
 		"prefix":    os.Getenv(EnvNetworkLoopbackPrefix),
 		"repos":     os.Getenv(EnvNetworkIsolationRepos),
+		"netns":     os.Getenv(EnvNetworkNetnsAvailable),
+		"provider":  os.Getenv(EnvNetworkNetnsProvider),
 	}
 }
 
@@ -109,6 +122,7 @@ func baseNetworkPlanStatus(policy NetworkPolicy, now time.Time) NetworkPlanStatu
 		LoopbackPrefix:     policy.LoopbackPrefix,
 		ReservedPorts:      append([]int(nil), policy.ReservedPorts...),
 		NetnsAvailable:     policy.NetnsAvailable,
+		NetnsProvider:      networkProviderName(policy),
 		IsolationRepos:     append([]string(nil), policy.IsolationRepos...),
 		EnvMode:            levers["mode"],
 		EnvLoopbackAliases: levers["aliases"],
@@ -117,6 +131,8 @@ func baseNetworkPlanStatus(policy NetworkPolicy, now time.Time) NetworkPlanStatu
 		EnvMaxWorkspaces:   levers["workspace"],
 		EnvLoopbackPrefix:  levers["prefix"],
 		EnvIsolationRepos:  levers["repos"],
+		EnvNetnsAvailable:  levers["netns"],
+		EnvNetnsProvider:   levers["provider"],
 	}
 }
 
@@ -134,6 +150,19 @@ func planNotes(policy NetworkPolicy) []string {
 	if policy.Mode == NetworkModeNetns {
 		notes = append(notes,
 			"netns mode gives each workspace a private loopback; egress still passes through the ci#613 pool egress gate")
+	}
+	if policy.NetnsAvailable {
+		// Name where the capability came from: a pinned lever or the read-only
+		// host probe. An operator debugging a flapping netns lease needs to know
+		// whether the deployment asserted the capability or the pod proved it.
+		// Mirrors NetworkPolicyFromEnv: a blank lever is not a pin, the probe
+		// answered in that case.
+		source := EnvNetworkNetnsAvailable
+		if strings.TrimSpace(os.Getenv(EnvNetworkNetnsAvailable)) == "" {
+			source = "the read-only host probe (" + EnvNetworkNetnsAvailable + " is unset)"
+		}
+		notes = append(notes,
+			fmt.Sprintf("per-workspace netns is available via %s, established by %s", networkProviderName(policy), source))
 	}
 	if !policy.NetnsAvailable && policy.Mode == NetworkModeNetns {
 		notes = append(notes,

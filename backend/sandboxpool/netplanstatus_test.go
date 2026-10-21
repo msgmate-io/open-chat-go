@@ -57,6 +57,24 @@ func TestNetworkPlanStatusRendersPolicy(t *testing.T) {
 	if len(status.IsolationRepos) != 1 || status.IsolationRepos[0] != "acme/web" {
 		t.Errorf("isolation repos = %v", status.IsolationRepos)
 	}
+	// netns_available without a probed or pinned mechanism must not read like a
+	// mechanism named "": the wire says "declared" and the notes spell out where
+	// the capability came from.
+	if status.NetnsProvider != NetnsProviderDeclared {
+		t.Errorf("netns_provider = %q, want %q for a policy that only declares it", status.NetnsProvider, NetnsProviderDeclared)
+	}
+	if !strings.Contains(strings.Join(status.Notes, " "), "netns is available via") {
+		t.Errorf("notes do not explain the netns capability: %v", status.Notes)
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	for _, marker := range []string{`"netns_available":true`, `"netns_provider":"` + NetnsProviderDeclared + `"`, `"env_netns_available"`, `"env_netns_provider"`} {
+		if !strings.Contains(string(encoded), marker) {
+			t.Errorf("status JSON %s is missing %s", encoded, marker)
+		}
+	}
 
 	// The plan exposes the block geometry the allocator enforces.
 	plan, err := alloc.Allocate("11111111-1111-1111-1111-111111111111", "", "")
