@@ -1,0 +1,17 @@
+=== REMOTES
+origin	https://github.com/msgmate-io/open-chat-go.git (fetch)
+origin	https://github.com/msgmate-io/open-chat-go.git (push)
+=== AUTH
+github.com
+  ✓ Logged in to github.com account  (/root/.config/gh/hosts.yml)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: ghp_************************************
+  - Token scopes: 'gist', 'project', 'repo', 'user', 'workflow', 'write:discussion', 'write:packages'
+  ! Missing required token scopes: 'read:org'
+  - To request missing scopes, run: gh auth refresh -h github.com
+=== PERMS
+open-chat-go: true
+open-chat-go-integration-interface: true
+open-chat-go-msgmate-coder: true
+=== INTEG YAML

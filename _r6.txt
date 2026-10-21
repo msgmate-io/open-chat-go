@@ -1,0 +1,190 @@
+=== CI SYMBOLS
+integrationinterface/ci_events.go:20:// capability are simply absent from CIFailureEventSinks, so the extension is
+integrationinterface/ci_events.go:24:	// CIFailureSchemaVersion is the highest relay schema version this module
+integrationinterface/ci_events.go:27:	CIFailureSchemaVersion = 1
+integrationinterface/ci_events.go:28:	// CIFailureEventKind is the canonical relay event kind.
+integrationinterface/ci_events.go:29:	CIFailureEventKind = "ci_failure"
+integrationinterface/ci_events.go:30:	// CIFailureEventAliasKind is the accepted alias of the event kind.
+integrationinterface/ci_events.go:31:	CIFailureEventAliasKind = "ci_error"
+integrationinterface/ci_events.go:32:	// CIFailureTargetPR, CIFailureTargetBranch and CIFailureTargetCommit name
+integrationinterface/ci_events.go:33:	// the most specific target a failure was attributed to (see TargetKind).
+integrationinterface/ci_events.go:34:	CIFailureTargetPR     = "pr"
+integrationinterface/ci_events.go:35:	CIFailureTargetBranch = "branch"
+integrationinterface/ci_events.go:36:	CIFailureTargetCommit = "commit"
+integrationinterface/ci_events.go:39:// CIFailureEvent is the small, versioned, secret-free payload a CI system relays
+integrationinterface/ci_events.go:42:type CIFailureEvent struct {
+integrationinterface/ci_events.go:43:	SchemaVersion int      `json:"schema_version,omitempty"`
+integrationinterface/ci_events.go:63:func (e CIFailureEvent) Validate() error {
+integrationinterface/ci_events.go:65:		return errors.New("ci_failure event is missing repo")
+integrationinterface/ci_events.go:67:	if e.SchemaVersion < 0 {
+integrationinterface/ci_events.go:68:		return fmt.Errorf("invalid ci_failure schema_version %d", e.SchemaVersion)
+integrationinterface/ci_events.go:70:	if e.SchemaVersion > CIFailureSchemaVersion {
+integrationinterface/ci_events.go:71:		return fmt.Errorf("unsupported ci_failure schema_version %d (max %d)", e.SchemaVersion, CIFailureSchemaVersion)
+integrationinterface/ci_events.go:74:	if kind != "" && kind != CIFailureEventKind && kind != CIFailureEventAliasKind {
+integrationinterface/ci_events.go:75:		return fmt.Errorf("unsupported ci_failure kind %q", e.Kind)
+integrationinterface/ci_events.go:78:		return fmt.Errorf("invalid ci_failure pr_number %d", e.PRNumber)
+integrationinterface/ci_events.go:81:		return fmt.Errorf("invalid ci_failure attempt %d", e.Attempt)
+integrationinterface/ci_events.go:86:// ParseCIFailureEvent decodes and validates a relayed CI-failure payload.
+integrationinterface/ci_events.go:87:func ParseCIFailureEvent(raw []byte) (CIFailureEvent, error) {
+integrationinterface/ci_events.go:88:	var event CIFailureEvent
+integrationinterface/ci_events.go:90:		return event, errors.New("empty ci_failure payload")
+integrationinterface/ci_events.go:93:		return event, fmt.Errorf("invalid ci_failure payload: %w", err)
+integrationinterface/ci_events.go:101:// TargetKind reports which target the failure was attributed to.
+integrationinterface/ci_events.go:102:func (e CIFailureEvent) TargetKind() string {
+integrationinterface/ci_events.go:105:		return CIFailureTargetPR
+integrationinterface/ci_events.go:107:		return CIFailureTargetBranch
+integrationinterface/ci_events.go:109:		return CIFailureTargetCommit
+integrationinterface/ci_events.go:113:// FixSessionKey is the dedupe/attempt-cap identity of a failure: one fix session
+integrationinterface/ci_events.go:115:func (e CIFailureEvent) FixSessionKey() string {
+integrationinterface/ci_events.go:117:	switch e.TargetKind() {
+integrationinterface/ci_events.go:118:	case CIFailureTargetPR:
+integrationinterface/ci_events.go:120:	case CIFailureTargetBranch:
+integrationinterface/ci_events.go:127:// CIFailureEventFunc receives one relayed CI failure. Implementations must be
+integrationinterface/ci_events.go:130:type CIFailureEventFunc func(ctx context.Context, event CIFailureEvent) error
+integrationinterface/ci_events.go:132:// DispatchCIFailureEvent validates and hands a relayed CI-failure event to every
+integrationinterface/ci_events.go:133:// registered sink (see CIFailureEventSinks). With no sink registered it is a
+integrationinterface/ci_events.go:136:func DispatchCIFailureEvent(ctx context.Context, event CIFailureEvent) error {
+integrationinterface/ci_events.go:141:	for _, ref := range CIFailureEventSinks() {
+integrationinterface/ci_events.go:171:func (e CIFailureEvent) IsZero() bool {
+integrationinterface/ci_events_test.go:13:  "kind": "ci_failure",
+integrationinterface/ci_events_test.go:31:func TestParseCIFailureEventAcceptsRelayedPayload(t *testing.T) {
+integrationinterface/ci_events_test.go:32:	event, err := ParseCIFailureEvent([]byte(ciFailureRelayTestPayload))
+integrationinterface/ci_events_test.go:34:		t.Fatalf("ParseCIFailureEvent(relayed payload): %v", err)
+integrationinterface/ci_events_test.go:48:	if got, want := event.TargetKind(), CIFailureTargetPR; got != want {
+integrationinterface/ci_events_test.go:49:		t.Fatalf("TargetKind = %q, want %q", got, want)
+integrationinterface/ci_events_test.go:51:	if got, want := event.FixSessionKey(), "msgmate-io/open-chat-go#pr-822"; got != want {
+integrationinterface/ci_events_test.go:52:		t.Fatalf("FixSessionKey = %q, want %q", got, want)
+integrationinterface/ci_events_test.go:59:func TestCIFailureEventValidation(t *testing.T) {
+integrationinterface/ci_events_test.go:62:		event   CIFailureEvent
+integrationinterface/ci_events_test.go:65:		{name: "missing repo", event: CIFailureEvent{}, wantErr: "missing repo"},
+integrationinterface/ci_events_test.go:66:		{name: "future schema", event: CIFailureEvent{Repo: "a/b", SchemaVersion: CIFailureSchemaVersion + 1}, wan
+integrationinterface/ci_events_test.go:67:		{name: "negative schema", event: CIFailureEvent{Repo: "a/b", SchemaVersion: -1}, wantErr: "invalid"},
+integrationinterface/ci_events_test.go:68:		{name: "unknown kind", event: CIFailureEvent{Repo: "a/b", Kind: "deploy_failure"}, wantErr: "unsupported"}
+integrationinterface/ci_events_test.go:69:		{name: "negative pr", event: CIFailureEvent{Repo: "a/b", PRNumber: -1}, wantErr: "pr_number"},
+integrationinterface/ci_events_test.go:70:		{name: "negative attempt", event: CIFailureEvent{Repo: "a/b", Attempt: -2}, wantErr: "attempt"},
+integrationinterface/ci_events_test.go:71:		{name: "alias kind", event: CIFailureEvent{Repo: "a/b", Kind: CIFailureEventAliasKind}},
+integrationinterface/ci_events_test.go:72:		{name: "repo normalizes", event: CIFailureEvent{Repo: "https://github.com/a/b.git"}},
+integrationinterface/ci_events_test.go:88:	if _, err := ParseCIFailureEvent(nil); err == nil || !strings.Contains(err.Error(), "empty") {
+integrationinterface/ci_events_test.go:89:		t.Fatalf("ParseCIFailureEvent(nil) = %v, want empty-payload error", err)
+integrationinterface/ci_events_test.go:91:	if _, err := ParseCIFailureEvent([]byte("{")); err == nil || !strings.Contains(err.Error(), "invalid ci_fai
+integrationinterface/ci_events_test.go:92:		t.Fatalf("ParseCIFailureEvent(broken) = %v, want decode error", err)
+integrationinterface/ci_events_test.go:96:func TestCIFailureEventFixSessionKeyPrefersMostSpecificTarget(t *testing.T) {
+integrationinterface/ci_events_test.go:97:	base := CIFailureEvent{Repo: "msgmate-io/open-chat-go", Branch: "main", Sha: "ABC123"}
+integrationinterface/ci_events_test.go:98:	if got, want := base.FixSessionKey(), "msgmate-io/open-chat-go#branch-main"; got != want {
+integrationinterface/ci_events_test.go:103:	if got, want := withPR.FixSessionKey(), "msgmate-io/open-chat-go#pr-7"; got != want {
+integrationinterface/ci_events_test.go:106:	shaOnly := CIFailureEvent{Repo: "msgmate-io/open-chat-go", Sha: "ABC123"}
+integrationinterface/ci_events_test.go:107:	if got, want := shaOnly.FixSessionKey(), "msgmate-io/open-chat-go#sha-abc123"; got != want {
+integrationinterface/ci_events_test.go:110:	if got, want := shaOnly.TargetKind(), CIFailureTargetCommit; got != want {
+integrationinterface/ci_events_test.go:111:		t.Fatalf("TargetKind = %q, want %q", got, want)
+integrationinterface/ci_events_test.go:115:func TestDispatchCIFailureEventReachesRegisteredSink(t *testing.T) {
+integrationinterface/ci_events_test.go:116:	var got CIFailureEvent
+integrationinterface/ci_events_test.go:120:		CIFailureEventSink: func(_ context.Context, event CIFailureEvent) error {
+integrationinterface/ci_events_test.go:126:	event, err := ParseCIFailureEvent([]byte(ciFailureRelayTestPayload))
+integrationinterface/ci_events_test.go:128:		t.Fatalf("ParseCIFailureEvent: %v", err)
+integrationinterface/ci_events_test.go:130:	if err := DispatchCIFailureEvent(context.Background(), event); err != nil {
+integrationinterface/ci_events_test.go:131:		t.Fatalf("DispatchCIFailureEvent: %v", err)
+integrationinterface/ci_events_test.go:136:	if got.FixSessionKey() != event.FixSessionKey() || got.FailureLogs != event.FailureLogs {
+integrationinterface/ci_events_test.go:140:	if err := DispatchCIFailureEvent(context.Background(), CIFailureEvent{}); err == nil {
+integrationinterface/ci_events_test.go:141:		t.Fatal("DispatchCIFailureEvent must reject an invalid event")
+integrationinterface/ci_events_test.go:148:func TestDispatchCIFailureEventPropagatesSinkError(t *testing.T) {
+integrationinterface/ci_events_test.go:152:		CIFailureEventSink: func(_ context.Context, _ CIFailureEvent) error {
+integrationinterface/ci_events_test.go:156:	event, err := ParseCIFailureEvent([]byte(ciFailureRelayTestPayload))
+integrationinterface/ci_events_test.go:158:		t.Fatalf("ParseCIFailureEvent: %v", err)
+integrationinterface/ci_events_test.go:160:	err = DispatchCIFailureEvent(context.Background(), event)
+integrationinterface/ci_events_test.go:162:		t.Fatalf("DispatchCIFailureEvent = %v, want wrapped boom", err)
+integrationinterface/ci_events_test.go:169:func TestCIFailureEventPayloadCarriesNoSecretMaterial(t *testing.T) {
+integrationinterface/ci_events_test.go:170:	event, err := ParseCIFailureEvent([]byte(ciFailureRelayTestPayload))
+integrationinterface/ci_events_test.go:172:		t.Fatalf("ParseCIFailureEvent: %v", err)
+integrationinterface/registry.go:85:// AuthEventSinkRef pairs an integration name with its registered auth event
+integrationinterface/registry.go:87:type AuthEventSinkRef struct {
+integrationinterface/registry.go:92:// AuthEventSinks returns the auth event sinks declared by registered
+integrationinterface/registry.go:94:func AuthEventSinks() []AuthEventSinkRef {
+integrationinterface/registry.go:104:	out := make([]AuthEventSinkRef, 0, len(names))
+integrationinterface/registry.go:107:		if def.AuthEventSink == nil {
+integrationinterface/registry.go:110:		out = append(out, AuthEventSinkRef{IntegrationName: name, Sink: def.AuthEventSink})
+integrationinterface/registry.go:161:// CIFailureEventSinkRef pairs an integration name with its registered
+integrationinterface/registry.go:163:type CIFailureEventSinkRef struct {
+integrationinterface/registry.go:165:	Sink            CIFailureEventFunc
+integrationinterface/registry.go:168:// CIFailureEventSinks returns the CI-failure relay sinks declared by registered
+integrationinterface/registry.go:172:func CIFailureEventSinks() []CIFailureEventSinkRef {
+integrationinterface/registry.go:182:	out := make([]CIFailureEventSinkRef, 0, len(names))
+integrationinterface/registry.go:185:		if def.CIFailureEventSink == nil {
+integrationinterface/registry.go:188:		out = append(out, CIFailureEventSinkRef{IntegrationName: name, Sink: def.CIFailureEventSink})
+integrationinterface/registry_test.go:94:func TestAuthEventSinksExposeRegisteredSink(t *testing.T) {
+integrationinterface/registry_test.go:99:		AuthEventSink: func(_ context.Context, event AuthEvent) error {
+integrationinterface/registry_test.go:110:	sinks := AuthEventSinks()
+integrationinterface/registry_test.go:111:	var found *AuthEventSinkRef
+integrationinterface/types.go:203:	// AuthEventSink, when set, receives authentication events emitted by the
+integrationinterface/types.go:207:	AuthEventSink AuthEventFunc
+integrationinterface/types.go:208:	// CIFailureEventSink, when set, receives CI-failure events relayed by an
+integrationinterface/types.go:213:	CIFailureEventSink CIFailureEventFunc
+docs/ci-failure-relay.md:10:`integrationinterface.CIFailureEvent` (JSON, `schema_version: 1`):
+docs/ci-failure-relay.md:14:| `schema_version` | no | relay schema version, max `CIFailureSchemaVersion` |
+docs/ci-failure-relay.md:15:| `kind` | no | `ci_failure` (alias `ci_error`) |
+docs/ci-failure-relay.md:30:An integration implements `Definition.CIFailureEventSink` (`CIFailureEventFunc`)
+docs/ci-failure-relay.md:31:and is discovered via `CIFailureEventSinks()`. `DispatchCIFailureEvent` validates
+docs/ci-failure-relay.md:40:`TargetKind()` picks the most specific target (PR, else branch, else commit) and
+docs/ci-failure-relay.md:41:`FixSessionKey()` derives the dedupe / attempt-cap identity
+=== ci_events decls
+27:	CIFailureSchemaVersion = 1
+29:	CIFailureEventKind = "ci_failure"
+31:	CIFailureEventAliasKind = "ci_error"
+34:	CIFailureTargetPR     = "pr"
+35:	CIFailureTargetBranch = "branch"
+36:	CIFailureTargetCommit = "commit"
+42:type CIFailureEvent struct {
+43:	SchemaVersion int      `json:"schema_version,omitempty"`
+44:	Kind          string   `json:"kind,omitempty"`
+45:	Provider      string   `json:"provider,omitempty"`
+46:	Repo          string   `json:"repo"`
+47:	PRNumber      int      `json:"pr_number,omitempty"`
+48:	Branch        string   `json:"branch,omitempty"`
+49:	Sha           string   `json:"sha,omitempty"`
+50:	RunURL        string   `json:"run_url,omitempty"`
+51:	FailingJobs   []string `json:"failing_jobs,omitempty"`
+55:	FailureLogs string `json:"failure_logs,omitempty"`
+56:	Attempt     int    `json:"attempt,omitempty"`
+57:	Severity    string `json:"severity,omitempty"`
+58:	OccurredAt  string `json:"occurred_at,omitempty"`
+63:func (e CIFailureEvent) Validate() error {
+64:	if normalizeCIRepo(e.Repo) == "" {
+67:	if e.SchemaVersion < 0 {
+70:	if e.SchemaVersion > CIFailureSchemaVersion {
+73:	kind := strings.ToLower(strings.TrimSpace(e.Kind))
+74:	if kind != "" && kind != CIFailureEventKind && kind != CIFailureEventAliasKind {
+77:	if e.PRNumber < 0 {
+80:	if e.Attempt < 0 {
+83:	return nil
+87:func ParseCIFailureEvent(raw []byte) (CIFailureEvent, error) {
+88:	var event CIFailureEvent
+89:	if len(raw) == 0 {
+92:	if err := json.Unmarshal(raw, &event); err != nil {
+95:	if err := event.Validate(); err != nil {
+98:	return event, nil
+102:func (e CIFailureEvent) TargetKind() string {
+103:	switch {
+104:	case e.PRNumber > 0:
+106:	case normalizeCIBranch(e.Branch) != "":
+115:func (e CIFailureEvent) FixSessionKey() string {
+116:	repo := normalizeCIRepo(e.Repo)
+117:	switch e.TargetKind() {
+118:	case CIFailureTargetPR:
+120:	case CIFailureTargetBranch:
+130:type CIFailureEventFunc func(ctx context.Context, event CIFailureEvent) error
+136:func DispatchCIFailureEvent(ctx context.Context, event CIFailureEvent) error {
+137:	if err := event.Validate(); err != nil {
+140:	var errs []error
+141:	for _, ref := range CIFailureEventSinks() {
+149:	return errors.Join(errs...)
+154:func normalizeCIRepo(repo string) string {
+155:	v := strings.ToLower(strings.TrimSpace(repo))
+156:	for _, prefix := range []string{"https://github.com/", "http://github.com/", "git@github.com:", "github.com/"} {
+159:	v = strings.TrimSuffix(v, ".git")
+160:	return strings.Trim(v, "/")
+163:func normalizeCIBranch(branch string) string {
+164:	v := strings.TrimSpace(branch)
+165:	v = strings.TrimPrefix(v, "refs/heads/")
+166:	v = strings.TrimPrefix(v, "refs/pull/")
+167:	return v
+171:func (e CIFailureEvent) IsZero() bool {
+172:	return normalizeCIRepo(e.Repo) == ""

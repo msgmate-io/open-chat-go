@@ -1,0 +1,110 @@
+=== CORE AC GREP
+backend/integrations/capabilities.go:14:// An integration that wants to consume relayed events (today: `ci_failure`)
+backend/integrations/capabilities_test.go:63:	payload := json.RawMessage(`{"repo":"msgmate-io/open-chat-go","pr_number":42}`)
+backend/integrations/capabilities_test.go:64:	res, err := s.HandleIntegrationEvent(context.Background(), "ci_failure", payload)
+backend/integrations/capabilities_test.go:68:	if sink.kind != "ci_failure" || string(sink.payload) != string(payload) {
+backend/integrations/capabilities_test.go:76:	if _, err := s.HandleIntegrationEvent(context.Background(), "ci_failure", payload); err == nil {
+backend/nativecoder/github.go:389:			"pr_number": strconv.Itoa(number),
+=== EVENT SINK USAGE
+backend/api/user/Login.go:124:	sinks := integrationinterface.AuthEventSinks()
+backend/api/user/login_auth_event_test.go:59:		AuthEventSink: func(_ context.Context, event integrationinterfa
+backend/integrations/capabilities.go:15:// registers an EventSink under its own name from its bootstrap/route
+backend/integrations/capabilities.go:22://	type EventSink interface {
+backend/integrations/capabilities.go:23://	    HandleIntegrationEvent(ctx context.Context, kind string, payloa
+backend/integrations/capabilities.go:31:// EventSink is the optional capability an integration may provide to 
+backend/integrations/capabilities.go:33:type EventSink interface {
+backend/integrations/capabilities.go:34:	HandleIntegrationEvent(ctx context.Context, kind string, payload json
+backend/integrations/capabilities.go:39:	eventSinks   = map[string]EventSink{}
+backend/integrations/capabilities.go:42:// RegisterEventSink attaches an EventSink to an integration name. Reg
+backend/integrations/capabilities.go:44:func RegisterEventSink(integrationName string, sink EventSink) {
+backend/integrations/capabilities.go:57:// EventSinkFor returns the EventSink registered for an integration, i
+backend/integrations/capabilities.go:58:func EventSinkFor(integrationName string) (EventSink, bool) {
+backend/integrations/capabilities.go:65:// ClearEventSinks drops all registered sinks (bootstrap/tests only).
+backend/integrations/capabilities.go:66:func ClearEventSinks() {
+backend/integrations/capabilities.go:69:	eventSinks = map[string]EventSink{}
+backend/integrations/capabilities_test.go:16:func (s *recordingSink) HandleIntegrationEvent(_ context.Context,
+backend/integrations/capabilities_test.go:22:func TestRegisterEventSinkIsOptionalAndNormalized(t *testing.T) {
+backend/integrations/capabilities_test.go:23:	ClearEventSinks()
+backend/integrations/capabilities_test.go:24:	t.Cleanup(ClearEventSinks)
+backend/integrations/capabilities_test.go:28:	if _, ok := EventSinkFor("msgmate-coder"); ok {
+backend/integrations/capabilities_test.go:31:	if _, ok := EventSinkFor(""); ok {
+backend/integrations/capabilities_test.go:36:	RegisterEventSink("  Runtime-Selector ", sink)
+backend/integrations/capabilities_test.go:37:	got, ok := EventSinkFor("runtime-selector")
+backend/integrations/capabilities_test.go:43:	RegisterEventSink("runtime-selector", nil)
+backend/integrations/capabilities_test.go:44:	RegisterEventSink("   ", sink)
+backend/integrations/capabilities_test.go:45:	if got, ok := EventSinkFor("runtime-selector"); !ok || got != si
+backend/integrations/capabilities_test.go:49:	ClearEventSinks()
+backend/integrations/capabilities_test.go:50:	if _, ok := EventSinkFor("runtime-selector"); ok {
+backend/integrations/capabilities_test.go:51:		t.Fatal("expected ClearEventSinks to drop the registration")
+=== IFACE DIR
+COPYRIGHT
+LICENSE
+NOTICE
+README.md
+docs
+go.mod
+go.sum
+integrationinterface
+auth_events.go
+ci_events.go
+ci_events_test.go
+host.go
+host_capabilities.go
+host_platform.go
+registry.go
+registry_test.go
+shared_config_defaults.go
+types.go
+       41 clients/go_integration_interface/integrationinterface/auth_events.go
+      173 clients/go_integration_interface/integrationinterface/ci_events.go
+      184 clients/go_integration_interface/integrationinterface/ci_events_test.go
+      149 clients/go_integration_interface/integrationinterface/host.go
+      273 clients/go_integration_interface/integrationinterface/host_capabilities.go
+       52 clients/go_integration_interface/integrationinterface/host_platform.go
+      191 clients/go_integration_interface/integrationinterface/registry.go
+      127 clients/go_integration_interface/integrationinterface/registry_test.go
+       75 clients/go_integration_interface/integrationinterface/shared_config_defaults.go
+      218 clients/go_integration_interface/integrationinterface/types.go
+     1483 total
+=== DOCS
+=== IFACE GIT
+ada7c35 Merge pull request #5 from msgmate-io/ci-607-ci-failure-relay-event
+origin	https://github.com/msgmate-io/open-chat-go-integration-interface.git (fetch)
+origin	https://github.com/msgmate-io/open-chat-go-integration-interface.git (push)
+=== DEVMD HEADINGS
+1:### General Development Guide
+11:### Pull-request CI labels and deployment policy
+114:#### Autonomous approval and merge of green consolidation PRs
+142:#### A cancelled (superseded) CI run is not a failed gate (ci#659)
+208:#844). `WorkflowWiringTests` pins the checkout-before-reconciler o
+228:#### Startup bootstrap survives an overlapping pod's SQLite write 
+302:#### Expired sessions are swept, not just rejected (ci#729 follow-
+335:#### A message sent into a running chat is queued, never dropped (
+406:#### Chat-state filters are applied server-side, before pagination
+457:### A native interaction that cannot start is reported, never a si
+507:### Clone the repository
+517:# existing clone:
+521:### Integration manager
+570:### Integration module PR CI (ci#600)
+621:### Building a specific integration profile
+632:# Local development (compose runs the integration-sync service for
+636:# Host build (full_build.sh runs `prepare` itself)
+641:# Production image
+643:# or directly:
+646:# Android (uses the mobile client from the full-android profile)
+653:### Native coding-agent sandboxes
+686:### Custom integration profiles
+726:### Integration Frontend Pages Development
+734:#### Build & Export Workflow:
+741:### Private integration documentation pages
+751:### Chat extensions (cross-integration chat UI)
+755:#### Local dev / hot-reload loop
+764:### Second CI deployment: `ci2` - monitoring / recovery agent (ci#
+842:### Documentation lookup index
+859:### Bot/agent runbooks are private, never in this repository
+881:### Native bot runtimes on the ci deployment (ci#584)
+916:### Native coder / opencode capability parity (ci#394)
+945:## Native agent dispatch - retiring the workflow-only dispatch rou
+974:### Recalling old chat context
+983:### Enabling the tools selectively
+992:### Migration order

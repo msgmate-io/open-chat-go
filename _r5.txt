@@ -1,0 +1,94 @@
+=== SINK USE
+=== GH
+	payload := map[string]interface{}{"labels": normalized}
+	return c.request(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/labels", c.Repo, number), payload, nil)
+}
+
+// RequestAutoApprove dispatches the ci#538 auto-approve workflow for the PR, so
+// the required approving review is posted by the reviewer identity once the
+// required PR CI run succeeded.
+func (c *GitHubAPIClient) RequestAutoApprove(ctx context.Context, number int) error {
+	payload := map[string]interface{}{
+		"ref": "main",
+		"inputs": map[string]string{
+			"pr_number": strconv.Itoa(number),
+		},
+	}
+	path := fmt.Sprintf("/repos/%s/actions/workflows/auto-approve-consolidation.yaml/dispatches", c.Repo)
+	return c.request(ctx, http.MethodPost, path, payload, nil)
+}
+
+// MergePullRequest merges a green consolidation PR with a merge commit, keeping
+// the consolidated history reviewable.
+func (c *GitHubAPIClient) MergePullRequest(ctx context.Context, number int) error {
+=== CAP
+     1	package integrations
+     2	
+     3	import (
+     4		"context"
+     5		"encoding/json"
+     6		"sync"
+     7	)
+     8	
+     9	// capabilities.go adds the small, optional extension the CI-error relay needs
+    10	// (ci#607) on top of the base integration interface, without touching the
+    11	// external go-integration-interface module and without forcing every
+    12	// integration to implement anything new.
+    13	//
+    14	// An integration that wants to consume relayed events (today: `ci_failure`)
+    15	// registers an EventSink under its own name from its bootstrap/route
+    16	// registration. Integrations that do not implement the capability are
+    17	// completely unaffected: the sink map stays empty and lookups simply miss, so
+    18	// this extension is backwards compatible by construction.
+    19	//
+    20	// The contract is deliberately narrow and secret free:
+    21	//
+    22	//	type EventSink interface {
+    23	//	    HandleIntegrationEvent(ctx context.Context, kind string, payload json.RawMessage) (any, error)
+    24	//	}
+    25	//
+    26	// A sink receives the *raw* kind-specific payload plus the already-lower-cased
+    27	// kind and owns the interpretation. Routing, retries and rendering therefore
+    28	// stay in the consumer (the agent chooser / development lead), while external
+    29	// systems (CI) only emit a payload.
+    30	
+    31	// EventSink is the optional capability an integration may provide to consume
+    32	// externally relayed, versioned integration events.
+    33	type EventSink interface {
+    34		HandleIntegrationEvent(ctx context.Context, kind string, payload json.RawMessage) (any, error)
+    35	}
+    36	
+    37	var (
+    38		eventSinksMu sync.RWMutex
+    39		eventSinks   = map[string]EventSink{}
+    40	)
+    41	
+    42	// RegisterEventSink attaches an EventSink to an integration name. Registering a
+    43	// nil sink is a no-op, so integrations can call it unconditionally.
+    44	func RegisterEventSink(integrationName string, sink EventSink) {
+    45		if sink == nil {
+    46			return
+    47		}
+    48		name := normalizeIntegrationName(integrationName)
+    49		if name == "" {
+    50			return
+    51		}
+    52		eventSinksMu.Lock()
+    53		defer eventSinksMu.Unlock()
+    54		eventSinks[name] = sink
+    55	}
+    56	
+    57	// EventSinkFor returns the EventSink registered for an integration, if any.
+    58	func EventSinkFor(integrationName string) (EventSink, bool) {
+    59		eventSinksMu.RLock()
+    60		defer eventSinksMu.RUnlock()
+    61		sink, ok := eventSinks[normalizeIntegrationName(integrationName)]
+    62		return sink, ok
+    63	}
+    64	
+    65	// ClearEventSinks drops all registered sinks (bootstrap/tests only).
+    66	func ClearEventSinks() {
+    67		eventSinksMu.Lock()
+    68		defer eventSinksMu.Unlock()
+    69		eventSinks = map[string]EventSink{}
+    70	}

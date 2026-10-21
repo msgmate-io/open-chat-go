@@ -1,0 +1,55 @@
+=== GREP
+grep: unrecognized option: exclude-dir=.git
+BusyBox v1.37.0 (2025-11-21 22:40:56 UTC) multi-call binary.
+
+Usage: grep [-HhnlLoqvsrRiwFE] [-m N] [-A|B|C N] { PATTERN | -e PATTERN... | -f FILE... } [FILE]...
+
+Search for PATTERN in FILEs (or stdin)
+
+	-H	Add 'filename:' prefix
+	-h	Do not add 'filename:' prefix
+	-n	Add 'line_no:' prefix
+	-l	Show only names of files that match
+	-L	Show only names of files that don't match
+	-c	Show only count of matching lines
+	-o	Show only the matching part of line
+	-q	Quiet. Return 0 if PATTERN is found, 1 otherwise
+	-v	Select non-matching lines
+	-s	Suppress open and read errors
+	-r	Recurse
+	-R	Recurse and dereference symlinks
+	-i	Ignore case
+	-w	Match whole words only
+	-x	Match whole lines only
+	-F	PATTERN is a literal (not regexp)
+	-E	PATTERN is an extended regexp
+	-m N	Match up to N times per file
+	-A N	Print N lines of trailing context
+	-B N	Print N lines of leading context
+	-C N	Same as '-A N -B N'
+	-e PTRN	Pattern to match
+	-f FILE	Read pattern from file
+=== GOMOD
+module github.com/msgmate-io/msgmate-coder-integration
+
+go 1.26.0
+
+require (
+	backend v0.0.0
+	github.com/coder/websocket v1.8.15
+	github.com/glebarez/sqlite v1.11.0
+	github.com/msgmate-io/go-client-integration v0.0.0
+	github.com/msgmate-io/go-integration-interface v0.0.0
+	github.com/msgmate-io/go-tool-interface v0.0.0
+	github.com/msgmate-io/mcp-integration v0.0.0
+	golang.org/x/crypto v0.55.0
+	gorm.io/gorm v1.31.2
+)
+
+require (
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+=== DOCS
+agent
+development-admin-loop.md
