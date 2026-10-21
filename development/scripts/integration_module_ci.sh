@@ -107,6 +107,22 @@ else
   (cd "$INTEGRATION_SRC" && tar --exclude=.git -cf - .) | (cd "$WORKSPACE_PATH" && tar -xf -)
 fi
 
+if [ "$DECOUPLED" = "true" ]; then
+  # ci#423: fail fast and with a clear message when a module that still replaces
+  # or imports backend/... is pushed down the decoupled path; otherwise the
+  # missing materialized profile only surfaces as a confusing import error.
+  step "Decoupled preflight: module must not import backend/... (ci#423)"
+  PREFLIGHT_GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
+  if [ -f "$PREFLIGHT_GUARD" ] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 "$PREFLIGHT_GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
+      echo "::error::decoupled build requires a module that no longer imports backend/... (ci#423)" >&2
+      exit 1
+    fi
+  else
+    echo "skipped: guard script or python3 unavailable"
+  fi
+fi
+
 step "Go module checks in $WORKSPACE_PATH"
 export GOWORK=off
 export GOFLAGS="${GOFLAGS:-}"
@@ -153,24 +169,26 @@ fi
 # ci#345 design). The migration is incremental, so this is a report by default;
 # REQUIRE_DECOUPLED=true turns remaining coupling into a failure and is meant for
 # an integration whose go.mod cleanup has already landed.
-step "Integration decoupling report (ci#423)"
-GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
-if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
-  # Measure the materialized workspace: that layout has the relative `replace`
-  # targets next to it, so `go list -deps` resolves exactly like the build above.
-  # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
-  if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
-    # A decoupled build only makes sense on a decoupled module: DECOUPLED=true
-    # therefore enforces the guard unless REQUIRE_DECOUPLED says otherwise.
-    REQUIRE_DECOUPLED="${REQUIRE_DECOUPLED:-$DECOUPLED}"
-    if [ "$REQUIRE_DECOUPLED" = "true" ]; then
-      echo "::error::integration is still coupled to backend/... (ci#423)" >&2
-      exit 1
+#
+# DECOUPLED=true already enforced the guard before the build, so there is nothing
+# left to report (and the guard must not run twice).
+if [ "$DECOUPLED" != "true" ]; then
+  step "Integration decoupling report (ci#423)"
+  GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
+  if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
+    # Measure the materialized workspace: that layout has the relative `replace`
+    # targets next to it, so `go list -deps` resolves exactly like the build above.
+    # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
+    if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
+      if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
+        echo "::error::integration is still coupled to backend/... (ci#423)" >&2
+        exit 1
+      fi
+      echo "note: coupling is reported, not enforced (set REQUIRE_DECOUPLED=true to enforce)"
     fi
-    echo "note: coupling is reported, not enforced (set REQUIRE_DECOUPLED=true to enforce)"
+  else
+    echo "skipped: guard script or python3 unavailable"
   fi
-else
-  echo "skipped: guard script or python3 unavailable"
 fi
 
 echo
