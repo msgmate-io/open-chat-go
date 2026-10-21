@@ -130,17 +130,26 @@ func WorkerCli() *cli.Command {
 				if integrationScheduler != nil {
 					defer integrationScheduler.Shutdown()
 				}
-				// ci#747 (RC1, depends on ci#744): seed the declarative
+				// ci#744 (RC1, depends on ci#744): seed the declarative
 				// self-message schedules (OPEN_CHAT_SELF_MESSAGE_SCHEDULES) in
 				// the same single-owner gate, so a worker-only deployment also
 				// re-fires a configured actor. No-op when nothing is configured.
-				selfMessageRuntime, err := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
-				if err != nil {
-					return err
-				}
-				if selfMessageRuntime != nil {
+				//
+				// ci#785: self-messaging is an optional convenience on top of the
+				// queue scheduler, so a deployment that does not know the
+				// configured bot (an unseeded CI database, a renamed user, a bot
+				// without a chat) must degrade to a loud log line and keep
+				// working, exactly like the embedded server path in
+				// backend/cmd/server.go. Never abort the worker for it.
+				selfMessageRuntime, selfErr := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
+				switch {
+				case selfErr != nil:
+					logging.Errorf("self-message schedules disabled, idle interactions will not self-resume: %v", selfErr)
+				case selfMessageRuntime != nil:
 					defer selfMessageRuntime.Shutdown()
-					logging.Infof("Self-message self-resume schedules active (ci#744/ci#747)")
+					logging.Infof("Armed the self-message schedules (ci#744); idle interactions now self-resume")
+				default:
+					logging.Infof("No self-message schedules configured (%s unset)", msgmate.SelfMessageScheduleEnvVar)
 				}
 			} else {
 				logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")

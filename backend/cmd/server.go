@@ -1231,33 +1231,20 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		// gate as the integration scheduler, so a configured actor re-fires its
 		// own loop instead of idling until a human re-dispatches it. The runtime
 		// is a no-op (nil, nil) when nothing is configured.
-		selfMessageRuntime, err := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
-		if err != nil {
-			return err
-		}
-		if selfMessageRuntime != nil {
-			defer selfMessageRuntime.Shutdown()
-			logging.Infof("Self-message self-resume schedules active (ci#744/ci#747)")
-		}
-	} else {
-		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
-	}
-
-	// ci#744 / ci#747 RC1: arm the declared self-message schedules. Without this
-	// the schedule bookkeeping in api/msgmate is never reached at boot, so a lead
-	// (or worker) whose turn ends without an external dispatcher stays idle
-	// forever. StartSelfMessageRuntime is a no-op when
-	// OPEN_CHAT_SELF_MESSAGE_SCHEDULES is empty, so it is safe to wire
-	// unconditionally; the runtime is owned by the same process that owns the
-	// queue scheduler, so exactly one instance seeds the tasks.
-	if c.Bool("run-scheduler") {
+		//
+		// ci#744 / ci#785: self-messaging is an optional convenience on top of the
+		// queue scheduler, so it is armed exactly once here and *never* fatally. A
+		// deployment that does not know the configured bot (a fresh CI database
+		// where the bot user was never seeded, a renamed user, a bot without a
+		// chat) must keep serving: the runtime logs the degraded schedule and
+		// keeps reconciling, so a bot seeded later self-resumes on the next tick.
+		// r57 shipped a second, unconditional start whose `if err != nil { return
+		// err }` aborted the boot of every GitHub Actions deployment; that
+		// duplicate is why the backend never opened port 1984. Do not re-add a
+		// second start (see TestServerBootArmsSelfMessageSchedules).
 		selfMessageRuntime, selfErr := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
 		switch {
 		case selfErr != nil:
-			// ci#744 / ci#785: self-messaging is an optional convenience on top of
-			// the queue scheduler. A deployment that does not know the configured
-			// bot (for example a fresh CI database where the bot user was never
-			// seeded) must not lose its backend to it: log loudly and keep serving.
 			logging.Errorf("self-message schedules disabled, idle interactions will not self-resume: %v", selfErr)
 		case selfMessageRuntime != nil:
 			defer selfMessageRuntime.Shutdown()
@@ -1265,6 +1252,8 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		default:
 			logging.Infof("No self-message schedules configured (%s unset)", msgmate.SelfMessageScheduleEnvVar)
 		}
+	} else {
+		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
 
 	serverErrCh := make(chan error, 1)
