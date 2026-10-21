@@ -88,6 +88,10 @@ type AutoConsolidationPolicy struct {
 	// RequireGreen excludes PRs whose checks are not green, that are
 	// conflicting/unmergeable or whose mergeability is still unknown.
 	RequireGreen bool `json:"require_green"`
+	// RequireIssueLink makes every consolidated PR implement exactly one leaf
+	// issue in the private tracker (ci#813). A PR without a standalone
+	// `Closes msgmate-io/open-chat-go-ci#N` line is never consolidated.
+	RequireIssueLink bool `json:"require_issue_link"`
 	// Labels is the label set applied to the consolidation PR.
 	Labels []string `json:"labels"`
 	// BranchPrefix is the consolidation head-branch prefix.
@@ -102,16 +106,17 @@ type AutoConsolidationPolicy struct {
 // DefaultAutoConsolidationPolicy returns the default-ON policy of ci#653.
 func DefaultAutoConsolidationPolicy() AutoConsolidationPolicy {
 	return AutoConsolidationPolicy{
-		Enabled:        true,
-		Threshold:      DefaultAutoConsolidationThreshold,
-		Base:           DefaultAutoConsolidationBase,
-		Scope:          DefaultAutoConsolidationScope,
-		Authors:        []string{AuthorSelf},
-		RequireGreen:   true,
-		Labels:         append([]string(nil), DefaultAutoConsolidationLabels...),
-		BranchPrefix:   DefaultAutoConsolidationBranchPrefix,
-		OneOpenAtATime: true,
-		RollupIssue:    true,
+		Enabled:          true,
+		Threshold:        DefaultAutoConsolidationThreshold,
+		Base:             DefaultAutoConsolidationBase,
+		Scope:            DefaultAutoConsolidationScope,
+		Authors:          []string{AuthorSelf},
+		RequireGreen:     true,
+		RequireIssueLink: true,
+		Labels:           append([]string(nil), DefaultAutoConsolidationLabels...),
+		BranchPrefix:     DefaultAutoConsolidationBranchPrefix,
+		OneOpenAtATime:   true,
+		RollupIssue:      true,
 	}
 }
 
@@ -126,6 +131,7 @@ func AutoConsolidationPolicyMap() map[string]interface{} {
 		"scope":              DefaultAutoConsolidationScope,
 		"authors":            []interface{}{AuthorSelf},
 		"require_green":      true,
+		"require_issue_link": true,
 		"labels":             stringSliceToInterface(DefaultAutoConsolidationLabels),
 		"branch_prefix":      DefaultAutoConsolidationBranchPrefix,
 		"one_open_at_a_time": true,
@@ -191,6 +197,8 @@ func applyAutoConsolidationMap(policy AutoConsolidationPolicy, raw map[string]in
 			}
 		case "require_green":
 			policy.RequireGreen = boolishValue(value, policy.RequireGreen)
+		case "require_issue_link":
+			policy.RequireIssueLink = boolishValue(value, policy.RequireIssueLink)
 		case "labels":
 			if parsed := stringListValue(value); len(parsed) > 0 {
 				policy.Labels = parsed
