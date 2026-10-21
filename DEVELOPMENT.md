@@ -650,38 +650,13 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
 
-### Native coding-agent sandboxes
+### Coding-agent sandboxes and dispatch live in the private integration
 
-The native `msgmate_coder` coding agents can run each chat in a **fully
-isolated, per-chat coding sandbox** instead of a shared bootstrap workspace.
-The chat-init `coder_select_workspace` `auto_sandbox` option provisions the
-sandbox through the sandbox integration, which owns the Docker and Kubernetes
-backends; on Kubernetes it is an ephemeral privileged pod with its own
-persistent workspace and state PVCs, so the checkout survives restarts and stays
-**continuable** across messages for its TTL. A periodic reaper tears the backing
-pod and PVCs down when the sandbox expires.
-
-The sandbox target is selectable three ways, per field, with precedence
-**chat-init input → per-agent shared config → deployment env**:
-
-- chat-init: `sandbox_backend`, `sandbox_template`, `sandbox_image`,
-  `sandbox_workspace_size`;
-- per-agent shared config: `coder_sandbox_backend`, `coder_sandbox_template`,
-  `coder_sandbox_image`, `coder_sandbox_workspace_size`;
-- deployment env: `OCI_MSGMATE_CODER_TEMP_SANDBOX_BACKEND` and its
-  `_TEMPLATE` / `_IMAGE` / `_WORKSPACE_SIZE` counterparts.
-
-When no backend is configured (or no sandbox integration is present), the
-legacy first-enabled-SSH-server behavior is kept, so existing deployments are
-unaffected. The OpenCode-based coding bots remain the default/backup route and
-are not modified by the native sandbox flow.
-
-The checkout a per-chat sandbox lands on is selectable from the dispatch too:
-an explicit `repo:<owner/name>` and `branch:<name>` tag pin what it clones and
-checks out (unless the caller pinned it in
-`tool_init.coder_select_workspace.git_repo`/`git_branch`, which stays
-authoritative), so a re-run for a pull request resumes that PR's branch instead
-of the bot's default.
+Sandbox provisioning, the development-lead loop, CI-failure routing and the
+hive-mind dispatch tool families are owned by the private `msgmate_coder`
+integration (see its `docs/`), not by this repository. Only the generic
+integration contract (integration profiles, event envelopes, route/handler
+registration) is described below.
 
 ### Custom integration profiles
 
@@ -942,57 +917,11 @@ Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
 (sub-agents, code search/LSP, per-workspace MCP).
-## Native agent dispatch - retiring the workflow-only dispatch route (ci#757)
+### Coding-agent sandboxes and dispatch live in the private integration
 
-The `trigger-open-chat-coding-interaction.yaml` workflow in the private
-`msgmate-io/open-chat-go-ci` repository is the *legacy* way for a lead agent to
-start another coding agent: it shells out through `coder_bash`
-(`gh workflow run`) and relies on GitHub to deliver the trigger. It stays
-supported as the reproducible, auditable fallback, but it is **deprecated as the
-primary route** for the coordinating `msgmate-coder` agent.
+Sandbox provisioning, the development-lead loop, CI-failure routing and the
+hive-mind dispatch tool families are owned by the private `msgmate_coder`
+integration (see its `docs/`), not by this repository. Only the generic
+integration contract (integration profiles, event envelopes, route/handler
+registration) is described below.
 
-The native route is the in-server agent-dispatch surface documented in
-`backend/api/bots/AgentDispatch.go`, exposed to the native coder (and through the
-hive-mind integration) as the `hive_mind_agent_*` tool family. It mirrors the
-workflow inputs (task message, repo/issue tags, `autonomous`,
-`approve_confirmations`, auto-continue + completion/human markers,
-workspace/sandbox) and adds the continue/stop lifecycle, so a lead agent starts,
-observes, steers and stops peers without a GitHub round-trip and without a
-second, structurally different trigger path to keep in sync:
-
-- `hive_mind_agent_dispatch` - start a named bot with a task, tags, autonomous
-  and auto-continue options; returns the `chat_uuid` to watch.
-- `hive_mind_agent_list` / `hive_mind_agent_get` - list the in-flight and
-  finished interactions and read one transcript.
-- `hive_mind_agent_continue` / `hive_mind_agent_stop` - nudge or stop a peer.
-- `hive_mind_observe_list` / `hive_mind_observe_get` - snapshot what other
-  interactions produced (a plan, a PR, a blocker).
-- `hive_mind_state_get` / `hive_mind_state_set` - durable state that survives a
-  reaped sandbox.
-- `hive_mind_influence` - queue an intervention on an observed interaction.
-
-### Recalling old chat context
-
-Past development chats stay searchable through the interaction-history tools
-(`mcp:open-chat-opencode-mcp:openchat_list_interactions`,
-`openchat_get_interaction`, `openchat_search_interactions`,
-`openchat_search_interaction_messages`), so "what did we already try on this
-issue?" is answerable from inside a dev-agent chat instead of by scrolling the
-server UI.
-
-### Enabling the tools selectively
-
-The families are opt-in per bot/chat through the shared-config `tools` key. An
-**empty** `tools: []` means "not configured": the key is dropped so the
-compiled-in defaults apply (ci#617). To narrow a chat deliberately, list a
-non-empty array. Enable the `hive_mind_*` tools (plus the `mcp:` interaction
-history tools) for lead/dev-agent chats; a leaf worker agent that only
-implements one issue does not need the dispatch family.
-
-### Migration order
-
-1. Enable and verify the native tools for the lead/dev-agent chats on
-   ci.msgmate.io (a dispatch -> observe -> continue/stop round-trip).
-2. Keep both routes until the native route is verified live.
-3. Then retire the workflow from the lead's prompt/config in one consolidation
-   PR and record the version that flipped it, so the change is revertible.
