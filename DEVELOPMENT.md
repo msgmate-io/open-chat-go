@@ -650,9 +650,9 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
 
-### Coding-agent sandboxes and dispatch live in the private integration
+### Agent and CI automation lives in the private integration
 
-Sandbox provisioning, the development-lead loop, CI-failure routing and the
+Sandbox provisioning, the agent fleet orchestration, CI event routing and the
 hive-mind dispatch tool families are owned by the private `msgmate_coder`
 integration (see its `docs/`), not by this repository. Only the generic
 integration contract (integration profiles, event envelopes, route/handler
