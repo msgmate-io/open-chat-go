@@ -406,6 +406,58 @@ and, once the database file is unlinked underneath a still-open connection, into
   alone - nothing checks that the helper is ever called, or called by every
   helper in the file. Same per-file hole, one more accepted token.
 
+#### Detached DB work is drained before the teardown closes the pool (ci#811)
+
+The helpers above close the pool before `t.TempDir`'s `RemoveAll`, but they can
+only wait for work they can observe. A handler that answers its HTTP response and
+then keeps writing through the `*gorm.DB` it was handed - a notification, an
+auto-continuation follow-up - runs in a goroutine the pool-quiescence check cannot
+see: it holds no connection at the moment it is checked, so `CloseTestDB` can
+close the pool (and `RemoveAll` can walk the directory) between two of its
+statements. The symptom is the same
+
+```
+TempDir RemoveAll cleanup: unlinkat /tmp/Test.../001: directory not empty
+```
+
+as ci#920, but no amount of extra waiting fixes it - only an explicit handshake
+does.
+
+- `database.DetachedWork` (`backend/database/detached_work.go`) is that handshake:
+  `Go(fn)` runs `fn` in a tracked goroutine, `Wait(timeout)` blocks until the group
+  is quiescent, and `Started`/`Pending` let a test observe that the tracked work
+  was started and has finished (`backend/database/detached_work_test.go`).
+  `RegisterDetachedWork(group)` publishes a package-level group to the shared test
+  helpers, so `CloseTestDB` drains it first (`DrainRegisteredDetachedWork`, bounded
+  by `detachedWorkDrainTimeout`, 10s).
+- `backend/api/chats` keeps one such group, `chatsDetachedDBWork`
+  (`backend/api/chats/detached_work.go`), and exposes `GoDetachedDBWork` for other
+  packages that hand it a pool: `api/tools` uses it for its confirmation
+  notification, `MessageSend.go` for the auto-continuation and finished-reply post
+  that follow a send response, and `InteractionConfirmation.go` for the
+  interaction-confirmed notification.
+- A caller that only has the unwrapped `*sql.DB` can call
+  `database.WaitForTestDBQuiescent(t, DB, timeout)` instead, which waits for the
+  pool itself to go idle.
+- The guard is `TestTempDirPackagesHaveNoUntrackedDBWriters` in
+  `backend/database/testdb_test.go`. It scans the non-test files of every package
+  whose tests bind a SQLite pool to `t.TempDir()` and fails when one starts a
+  goroutine that mentions a DB handle without one of the accepted handshakes
+  (`RegisterDetachedWork(`, `DrainRegisteredDetachedWork(`,
+  `WaitForTestDBQuiescent(`). `knownAsyncDBWriterViolations` is the debt list of
+  files drained by their own stop function (`session_cleanup.go` and
+  `session_lifetime.go`, both `cancel` + `<-done`); an entry that stops matching
+  fails the test, so the list cannot outlive its fix. The predicate itself is
+  pinned against a synthetic leak/tracked tree by
+  `TestScanForTempDirPackagesWithDetachedDBWritersClassifiesFixtures`, so the guard
+  cannot silently stop recognising the shape it was written for.
+- Known limitation, deliberate and *not* closed here: the scan is textual and per
+  *file*, so it accepts a file that merely *mentions* a handshake token (even in a
+  comment or a fixture) and it never checks that the accepted call is reachable
+  from the goroutine it exempts. Closing that needs the same per-function scan plus
+  string-literal stripping that the ci#920 note above already records as a
+  follow-up, so it is folded into that item instead of duplicated here.
+
 #### Expired sessions are swept, not just rejected (ci#729 follow-up)
 
 Expired sessions were never removed: `resolveValidSessionFromRequest` in
