@@ -149,6 +149,7 @@ a follow-up.
 | overlapping port slices | impossible by construction; `Overlaps()` detects a misconfiguration | `Windows()` / `Overlaps()` for tests & audits |
 | sensitive repo on a shared pool | denied by the repo gate with a reason | `SharedNetnsPermitted` reason |
 | N agents, one node saturated | the ci#691 capacity cooldown applies (unchanged) | capacity error placeholder |
+| all port blocks of a pool in use | the lease is refused with `ErrPoolNetworkCapacity`; the lease path may spill to another pool pod or fall back to a dedicated sandbox | `PoolNetworkExhaustedError` / `IsPoolNetworkExhausted`, and `exhaustion_signal` in the admin plan status |
 
 ## Follow-ups (ticket, do not implement here)
 

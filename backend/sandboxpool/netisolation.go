@@ -79,9 +79,11 @@ package sandboxpool
 //
 // Follow-ups (one batched ticket, ci#792): publish the allocated block through
 // the pool Service so an operator can reach a workspace dev server; add a
-// per-workspace cgroup guard; provision per-workspace netns; and surface a
-// distinct port-block exhaustion signal. The admin view of the resolved plan
-// landed with the network plan status (see netplanstatus.go).
+// per-workspace cgroup guard; and provision per-workspace netns. The admin view of
+// the resolved plan landed with the network plan status (see netplanstatus.go), and
+// the distinct port-block exhaustion signal landed with
+// PoolNetworkExhaustedError / IsPoolNetworkExhausted and the ExhaustionSignal of
+// the plan status (see the exhaustion-signal block below).
 
 import (
 	"crypto/sha256"
@@ -177,6 +179,98 @@ func IsPoolNetworkFailure(err error) bool {
 		errors.Is(err, ErrWorkspaceIsolationUnavailable) ||
 		errors.Is(err, ErrInvalidNetworkPolicy) ||
 		errors.Is(err, ErrInvalidWorkspaceUUID)
+}
+
+// Exhaustion signal (ci#792 follow-up: "hand back a distinct, surfaceable signal
+// rather than a generic allocation error so the lease path can spill to a new
+// pool pod or fall back to a dedicated sandbox").
+const (
+	// PoolNetworkExhaustedSignal is the machine-readable name of the condition.
+	// It is what a status view, an event or a metric labels a full pool with, so
+	// the surface stays stable when the wording of a message changes.
+	PoolNetworkExhaustedSignal = "pool_network_exhausted"
+	// RemediationSpillPoolPod is the first documented way out of a full pool:
+	// place the workspace on another pool pod.
+	RemediationSpillPoolPod = "spill_pool_pod"
+	// RemediationDedicatedSandbox is the fallback: give the workspace its own
+	// dedicated sandbox instead of a slot in the shared pool.
+	RemediationDedicatedSandbox = "dedicated_sandbox"
+)
+
+// PoolNetworkExhaustedError is the distinct exhaustion signal of a full pool: the
+// answer to "*full*, not *broken*". A lease path type-asserts it (or calls
+// AsPoolNetworkExhausted) to spill the workspace to another pool pod or fall back
+// to a dedicated sandbox, instead of retrying or reporting a generic allocation
+// error.
+//
+// It wraps ErrPoolNetworkCapacity, so errors.Is(err, ErrPoolNetworkCapacity) and
+// IsPoolNetworkFailure keep matching it and the ci#546 contract is unchanged.
+type PoolNetworkExhaustedError struct {
+	// WorkspaceUUID is the workspace that could not be placed.
+	WorkspaceUUID string
+	// Mode is the pool mode whose space ran out.
+	Mode string
+	// Slots is the number of blocks the policy provides (the effective ceiling:
+	// min(port-range blocks, MaxWorkspaces) - the ci#546/ci#662 bound).
+	Slots int
+	// ActiveWorkspaces is how many blocks are already in use.
+	ActiveWorkspaces int
+	// PortBase and PortBlockSize describe the geometry of the space that ran out.
+	PortBase      int
+	PortBlockSize int
+	// MaxWorkspaces is the configured workspace ceiling.
+	MaxWorkspaces int
+}
+
+// Error renders the condition, the space that ran out and the ways out. It keeps
+// the historical ErrPoolNetworkCapacity wording (so a log message or a test that
+// matched the old allocation error still matches) and adds the stable signal name.
+// It never carries a credential: ports, counts and env names only.
+func (e *PoolNetworkExhaustedError) Error() string {
+	if e == nil {
+		return ErrPoolNetworkCapacity.Error()
+	}
+	return fmt.Sprintf(
+		"%s: %s: workspace %s: %d of %d blocks in %d+%d*%d are in use; release a lease or raise %s (the ci#662 memory bound must allow it too), then %s or %s",
+		ErrPoolNetworkCapacity, PoolNetworkExhaustedSignal, e.WorkspaceUUID,
+		e.ActiveWorkspaces, e.Slots,
+		e.PortBase, e.PortBlockSize, e.Slots-1, EnvNetworkMaxWorkspaces,
+		RemediationSpillPoolPod, RemediationDedicatedSandbox)
+}
+
+// Unwrap keeps ErrPoolNetworkCapacity the sentinel errors.Is matches, so the
+// distinct signal is additive and never a second, competing error identity.
+func (e *PoolNetworkExhaustedError) Unwrap() error { return ErrPoolNetworkCapacity }
+
+// Signal is the stable name of the condition (PoolNetworkExhaustedSignal), what a
+// surface labels it with.
+func (e *PoolNetworkExhaustedError) Signal() string { return PoolNetworkExhaustedSignal }
+
+// Remediations lists the ways out in the order the lease path should try them:
+// another pool pod first, a dedicated sandbox as the fallback.
+func (e *PoolNetworkExhaustedError) Remediations() []string {
+	return []string{RemediationSpillPoolPod, RemediationDedicatedSandbox}
+}
+
+// AsPoolNetworkExhausted extracts the exhaustion signal from err, wrapping
+// included. It reports false for every other pool-network failure (a denial is
+// not a full pool) and for a nil error.
+func AsPoolNetworkExhausted(err error) (*PoolNetworkExhaustedError, bool) {
+	var target *PoolNetworkExhaustedError
+	if errors.As(err, &target) {
+		return target, true
+	}
+	return nil, false
+}
+
+// IsPoolNetworkExhausted reports whether err means "this pool is full". A bare
+// ErrPoolNetworkCapacity counts too: it is the pre-signal spelling of the same
+// condition, so a caller wrapping only the sentinel keeps working.
+func IsPoolNetworkExhausted(err error) bool {
+	if _, ok := AsPoolNetworkExhausted(err); ok {
+		return true
+	}
+	return errors.Is(err, ErrPoolNetworkCapacity)
 }
 
 // NetworkPolicy is the resolved, operator-readable networking policy of a pool.
@@ -487,10 +581,19 @@ func (a *PortAllocator) allocateLocked(uuid, repo, scope string) (WorkspaceNetwo
 	}
 	index, ok := a.freeBlockIndex(uuid)
 	if !ok {
-		return WorkspaceNetworkPlan{}, fmt.Errorf(
-			"%w: workspace %s: %d of %d blocks in %d+%d*%d are in use; release a lease or raise %s (the ci#662 memory bound must allow it too)",
-			ErrPoolNetworkCapacity, uuid, len(a.assigned), a.slots,
-			a.policy.PortBase, a.policy.PortBlockSize, a.slots-1, EnvNetworkMaxWorkspaces)
+		// The distinct ci#792 exhaustion signal: *full*, not *broken*. The
+		// sentinel stays the matched identity (Unwrap), the type carries the
+		// geometry and the ways out so the lease path can spill to another pool
+		// pod or fall back to a dedicated sandbox.
+		return WorkspaceNetworkPlan{}, &PoolNetworkExhaustedError{
+			WorkspaceUUID:    uuid,
+			Mode:             a.policy.Mode,
+			Slots:            a.slots,
+			ActiveWorkspaces: len(a.assigned),
+			PortBase:         a.policy.PortBase,
+			PortBlockSize:    a.policy.PortBlockSize,
+			MaxWorkspaces:    a.policy.MaxWorkspaces,
+		}
 	}
 	plan, err := a.planForIndex(uuid, index)
 	if err != nil {

@@ -50,6 +50,16 @@ type NetworkPlanStatus struct {
 	// Exhausted is the ci#792 port-block exhaustion condition: no free block is
 	// left, so the next lease in shared mode fails with ErrPoolNetworkCapacity.
 	Exhausted bool `json:"exhausted"`
+	// ExhaustionSignal is the stable, machine-readable name of the exhaustion
+	// condition (PoolNetworkExhaustedSignal), set only when Exhausted is true. It
+	// is the surfaceable half of the ci#792 signal: a status view, an event or a
+	// metric labels a full pool with it, so automation does not have to parse a
+	// message. Empty means "not full".
+	ExhaustionSignal string `json:"exhaustion_signal,omitempty"`
+	// ExhaustionRemediations are the documented ways out of a full pool, in the
+	// order the lease path should try them (another pool pod, then a dedicated
+	// sandbox). Set only when Exhausted is true.
+	ExhaustionRemediations []string `json:"exhaustion_remediations,omitempty"`
 	// PortGeometry renders the block layout (base+size*slots) for the logs.
 	PortGeometry string `json:"port_geometry"`
 	// Workspaces are the live plans, sorted by block index: the port block and
@@ -161,9 +171,20 @@ func (a *PortAllocator) statusLocked(now time.Time) NetworkPlanStatus {
 	status.Workspaces = plansByBlockIndex(a.assigned)
 	status.Notes = planNotes(policy)
 	if status.Exhausted {
+		// The surfaceable half of the ci#792 signal, next to the advisory note:
+		// automation reads the name and the remediations, a human reads the note.
+		status.ExhaustionSignal = PoolNetworkExhaustedSignal
+		status.ExhaustionRemediations = exhaustionRemediations()
 		status.Notes = append(status.Notes, exhaustionNote(policy, a.slots))
 	}
 	return status
+}
+
+// exhaustionRemediations returns the documented ways out of a full pool in the
+// order the lease path should try them. Copied per call so a caller cannot mutate
+// a shared slice.
+func exhaustionRemediations() []string {
+	return []string{RemediationSpillPoolPod, RemediationDedicatedSandbox}
 }
 
 // plansByBlockIndex returns the live plans sorted by block index so the admin view

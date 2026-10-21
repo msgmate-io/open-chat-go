@@ -2,6 +2,7 @@ package sandboxpool
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -232,5 +233,90 @@ func TestNormalizeWorkspaceUUIDRejectsUnsafeValues(t *testing.T) {
 	uuid, err := NormalizeWorkspaceUUID(" 6b70f615-189a-48a2 ")
 	if err != nil || uuid != "6b70f615-189a-48a2" {
 		t.Fatalf("unexpected normalisation: %q %v", uuid, err)
+	}
+}
+
+// TestPoolNetworkExhaustionSignal is the ci#792 row-5 contract: a full pool is a
+// distinct, surfaceable *signal*, not a generic allocation error.
+func TestPoolNetworkExhaustionSignal(t *testing.T) {
+	policy := DefaultNetworkPolicy()
+	policy.MaxWorkspaces = 1
+	allocator, err := NewPortAllocator(policy)
+	if err != nil {
+		t.Fatalf("NewPortAllocator: %v", err)
+	}
+	if _, err := allocator.Allocate("chat-a", "msgmate-io/open-chat-go", "user"); err != nil {
+		t.Fatalf("first allocate: %v", err)
+	}
+	_, err = allocator.Allocate("chat-b", "msgmate-io/open-chat-go", "user")
+	if err == nil {
+		t.Fatal("expected the full pool to refuse the second workspace")
+	}
+
+	// The signal is additive: the ci#546 sentinel and the existing predicate still
+	// match it, so nothing that only knows ErrPoolNetworkCapacity breaks.
+	if !errors.Is(err, ErrPoolNetworkCapacity) {
+		t.Errorf("exhaustion signal must still match ErrPoolNetworkCapacity: %v", err)
+	}
+	if !IsPoolNetworkFailure(err) {
+		t.Errorf("exhaustion signal must still count as a pool network failure: %v", err)
+	}
+	if !IsPoolNetworkExhausted(err) {
+		t.Errorf("IsPoolNetworkExhausted must match the allocation refusal: %v", err)
+	}
+	// A denial is not a full pool, and neither is an unrelated error.
+	if IsPoolNetworkExhausted(nil) {
+		t.Error("IsPoolNetworkExhausted(nil) must be false")
+	}
+	if IsPoolNetworkExhausted(errors.New("other")) {
+		t.Error("IsPoolNetworkExhausted must not match an unrelated error")
+	}
+	if IsPoolNetworkExhausted(fmt.Errorf("%w: workspace x", ErrSharedNetnsDenied)) {
+		t.Error("a shared-netns denial must not read as an exhausted pool")
+	}
+
+	signal, ok := AsPoolNetworkExhausted(err)
+	if !ok {
+		t.Fatalf("AsPoolNetworkExhausted must extract the signal from %v", err)
+	}
+	if signal.Signal() != PoolNetworkExhaustedSignal {
+		t.Errorf("signal name = %q, want %q", signal.Signal(), PoolNetworkExhaustedSignal)
+	}
+	if signal.WorkspaceUUID != "chat-b" {
+		t.Errorf("workspace = %q, want chat-b", signal.WorkspaceUUID)
+	}
+	if signal.Slots != 1 || signal.ActiveWorkspaces != 1 {
+		t.Errorf("slots/active = %d/%d, want 1/1", signal.Slots, signal.ActiveWorkspaces)
+	}
+	if signal.Mode != NetworkModeShared || signal.MaxWorkspaces != 1 {
+		t.Errorf("mode/max = %q/%d, want %q/1", signal.Mode, signal.MaxWorkspaces, NetworkModeShared)
+	}
+	got := signal.Remediations()
+	if len(got) != 2 || got[0] != RemediationSpillPoolPod || got[1] != RemediationDedicatedSandbox {
+		t.Fatalf("remediations = %v, want the spill then the dedicated fallback", got)
+	}
+	// The signal must be actionable from the message alone: the condition, the
+	// ruler that ran out and every way out.
+	for _, marker := range []string{
+		PoolNetworkExhaustedSignal,
+		EnvNetworkMaxWorkspaces,
+		RemediationSpillPoolPod,
+		RemediationDedicatedSandbox,
+		"ci#662",
+	} {
+		if !strings.Contains(err.Error(), marker) {
+			t.Errorf("exhaustion message %q is missing %q", err.Error(), marker)
+		}
+	}
+	// A wrapped signal is still the signal, and stays free of secret material.
+	wrapped := fmt.Errorf("lease workspace: %w", err)
+	asWrapped, ok := AsPoolNetworkExhausted(wrapped)
+	if !ok || asWrapped.Signal() != PoolNetworkExhaustedSignal {
+		t.Fatalf("wrapped signal not extractable: %v (%v)", wrapped, ok)
+	}
+	for _, marker := range []string{"token", "password", "kubeconfig"} {
+		if strings.Contains(strings.ToLower(err.Error()), marker) {
+			t.Errorf("exhaustion message leaked %q: %s", marker, err.Error())
+		}
 	}
 }
