@@ -20,6 +20,10 @@ on:
       - development/scripts/integration_module_ci.sh
       - development/scripts/check_integration_decoupling.py
       - development/scripts/tests/test_integration_decoupling.sh
+      # ci#423 step 4: the dependency-surface measurement and its baseline.
+      - backend/scripts/integration_dep_surface.py
+      - development/scripts/tests/test_integration_dep_surface.sh
+      - integrations.dep-surface.json
   workflow_dispatch:
     inputs:
       integration_repository:
@@ -91,6 +95,22 @@ jobs:
         run: |
           python3 -m py_compile development/scripts/check_integration_decoupling.py
           bash development/scripts/tests/test_integration_decoupling.sh
+
+      # ci#423 step 4: the dependency-surface delta (baseline) reporting decides
+      # whether an integration regressed, so its outcomes are pinned
+      # hermetically as well.
+      - name: dependency-surface delta self-test
+        run: |
+          python3 -m py_compile backend/scripts/integration_dep_surface.py
+          bash development/scripts/tests/test_integration_dep_surface.sh
+
+      # The committed baseline is the record of which integrations are already
+      # decoupled; validate it without a Go toolchain so a malformed or
+      # wrongly-pinned baseline cannot silently neuter the gate.
+      - name: dependency-surface baseline is valid
+        run: |
+          python3 backend/scripts/integration_dep_surface.py \
+              --check-baseline integrations.dep-surface.json
 
   smoke:
     name: smoke build an integration module
