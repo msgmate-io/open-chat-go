@@ -386,7 +386,7 @@ func (c *GitHubAPIClient) RequestAutoApprove(ctx context.Context, number int) er
 	payload := map[string]interface{}{
 		"ref": "main",
 		"inputs": map[string]string{
-			"pr_number": strconv.Itoa(number),
+			"number": strconv.Itoa(number),
 		},
 	}
 	path := fmt.Sprintf("/repos/%s/actions/workflows/auto-approve-consolidation.yaml/dispatches", c.Repo)
