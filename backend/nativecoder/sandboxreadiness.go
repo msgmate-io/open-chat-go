@@ -39,7 +39,7 @@ const (
 	// gitignored, so a fresh sandbox has neither it nor the private checkouts
 	// until this runs — that is precisely the failure this policy explains.
 	// See DEVELOPMENT.md ("Integration manager", ~line 331).
-	SandboxProfileSetupCommand = ".venv/bin/openchat-integrations prepare --profile full"
+	SandboxProfileSetupCommand = "development/scripts/build_tools.sh >/dev/null && $(development/scripts/build_tools.sh) prepare --profile full-ci"
 )
 
 // SandboxToolchainPathEntries are prepended to PATH for sandbox tool calls so
@@ -59,6 +59,91 @@ func SandboxPrivateModuleEnv() map[string]string {
 		"GONOSUMDB":           SandboxPrivateModuleOrg,
 		"GOFLAGS":             "-mod=mod",
 		"GIT_TERMINAL_PROMPT": "0",
+	}
+}
+
+// SandboxProfileFile persists the profile of the last successful set-up so a
+// later shell can tell an already-provisioned workspace from a fresh one. It
+// lives inside `.git/` (with a HOME fallback) so the marker never shows up as an
+// untracked file in the agent's checkout.
+const SandboxProfileFile = ".git/openchat-sandbox-profile"
+
+// sandboxEnvRcMarker guards the rc-file appends, so re-running the set-up is
+// idempotent and never grows the shell rc file.
+const sandboxEnvRcMarker = "# openchat sandbox environment"
+
+// SandboxEnvSetupLines renders the idempotent, shell-escaping-free lines that
+// persist the sandbox toolchain PATH and the private-module opt-outs for the
+// *agent's* shells. The dev-setup script runs in its own process, so an
+// `export` there is invisible to the later `coder_bash` calls — the recurring
+// ci#739 symptom where `go`/`gofmt` are "command not found" and a private module
+// fails to resolve even though the set-up itself succeeded. Appending to the
+// user's shell rc (and to /etc/profile.d when the sandbox runs as a user that
+// can write it) makes the same environment reachable interactively and
+// non-interactively; every entry is idempotent, so re-running the set-up does
+// not grow the rc file.
+func SandboxEnvSetupLines() []string {
+	entries := strings.Join(SandboxToolchainPathEntries, ":")
+	moduleEnv := SandboxPrivateModuleEnv()
+	// Deterministic order so the generated script is byte-stable for tests.
+	envKeys := []string{"GOPRIVATE", "GONOSUMDB", "GOFLAGS", "GIT_TERMINAL_PROMPT"}
+	var envAssignments []string
+	for _, key := range envKeys {
+		if value, ok := moduleEnv[key]; ok {
+			envAssignments = append(envAssignments, "export "+key+"="+value)
+		}
+	}
+	envLine := strings.Join(envAssignments, "; ")
+	return []string{
+		`export PATH="` + entries + `:$PATH"`,
+		envLine,
+		// The export above only lives in this process; persist both for the
+		// agent's later shells. `/etc/profile.d` needs root, so a missing write
+		// permission is not an error.
+		`for rc in "$HOME/.bashrc" "$HOME/.profile"; do`,
+		`  [ -f "$rc" ] || touch "$rc" 2>/dev/null || continue`,
+		`  if ! grep -qF '` + sandboxEnvRcMarker + `' "$rc" 2>/dev/null; then`,
+		`    { echo '` + sandboxEnvRcMarker + `'; echo 'export PATH="` + entries + `:$PATH"'; echo '` + envLine + `'; } >> "$rc" 2>/dev/null || true`,
+		`  fi`,
+		`done`,
+		`if [ -d /etc/profile.d ] && [ -w /etc/profile.d ]; then`,
+		`  f=/etc/profile.d/openchat-sandbox-env.sh`,
+		`  [ -f "$f" ] || printf '%s\n' '` + sandboxEnvRcMarker + `' 'export PATH="` + entries + `:$PATH"' '` + envLine + `' > "$f" 2>/dev/null || true`,
+		`fi`,
+		// Tool shells may be non-interactive (`sh -c …`), which sources neither
+		// `~/.bashrc` nor `/etc/profile.d`. Linking the toolchain binaries into a
+		// system bin dir that is already on the image PATH makes them resolvable
+		// regardless of how the shell was started; existing names are never
+		// overwritten, so an image-provided shim keeps priority.
+		`for d in /usr/local/bin /usr/bin; do`,
+		`  [ -w "$d" ] || continue`,
+		`  for tool in ` + strings.Join(sandboxToolchainTools, " ") + `; do`,
+		`    if [ -x "$d/$tool" ] || ! [ -x "` + SandboxGoBinDir + `/$tool" ]; then continue; fi`,
+		`    ln -s "` + SandboxGoBinDir + `/$tool" "$d/$tool" 2>/dev/null || true`,
+		`  done`,
+		`done`,
+	}
+}
+
+// SandboxProfileSetupLines renders the lines that run the integration profile
+// set-up exactly once per workspace. Provisioning is expensive (private
+// checkouts plus the Go workspace) and the resulting workspace is not part of
+// the git checkout, so repeating it for every interaction on the same workspace
+// is pure latency. The marker is written only on success, so a failed set-up is
+// retried instead of being mistaken for a finished one; it lives under `.git/`
+// (or `$HOME`) and therefore never appears as an untracked file to the agent.
+func SandboxProfileSetupLines(profile string) []string {
+	normalized := normalizeDevSetupProfile(profile)
+	if normalized == "" {
+		normalized = DevSetupProfileDefault
+	}
+	return []string{
+		// The marker path must be assigned before the legacy fallback block,
+		// which reads it to decide whether provisioning already happened.
+		`if [ -d .git ]; then openchat_sandbox_profile='` + SandboxProfileFile + `'; else openchat_sandbox_profile="$HOME/.openchat-sandbox-profile"; fi`,
+		`if [ -x development/scripts/build_tools.sh ] && [ ! -f "$openchat_sandbox_profile" ]; then`,
+		`  cli="$(development/scripts/build_tools.sh)" && "$cli" prepare --profile ` + normalized + ` && printf '%s\n' '` + normalized + `' > "$openchat_sandbox_profile"`,
+		`fi`,
 	}
 }
 
