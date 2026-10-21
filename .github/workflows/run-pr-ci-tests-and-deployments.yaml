@@ -2498,6 +2498,16 @@ jobs:
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_provider_failure.sh
 
+      # ci#739: the coding-sandbox readiness probe tells a msgmate-coder agent
+      # whether local Go checks can run at all, and its recovery hint must point
+      # at the submodule-free provisioning entry point
+      # (`development/scripts/build_tools.sh`) so a fresh checkout can always
+      # bootstrap itself.
+      - name: Coder sandbox readiness probe unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_coder_sandbox_readiness.sh
+
       # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
       # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
       # networking design). Pin the in-pod probe script contract (single-line
@@ -2523,6 +2533,19 @@ jobs:
         run: |
           set -euo pipefail
           bash development/scripts/tests/test_sandbox_workspace_netns.sh
+
+      # ci#787: coding sandboxes are routinely provisioned without a docker
+      # daemon, and the old failure mode was agents improvising raw docker shell
+      # commands (compose up, run, repeated build retries, occasionally
+      # installing a daemon). Pin the contract of the one supported wrapper: a
+      # missing CLI / unreachable daemon reports guidance and exits 3 instead of
+      # a raw docker error, the command's own exit status survives the output
+      # capping, output stays bounded, `run` always passes --rm, and the wrapper
+      # subcommands stay in sync with the typed docker_sandbox_* registry.
+      - name: Coder docker tooling wrapper unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_coder_docker.sh
 
       - name: PR CI progress-comment target unit tests
         run: |

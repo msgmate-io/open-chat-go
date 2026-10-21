@@ -1251,6 +1251,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			logging.Infof("Armed the self-message schedules (ci#744); idle interactions now self-resume")
 		default:
 			logging.Infof("No self-message schedules configured (%s unset)", msgmate.SelfMessageScheduleEnvVar)
+
 		}
 	} else {
 		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
