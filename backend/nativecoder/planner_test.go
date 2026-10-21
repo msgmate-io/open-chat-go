@@ -20,8 +20,18 @@ func TestReadyPullRequestSelection(t *testing.T) {
 	}{
 		{
 			name:  "green non-draft mergeable PR targeting main is ready",
-			pr:    PullRequest{Number: 101, Title: "feat: ready", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, MergeStateStatus: MergeStateClean, ChecksState: "success"},
+			pr:    PullRequest{Number: 101, Title: "feat: ready", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, MergeStateStatus: MergeStateClean, ChecksState: "success", LinkedIssues: []int{101}},
 			ready: true,
+		},
+		{
+			name:   "a green PR without a linked leaf issue is not consolidated",
+			pr:     PullRequest{Number: 111, Author: "cur1ousdude", BaseRef: "main", Mergeable: true, MergeStateStatus: MergeStateClean, ChecksState: "success"},
+			reason: "leaf-issue link",
+		},
+		{
+			name:   "a PR linking more than one issue is not consolidated",
+			pr:     PullRequest{Number: 112, Author: "cur1ousdude", BaseRef: "main", Mergeable: true, MergeStateStatus: MergeStateClean, ChecksState: "success", LinkedIssues: []int{112, 113}},
+			reason: "one leaf issue per PR",
 		},
 		{
 			name:   "draft is never consolidated",
@@ -111,8 +121,8 @@ func TestPlanOpensSingleConsolidationAtThreshold(t *testing.T) {
 		SelfLogin: "cur1ousdude",
 		Now:       now,
 		OpenPRs: []PullRequest{
-			{Number: 11, Title: "fix: a", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success"},
-			{Number: 12, Title: "fix: b", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success"},
+			{Number: 11, Title: "fix: a", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success", LinkedIssues: []int{11}},
+			{Number: 12, Title: "fix: b", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success", LinkedIssues: []int{12}},
 		},
 	})
 
@@ -171,7 +181,7 @@ func TestPlanDefersWhenConsolidationOpen(t *testing.T) {
 		SelfLogin: "cur1ousdude",
 		Now:       now,
 		OpenPRs: []PullRequest{
-			{Number: 21, Title: "feat: later", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success"},
+			{Number: 21, Title: "feat: later", Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success", LinkedIssues: []int{21}},
 		},
 		OpenConsolidations: []ExistingConsolidation{
 			{Number: 500, Branch: "chore/consolidate-2026-10-17", Green: false, CreatedAt: now.Add(-24 * time.Hour)},
@@ -222,7 +232,7 @@ func TestPlanSupersedesExtraConsolidations(t *testing.T) {
 		SelfLogin: "cur1ousdude",
 		Now:       now,
 		OpenPRs: []PullRequest{
-			{Number: 31, Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success"},
+			{Number: 31, Author: "cur1ousdude", BaseRef: "main", Mergeable: true, ChecksState: "success", LinkedIssues: []int{31}},
 		},
 		OpenConsolidations: []ExistingConsolidation{
 			{Number: 700, Branch: "chore/consolidate-2026-10-18", CreatedAt: now.Add(-time.Hour)},
@@ -296,6 +306,7 @@ func TestPlanToleratesInformationalStatusOnlyBlock(t *testing.T) {
 		BaseRef: "main", Mergeable: true, MergeStateStatus: MergeStateBlocked,
 		ChecksState: "success", RequiredChecksKnown: true, RequiredChecksState: "success",
 		InformationalChecks: []string{"private-sandbox-tests"},
+		LinkedIssues:        []int{120},
 	}
 	plan := Plan(policy, ConsolidationFacts{
 		Repo: "msgmate-io/open-chat-go", SelfLogin: "cur1ousdude",
@@ -407,7 +418,7 @@ func TestAuthorAnyWidensTheScope(t *testing.T) {
 		Repo:      "msgmate-io/open-chat-go",
 		SelfLogin: "cur1ousdude",
 		OpenPRs: []PullRequest{
-			{Number: 61, Author: "someone-else", BaseRef: "main", Mergeable: true, ChecksState: "success"},
+			{Number: 61, Author: "someone-else", BaseRef: "main", Mergeable: true, ChecksState: "success", LinkedIssues: []int{61}},
 		},
 	})
 	if !plan.ShouldOpen {

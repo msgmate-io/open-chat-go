@@ -60,6 +60,12 @@ type PullRequest struct {
 	InformationalChecks []string  `json:"informational_checks,omitempty"`
 	Labels              []string  `json:"labels,omitempty"`
 	CreatedAt           time.Time `json:"created_at,omitempty"`
+	// Body is the PR description, used to resolve the leaf issue the PR closes
+	// (ci#813).
+	Body string `json:"-"`
+	// LinkedIssues are the leaf issues named by standalone `Closes
+	// msgmate-io/open-chat-go-ci#N` lines in Body (ci#813).
+	LinkedIssues []int `json:"linked_issues,omitempty"`
 }
 
 // ExistingConsolidation describes an already open consolidation PR.
@@ -77,6 +83,10 @@ type ExistingConsolidation struct {
 	// CreatedAt orders multiple (unexpected) open consolidation PRs: the
 	// oldest stays the live one, the rest are superseded.
 	CreatedAt time.Time `json:"created_at,omitempty"`
+	// LinkedIssues are the leaf issues already named by the open consolidation
+	// PR's `Closes` lines. They are preserved when the body is refreshed and
+	// closed once the PR merges (ci#813).
+	LinkedIssues []int `json:"linked_issues,omitempty"`
 }
 
 // ConsolidationFacts is the input of the planner.
@@ -115,6 +125,9 @@ type ConsolidationPlan struct {
 	Include []PullRequest `json:"include"`
 	// Deferred are ready PRs that roll into the NEXT consolidation (ci#652).
 	Deferred []PullRequest `json:"deferred"`
+	// LinkedIssues are the leaf issues this consolidation PR closes: the
+	// existing PR's links plus every included PR's link (ci#813).
+	LinkedIssues []int `json:"linked_issues,omitempty"`
 	// Superseded are extra open consolidation PRs to absorb/close so exactly
 	// one stays open.
 	Superseded []ExistingConsolidation `json:"superseded,omitempty"`
@@ -192,6 +205,7 @@ func Plan(policy AutoConsolidationPolicy, facts ConsolidationFacts) Consolidatio
 			plan.Deferred = ready
 			plan.ShouldUpdate = true
 			plan.ShouldMerge = policy.RequireGreen && existing.Green
+			plan.LinkedIssues = mergeLinkedIssues(existing.LinkedIssues, nil)
 			plan.Reason = fmt.Sprintf(
 				"consolidation PR #%d is open: refreshing it and deferring %d ready PR(s) to the next consolidation",
 				existing.Number, len(ready),
@@ -205,6 +219,7 @@ func Plan(policy AutoConsolidationPolicy, facts ConsolidationFacts) Consolidatio
 			return plan
 		}
 		plan.Include = ready
+		plan.LinkedIssues = mergeLinkedIssues(existing.LinkedIssues, plan.Include)
 		plan.ShouldUpdate = len(ready) > 0
 		plan.ShouldMerge = policy.RequireGreen && existing.Green && len(ready) == 0
 		plan.Reason = fmt.Sprintf("folding %d ready PR(s) into the open consolidation PR #%d", len(ready), existing.Number)
@@ -217,6 +232,7 @@ func Plan(policy AutoConsolidationPolicy, facts ConsolidationFacts) Consolidatio
 	}
 
 	plan.Include = ready
+	plan.LinkedIssues = mergeLinkedIssues(nil, plan.Include)
 	plan.ShouldOpen = true
 	plan.Branch = consolidationBranch(policy, now)
 	plan.Reason = fmt.Sprintf("opening %s with %d ready PR(s)", plan.Branch, len(ready))
@@ -311,6 +327,15 @@ func evaluateReady(policy AutoConsolidationPolicy, facts ConsolidationFacts, pr 
 			return reject("has no reported checks yet")
 		}
 		return reject(fmt.Sprintf("checks are %s", pr.ChecksState))
+	}
+	if policy.RequireIssueLink {
+		switch len(pr.LinkedIssues) {
+		case 0:
+			return reject("has no `Closes msgmate-io/open-chat-go-ci#N` leaf-issue link")
+		case 1:
+		default:
+			return reject(fmt.Sprintf("links %d issues; one leaf issue per PR", len(pr.LinkedIssues)))
+		}
 	}
 	decision.Ready = true
 	return decision

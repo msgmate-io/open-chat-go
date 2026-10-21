@@ -135,7 +135,7 @@ func TestResolvePolicyFromConfigDefaultsOn(t *testing.T) {
 	if !policy.Enabled {
 		t.Fatalf("expected the default policy to be enabled")
 	}
-	if policy.Threshold != 1 || policy.Base != "main" || !policy.RequireGreen || !policy.OneOpenAtATime {
+	if policy.Threshold != 1 || policy.Base != "main" || !policy.RequireGreen || !policy.RequireIssueLink || !policy.OneOpenAtATime {
 		t.Fatalf("unexpected default policy: %#v", policy)
 	}
 
