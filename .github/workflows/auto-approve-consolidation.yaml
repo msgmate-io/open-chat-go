@@ -120,12 +120,47 @@ jobs:
           # of `gh api --jq`. On an API failure (eg a bad token) `--jq` used to
           # write the *error* JSON to stdout, which then became the "PR number"
           # list. Capture the exit status and fail loudly instead.
-          if ! pulls_json="$(
-            gh api --paginate \
-              "repos/${{ github.repository }}/commits/${head_sha}/pulls"
-          )"; then
-            echo "::error::Failed to list the PRs for ${head_sha} (API/credentials)."
-            exit 1
+          # ci#889: the `GET /repos/{repo}/commits/{sha}/pulls` endpoint
+          # intermittently answers HTTP 200 with an empty or truncated body for
+          # this repository (reproduced 2 of 3 calls: ~1.2 kB of headers, no
+          # JSON). That surfaced here as "unexpected end of JSON input" followed
+          # by a misleading "API/credentials" failure, which blocked an
+          # otherwise green consolidation PR and starved `auto-approve`. Retry
+          # the call a bounded number of times, then fall back to listing the
+          # open consolidation PRs and matching the triggering head commit.
+          pulls_json=""
+          for attempt in 1 2 3; do
+            candidate="$(gh api --paginate \
+                 "repos/${{ github.repository }}/commits/${head_sha}/pulls" \
+                 2>/dev/null)" || candidate=""
+            # An empty array is a legitimate answer (the head commit is not a
+            # PR head yet); only a non-array payload means the call was flaky.
+            if printf '%s' "$candidate" |
+                 jq -e 'type == "array"' >/dev/null 2>&1; then
+              pulls_json="$candidate"
+              break
+            fi
+            echo "::warning::Listing the PRs for ${head_sha} (attempt ${attempt}/3) returned no usable payload."
+            sleep "$((attempt * 5))"
+          done
+
+          if [ -z "$pulls_json" ]; then
+            echo "::warning::Falling back to the pull listing to resolve the PR for ${head_sha}."
+            fallback_json="$(gh pr list --repo "${{ github.repository }}" \
+              --state open --base main --limit 100 \
+              --json number,headRefName,headRefOid 2>/dev/null || true)"
+            pulls_json="$(jq -c --arg sha "$head_sha" --arg repo "${{ github.repository }}" \
+              '[ .[]?
+                 | select(.headRefOid == $sha)
+                 | select(.headRefName | startswith("chore/consolidate-"))
+                 | { number: .number,
+                     base: { ref: "main" },
+                     head: { ref: .headRefName, repo: { full_name: $repo } } } ]' \
+              <<< "${fallback_json:-[]}" 2>/dev/null || true)"
+            if [ -z "$pulls_json" ]; then
+              echo "::error::Failed to list the PRs for ${head_sha} (API/credentials)."
+              exit 1
+            fi
           fi
           if ! numbers_raw="$(
             printf '%s' "$pulls_json" \
