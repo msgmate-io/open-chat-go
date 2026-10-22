@@ -933,6 +933,15 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same acting-user resolution as the other write paths (ci#824 follow-up): a
+	// bot session creates the bot for its runtime owner, not for itself. The
+	// permission gate above stays on the raw session principal.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	var req CreateBotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -947,7 +956,7 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "default_shared_config is required", http.StatusBadRequest)
 		return
 	}
-	defaultsAppliedConfig, err := applyIntegrationDefaultsForUser(DB, user, req.DefaultSharedConfig)
+	defaultsAppliedConfig, err := applyIntegrationDefaultsForUser(DB, actingUser, req.DefaultSharedConfig)
 	if err != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
 		return
@@ -957,11 +966,11 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1004,13 +1013,15 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 
 		isPublic := false
+		// The public-visibility privilege stays on the raw session principal
+		// (least privilege); only ownership follows the acting user.
 		if user.IsAdmin {
 			isPublic = req.IsPublic
 		}
 
 		runtime = database.BotRuntimeConfig{
 			BotUserId:           botUser.ID,
-			OwnerUserId:         user.ID,
+			OwnerUserId:         actingUser.ID,
 			Name:                req.Name,
 			Description:         req.Description,
 			DefaultSharedConfig: configJSON,
@@ -1020,11 +1031,11 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Create(&runtime).Error; err != nil {
 			return err
 		}
-		if err := database.EnsureBotRuntimeOwner(tx, runtime.ID, user.ID); err != nil {
+		if err := database.EnsureBotRuntimeOwner(tx, runtime.ID, actingUser.ID); err != nil {
 			return err
 		}
 
-		if err := ensureContactAndDirectChat(tx, *user, botUser); err != nil {
+		if err := ensureContactAndDirectChat(tx, *actingUser, botUser); err != nil {
 			return err
 		}
 
@@ -1165,8 +1176,18 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write paths resolve the acting user too (ci#824 follow-up): an automated
+	// (bot) session owns no bot_runtime_owners row itself — its fleet belongs to
+	// the runtime owner — so scoping by the raw principal 404s on a bot that
+	// genuinely exists. For a human session resolveActingUser is a no-op.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveOwnedBot(DB, user, identifier)
+	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1182,7 +1203,7 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.DefaultSharedConfig != nil {
-		defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, req.DefaultSharedConfig)
+		defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, req.DefaultSharedConfig)
 		if defaultsErr != nil {
 			http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
 			return
@@ -1192,11 +1213,11 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+		if err := validateAndAttachDynamicToolsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+		if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1275,8 +1296,15 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same acting-user resolution as Update (ci#824 follow-up).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveOwnedBot(DB, user, identifier)
+	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1293,7 +1321,7 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, config)
+	defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, config)
 	if defaultsErr != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
 		return
@@ -1303,11 +1331,11 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachDynamicToolsForUser(DB, user, config); err != nil {
+	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachMCPIntegrationsForUser(DB, user, config); err != nil {
+	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1349,8 +1377,15 @@ func (h *BotsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same acting-user resolution as Update/SaveConfig (ci#824 follow-up).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveOwnedBot(DB, user, identifier)
+	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
