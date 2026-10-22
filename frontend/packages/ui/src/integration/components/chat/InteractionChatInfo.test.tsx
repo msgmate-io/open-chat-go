@@ -43,8 +43,11 @@ describe("InteractionChatInfo headerActions slot", () => {
     const slot = html.slice(html.indexOf("justify-end"));
     expect(slot).toContain("Shell");
     expect(slot).toContain("TUI");
-    // The row uses the compact flex layout the header expects.
-    expect(html).toContain("flex flex-wrap items-center justify-end gap-1");
+    // ci#831: desktop keeps the controls inline in the header row (md:flex)
+    // while small screens fall back to the wrapped row below (md:hidden).
+    expect(html).toContain("items-center justify-end gap-1");
+    expect(html).toContain("md:flex");
+    expect(html).toContain("md:hidden");
   });
 
   it("does not render the header actions row when no actions are supplied", () => {
@@ -136,5 +139,27 @@ describe("InteractionChatInfo chat details modal", () => {
     );
 
     expect(html).toBe("");
+  });
+
+  // ci#831: the details modal was too small on desktop, forcing a scrollbar per
+  // section. It now grows into a taller/wider panel on large screens while
+  // keeping the small-screen sheet behaviour.
+  it("grows into a taller, wider panel on desktop", () => {
+    const html = renderToStaticMarkup(
+      <ChatDetailsDialog
+        open
+        onOpenChange={() => undefined}
+        chat={interactionChat}
+        activeTab="overview"
+        onTabChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("max-h-[90dvh]");
+    expect(html).toContain("sm:max-w-[640px]");
+    expect(html).toContain("lg:max-w-[80rem]");
+    expect(html).toContain("lg:h-[min(88dvh,52rem)]");
+    // One shared scroll region instead of nested scrollbars.
+    expect(html).toContain("min-h-0 flex-1 overflow-y-auto");
   });
 });
