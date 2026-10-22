@@ -117,7 +117,7 @@ var openCodeParityRegistry = []ParityGap{
 		ID:     "todo_list",
 		Title:  "Plan and update a visible task list",
 		Phase:  ParityPhaseNow,
-		Status: ParityStatusOpen,
+		Status: ParityStatusPartial,
 		CoderTools: []string{
 			"coder_todo_write",
 			"coder_todo_read",
@@ -125,7 +125,7 @@ var openCodeParityRegistry = []ParityGap{
 		OpenCodeTools:    []string{"todowrite", "todoread"},
 		BlocksRetirement: true,
 		Tracks:           []int{394},
-		Note:             "A long task has no structured progress state; the agent can only narrate its plan in prose.",
+		Note:             "todoplan.go ships the per-chat plan state (validation, revision, render) but the coder surface still lacks the coder_todo_write/coder_todo_read tools, so the agent cannot reach it yet.",
 	},
 	{
 		ID:     "session_trust",

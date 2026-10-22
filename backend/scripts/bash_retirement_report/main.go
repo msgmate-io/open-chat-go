@@ -76,6 +76,15 @@ type retirementReport struct {
 	// ReadyToClose is true only when every phase that retires a category has
 	// met its exit criteria against this sample.
 	ReadyToClose bool `json:"ready_to_close"`
+	// Criteria is the per-phase exit-criteria checklist: every declared
+	// criterion of every phase with its machine-checked status, so a phase can
+	// never be declared done while one of its criteria was simply never
+	// checked.
+	Criteria []nativecoder.BashRetirementPhaseCriteria `json:"criteria"`
+	// CriteriaReadyToClose is the checklist's verdict, which is strictly
+	// harder than ReadyToClose: it also requires that every criterion has
+	// evidence at all, not just that the categories passed their threshold.
+	CriteriaReadyToClose bool `json:"criteria_ready_to_close"`
 }
 
 func main() {
@@ -192,11 +201,15 @@ func readSamples(input io.Reader) ([]nativecoder.BashCallSample, error) {
 func buildReport(samples []nativecoder.BashCallSample) retirementReport {
 	coverage := nativecoder.ComputeBashCoverage(samples)
 	phases := nativecoder.EvaluateBashRetirementPhases(coverage)
+	translation := nativecoder.MeasureGitHubShellTranslation(samples)
+	criteria := nativecoder.EvaluateBashRetirementCriteria(coverage, &translation)
 	return retirementReport{
-		BashCoverageReport: coverage,
-		GitHubPhase1:       nativecoder.MeasureGitHubShellTranslation(samples),
-		Phases:             phases,
-		ReadyToClose:       nativecoder.BashRetirementReadyToClose(phases),
+		BashCoverageReport:   coverage,
+		GitHubPhase1:         translation,
+		Phases:               phases,
+		ReadyToClose:         nativecoder.BashRetirementReadyToClose(phases),
+		Criteria:             criteria,
+		CriteriaReadyToClose: nativecoder.BashRetirementCriteriaReadyToClose(criteria),
 	}
 }
 
@@ -226,6 +239,40 @@ func renderText(report retirementReport) string {
 	}
 	b.WriteString(renderGitHubPhase1Text(report.GitHubPhase1))
 	b.WriteString(renderPhaseGatesText(report.Phases, report.ReadyToClose))
+	b.WriteString(renderCriteriaText(report.Criteria, report.CriteriaReadyToClose))
+	return b.String()
+}
+
+// renderCriteriaText renders the exit-criteria checklist: every criterion of
+// every phase with its machine-checked status and evidence, so a reader can see
+// which criteria are actually checked and which are still unattested instead of
+// inferring it from the category gate.
+func renderCriteriaText(criteria []nativecoder.BashRetirementPhaseCriteria, readyToClose bool) string {
+	var b strings.Builder
+	b.WriteString("\nexit criteria:\n")
+	for _, phase := range criteria {
+		status := "open"
+		if len(phase.Criteria) == 0 {
+			status = "n/a (no declared criteria)"
+		} else if phase.Ready {
+			status = "ready"
+		} else if !phase.Measured {
+			status = "unmeasured"
+		} else if !phase.Attested {
+			status = "partly unattested"
+		}
+		fmt.Fprintf(&b, "  %-28s %s\n", phase.ID, status)
+		for _, criterion := range phase.Criteria {
+			fmt.Fprintf(&b, "      %-11s %s\n", criterion.Status, criterion.Text)
+			for _, evidence := range criterion.Evidence {
+				fmt.Fprintf(&b, "          evidence: %s\n", evidence)
+			}
+			for _, blocker := range criterion.Blockers {
+				fmt.Fprintf(&b, "          blocked: %s\n", blocker)
+			}
+		}
+	}
+	fmt.Fprintf(&b, "\nready to close on criteria alone: %t\n", readyToClose)
 	return b.String()
 }
 

@@ -2244,8 +2244,16 @@ jobs:
             fi
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          # ci#824: a closing line must be standalone, exactly like
+          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
+          # line (`[ \t]*$`). Without that anchor this pattern also matched
+          # prose such as "Fix ci#824: crash on empty config" or
+          # "Closes ci#824 and also ci#999", importing leaf issues the author
+          # never linked - while the Go parser used by the consolidation runner
+          # ignored them. The two copies are pinned together by
+          # TestWorkflowLinkedIssueGrepStaysAnchored.
           mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+' "${RUNNER_TEMP}/pr-body.md" \
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
               | sed -E 's/.*#([0-9]+).*/\1/' \
               | sort -n -u
           )
@@ -2632,6 +2640,35 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_ai_mock_gate.py -v
+
+      # ci#832: the three deploy waiters (the approved-dispatch waiter plus the
+      # two merged-deploy siblings) polled a run's top-level status, which GitHub
+      # can leave at `in_progress` long after every job of that run finished, and
+      # re-read their tab-separated run line with a tab IFS, which collapses the
+      # empty conclusion and shifts every later field. The fix consults the run's
+      # job listing before interpreting a non-`completed` status as "still
+      # deploying" and emits/reads the conclusion last. Both guards are extracted
+      # from this file and executed with a stubbed API fetch, so the assertions
+      # are about the shipped shell.
+      - name: Deploy waiter run-status wedge unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_deploy_waiter_run_status.py -v
+
+      # ci#830: the auto-approve resolver's `commits/{sha}/pulls` lookup is
+      # flaky on api.github.com's side (HTTP 200/500 with an empty or truncated
+      # body) and the old guard accepted only a single-document array, so one
+      # unlucky call - or a multi-page `[...][...]` answer - hard-failed the job
+      # and left an otherwise green consolidation PR BLOCKED/REVIEW_REQUIRED.
+      # The step is extracted from the workflow and run against a stubbed `gh`,
+      # so the bounded retry, the slurped paginated payload and the
+      # `headRefOid`-matched `gh pr list` fallback are asserted on the shipped
+      # shell.
+      - name: Auto-approve flaky PR listing unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_auto_approve_flaky_pulls.py -v
+
       # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
       # Deployment of the CI deployment with probe_timeout_too_low,
       # probe_budget_too_short, startup_probe_missing and
@@ -3080,6 +3117,16 @@ jobs:
           # A run that never appears means the dispatch was dropped or used the
           # wrong ref - never a slow deploy - so do not burn the 25-minute window.
           first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
           # ci#774 follow-up: this is the dispatch grace, not a deploy budget. A
           # dispatched run appears within seconds; when the CI repository rejects
           # the dispatch or never creates the run, the waiter must fail fast (and
@@ -3130,10 +3177,26 @@ jobs:
                 [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
                 // candidates[0]
               end)
-              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url, (.head_branch // ""), (.head_sha // "")] | @tsv end
+              | if . == null then "" else [.id, .status, .html_url, (.head_branch // ""), (.head_sha // ""), (.conclusion // "")] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
               if [ -z "$first_miss_at" ]; then
                 first_miss_at="$(date +%s)"
                 echo "Recent dispatched CI deploy run titles (for diagnosis):"
@@ -3155,7 +3218,23 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url run_ref run_sha <<< "$run_line"
+            # ci#832: the fields are ordered with the (empty until the run finishes) conclusion last,
+            # because `read` with a tab IFS collapses tab runs: an empty field used to shift
+            # every later field left by one, so the waiter read the run url as the conclusion
+            # and the head sha as the ref, silently disabling the ref/sha dispatch guards.
+            IFS=$'\t' read -r run_id run_status run_url run_ref run_sha run_conclusion <<< "$run_line"
+            # A matching run was observed, so the dispatch demonstrably was not
+            # dropped: clear the miss timer. The grace window must measure
+            # *consecutive* misses, not total elapsed time since the first one -
+            # otherwise one transient API/pagination miss early on keeps its
+            # clock running while the run is being observed normally, and the
+            # waiter dyes the whole PR run red at 60s even though the dispatched
+            # deploy is in_progress (ci#774 follow-up).
+            first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
             echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none} ref=${run_ref:-none} sha=${run_sha:-none}"
             # ci#774 follow-up: the observed run must belong to the ref/sha this job
             # dispatched, otherwise a run created from another commit would be
@@ -3179,6 +3258,25 @@ jobs:
             fi
 
             if [ "$run_status" != "completed" ]; then
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -3486,7 +3584,7 @@ jobs:
     # holds the per-branch job concurrency group and starves the fresh dispatch.
     # This job explicitly cancels every superseded merged-deployment run for this
     # repository so the fresh dispatch can proceed.
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
     steps:
@@ -3533,7 +3631,7 @@ jobs:
   resolve-merged-deployment:
     name: Resolve Merged Deployment
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -3554,17 +3652,37 @@ jobs:
             TARGET_REF="$BASE_REF"
           fi
 
-          if [ "$BASE_REF" = "production" ]; then
-            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
-            DEPLOYMENT_URL="https://msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
-          else
-            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
-            DEPLOYMENT_URL="https://stage.msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
-          fi
+          # ci#833: the deploy target is derived from the merge base ref and is
+          # correctness-critical. `dev` is the integration trunk: a merge to it
+          # is verified by PR CI only and dispatches NO deployment. `main`
+          # deploys the CI environment (ci.msgmate.io); `production` deploys
+          # msgmate.io. An unknown base ref is a hard error - never guess.
+          case "$BASE_REF" in
+            dev)
+              SHOULD_DEPLOY="false"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
+              DEPLOYMENT_URL="https://stage.msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
+              ;;
+            main)
+              SHOULD_DEPLOY="true"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
+              DEPLOYMENT_URL="https://stage.msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
+              ;;
+            production)
+              SHOULD_DEPLOY="true"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
+              DEPLOYMENT_URL="https://msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
+              ;;
+            *)
+              echo "::error::Unknown merge base ref '${BASE_REF}': refusing to guess a deployment target (ci#833)."
+              exit 1
+              ;;
+          esac
 
-          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
           echo "ci_deployment_name=${{ env.DEPLOYMENT_CI }}" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
@@ -3675,6 +3793,107 @@ jobs:
             -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android","slow-android-build-test"]}'
 
           echo "Production promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
+
+  open-dev-to-main-promotion-pr:
+    name: Open Dev To Main Promotion PR
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment]
+    # ci#833: `main <- dev` is the ONLY PR that carries the deploy/sandbox
+    # labels and the only one whose merge deploys ci.msgmate.io. A merge to
+    # `dev` refreshes this PR in place (never delete/recreate: closing it would
+    # cancel its labelled CI run) and attaches the automatic label set.
+    if: |
+      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    env:
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Open or refresh dev to main promotion PR
+        env:
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
+          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
+          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          compare_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/repos/${REPOSITORY}/compare/main...dev")"
+          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          if [ "$ahead_by" = "0" ]; then
+            echo "dev is not ahead of main; skipping the dev to main promotion PR."
+            exit 0
+          fi
+
+          title="[Dev promotion] Promote dev -> main - merging deploys ci.msgmate.io (ci#833)"
+          body="$(cat <<EOF
+          <!-- open-chat-dev-promotion -->
+
+          This pull request is maintained automatically (ci#833): every merge to \`dev\` refreshes it in place.
+
+          **Merging this PR promotes \`dev\` to \`main\` and deploys the change to [ci.msgmate.io](https://ci.msgmate.io).**
+
+          | | |
+          | --- | --- |
+          | Head | \`dev\` |
+          | Base | \`main\` |
+          | Labels (automated, never toggled) | \`test\`, \`e2e\`, \`deploy\`, \`sandbox-test\` |
+          | Latest dev merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) - ${MERGED_PR_TITLE} |
+          | Dev commit | \`${DEV_HEAD_SHA}\` |
+
+          Label policy: feature PRs target \`dev\` with \`test\` only; consolidation PRs (\`chore/consolidate-*\`) target \`dev\` with \`test\`,\`e2e\`; this promotion PR is the only one carrying \`deploy\` and \`sandbox-test\`.
+          EOF
+          )"
+          labels_payload='{"labels":["test","e2e","deploy","sandbox-test"]}'
+
+          existing_pr_number="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
+              | jq -r '.[0].number // ""'
+          )"
+
+          if [ -n "$existing_pr_number" ]; then
+            echo "Refreshing the existing promotion PR #${existing_pr_number} in place."
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
+              -d "$(jq -n --arg title "$title" '{title: $title}')" >/dev/null
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
+              -d "$labels_payload" >/dev/null
+            echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
+            exit 0
+          fi
+
+          echo "Creating the dev to main promotion PR."
+          pr_number="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls" \
+              -d "$(jq -n --arg title "$title" --arg body "$body" --arg head "dev" --arg base "main" '{title: $title, body: $body, head: $head, base: $base}')" \
+              | jq -r '.number'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
+            -d "$labels_payload" >/dev/null
+          echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link
@@ -4136,6 +4355,16 @@ jobs:
           # slow deploy (ci#774).
           match_since=$(( $(date +%s) - 300 ))
           first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
           miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
@@ -4170,12 +4399,28 @@ jobs:
                   ] )
                 | unique_by(.id)
                 | .[]
-                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                | [.status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
               if [ -z "$first_miss_at" ]; then
                 first_miss_at="$(date +%s)"
                 echo "Recent CI workflow titles (for diagnosis):"
@@ -4191,9 +4436,38 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
+            IFS=$'\t' read -r run_status run_url run_title run_conclusion <<< "$run_line"
+            # Observed a matching run: clear the miss timer so the grace window
+            # measures consecutive misses only (same defect as the PR-deploy
+            # waiter above; a single early miss used to keep its clock running
+            # and red-flag the job while the run was progressing normally).
+            first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -4341,6 +4615,16 @@ jobs:
           # slow deploy (ci#774).
           match_since=$(( $(date +%s) - 300 ))
           first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
           miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
@@ -4375,12 +4659,28 @@ jobs:
                   ] )
                 | unique_by(.id)
                 | .[]
-                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                | [.status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
               if [ -z "$first_miss_at" ]; then
                 first_miss_at="$(date +%s)"
                 echo "Recent CI workflow titles (for diagnosis):"
@@ -4396,9 +4696,38 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
+            IFS=$'\t' read -r run_status run_url run_title run_conclusion <<< "$run_line"
+            # Observed a matching run: clear the miss timer so the grace window
+            # measures consecutive misses only (same defect as the PR-deploy
+            # waiter above; a single early miss used to keep its clock running
+            # and red-flag the job while the run was progressing normally).
+            first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -4506,8 +4835,16 @@ jobs:
             exit 0
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          # ci#824: a closing line must be standalone, exactly like
+          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
+          # line (`[ \t]*$`). Without that anchor this pattern also matched
+          # prose such as "Fix ci#824: crash on empty config" or
+          # "Closes ci#824 and also ci#999", importing leaf issues the author
+          # never linked - while the Go parser used by the consolidation runner
+          # ignored them. The two copies are pinned together by
+          # TestWorkflowLinkedIssueGrepStaysAnchored.
           mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+' "${RUNNER_TEMP}/pr-body.md" \
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
               | sed -E 's/.*#([0-9]+).*/\1/' \
               | sort -n -u
           )
