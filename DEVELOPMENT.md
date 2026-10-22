@@ -679,6 +679,13 @@ python3 -m venv .venv
   coder set-up script retries `full-ci` when the manifest does not know
   `full-development` yet (see *Coding-agent and sandbox documentation is
   private* above).
+- The per-repo default is configurable per bot or interaction: a
+  `coder_dev_setup` map may carry a `profiles` table next to its `profile`
+  default (`profiles: {msgmate-io/open-chat-go: full-development,
+  msgmate-io/open-chat-go-mobile: full-android}`). The longest matching
+  repository prefix wins and a repository outside the table keeps the declared
+  default, so one bot config can serve several repositories with different
+  development set-ups instead of forcing every interaction onto the same one.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is

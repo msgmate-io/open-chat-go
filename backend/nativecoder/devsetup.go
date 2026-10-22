@@ -79,6 +79,69 @@ type DevSetupSpec struct {
 	ExtraRepos []string
 	// Commands are extra shell lines appended verbatim to the script.
 	Commands []string
+	// Profiles overrides Profile per repository prefix. It is the per-repo
+	// knob of the interaction-configurable plan: one bot (or trigger) that
+	// serves several repositories can declare the profile each repository
+	// needs without forcing every interaction onto the same set-up. The
+	// longest matching prefix wins, exactly like DefaultDevSetupProfiles.
+	Profiles []DevSetupRepoProfile
+}
+
+// forRepo returns the spec with the profile its per-repo table selects for
+// repo. A repository outside the table keeps the plan's default profile, so
+// declaring a per-repo table never disables the set-up for the other repos the
+// same configuration is dispatched for.
+func (spec DevSetupSpec) forRepo(repo string) DevSetupSpec {
+	normalized := NormalizeRepo(repo)
+	if normalized == "" || len(spec.Profiles) == 0 {
+		return spec
+	}
+	best := ""
+	bestLen := -1
+	for _, entry := range spec.Profiles {
+		if !strings.HasPrefix(normalized, entry.RepoPrefix) {
+			continue
+		}
+		if len(entry.RepoPrefix) > bestLen {
+			bestLen, best = len(entry.RepoPrefix), entry.Profile
+		}
+	}
+	if best != "" {
+		spec.Profile = best
+	}
+	return spec
+}
+
+// devSetupProfileOverrides reads the `profiles` map of an explicit
+// `coder_dev_setup` block (`{<repo-prefix>: <profile>}`). Both a JSON-decoded
+// `map[string]interface{}` and a literal `map[string]string` are accepted;
+// entries with an unusable prefix or profile are dropped rather than turned
+// into shell input.
+func devSetupProfileOverrides(raw interface{}) []DevSetupRepoProfile {
+	entries := map[string]string{}
+	switch typed := raw.(type) {
+	case map[string]interface{}:
+		for repo, value := range typed {
+			if profile, ok := value.(string); ok {
+				entries[repo] = profile
+			}
+		}
+	case map[string]string:
+		for repo, profile := range typed {
+			entries[repo] = profile
+		}
+	}
+	out := make([]DevSetupRepoProfile, 0, len(entries))
+	for repo, profile := range entries {
+		normalized := NormalizeRepo(repo)
+		if normalized == "" {
+			continue
+		}
+		if normalizedProfile := normalizeDevSetupProfile(profile); normalizedProfile != "" {
+			out = append(out, DevSetupRepoProfile{RepoPrefix: normalized, Profile: normalizedProfile})
+		}
+	}
+	return out
 }
 
 // DevSetupSpecForRepo returns the built-in plan for a repository, or
@@ -136,6 +199,7 @@ func ResolveDevSetup(config map[string]interface{}) (DevSetupSpec, bool) {
 			Submodules: devSetupBool(typed["submodules"], true),
 			ExtraRepos: normalizedRepos(stringSliceFromConfig(firstValue(typed, "repos", "repositories"))),
 			Commands:   trimmedLines(stringSliceFromConfig(typed["commands"])),
+			Profiles:   devSetupProfileOverrides(firstValue(typed, "profiles", "per_repo_profiles", "repo_profiles")),
 		}
 		if spec.Profile == "" {
 			spec.Profile = DevSetupProfileDefault
@@ -227,6 +291,14 @@ func WithDevSetup(config map[string]interface{}, repo string, envValue string) m
 			repo = repoFromConfig(config)
 		}
 		spec = DevSetupSpecForRepo(repo)
+	} else {
+		// ci#756: an explicit plan may carry a per-repo profile table
+		// (`profiles: {<repo-prefix>: <profile>}`) so one bot/interaction
+		// config can serve several repositories with different set-ups
+		// (eg `full-development` for open-chat-go, `core-only` for a
+		// helper repo). The profile of the dispatched repository wins;
+		// a repository outside the table keeps the declared default.
+		spec = spec.forRepo(repo)
 	}
 	script := DevSetupScript(spec)
 	if script == "" {
