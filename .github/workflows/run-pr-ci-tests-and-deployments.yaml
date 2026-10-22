@@ -4346,6 +4346,7 @@ jobs:
           }
 
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_id=""
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
           # Accept a run of the expected deployment title created at/after the
@@ -4399,7 +4400,7 @@ jobs:
                   ] )
                 | unique_by(.id)
                 | .[]
-                | [.status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
+                | [.id, .status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
@@ -4437,7 +4438,7 @@ jobs:
             fi
 
             # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
-            IFS=$'\t' read -r run_status run_url run_title run_conclusion <<< "$run_line"
+            IFS=$'\t' read -r run_id run_status run_url run_title run_conclusion <<< "$run_line"
             # Observed a matching run: clear the miss timer so the grace window
             # measures consecutive misses only (same defect as the PR-deploy
             # waiter above; a single early miss used to keep its clock running
@@ -4606,6 +4607,7 @@ jobs:
           }
 
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_id=""
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
           # Accept a run of the expected deployment title created at/after the
@@ -4659,7 +4661,7 @@ jobs:
                   ] )
                 | unique_by(.id)
                 | .[]
-                | [.status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
+                | [.id, .status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
@@ -4697,7 +4699,7 @@ jobs:
             fi
 
             # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
-            IFS=$'\t' read -r run_status run_url run_title run_conclusion <<< "$run_line"
+            IFS=$'\t' read -r run_id run_status run_url run_title run_conclusion <<< "$run_line"
             # Observed a matching run: clear the miss timer so the grace window
             # measures consecutive misses only (same defect as the PR-deploy
             # waiter above; a single early miss used to keep its clock running
