@@ -4,7 +4,44 @@ import (
 	"backend/database"
 	"encoding/json"
 	"testing"
+
+	toolinterface "github.com/msgmate-io/go-tool-interface/toolinterface"
 )
+
+// The real `coder_bash` / `coder_select_workspace` definitions are shipped by
+// the coding integration at runtime. A test binary that does not carry that
+// integration's generated wiring would otherwise reject these configs with
+// `references unknown tool`, which has nothing to do with the chat-start hook
+// under test. Registering stand-in definitions keeps this file hermetic; when
+// the integration is compiled in, its own definitions already own the names
+// (they are registered from an init of the imported package, ie before this
+// init runs), so nothing is overridden.
+func init() {
+	registered := map[string]bool{}
+	for _, def := range toolinterface.List() {
+		registered[def.Name] = true
+	}
+	noop := func(_ interface{}, _ map[string]interface{}) (string, error) { return "", nil }
+
+	if !registered["coder_bash"] {
+		// RequiresInit stays false: the integration's coder_bash is accepted
+		// without a tool_init payload.
+		if err := toolinterface.Register(toolinterface.Definition{Name: "coder_bash", Run: noop}); err != nil {
+			panic(err)
+		}
+	}
+	if !registered["coder_select_workspace"] {
+		// RequiresInit with no schema of its own: the chat-start hook is what
+		// has to seed its tool_init, and the payload it derives must validate.
+		if err := toolinterface.Register(toolinterface.Definition{
+			Name:         "coder_select_workspace",
+			RequiresInit: true,
+			Run:          noop,
+		}); err != nil {
+			panic(err)
+		}
+	}
+}
 
 // ci#819 part B: a dispatch for a coder bot must seed tool_init at chat start
 // so the agent never has to call coder_select_workspace itself.
