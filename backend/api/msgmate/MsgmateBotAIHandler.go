@@ -60,6 +60,13 @@ func resolveProviderEndpoint(backend, endpoint string) (string, error) {
 	// custom endpoint is configured.
 	switch strings.ToLower(strings.TrimSpace(backend)) {
 	case "openrouter":
+		// A deployment may override the OpenRouter base URL (e.g. to route to
+		// the EU-only cloud at https://eu.openrouter.ai/api/v1 for in-region
+		// routing) without editing every bot's shared config. The env override
+		// wins over a configured endpoint; unset/blank keeps the public default.
+		if openRouterHost := strings.TrimSpace(os.Getenv("OPENROUTER_API_HOST")); openRouterHost != "" {
+			endpoint = openRouterHost
+		}
 		if strings.TrimSpace(endpoint) == "" {
 			endpoint = "https://openrouter.ai/api/v1/"
 		}
