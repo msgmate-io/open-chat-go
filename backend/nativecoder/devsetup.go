@@ -215,7 +215,7 @@ func WithDevSetup(config map[string]interface{}, repo string, envValue string) m
 	if config == nil {
 		return nil
 	}
-	if _, exists := config[SandboxSetupCommandsConfigKey]; exists {
+	if devSetupConfiguredScript(config[SandboxSetupCommandsConfigKey]) {
 		return config
 	}
 	spec, explicit := ResolveDevSetup(config)
@@ -243,6 +243,23 @@ func WithDevSetup(config map[string]interface{}, repo string, envValue string) m
 // DevSetupEnvValue returns the deployment-wide kill-switch value.
 func DevSetupEnvValue() string {
 	return os.Getenv(DevSetupEnvKey)
+}
+
+// devSetupConfiguredScript reports whether the config already carries an
+// operator-provided set-up script. Only a non-empty string counts: an explicit
+// but empty/null value (JSON `null`, `""`) is treated as "not configured", so a
+// deliberately cleared key does not silently disable the ci#756 preparation.
+func devSetupConfiguredScript(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	script, ok := value.(string)
+	if !ok {
+		// A non-string value is malformed input; refusing to touch it keeps the
+		// operator's configuration intact instead of overwriting it.
+		return true
+	}
+	return strings.TrimSpace(script) != ""
 }
 
 // devSetupEnvDisabled reports whether a kill-switch value means "off".
