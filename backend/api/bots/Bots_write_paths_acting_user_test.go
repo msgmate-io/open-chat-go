@@ -9,13 +9,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// grantCreateBotsPermission gives a non-admin session the create_bots
-// permission so an automated session can exercise Create.
-func grantCreateBotsPermission(t *testing.T, DB *gorm.DB, user *database.User) {
+// ensureCreateBotsPermission makes the create_bots permission explicit for a
+// session user (every user already receives it in User.AfterCreate, so this is
+// idempotent rather than a second insert), keeping Create reachable no matter
+// how the test user was persisted.
+func ensureCreateBotsPermission(t *testing.T, DB *gorm.DB, user *database.User) {
 	t.Helper()
 	permission := database.Permission{UserId: user.ID, Permission: database.PermissionCreateBots}
-	if err := DB.Create(&permission).Error; err != nil {
-		t.Fatalf("failed to grant create_bots to %q: %v", user.Name, err)
+	if err := DB.Where("user_id = ? AND permission = ?", user.ID, database.PermissionCreateBots).
+		FirstOrCreate(&permission).Error; err != nil {
+		t.Fatalf("failed to ensure create_bots for %q: %v", user.Name, err)
 	}
 }
 
@@ -103,7 +106,7 @@ func TestCreateBotFromAutomatedSessionActsForOwner(t *testing.T) {
 	owner := createUserForBotsTest(t, DB, "owner@example.com", false)
 
 	_, sessionBot := createBotRuntimeForTest(t, DB, owner, "session-bot")
-	grantCreateBotsPermission(t, DB, &sessionBot)
+	ensureCreateBotsPermission(t, DB, &sessionBot)
 
 	rr := agentDispatchRequest(t, DB, &sessionBot, http.MethodPost, "/api/v1/bots",
 		nil, createBotRequestPayload("spawned-bot"), nil, nil, (&BotsHandler{}).Create)
