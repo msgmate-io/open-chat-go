@@ -1075,7 +1075,16 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 	page, limit := parsePagination(r, 40)
 	includePublic := parseBoolQuery(r.URL.Query().Get("include_public"))
 
-	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, user.ID)
+	// Owner-scoped listing resolves the acting user (the fleet owner for an
+	// automated session) so a bot token sees the same bots the agent-dispatch
+	// surface can dispatch to instead of an empty list (ci#789).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
+	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, actingUser.ID)
 	query := DB.Model(&database.BotRuntimeConfig{}).
 		Where("is_active = ? AND id IN (?)", true, ownedIDs)
 	if includePublic {
@@ -1131,8 +1140,18 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// get_bot (GET /api/v1/bots/{identifier}) must resolve the acting user before
+	// the owner-scoped lookup, exactly like POST /api/v1/agents/dispatch, so a
+	// bot token can resolve its fleet instead of getting a 404 and falling back
+	// to /contacts/list (ci#789).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1395,8 +1414,17 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The canonical interaction route is what the workflow's tagged path POSTs to;
+	// it resolves the acting user before the owner-scoped bot lookup so a bot token
+	// starts the interaction exactly like POST /api/v1/agents/dispatch (ci#789).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1416,7 +1444,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	response, err := createBotInteraction(DB, queueClient, queueInspector, user, runtime, req, requestBaseURL(r))
+	response, err := createBotInteraction(DB, queueClient, queueInspector, actingUser, runtime, req, requestBaseURL(r))
 	if err != nil {
 		writeCreateInteractionError(w, err)
 		return
