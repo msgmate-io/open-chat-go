@@ -1072,10 +1072,20 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ci#824: an automated (bot) session owns no bot_runtime_owners row itself -
+	// the fleet is owned by the runtime owner - so a bot token would get an empty
+	// list. Resolve the acting user first, exactly like the agent-dispatch surface
+	// does; it is a no-op for humans, so the owner scope is unchanged.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	page, limit := parsePagination(r, 40)
 	includePublic := parseBoolQuery(r.URL.Query().Get("include_public"))
 
-	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, user.ID)
+	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, actingUser.ID)
 	query := DB.Model(&database.BotRuntimeConfig{}).
 		Where("is_active = ? AND id IN (?)", true, ownedIDs)
 	if includePublic {
@@ -1132,7 +1142,14 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	// ci#824: resolve the acting user before the owner-scoped lookup so an
+	// automated bot session sees its owner's runtime instead of a 404.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1396,7 +1413,15 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	}
 
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	// ci#824: resolve the acting user before the owner-scoped lookup/create so an
+	// automated bot session can start an interaction with its owner's runtime; the
+	// interaction chat must belong to that owner, not to the bot principal.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1416,7 +1441,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	response, err := createBotInteraction(DB, queueClient, queueInspector, user, runtime, req, requestBaseURL(r))
+	response, err := createBotInteraction(DB, queueClient, queueInspector, actingUser, runtime, req, requestBaseURL(r))
 	if err != nil {
 		writeCreateInteractionError(w, err)
 		return
