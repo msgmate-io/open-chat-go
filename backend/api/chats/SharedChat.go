@@ -421,9 +421,11 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 	}
 
 	var messages []database.Message
-	q := DB.Scopes(database.Paginate(&messages, &pagination, DB)).
-		Where("chat_id = ?", chat.ID).
-		Where("deleted_at IS NULL").
+	// Build the chat-scoped query first so Paginate counts this chat's messages
+	// instead of every row in the messages table (ci#825).
+	messageQuery := DB.Where("chat_id = ?", chat.ID).
+		Where("deleted_at IS NULL")
+	q := messageQuery.Scopes(database.Paginate(&messages, &pagination, messageQuery)).
 		Preload("Sender").
 		Find(&messages)
 	if q.Error != nil {

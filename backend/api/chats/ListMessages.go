@@ -131,10 +131,16 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Now list the messages paginated
-	result = DB.Scopes(database.Paginate(&messages, &pagination, DB)).
-		Where("chat_id = ?", chat.ID).
-		Where("deleted_at IS NULL").
+	// Now list the messages paginated. The chat-scoped query is built first and
+	// handed to Paginate, because Paginate derives TotalPages from the count of
+	// the handle it receives: passing the bare DB made TotalPages report every
+	// row in the messages table instead of this chat's messages, so a
+	// three-message chat advertised hundreds of pages and clients kept paging
+	// into empty ones (ci#825). This is the shape List already uses for chats.
+	messageQuery := DB.Where("chat_id = ?", chat.ID).
+		Where("deleted_at IS NULL")
+
+	result = messageQuery.Scopes(database.Paginate(&messages, &pagination, messageQuery)).
 		Preload("Sender").
 		Find(&messages)
 
