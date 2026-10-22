@@ -28,7 +28,8 @@ type WebSearchInput struct {
 var WebFetchToolDef = ToolDefinition{
 	Name: "web_fetch",
 	Description: "Fetch a URL and return its readable text content (HTML is converted to plain text). Use it to read web pages, documentation or API responses. " +
-		"Do not guess URLs: a 404/410 is reported as a not-found error and repeated fetches of the same dead URL are not retried - " +
+		"Do not guess URLs: a 404/410 is reported as a not-found error, copies of the same dead URL (tracking parameters, fragment, host case) are answered from a cache " +
+		"and never retried, and the error names the other paths of that host that are already known dead - so read the error and stop walking guessed paths; " +
 		"use web_search to find the current URL instead, and never fetch a URL twice in one turn.",
 	InputType:      WebFetchInput{},
 	RequiredParams: []string{"url"},

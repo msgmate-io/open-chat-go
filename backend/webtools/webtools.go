@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -51,7 +52,22 @@ const (
 	// notFoundCacheMax bounds the memory the not-found cache may use; entries
 	// past it are dropped wholesale rather than evicted one by one.
 	notFoundCacheMax = 256
+
+	// deadPathSiblingMax bounds how many other known-dead URLs of the same host
+	// are named in a not-found error. ci#789: an agent that guesses one path
+	// after another pays a round-trip per guess; telling it which neighbouring
+	// paths are already known dead stops the next guesses.
+	deadPathSiblingMax = 3
 )
+
+// notFoundTrackingParams are query parameters that never change which document a
+// URL addresses (campaign/referrer tracking). They are dropped from the
+// not-found cache key so the same dead page is one entry no matter how the link
+// was copied (ci#789).
+var notFoundTrackingParams = []string{
+	"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+	"gclid", "fbclid", "ref",
+}
 
 // notFoundEntry is one remembered not-found fetch outcome.
 type notFoundEntry struct {
@@ -255,9 +271,11 @@ func Fetch(ctx context.Context, rawURL string, maxBytes int) (FetchResult, error
 	defer resp.Body.Close()
 
 	if isNotFoundStatus(resp.StatusCode) {
-		rememberNotFound(target)
-		return FetchResult{URL: target, Status: resp.StatusCode},
-			notFoundError(FetchResult{URL: target, Status: resp.StatusCode})
+		// The remembered entry is recorded before the error is built so the
+		// message can name the other paths of this host that are known dead.
+		rememberNotFound(target, resp.StatusCode)
+		result := FetchResult{URL: target, Status: resp.StatusCode}
+		return result, notFoundError(result)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)+1))
@@ -296,40 +314,124 @@ func isNotFoundStatus(status int) bool {
 
 // notFoundError builds the actionable error returned for a dead URL. It names
 // the status and says what to do next, so the model does not re-issue the same
-// fetch or try a near-identical guess.
+// fetch or try a near-identical guess. Other paths of the same host that are
+// already known dead are named too: ci#789 showed a development agent walking a
+// guessed path (v1 -> v2 -> latest) pays a round-trip per guess, while knowing
+// which neighbouring paths already answered 404 ends the walk after the first
+// miss.
 func notFoundError(result FetchResult) error {
-	return fmt.Errorf("%w: %s returned %d - the page does not exist; do not re-fetch it, "+
+	message := fmt.Sprintf("%s returned %d - the page does not exist; do not re-fetch it, "+
 		"use coder_websearch to find the current URL or read the repository instead",
-		ErrNotFound, result.URL, result.Status)
+		result.URL, result.Status)
+	if siblings := deadPathSiblings(normalizeNotFoundKey(result.URL)); len(siblings) > 0 {
+		message += "; already known dead on this host: " + strings.Join(siblings, ", ")
+	}
+	return fmt.Errorf("%w: %s", ErrNotFound, message)
 }
 
-// cachedNotFound returns a remembered not-found outcome for url, if the entry is
-// still fresh.
-func cachedNotFound(url string) (FetchResult, bool) {
+// normalizeNotFoundKey reduces a URL to the form used as the not-found cache
+// key. For a page that does not exist the scheme/host case, the fragment and
+// campaign/referrer tracking parameters do not change the answer, so the same
+// dead page stays one entry however the link was copied (ci#789). Anything
+// unparseable falls back to the trimmed raw URL.
+func normalizeNotFoundKey(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return trimmed
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Fragment = ""
+	if parsed.RawQuery != "" {
+		values := parsed.Query()
+		for _, param := range notFoundTrackingParams {
+			values.Del(param)
+		}
+		// Encode() sorts the parameters, so the key is stable.
+		parsed.RawQuery = values.Encode()
+	}
+	return parsed.String()
+}
+
+// deadPathSiblings returns up to deadPathSiblingMax fresh not-found URLs that
+// share a host with key but address a different path, oldest first so the list
+// is stable between calls.
+func deadPathSiblings(key string) []string {
+	parsed, err := url.Parse(key)
+	if err != nil || parsed.Host == "" {
+		return nil
+	}
+	host := parsed.Host
+	ownPath := parsed.Path
+
 	notFoundMu.Lock()
 	defer notFoundMu.Unlock()
-	entry, ok := notFoundCache[url]
+
+	type candidate struct {
+		url string
+		at  time.Time
+	}
+	candidates := make([]candidate, 0, len(notFoundCache))
+	for otherKey, entry := range notFoundCache {
+		if otherKey == key || time.Since(entry.at) > notFoundCacheTTL {
+			continue
+		}
+		other, err := url.Parse(otherKey)
+		if err != nil || other.Host != host || other.Path == ownPath {
+			continue
+		}
+		candidates = append(candidates, candidate{url: entry.result.URL, at: entry.at})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].at.Equal(candidates[j].at) {
+			return candidates[i].url < candidates[j].url
+		}
+		return candidates[i].at.Before(candidates[j].at)
+	})
+	if len(candidates) > deadPathSiblingMax {
+		candidates = candidates[:deadPathSiblingMax]
+	}
+	siblings := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		siblings = append(siblings, c.url)
+	}
+	return siblings
+}
+
+// cachedNotFound returns a remembered not-found outcome for rawURL, if the entry
+// is still fresh. The lookup uses the normalized key, so the same dead page is a
+// hit even when the link was copied with a fragment or tracking parameters.
+func cachedNotFound(rawURL string) (FetchResult, bool) {
+	key := normalizeNotFoundKey(rawURL)
+	notFoundMu.Lock()
+	defer notFoundMu.Unlock()
+	entry, ok := notFoundCache[key]
 	if !ok {
 		return FetchResult{}, false
 	}
 	if time.Since(entry.at) > notFoundCacheTTL {
-		delete(notFoundCache, url)
+		delete(notFoundCache, key)
 		return FetchResult{}, false
 	}
 	return entry.result, true
 }
 
-// rememberNotFound records a not-found outcome for url so the next fetch of the
-// same URL does not hit the network again. The cache is dropped wholesale once
-// it grows past notFoundCacheMax: it only ever holds cheap to reproduce misses.
-func rememberNotFound(url string) {
+// rememberNotFound records a not-found outcome for rawURL so the next fetch of
+// the same URL does not hit the network again, and so the error of a
+// neighbouring guess can name it. The cache is dropped wholesale once it grows
+// past notFoundCacheMax: it only ever holds cheap to reproduce misses.
+func rememberNotFound(rawURL string, status int) {
+	if status <= 0 {
+		status = http.StatusNotFound
+	}
 	notFoundMu.Lock()
 	defer notFoundMu.Unlock()
 	if len(notFoundCache) >= notFoundCacheMax {
 		notFoundCache = map[string]notFoundEntry{}
 	}
-	notFoundCache[url] = notFoundEntry{
-		result: FetchResult{URL: url, Status: http.StatusNotFound},
+	notFoundCache[normalizeNotFoundKey(rawURL)] = notFoundEntry{
+		result: FetchResult{URL: rawURL, Status: status},
 		at:     time.Now(),
 	}
 }

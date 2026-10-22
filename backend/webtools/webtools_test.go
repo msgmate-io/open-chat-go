@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -344,5 +345,128 @@ func TestFetchSuccessReturnsContent(t *testing.T) {
 	}
 	if transport.calls != 1 {
 		t.Fatalf("expected one attempt, got %d", transport.calls)
+	}
+}
+
+// ci#789 follow-up: an agent copies a dead link out of a page (tracking params,
+// fragment, mixed-case host) and re-fetches what is logically the same URL. The
+// not-found cache key must be normalized so that costs no network round-trip.
+func TestFetchDeadURLCopiesAreAnsweredFromCache(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusNotFound, "nope")
+	if _, err := Fetch(context.Background(), "https://example.invalid/Missing", 1024); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	copies := []string{
+		"https://example.invalid/Missing#install",
+		"https://EXAMPLE.invalid/Missing",
+		"https://example.invalid/Missing?utm_source=newsletter&utm_campaign=docs",
+	}
+	for _, copyURL := range copies {
+		if _, err := Fetch(context.Background(), copyURL, 1024); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: expected ErrNotFound, got %v", copyURL, err)
+		}
+	}
+	if transport.calls != 1 {
+		t.Fatalf("copies of the same dead URL must be served from the cache, got %d network calls", transport.calls)
+	}
+}
+
+// A different path is a genuinely different guess and must still hit the network
+// (the cache must not over-collapse), but its error names the paths this host is
+// already known to be missing so the walk of guesses stops early.
+func TestFetchNotFoundErrorNamesDeadPathsOnSameHost(t *testing.T) {
+	transport := withCountingResponse(t, http.StatusNotFound, "nope")
+	if _, err := Fetch(context.Background(), "https://example.invalid/api/v1/docs", 1024); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	_, err := Fetch(context.Background(), "https://example.invalid/api/v2/docs", 1024)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if transport.calls != 2 {
+		t.Fatalf("a different path must be fetched, got %d network calls", transport.calls)
+	}
+	if !strings.Contains(err.Error(), "already known dead on this host") {
+		t.Fatalf("expected the error to name the dead sibling paths, got %q", err.Error())
+	}
+	siblings := err.Error()[strings.Index(err.Error(), "already known dead on this host"):]
+	if !strings.Contains(siblings, "https://example.invalid/api/v1/docs") {
+		t.Fatalf("expected the earlier dead path to be named, got %q", err.Error())
+	}
+	if strings.Contains(siblings, "api/v2/docs") {
+		t.Fatalf("the failing path must not be listed as its own sibling, got %q", err.Error())
+	}
+}
+
+// Dead paths of another host are unrelated and must not be suggested.
+func TestFetchNotFoundErrorIgnoresOtherHosts(t *testing.T) {
+	withCountingResponse(t, http.StatusNotFound, "nope")
+	if _, err := Fetch(context.Background(), "https://docs.example.invalid/old", 1024); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	_, err := Fetch(context.Background(), "https://example.invalid/api/v2", 1024)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if strings.Contains(err.Error(), "docs.example.invalid/old") {
+		t.Fatalf("a dead path of another host must not be suggested, got %q", err.Error())
+	}
+}
+
+func TestNormalizeNotFoundKey(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "fragment dropped",
+			in:   "https://example.invalid/page#section",
+			want: "https://example.invalid/page",
+		},
+		{
+			name: "host and scheme lowercased",
+			in:   "HTTPS://Example.Invalid/Page",
+			want: "https://example.invalid/Page",
+		},
+		{
+			name: "tracking params dropped, others kept sorted",
+			in:   "https://example.invalid/page?b=2&utm_source=x&a=1&ref=hn",
+			want: "https://example.invalid/page?a=1&b=2",
+		},
+		{
+			name: "no host falls back to the trimmed url",
+			in:   "  /relative/path  ",
+			want: "/relative/path",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeNotFoundKey(tc.in); got != tc.want {
+				t.Fatalf("normalizeNotFoundKey(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	if got := normalizeNotFoundKey("https://example.invalid/a?utm_source=x"); got != normalizeNotFoundKey("https://EXAMPLE.invalid/a") {
+		t.Fatalf("a tracked copy must share the cache key of the plain URL: %q", got)
+	}
+}
+
+// The sibling list is bounded, so a long walk of guesses cannot make the error
+// grow without limit.
+func TestDeadPathSiblingsAreBounded(t *testing.T) {
+	withCountingResponse(t, http.StatusNotFound, "nope")
+	for i := 0; i < deadPathSiblingMax+3; i++ {
+		url := "https://example.invalid/guess/" + strconv.Itoa(i)
+		if _, err := Fetch(context.Background(), url, 1024); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: expected ErrNotFound, got %v", url, err)
+		}
+	}
+	siblings := deadPathSiblings(normalizeNotFoundKey("https://example.invalid/guess/final"))
+	if len(siblings) > deadPathSiblingMax {
+		t.Fatalf("expected at most %d siblings, got %d", deadPathSiblingMax, len(siblings))
+	}
+	if len(siblings) == 0 {
+		t.Fatal("expected the previously guessed paths to be named")
 	}
 }
