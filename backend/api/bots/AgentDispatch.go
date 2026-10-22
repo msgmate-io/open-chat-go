@@ -69,25 +69,8 @@ import (
 // declared scope tags may itself only touch tags inside that scope, so a scoped
 // bot cannot re-scope an interaction out of (or into) another team's tag scope.
 
-// resolveActingUser maps a session principal to the user an agent-management call
-// acts for. A human session acts for itself; an automated (bot) session acts for
-// the owner of its bot runtime config, falling back to the bot itself when no
-// owner is recorded.
-func resolveActingUser(DB *gorm.DB, sessionUser *database.User) (*database.User, error) {
-	if sessionUser == nil {
-		return nil, errors.New("no authenticated user")
-	}
-	if !sessionUser.IsAutomated {
-		return sessionUser, nil
-	}
-	var runtime database.BotRuntimeConfig
-	err := DB.Preload("OwnerUser").Where("bot_user_id = ? AND is_active = ?", sessionUser.ID, true).First(&runtime).Error
-	if err == nil && runtime.OwnerUser.ID != 0 {
-		owner := runtime.OwnerUser
-		return &owner, nil
-	}
-	return sessionUser, nil
-}
+// resolveActingUser lives in Bots.go: it is shared by the agent-dispatch surface
+// and the canonical bot routes (ci#824).
 
 // AgentDispatchRequest is the dispatch body. It carries the task plus the
 // workflow-equivalent options so an agent can reproduce what the GitHub
