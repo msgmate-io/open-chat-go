@@ -131,10 +131,18 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Now list the messages paginated
-	result = DB.Scopes(database.Paginate(&messages, &pagination, DB)).
+	// The chat filter has to exist BEFORE pagination runs: Paginate counts the
+	// rows of the handle it receives to derive TotalPages, and counting the bare
+	// DB handle described every message in the database rather than this chat's.
+	// Clients then believed a short chat had hundreds of pages and kept paging
+	// (the unnecessary-fetch class, ci#789). Build the filtered query first — the
+	// same shape backend/api/chats/List.go uses — and paginate that.
+	query := DB.
 		Where("chat_id = ?", chat.ID).
-		Where("deleted_at IS NULL").
+		Where("deleted_at IS NULL")
+
+	// Now list the messages paginated
+	result = query.Scopes(database.Paginate(&messages, &pagination, query)).
 		Preload("Sender").
 		Find(&messages)
 
