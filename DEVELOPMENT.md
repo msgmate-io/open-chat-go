@@ -45,6 +45,11 @@ Policy:
   `resolve-merged-deployment`), and an unknown base ref is a hard error:
   `dev` dispatches **no** deployment, `main` deploys the CI environment
   (ci.msgmate.io), `production` deploys msgmate.io.
+- A PR *based on* `dev` never dispatches a pre-merge deploy either: the
+  context step clears `should_deploy` for `base.ref == 'dev'`, so a stray
+  `deploy` label on a dev-trunk PR cannot open a staging PR environment (and a
+  stray `sandbox-test` label therefore has nothing to run against). Only the
+  `dev` → `main` promotion PR (base `main`) deploys.
 - A same-repository PR targeting `main` is the CI-environment case: its
   deploy/test gate uses the **unprotected** `msgmate-io-ci` GitHub environment,
   so the full suite — including the post-deploy sandbox and real-AI suites —
