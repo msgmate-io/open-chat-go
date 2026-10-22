@@ -1598,6 +1598,12 @@ func processParsedToolCall(
 		return
 	}
 
+	// ci#819 part A (tolerance half): drop a redundant leading `cd <workspace
+	// root>` from a `coder_bash` command before it is parsed, dispatched and
+	// cached, so an older `cd $(git rev-parse --show-toplevel) && ...` habit costs
+	// no call and the duplicate-call signature matches the unprefixed spelling.
+	arguments = normalizeCoderBashArguments(name, arguments)
+
 	toolInput, parseErr := tool.ParseArguments(arguments)
 	if parseErr != nil {
 		return

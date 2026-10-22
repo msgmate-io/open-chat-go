@@ -46,12 +46,22 @@ const WorkspaceRootConfigKey = "coder_workspace_root"
 // the workspace root up front, so a coder does not have to discover it (and
 // stops prefixing every command with a `cd` into it).
 func WorkspaceRootGuidanceLines() []string {
-	root := WorkspaceRootDefault
+	return WorkspaceRootGuidanceLinesFor(WorkspaceRootDefault)
+}
+
+// WorkspaceRootGuidanceLinesFor is WorkspaceRootGuidanceLines for a sandbox that
+// declares its own root (WorkspaceRootConfigKey), so the prompt names the path
+// the session layer will actually apply instead of the default.
+func WorkspaceRootGuidanceLinesFor(root string) []string {
+	resolved := strings.TrimRight(strings.TrimSpace(root), "/")
+	if resolved == "" {
+		resolved = WorkspaceRootDefault
+	}
 	return []string{
-		"Workspace root: `" + root + "` is the root of your checkout. Every `coder_bash` command already " +
+		"Workspace root: `" + resolved + "` is the root of your checkout. Every `coder_bash` command already " +
 			"starts there, and a workspace-relative path in `coder_read` / `coder_list` / `coder_glob` / " +
 			"`coder_grep` resolves against it.",
-		"Do not prefix a command with `cd " + root + "` or `cd $(git rev-parse --show-toplevel)`: it is a " +
+		"Do not prefix a command with `cd " + resolved + "` or `cd $(git rev-parse --show-toplevel)`: it is a " +
 			"no-op that wastes a turn. Pass the workspace-relative path (eg `go test ./backend/nativecoder/...`) " +
 			"and use `cd <subdir> && ...` only to descend into a subdirectory.",
 	}
@@ -60,7 +70,12 @@ func WorkspaceRootGuidanceLines() []string {
 // WorkspaceRootGuidance returns WorkspaceRootGuidanceLines as one paragraph,
 // which is the shape a single prompt block wants.
 func WorkspaceRootGuidance() string {
-	return strings.Join(WorkspaceRootGuidanceLines(), " ")
+	return WorkspaceRootGuidanceFor(WorkspaceRootDefault)
+}
+
+// WorkspaceRootGuidanceFor is WorkspaceRootGuidance for a declared root.
+func WorkspaceRootGuidanceFor(root string) string {
+	return strings.Join(WorkspaceRootGuidanceLinesFor(root), " ")
 }
 
 // WorkspaceRootFromConfig reads the declared workspace root of a sandbox config,

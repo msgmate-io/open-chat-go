@@ -42,6 +42,22 @@ func TestWorkspaceRootGuidanceStatesRootAndRetiresCD(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRootGuidanceForNamesDeclaredRoot(t *testing.T) {
+	const root = "/mnt/sandbox/work"
+	guidance := WorkspaceRootGuidanceFor(root + "/")
+	if !strings.Contains(guidance, root) {
+		t.Fatalf("guidance does not name the declared root %q: %s", root, guidance)
+	}
+	if strings.Contains(guidance, WorkspaceRootDefault) {
+		t.Fatalf("guidance leaked the default root %q for a declared one: %s", WorkspaceRootDefault, guidance)
+	}
+	// An empty root is not a declaration: the default stands, so the prompt can
+	// never end up naming an empty path.
+	if got := WorkspaceRootGuidanceFor("  "); got != WorkspaceRootGuidance() {
+		t.Fatalf("blank root must fall back to the default guidance, got %s", got)
+	}
+}
+
 func TestWithWorkspaceRootDoesNotMutateCallerMap(t *testing.T) {
 	original := map[string]interface{}{"coder_mode": "trust"}
 	merged := WithWorkspaceRoot(original, "/srv/checkout")
