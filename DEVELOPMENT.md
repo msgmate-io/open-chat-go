@@ -216,6 +216,21 @@ approves **and merges** it once it is provably green:
 - A PR that is merely `BEHIND` gets its branch updated instead (which re-runs CI
   and this workflow); an already merged PR counts as success, so re-runs and
   races are harmless.
+- Resolving *which* PR the finished run belongs to goes through
+  `GET /repos/{repo}/commits/{sha}/pulls`, which this repository has seen answer
+  intermittently with an empty/truncated body (`unexpected end of JSON input`),
+  so the lookup is retried up to three times with a 5s/10s backoff before it
+  falls back to a `gh pr list` matched on `headRefOid`. The retry only accepts a
+  *usable* payload: `gh api --paginate` emits one JSON document per page, so the
+  guard slurps the documents and flattens them (`jq -ces '... then add ...'`),
+  which keeps single-page answers unchanged, turns a multi-page `[...][...]`
+  answer — not one valid JSON document — into a single array, and rejects an
+  empty body, `null` or an error object so the retry (and eventually the
+  fallback) still runs instead of the job dying red on a flaky API. Both paths
+  exhausted is only fatal when the fallback body is unusable; a valid empty
+  listing is a no-op. Pinned by
+  `development/scripts/test_auto_approve_flaky_pulls.py` in the Pin Freshness
+  Gate job.
 
 The preferred configuration is a dedicated reviewer identity (GitHub App or a
 fine-grained token with `pull_requests: write`) stored as the repository secret
