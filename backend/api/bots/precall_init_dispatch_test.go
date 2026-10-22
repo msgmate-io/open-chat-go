@@ -2,6 +2,7 @@ package bots
 
 import (
 	"backend/database"
+	"backend/nativecoder"
 	"encoding/json"
 	"testing"
 
@@ -106,8 +107,11 @@ func TestAgentDispatchSeedsCoderWorkspaceInit(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected coder_select_workspace init seeded, got %v", init)
 	}
-	if repo, _ := seed["git_repo"].(string); repo != "msgmate-io/open-chat-go" {
+	if repo, _ := seed["git_repo"].(string); repo != nativecoder.GitRemoteForRepo("msgmate-io/open-chat-go") {
 		t.Fatalf("expected seeded repo from dispatch tag, got %v", seed)
+	}
+	if auto, _ := seed["auto_sandbox"].(bool); !auto {
+		t.Fatalf("expected the seeded workspace init to switch auto_sandbox on, got %v", seed)
 	}
 }
 
