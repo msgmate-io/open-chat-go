@@ -800,3 +800,62 @@ func TestSyncBotsInheritingDefaultModelAccessResolvesBotUser(t *testing.T) {
 		t.Fatalf("expected stale legacy assignment key to be cleaned up, rows=%+v err=%v", stale, err)
 	}
 }
+
+func TestApplyBotBootstrapConfigFilesReusesRuntimeForExistingBotUser(t *testing.T) {
+	config := setupBotConfigTestDB(t)
+	DB := database.SetupDatabase(*config)
+
+	if err, _ := util.CreateUser(DB, "owner_user", "OwnerPass1!", false); err != nil {
+		t.Fatalf("failed to create owner user: %v", err)
+	}
+
+	initialPath := writeBotConfigFile(t, map[string]interface{}{
+		"primary_owner": "owner_user",
+		"bot": map[string]interface{}{
+			"username": "existing_lead_bot",
+			"password": "BotPass1!",
+			"name":     "old_runtime_name",
+		},
+		"default_shared_config": map[string]interface{}{"model": "old-model"},
+	})
+	if err := applyBotBootstrapConfigFiles(DB, []string{initialPath}, false); err != nil {
+		t.Fatalf("initial apply failed: %v", err)
+	}
+
+	renamedPath := writeBotConfigFile(t, map[string]interface{}{
+		"primary_owner": "owner_user",
+		"bot": map[string]interface{}{
+			"username": "existing_lead_bot",
+			"password": "BotPass1!",
+			"name":     "new_runtime_name",
+		},
+		"default_shared_config": map[string]interface{}{"model": "new-model"},
+		"overwrite_if_exists":   true,
+	})
+	if err := applyBotBootstrapConfigFiles(DB, []string{renamedPath}, false); err != nil {
+		t.Fatalf("renamed apply must reuse the existing runtime, got: %v", err)
+	}
+
+	botUser, err := findUserByUsername(DB, "existing_lead_bot")
+	if err != nil {
+		t.Fatalf("failed to resolve bot user: %v", err)
+	}
+	var count int64
+	if err := DB.Model(&database.BotRuntimeConfig{}).Where("bot_user_id = ?", botUser.ID).Count(&count).Error; err != nil {
+		t.Fatalf("failed to count runtimes: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one runtime for bot_user_id=%d, got %d", botUser.ID, count)
+	}
+	var runtime database.BotRuntimeConfig
+	if err := DB.Where("bot_user_id = ?", botUser.ID).First(&runtime).Error; err != nil {
+		t.Fatalf("failed to load runtime: %v", err)
+	}
+	var shared map[string]interface{}
+	if err := json.Unmarshal(runtime.DefaultSharedConfig, &shared); err != nil {
+		t.Fatalf("failed to decode config: %v", err)
+	}
+	if shared["model"] != "new-model" {
+		t.Fatalf("expected overwrite to reach the existing runtime, got model %v", shared["model"])
+	}
+}
