@@ -3148,7 +3148,7 @@ jobs:
                 [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
                 // candidates[0]
               end)
-              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url, (.head_branch // ""), (.head_sha // "")] | @tsv end
+              | if . == null then "" else [.id, .status, .html_url, (.head_branch // ""), (.head_sha // ""), (.conclusion // "")] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
@@ -3189,7 +3189,11 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url run_ref run_sha <<< "$run_line"
+            # ci#832: the fields are ordered with the (empty until the run finishes) conclusion last,
+            # because `read` with a tab IFS collapses tab runs: an empty field used to shift
+            # every later field left by one, so the waiter read the run url as the conclusion
+            # and the head sha as the ref, silently disabling the ref/sha dispatch guards.
+            IFS=$'\t' read -r run_id run_status run_url run_ref run_sha run_conclusion <<< "$run_line"
             # A matching run was observed, so the dispatch demonstrably was not
             # dropped: clear the miss timer. The grace window must measure
             # *consecutive* misses, not total elapsed time since the first one -
@@ -3225,6 +3229,25 @@ jobs:
             fi
 
             if [ "$run_status" != "completed" ]; then
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-{}}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -4226,7 +4249,7 @@ jobs:
                   ] )
                 | unique_by(.id)
                 | .[]
-                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                | [.status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
@@ -4263,7 +4286,8 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
+            IFS=$'\t' read -r run_status run_url run_title run_conclusion <<< "$run_line"
             # Observed a matching run: clear the miss timer so the grace window
             # measures consecutive misses only (same defect as the PR-deploy
             # waiter above; a single early miss used to keep its clock running
@@ -4275,6 +4299,25 @@ jobs:
             stale_reads=0
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-{}}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
               interruptible_sleep "$poll_interval"
               continue
             fi
@@ -4466,7 +4509,7 @@ jobs:
                   ] )
                 | unique_by(.id)
                 | .[]
-                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                | [.status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
@@ -4503,7 +4546,8 @@ jobs:
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
+            IFS=$'\t' read -r run_status run_url run_title run_conclusion <<< "$run_line"
             # Observed a matching run: clear the miss timer so the grace window
             # measures consecutive misses only (same defect as the PR-deploy
             # waiter above; a single early miss used to keep its clock running
@@ -4515,6 +4559,25 @@ jobs:
             stale_reads=0
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-{}}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-{}}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
               interruptible_sleep "$poll_interval"
               continue
             fi
