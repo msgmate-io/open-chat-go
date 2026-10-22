@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -31,6 +32,9 @@ const (
 	SelfMessageScheduleEnvVar = "OPEN_CHAT_SELF_MESSAGE_SCHEDULES"
 	// selfMessageTaskPrefix marks the queue task IDs owned by this scheduler.
 	selfMessageTaskPrefix = "self-message:"
+	// SelfMessageDefaultScheduleKey is the schedule key of a self-message that
+	// did not name one: the default is to message the bot itself.
+	SelfMessageDefaultScheduleKey = "self"
 )
 
 // SelfMessageSchedule is one registered cron self-message of a bot.
@@ -42,6 +46,15 @@ type SelfMessageSchedule struct {
 	Prompt    string `json:"prompt"`
 	Cron      string `json:"cron"`
 	Timezone  string `json:"timezone,omitempty"`
+	// ScheduleKey is the caller's stable label of the schedule (defaults to
+	// "self"), so a bot can name and later cancel a schedule.
+	ScheduleKey string `json:"schedule_key,omitempty"`
+	// InitialDelay postpones the first fire; the cron cadence applies afterwards.
+	InitialDelay time.Duration `json:"initial_delay,omitempty"`
+	// Jitter spreads fires of the same cron instant by up to this much.
+	Jitter time.Duration `json:"jitter,omitempty"`
+	// MaxRuns retires the schedule after that many delivered runs (0 = unlimited).
+	MaxRuns int `json:"max_runs,omitempty"`
 }
 
 // Key identifies the single-active slot a schedule belongs to: one slot per bot.
@@ -59,6 +72,13 @@ type selfMessageSlot struct {
 	scheduleID string
 	nextRun    time.Time
 	fires      int
+	// Observability merged in from the run policy: runs delivered, deferrals and
+	// their reason, the failure of the last fire and the schedule state.
+	runs       int
+	skips      int
+	skipReason string
+	lastError  string
+	state      string
 }
 
 // SelfMessageScheduler owns the single active self-message schedule per bot.
@@ -109,6 +129,16 @@ func (s *SelfMessageScheduler) Schedule(schedule SelfMessageSchedule) (string, e
 	if s == nil {
 		return "", fmt.Errorf("the self-message scheduler is not available")
 	}
+	if schedule.MaxRuns < 0 {
+		return "", fmt.Errorf("the self-message schedule has a negative max_runs %d", schedule.MaxRuns)
+	}
+	if schedule.InitialDelay < 0 || schedule.Jitter < 0 {
+		return "", fmt.Errorf("the self-message schedule has a negative initial delay or jitter")
+	}
+	schedule.ScheduleKey = strings.TrimSpace(schedule.ScheduleKey)
+	if schedule.ScheduleKey == "" {
+		schedule.ScheduleKey = SelfMessageDefaultScheduleKey
+	}
 	schedule.Prompt = strings.TrimSpace(schedule.Prompt)
 	schedule.Cron = strings.TrimSpace(schedule.Cron)
 	schedule.ChatUUID = strings.TrimSpace(schedule.ChatUUID)
@@ -157,6 +187,13 @@ func (s *SelfMessageScheduler) Schedule(schedule SelfMessageSchedule) (string, e
 	if !ok {
 		return "", fmt.Errorf("the cron expression %q never fires", schedule.Cron)
 	}
+	// An initial delay postpones only the first fire; afterwards the cron
+	// cadence applies unchanged, which is what an "auto-resume after a while"
+	// schedule needs on (re)creation.
+	if schedule.InitialDelay > 0 {
+		nextRun = s.nowTime().Add(schedule.InitialDelay)
+	}
+	nextRun = s.applyJitter(schedule, nextRun)
 	scheduleID := selfMessageTaskID(schedule, s.nextNonce())
 	if s.enqueue != nil {
 		if err := s.enqueue(schedule, nextRun, scheduleID); err != nil {
@@ -266,6 +303,119 @@ func (s *SelfMessageScheduler) nowTime() time.Time {
 		return s.now()
 	}
 	return time.Now()
+}
+
+// applyJitter spreads the fires of a schedule by up to its Jitter budget, so a
+// fleet of bots on the same cron instant does not stampede the queue.
+func (s *SelfMessageScheduler) applyJitter(schedule SelfMessageSchedule, fireAt time.Time) time.Time {
+	if schedule.Jitter <= 0 {
+		return fireAt
+	}
+	offset := time.Duration(rand.Int63n(int64(schedule.Jitter)))
+	return fireAt.Add(offset)
+}
+
+// Record is the observable state of one active schedule: what cron_list reports
+// and what the status surface logs.
+type Record struct {
+	Key            string    `json:"key"`
+	BotName        string    `json:"bot_name,omitempty"`
+	ChatUUID       string    `json:"chat_uuid,omitempty"`
+	ScheduleKey    string    `json:"schedule_key,omitempty"`
+	Cron           string    `json:"cron"`
+	Timezone       string    `json:"timezone,omitempty"`
+	Prompt         string    `json:"prompt,omitempty"`
+	MaxRuns        int       `json:"max_runs,omitempty"`
+	InitialDelay   string    `json:"initial_delay,omitempty"`
+	Jitter         string    `json:"jitter,omitempty"`
+	NextRun        time.Time `json:"next_run,omitempty"`
+	Fires          int       `json:"fires"`
+	ScheduleID     string    `json:"schedule_id,omitempty"`
+	LastError      string    `json:"last_error,omitempty"`
+	State          string    `json:"state"`
+	RunsUsed       int       `json:"runs_used"`
+	Skips          int       `json:"skips"`
+	LastSkipReason string    `json:"last_skip_reason,omitempty"`
+}
+
+// Records reports the active schedules of the scheduler, optionally restricted
+// to one bot key.
+func (s *SelfMessageScheduler) Records(key string) []Record {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	records := make([]Record, 0, len(s.slots))
+	for slotKey, slot := range s.slots {
+		if key != "" && slotKey != key {
+			continue
+		}
+		record := Record{
+			Key:            slotKey,
+			BotName:        slot.schedule.BotName,
+			ChatUUID:       slot.schedule.ChatUUID,
+			ScheduleKey:    slot.schedule.ScheduleKey,
+			Cron:           slot.schedule.Cron,
+			Timezone:       slot.schedule.Timezone,
+			Prompt:         slot.schedule.Prompt,
+			MaxRuns:        slot.schedule.MaxRuns,
+			NextRun:        slot.nextRun,
+			Fires:          slot.fires,
+			ScheduleID:     slot.scheduleID,
+			LastError:      slot.lastError,
+			State:          SelfMessageStateActive,
+			RunsUsed:       slot.runs,
+			Skips:          slot.skips,
+			LastSkipReason: slot.skipReason,
+		}
+		if slot.state != "" {
+			record.State = slot.state
+		}
+		if slot.schedule.InitialDelay > 0 {
+			record.InitialDelay = slot.schedule.InitialDelay.String()
+		}
+		if slot.schedule.Jitter > 0 {
+			record.Jitter = slot.schedule.Jitter.String()
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+// RecordState merges the run-policy state (runs used, skips, skip reason) into a
+// record, so one listing shows both the cron and the run history.
+func (s *SelfMessageScheduler) RecordState(key string, state SelfMessageState) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot, ok := s.slots[key]
+	if !ok {
+		return
+	}
+	slot.runs = state.RunsUsed
+	slot.skips = state.Skips
+	slot.skipReason = state.LastSkipReason
+	if state.LastError != "" {
+		slot.lastError = state.LastError
+	}
+	if state.State != "" {
+		slot.state = state.State
+	}
+}
+
+// SetLastError records the failure of the last fire of a schedule.
+func (s *SelfMessageScheduler) SetLastError(key string, err error) {
+	if s == nil || err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if slot, ok := s.slots[key]; ok {
+		slot.lastError = err.Error()
+	}
 }
 
 func (s *SelfMessageScheduler) nextNonce() string {

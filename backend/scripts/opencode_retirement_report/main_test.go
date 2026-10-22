@@ -87,6 +87,43 @@ func TestReportRendersTheFlipDelta(t *testing.T) {
 	}
 }
 
+// TestReportRendersTheStopDelta covers the closing half of the umbrella: the job
+// prints the ci#585 stop delta and refuses to claim the opencode integration is
+// stopped without the recorded evidence.
+func TestReportRendersTheStopDelta(t *testing.T) {
+	binary := buildJob(t)
+
+	stop, code := runJob(t, binary, map[string]any{}, "--format=stop", "--require-stopped")
+	if code == 0 {
+		t.Fatalf("an unrecorded stop must exit non-zero:\n%s", stop)
+	}
+	for _, want := range []string{"remove_bot", "disable_chat_backend", "remove_integration", "pending:"} {
+		if !strings.Contains(stop, want) {
+			t.Errorf("stop output is missing %q:\n%s", want, stop)
+		}
+	}
+
+	stopped, code := runJob(t, binary, readyState(), "--format=stop", "--require-stopped")
+	if code != 0 {
+		t.Fatalf("a stopped opencode integration must exit 0, got %d:\n%s", code, stopped)
+	}
+	if !strings.Contains(stopped, "applied on") || !strings.Contains(stopped, "no configured dev bot resolves") {
+		t.Fatalf("stop evidence must record the removal:\n%s", stopped)
+	}
+
+	raw, code := runJob(t, binary, readyState(), "--format=json", "--require-stopped")
+	if code != 0 {
+		t.Fatalf("the JSON report must succeed for a stopped fleet, got %d:\n%s", code, raw)
+	}
+	var rep report
+	if err := json.Unmarshal([]byte(raw), &rep); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, raw)
+	}
+	if !rep.StopComplete || len(rep.StopBlockers) != 0 {
+		t.Fatalf("stopped fleet must report complete stop evidence: %+v", rep)
+	}
+}
+
 // readyState is the fully flipped fleet expressed the way the job reads it.
 func readyState() map[string]any {
 	runtimes := map[string]string{}
@@ -103,7 +140,29 @@ func readyState() map[string]any {
 		"parity_signed_off":   true,
 		"ab_validation_done":  true,
 		"retirement_delta_ok": true,
+		"stop_record": map[string]any{
+			"applied_on":            "2026-10-22",
+			"applied_by":            "operator",
+			"mode":                  nativecoder.OpencodeRetireStopModeDisabled,
+			"opencode_bots_stopped": stoppedBots(),
+		},
 	}
+}
+
+// stoppedBots is the opencode-era fleet the stop record has to cover.
+func stoppedBots() []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, stage := range nativecoder.NativeBotStages() {
+		for _, legacy := range stage.LegacyBots {
+			if legacy == stage.NativeRuntime || seen[legacy] {
+				continue
+			}
+			seen[legacy] = true
+			out = append(out, legacy)
+		}
+	}
+	return out
 }
 
 func buildJob(t *testing.T) string {

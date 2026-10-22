@@ -148,6 +148,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup
@@ -226,6 +230,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Materialize integrations
         if: inputs.backend_image == ''
@@ -283,6 +291,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Materialize integrations
         if: inputs.sandbox_image_url == ''
@@ -426,6 +438,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Materialize integrations
         run: |
