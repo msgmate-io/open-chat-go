@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import {
+  ACTION_TASKS_PAGE_SIZE,
   Badge,
   Button,
   Card,
@@ -13,10 +14,14 @@ import {
   LoadingSpinner,
   Text,
   TextTypes,
+  actionTasksFeedKey,
+  actionTasksPendingTotal,
   extractConfirmableActionsFromMeta,
   mergeConfirmableAction,
+  nextActionTasksOffset,
   optimisticResolveActionTaskKey,
   revalidateChatData,
+  shouldReanchorActionTasksOffset,
   type ChatUIToolCall,
 } from "@open-chat-go/ui";
 import { cn, fetcher } from "@/lib/utils";
@@ -66,6 +71,12 @@ type ActionTaskRow = {
 
 type ActionTasksResponse = {
   count: number;
+  // The paged backend response also carries `total`/`limit`/`offset`/`has_more`;
+  // older servers only send `count`/`rows`, so the extra fields stay optional.
+  total?: number;
+  limit?: number;
+  offset?: number;
+  has_more?: boolean;
   rows: ActionTaskRow[];
 };
 
@@ -356,12 +367,21 @@ function TaskCard({
 }
 
 export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => void }) {
+  // One page per poll (ci#801): the endpoint used to serialize the whole pending
+  // backlog on every 5s revalidation, and this view only ever renders a handful
+  // of cards. The key carries the window, so SWR keeps one cache entry per
+  // offset while `isActionTasksKey` still matches every variant by prefix.
+  const [offset, setOffset] = useState(0);
+  const feedKey = actionTasksFeedKey(offset, ACTION_TASKS_PAGE_SIZE);
   const { data, error: loadError, isLoading, mutate } = useSWR<ActionTasksResponse>(
-    "/api/v1/chats/action-tasks",
+    feedKey,
     fetcher,
     {
       refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 5000),
       revalidateOnFocus: true,
+      // Keep the drained window on screen while the next one loads, so walking
+      // forward does not flash the full-page spinner.
+      keepPreviousData: true,
     },
   );
   const { data: selfUser } = useSWR<SelfUser>("/api/v1/user/self", fetcher, {
@@ -377,15 +397,56 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
     () => (data?.rows ?? []).filter((task) => !dismissed.has(task.task_key)),
     [data?.rows, dismissed],
   );
-  const total = visibleTasks.length;
-  const safeIndex = total > 0 ? Math.min(index, total - 1) : 0;
+  // `total` is the server-side pending count, not the rows we happen to hold, so
+  // the badge and the "Task x / N" counter stay correct while the window walks
+  // forward (and while other clients resolve tasks behind our back).
+  const total = actionTasksPendingTotal(data, visibleTasks.length);
+  const safeIndex = visibleTasks.length > 0 ? Math.min(index, visibleTasks.length - 1) : 0;
   const current = visibleTasks[safeIndex];
+  // With `keepPreviousData` the response can still describe the window we just
+  // left; that offset (not the one we are switching to) is what the rendered
+  // rows belong to, so both the counter and the walk below read it.
+  const loadedOffset = typeof data?.offset === "number" ? data.offset : 0;
 
   useEffect(() => {
-    if (index > 0 && index >= total) {
-      setIndex(total > 0 ? total - 1 : 0);
+    if (index > 0 && index >= visibleTasks.length) {
+      setIndex(visibleTasks.length > 0 ? visibleTasks.length - 1 : 0);
     }
-  }, [index, total]);
+  }, [index, visibleTasks.length]);
+
+  // Walk to the next window once the loaded one is drained, and re-anchor at the
+  // first page if the feed shrank below our cursor. `nextActionTasksOffset` is
+  // monotonic and only fires on `has_more`, so this cannot ping-pong; the
+  // `loadedOffset === offset` guard keeps a still-loading window (whose rows come
+  // from the previous page) from being drained and skipped.
+  useEffect(() => {
+    if (!data || loadedOffset !== offset) {
+      return;
+    }
+    if (shouldReanchorActionTasksOffset(offset, total)) {
+      setOffset(0);
+      setIndex(0);
+      return;
+    }
+    const next = nextActionTasksOffset({
+      offset,
+      limit: data.limit ?? ACTION_TASKS_PAGE_SIZE,
+      total,
+      hasMore: data.has_more === true,
+      windowRemaining: visibleTasks.length,
+    });
+    if (next !== null) {
+      setOffset(next);
+      setIndex(0);
+    }
+  }, [data, loadedOffset, offset, total, visibleTasks.length]);
+
+  const refresh = () => {
+    setOffset(0);
+    setIndex(0);
+    setDismissed(new Set());
+    void mutate();
+  };
 
   const markResolved = (task: ActionTaskRow) => {
     setDismissed((previous) => {
@@ -427,7 +488,7 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
 
   const skipTask = () => {
     setActionError(null);
-    setIndex((value) => (total > 0 ? (value + 1) % total : 0));
+    setIndex((value) => (visibleTasks.length > 0 ? (value + 1) % visibleTasks.length : 0));
   };
 
   const openChat = (task: ActionTaskRow) => {
@@ -453,7 +514,7 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
               {total} pending
             </Badge>
           ) : null}
-          <Button type="button" size="sm" variant="outline" onClick={() => void mutate()}>
+          <Button type="button" size="sm" variant="outline" onClick={refresh}>
             Refresh
           </Button>
         </div>
@@ -471,7 +532,7 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
         </Card>
       ) : null}
 
-      {isLoading ? (
+      {isLoading || (loadedOffset !== offset && !current) ? (
         <div className="flex h-40 items-center justify-center">
           <LoadingSpinner />
         </div>
@@ -493,7 +554,7 @@ export function ActionTasksView({ navigateTo }: { navigateTo: (to: string) => vo
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <Text type={TextTypes.Body7} color="muted">
-              Task {safeIndex + 1} / {total}
+              Task {Math.min(loadedOffset + safeIndex + 1, Math.max(total, 1))} / {total}
             </Text>
             {total > 1 ? (
               <Button type="button" size="sm" variant="ghost" onClick={skipTask}>
