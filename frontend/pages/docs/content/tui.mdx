@@ -23,9 +23,33 @@ and runs directly from the `open-chat tui` subcommand (no separate binary is
 downloaded, extracted or looked up on `PATH`). If your build omits the `tui`
 integration, the subcommand is not registered.
 
+## Navigation
+
+The TUI is modal and vim-first: it starts in `NORMAL` with a visible mode
+indicator, and the composer and the server/API-key fields use `INSERT`. The bindings
+below come from one command registry (`tui_command.go`), which also generates the
+`:` palette, the `?` help overlay and the footer hints — so they cannot drift.
+
+| Key | Action |
+| --- | --- |
+| `h j k l` / arrows | move (counts work: `3j`) |
+| `gg` / `G` | top / bottom (`5G` = line 5) |
+| `Ctrl-d` / `Ctrl-u` | half page down / up |
+| `Enter` | open / select / send |
+| `i` `a` | enter `INSERT` (composer, fields) |
+| `/` | incremental search; `n`/`N` cycle matches |
+| `:` | command palette (fuzzy filter over every action) |
+| `?` | help overlay, generated from the command registry |
+| `Esc`, `Esc Esc` | stop a live turn, otherwise leave `INSERT` then go back |
+| `Ctrl-c` | stop the live turn; quits when no turn is running |
+| `q` | close view / quit (`:` quit asks to confirm) |
+
+Destructive actions (quit, delete a server) ask for an inline confirmation, and a
+value is chosen through a compact keyboard-only dropdown — the reusable option
+selector used for the active server, chat picker and confirmations.
+
 ## Using it
 
-- Move with the arrow keys or `j`/`k`, confirm with `Enter`.
 - **Servers** — add, edit, delete and switch between Open Chat servers. A local
   server (`http://127.0.0.1:1984`) is available by default.
 - **Sign in** — either through **Browser Login**, which opens the Open Chat CLI
