@@ -169,6 +169,43 @@ func collectConfirmableActions(toolCalls []interface{}) []interface{} {
 	return actions
 }
 
+// collectTaskCompletion finds a successful ci#809 all_tasks_completed call and
+// returns its summary/blocked flag. The turn reader promotes it into the
+// machine-readable task_completed message metadata the auto-continue loop
+// already consumes.
+func collectTaskCompletion(toolCalls []interface{}) (completed bool, blocked bool, summary string) {
+	for _, rawToolCall := range toolCalls {
+		toolCall, ok := rawToolCall.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := toolCall["name"].(string)
+		if strings.TrimSpace(name) != "all_tasks_completed" {
+			continue
+		}
+		if status, _ := toolCall["status"].(string); status == ToolCallStatusFailed {
+			continue
+		}
+		var payload struct {
+			Summary string `json:"summary"`
+			Blocked bool   `json:"blocked"`
+		}
+		switch args := toolCall["arguments"].(type) {
+		case string:
+			_ = json.Unmarshal([]byte(args), &payload)
+		case map[string]interface{}:
+			encoded, err := json.Marshal(args)
+			if err == nil {
+				_ = json.Unmarshal(encoded, &payload)
+			}
+		}
+		completed = true
+		blocked = payload.Blocked
+		summary = strings.TrimSpace(payload.Summary)
+	}
+	return completed, blocked, summary
+}
+
 // confirmableTurnPrompt builds the human-readable fallback text for a turn that
 // paused on one or more confirmable actions. It is persisted instead of an
 // empty assistant message so the turn does not render as a bare empty bubble
@@ -1367,6 +1404,23 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			// window instead of only learning it from a failed turn.
 			if outcome.Context.BudgetChars > 0 {
 				metadata["context_budget"] = outcome.Context.Metadata()
+			}
+		}
+
+		// ci#809: a successful all_tasks_completed call is the machine-readable
+		// end of the task. The auto-continue loop already stops on the
+		// task_completed metadata flag; task_blocked keeps the blocked variant
+		// visible to the UI and operators.
+		if completed, blocked, summary := collectTaskCompletion(allToolCalls); completed {
+			metadata["task_completed"] = true
+			if blocked {
+				metadata["task_blocked"] = true
+			}
+			if summary != "" {
+				metadata["task_completion_summary"] = summary
+				if strings.TrimSpace(text) == "" {
+					text = summary
+				}
 			}
 		}
 

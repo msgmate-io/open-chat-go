@@ -154,10 +154,13 @@ export function ChatDetailsDialog({
         // Centered sheet on small screens, roomy panel on desktop: the details
         // surface replaced the header expansion so it must stay usable on every
         // breakpoint (ci#788).
-        className="max-h-[90dvh] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] gap-3 overflow-hidden p-4 sm:max-w-[640px] sm:p-5 lg:max-w-[820px]"
+        //
+        // Desktop gets a taller, wider panel with a single scroll region so the
+        // details no longer need a scrollbar per section (ci#831).
+        className="max-h-[90dvh] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] gap-3 overflow-hidden p-4 sm:max-w-[640px] sm:p-5 lg:h-[min(88dvh,52rem)] lg:max-h-[88dvh] lg:w-[min(92vw,80rem)] lg:max-w-[80rem] lg:p-6 xl:max-w-[88rem]"
       >
         <ChatDetailsDialogHeader isSharedView={isSharedView} />
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
           <ChatDetailsPanel
             chat={chat}
             user={user}
@@ -245,6 +248,17 @@ export function InteractionChatInfo({
               {statusBadge.label}
             </Badge>
           ) : null}
+          {/*
+            Desktop keeps the integration controls (eg the msgmate coder's
+            workspace Shell and Open-Chat TUI launchers) on the same line as the
+            rest of the widget so the header stays one compact row (ci#831); on
+            small screens they fall back to their own wrapped row below.
+          */}
+          {headerActions ? (
+            <div className="hidden shrink-0 items-center justify-end gap-1 md:flex">
+              {headerActions}
+            </div>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
@@ -285,8 +299,10 @@ export function InteractionChatInfo({
           </DropdownMenu>
         </div>
 
+        {/* Small screens keep the integration controls on their own wrapped row;
+            desktop renders them inline in the header row above (ci#831). */}
         {headerActions ? (
-          <div className="mt-2 flex flex-wrap items-center justify-end gap-1">{headerActions}</div>
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-1 md:hidden">{headerActions}</div>
         ) : null}
       </Card>
 

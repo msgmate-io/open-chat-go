@@ -250,7 +250,7 @@ export function ToolDetailsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-4xl overflow-y-auto overscroll-contain sm:w-full">
+      <DialogContent className="h-[min(92vh,60rem)] max-h-[92vh] w-[calc(100vw-1.5rem)] max-w-6xl overflow-y-auto overscroll-contain sm:w-full">
         <DialogHeader>
           <DialogTitle className="break-words">
             {tool ? toolTitle(tool) : toolTitle(name) || "Tool"}
