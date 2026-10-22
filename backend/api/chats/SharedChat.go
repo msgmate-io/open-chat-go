@@ -422,13 +422,13 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 
 	// Build the chat-scoped query before paginating: the count behind TotalPages
 	// used to run against the bare DB handle, so every message in the database
-	// inflated the page count of this one shared chat (ci#789).
-	query := DB.
+	// inflated the page count of this one shared chat (ci#789, ci#825).
+	messageQuery := DB.
 		Where("chat_id = ?", chat.ID).
 		Where("deleted_at IS NULL")
 
 	var messages []database.Message
-	q := query.Scopes(database.Paginate(&messages, &pagination, query)).
+	q := messageQuery.Scopes(database.Paginate(&messages, &pagination, messageQuery)).
 		Preload("Sender").
 		Find(&messages)
 	if q.Error != nil {
