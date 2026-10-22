@@ -3164,6 +3164,14 @@ jobs:
             fi
 
             IFS=$'\t' read -r run_id run_status run_conclusion run_url run_ref run_sha <<< "$run_line"
+            # A matching run was observed, so the dispatch demonstrably was not
+            # dropped: clear the miss timer. The grace window must measure
+            # *consecutive* misses, not total elapsed time since the first one -
+            # otherwise one transient API/pagination miss early on keeps its
+            # clock running while the run is being observed normally, and the
+            # waiter dyes the whole PR run red at 60s even though the dispatched
+            # deploy is in_progress (ci#774 follow-up).
+            first_miss_at=""
             echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none} ref=${run_ref:-none} sha=${run_sha:-none}"
             # ci#774 follow-up: the observed run must belong to the ref/sha this job
             # dispatched, otherwise a run created from another commit would be
@@ -4200,6 +4208,11 @@ jobs:
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            # Observed a matching run: clear the miss timer so the grace window
+            # measures consecutive misses only (same defect as the PR-deploy
+            # waiter above; a single early miss used to keep its clock running
+            # and red-flag the job while the run was progressing normally).
+            first_miss_at=""
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep "$poll_interval"
@@ -4405,6 +4418,11 @@ jobs:
             fi
 
             IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
+            # Observed a matching run: clear the miss timer so the grace window
+            # measures consecutive misses only (same defect as the PR-deploy
+            # waiter above; a single early miss used to keep its clock running
+            # and red-flag the job while the run was progressing normally).
+            first_miss_at=""
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep "$poll_interval"
