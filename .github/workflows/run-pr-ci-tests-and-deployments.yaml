@@ -2244,8 +2244,16 @@ jobs:
             fi
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          # ci#824: a closing line must be standalone, exactly like
+          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
+          # line (`[ \t]*$`). Without that anchor this pattern also matched
+          # prose such as "Fix ci#824: crash on empty config" or
+          # "Closes ci#824 and also ci#999", importing leaf issues the author
+          # never linked - while the Go parser used by the consolidation runner
+          # ignored them. The two copies are pinned together by
+          # TestWorkflowLinkedIssueGrepStaysAnchored.
           mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+' "${RUNNER_TEMP}/pr-body.md" \
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
               | sed -E 's/.*#([0-9]+).*/\1/' \
               | sort -n -u
           )
@@ -4506,8 +4514,16 @@ jobs:
             exit 0
           fi
           jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          # ci#824: a closing line must be standalone, exactly like
+          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
+          # line (`[ \t]*$`). Without that anchor this pattern also matched
+          # prose such as "Fix ci#824: crash on empty config" or
+          # "Closes ci#824 and also ci#999", importing leaf issues the author
+          # never linked - while the Go parser used by the consolidation runner
+          # ignored them. The two copies are pinned together by
+          # TestWorkflowLinkedIssueGrepStaysAnchored.
           mapfile -t issues < <(
-            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+' "${RUNNER_TEMP}/pr-body.md" \
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
               | sed -E 's/.*#([0-9]+).*/\1/' \
               | sort -n -u
           )
