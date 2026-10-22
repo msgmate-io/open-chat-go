@@ -484,10 +484,14 @@ func getSharedChatByUUID(DB *gorm.DB, shareUUID string) (database.Chat, database
 	return chat, share, nil
 }
 
-// writeSharedMessagesJSON serialises a shared message payload and, when the
-// owning share is in the default censored content mode, strips tool-call
-// arguments/results, meta-data, reasoning and any secret-looking key before the
-// bytes are written to the response.
+// writeSharedMessagesJSON serialises a shared message payload and applies the
+// share reduction before the bytes are written to the response.
+//
+// Censored shares (the default) strip tool-call arguments/results, meta-data,
+// reasoning and any secret-looking key. Every share, including the explicit
+// "unsecure" mode, additionally has credential-shaped keys and values masked, so
+// no shared view can ever emit tokens, passwords, kubeconfig material or private
+// keys.
 func writeSharedMessagesJSON(w http.ResponseWriter, v interface{}, censored bool) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -495,6 +499,8 @@ func writeSharedMessagesJSON(w http.ResponseWriter, v interface{}, censored bool
 	}
 	if censored {
 		raw = sharecensor.CensorSharedJSON(raw)
+	} else {
+		raw = sharecensor.MaskSecretsJSON(raw)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write(raw)
