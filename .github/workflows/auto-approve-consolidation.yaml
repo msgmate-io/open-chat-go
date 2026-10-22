@@ -4,7 +4,19 @@ name: Auto-approve consolidation PRs
 #
 # A consolidation PR is the single batch-verification PR against `main` and is
 # always authored by the automation identity (`cur1ousdude`), which cannot
-# approve its own PR. This workflow posts the one required approving review on
+# approve its own PR.
+#
+# ci#833 (dev trunk): consolidation PRs (`chore/consolidate-*`) now target the
+# `dev` integration trunk with `test,e2e` only and must never deploy; the
+# `main <- dev` promotion PR (head `dev`, base `main`, labels
+# `test,e2e,deploy,sandbox-test`) is the release hop whose merge deploys
+# ci.msgmate.io. This workflow therefore accepts exactly two PR shapes:
+#   * `chore/consolidate-*` -> `dev`  (integration, no deployment), and
+#   * `dev`                 -> `main` (promotion, the only deploying hop),
+# plus the historical `chore/consolidate-*` -> `main` shape. Both `dev`
+# ("Dev (Integration) Merge Protection", required check only) and `main` block
+# the merge until the required `Run PR CI Tests and Deployments` check is green;
+# the verified-green precondition below is unchanged. This workflow posts the one required approving review on
 # behalf of a *distinct* reviewer identity once the required PR CI run has
 # finished successfully, and then merges the PR.
 #
@@ -83,6 +95,10 @@ jobs:
   approve:
     name: Approve and merge green consolidation PR
     runs-on: ubuntu-latest
+    # ci#833: the candidate PRs are resolved from the triggering commit (see the
+    # resolver step) and re-validated in the merge step, so the run-level gate is
+    # `same-repository pull_request run that concluded successfully`. It covers
+    # `chore/consolidate-*` -> `dev`/`main` and the `dev` -> `main` promotion PR.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -113,8 +129,11 @@ jobs:
           fi
 
           head_sha="${{ github.event.workflow_run.head_sha }}"
-          # PRs whose head is this commit, restricted to consolidation branches
-          # targeting main in this repository.
+          # PRs whose head is this commit, restricted to the two sanctioned
+          # shapes in this repository (ci#833):
+          #   * chore/consolidate-* -> dev   (integration consolidation, no deploy)
+          #   * chore/consolidate-* -> main  (historical shape, still supported)
+          #   * dev                 -> main  (release promotion, deploys ci.msgmate.io)
           #
           # ci#538: pull the payload into a variable and run jq separately instead
           # of `gh api --jq`. On an API failure (eg a bad token) `--jq` used to
@@ -164,9 +183,12 @@ jobs:
           fi
           if ! numbers_raw="$(
             printf '%s' "$pulls_json" \
-              | jq -r '.[] | select(.base.ref == "main")
-                            | select(.head.repo.full_name == "${{ github.repository }}")
-                            | select(.head.ref | startswith("chore/consolidate-"))
+              | jq -r '.[] | select(.head.repo.full_name == "${{ github.repository }}")
+                            | select(
+                                ((.base.ref == "main" or .base.ref == "dev")
+                                 and (.head.ref | startswith("chore/consolidate-")))
+                                or (.base.ref == "main" and .head.ref == "dev")
+                              )
                             | .number'
           )"; then
             echo "::error::Could not parse the PR listing for ${head_sha}."
@@ -309,9 +331,28 @@ jobs:
             # but the merge decision must not depend on that alone.
             base_ref="$(jq -r '.baseRefName' <<< "$pr_json")"
             head_ref="$(jq -r '.headRefName' <<< "$pr_json")"
-            if [ "$base_ref" != "main" ] || \
-               [[ "$head_ref" != chore/consolidate-* ]]; then
-              echo "::warning::PR #${number} (${head_ref} -> ${base_ref}) is not a consolidation PR; skipping."
+            allowed_shape=false
+            if [[ "$head_ref" == chore/consolidate-* ]] && \
+               { [ "$base_ref" = "main" ] || [ "$base_ref" = "dev" ]; }; then
+              allowed_shape=true
+              # ci#833: a consolidation PR against dev is the integration hop and
+              # must never carry a deployment label; the promotion PR deploys.
+              if [ "$base_ref" = "dev" ]; then
+                stray_labels="$(gh pr view "$number" --repo "$REPO" --json labels \
+                  --jq '[.labels[].name | select(. == "deploy" or . == "sandbox-test")] | join(", ")' \
+                  2>/dev/null || echo '')"
+                if [ -n "$stray_labels" ]; then
+                  echo "::warning::PR #${number} targets dev but carries deployment label(s) ${stray_labels}; not merging a dev consolidation that would deploy."
+                  echo "::endgroup::"
+                  continue
+                fi
+              fi
+            elif [ "$base_ref" = "main" ] && [ "$head_ref" = "dev" ]; then
+              # ci#833: the release promotion hop; this merge deploys ci.msgmate.io.
+              allowed_shape=true
+            fi
+            if [ "$allowed_shape" != "true" ]; then
+              echo "::warning::PR #${number} (${head_ref} -> ${base_ref}) is not an accepted consolidation/promotion shape; skipping."
               echo "::endgroup::"
               continue
             fi
