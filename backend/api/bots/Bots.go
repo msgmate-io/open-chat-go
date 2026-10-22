@@ -821,6 +821,34 @@ func parseBoolQuery(raw string) bool {
 	}
 }
 
+// resolveActingUser maps a session principal to the user an owner-scoped bot
+// call acts for. A human session acts for itself; an automated (bot) session
+// acts for the owner of its bot runtime config, falling back to the bot itself
+// when no owner is recorded.
+//
+// A bot session owns no `bot_runtime_owners` row itself — the fleet is owned by
+// the runtime owner — so scoping a canonical bot route by the raw principal left
+// an automated caller with an empty `bots/list` and a 404 on `bots/{identifier}`
+// (ci#824). Every owner-scoped lookup on List/Get/CreateInteraction resolves the
+// acting user first, exactly like the agent-dispatch surface already did. It is
+// a no-op for humans, so no owner scope is widened, and permission checks that
+// must stay on the raw principal keep using it.
+func resolveActingUser(DB *gorm.DB, sessionUser *database.User) (*database.User, error) {
+	if sessionUser == nil {
+		return nil, errors.New("no authenticated user")
+	}
+	if !sessionUser.IsAutomated {
+		return sessionUser, nil
+	}
+	var runtime database.BotRuntimeConfig
+	err := DB.Preload("OwnerUser").Where("bot_user_id = ? AND is_active = ?", sessionUser.ID, true).First(&runtime).Error
+	if err == nil && runtime.OwnerUser.ID != 0 {
+		owner := runtime.OwnerUser
+		return &owner, nil
+	}
+	return sessionUser, nil
+}
+
 func resolveReadableBot(DB *gorm.DB, user *database.User, identifier string) (database.BotRuntimeConfig, error) {
 	if identifier == "" {
 		return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
@@ -1072,10 +1100,18 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actingUser, actingErr := resolveActingUser(DB, user)
+	if actingErr != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	page, limit := parsePagination(r, 40)
 	includePublic := parseBoolQuery(r.URL.Query().Get("include_public"))
 
-	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, user.ID)
+	// ci#824: an automated (bot) session owns no runtime itself, so the list is
+	// scoped to the acting user (the runtime owner) instead of the raw principal.
+	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, actingUser.ID)
 	query := DB.Model(&database.BotRuntimeConfig{}).
 		Where("is_active = ? AND id IN (?)", true, ownedIDs)
 	if includePublic {
@@ -1132,7 +1168,14 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	// ci#824: resolve the acting user first, so an automated (bot) session reads
+	// the runtime owned by its owner instead of 404ing on the raw principal.
+	actingUser, actingErr := resolveActingUser(DB, user)
+	if actingErr != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1396,7 +1439,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	}
 
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	// ci#824: an automated (bot) session resolves the bot through its owner and
+	// the interaction is created for that acting user.
+	actingUser, actingErr := resolveActingUser(DB, user)
+	if actingErr != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1416,7 +1466,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	response, err := createBotInteraction(DB, queueClient, queueInspector, user, runtime, req, requestBaseURL(r))
+	response, err := createBotInteraction(DB, queueClient, queueInspector, actingUser, runtime, req, requestBaseURL(r))
 	if err != nil {
 		writeCreateInteractionError(w, err)
 		return
