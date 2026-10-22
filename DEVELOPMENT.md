@@ -1056,6 +1056,18 @@ mitigation names no shipped tool, or a *closed* gap still carries a workaround
 keeps ci#394 honest in both directions: the registry says what is missing, the
 fallback table says how the coder copes until it is added.
 
+Gap 1 (`todo_list`) is being closed from the core side first:
+`backend/nativecoder/todoplan.go` holds the per-chat plan state behind
+opencode's `todowrite`/`todoread` (`CoderTodoStore.Write`/`Read`/`Clear`),
+mirroring the opencode contract - four statuses, at most one step in progress,
+stable positional ids, a plan cap, a revision that increments per accepted
+write, structured metadata (`Metadata`) and a deterministic markdown renderer
+(`RenderCoderTodoPlan`) for the chat view. `NormalizeCoderTodoItems` is the
+single validator, so a rejected write is classified by error value rather than
+by parsing a message. The gap is `partial` until the `coder_todo_write` /
+`coder_todo_read` tools on top of this state ship: the registry only reports the
+surface the agent can actually call.
+
 Sequence the work as ci#394 suggests: the cheap gaps first (visible todo list,
 allow-for-this-session trust, streaming/background shell), then patch/multi-edit,
 image and structured reads, session compaction, and only then the large pieces
