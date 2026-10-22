@@ -120,7 +120,7 @@ jobs:
           # of `gh api --jq`. On an API failure (eg a bad token) `--jq` used to
           # write the *error* JSON to stdout, which then became the "PR number"
           # list. Capture the exit status and fail loudly instead.
-          # ci#889: the `GET /repos/{repo}/commits/{sha}/pulls` endpoint
+          # ci#830: the `GET /repos/{repo}/commits/{sha}/pulls` endpoint
           # intermittently answers HTTP 200 with an empty or truncated body for
           # this repository (reproduced 2 of 3 calls: ~1.2 kB of headers, no
           # JSON). That surfaced here as "unexpected end of JSON input" followed

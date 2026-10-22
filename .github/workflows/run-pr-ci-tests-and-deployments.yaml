@@ -3088,6 +3088,16 @@ jobs:
           # A run that never appears means the dispatch was dropped or used the
           # wrong ref - never a slow deploy - so do not burn the 25-minute window.
           first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
           # ci#774 follow-up: this is the dispatch grace, not a deploy budget. A
           # dispatched run appears within seconds; when the CI repository rejects
           # the dispatch or never creates the run, the waiter must fail fast (and
@@ -3142,6 +3152,22 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
               if [ -z "$first_miss_at" ]; then
                 first_miss_at="$(date +%s)"
                 echo "Recent dispatched CI deploy run titles (for diagnosis):"
@@ -3172,6 +3198,10 @@ jobs:
             # waiter dyes the whole PR run red at 60s even though the dispatched
             # deploy is in_progress (ci#774 follow-up).
             first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
             echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none} ref=${run_ref:-none} sha=${run_sha:-none}"
             # ci#774 follow-up: the observed run must belong to the ref/sha this job
             # dispatched, otherwise a run created from another commit would be
@@ -4152,6 +4182,16 @@ jobs:
           # slow deploy (ci#774).
           match_since=$(( $(date +%s) - 300 ))
           first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
           miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
@@ -4192,6 +4232,22 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
               if [ -z "$first_miss_at" ]; then
                 first_miss_at="$(date +%s)"
                 echo "Recent CI workflow titles (for diagnosis):"
@@ -4213,6 +4269,10 @@ jobs:
             # waiter above; a single early miss used to keep its clock running
             # and red-flag the job while the run was progressing normally).
             first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep "$poll_interval"
@@ -4362,6 +4422,16 @@ jobs:
           # slow deploy (ci#774).
           match_since=$(( $(date +%s) - 300 ))
           first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
           miss_fail_seconds=300
           poll_interval=15
           # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
@@ -4402,6 +4472,22 @@ jobs:
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
               if [ -z "$first_miss_at" ]; then
                 first_miss_at="$(date +%s)"
                 echo "Recent CI workflow titles (for diagnosis):"
@@ -4423,6 +4509,10 @@ jobs:
             # waiter above; a single early miss used to keep its clock running
             # and red-flag the job while the run was progressing normally).
             first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
             echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
               interruptible_sleep "$poll_interval"
