@@ -74,6 +74,12 @@ var publicAgentDocPaths = []string{
 	// re-adding the exact files ci#736 moved to the private integration.
 	"docs/ci-733-devlead-fleet-moderation-playbook.md",
 	"docs/ci730-coder-logic-extraction-plan.md",
+	// r65: the ci#622 native-coder selfcheck triage note was added to the
+	// public tree by mistake (PR #1018) and failed this guard in PR CI. The
+	// note is a development-bot runbook; it lives in the private integration
+	// (msgmate-io/open-chat-go-msgmate-coder, docs/agent/). Naming the path
+	// keeps a future "restore the doc" change from re-adding it silently.
+	"docs/native-coder-selfcheck-ci622.md",
 }
 
 // publicDocFiles collects the documentation surface a human reads: the repo

@@ -1,13 +1,17 @@
 name: Build Sandbox Images
 
-# Builds and publishes a per-template development sandbox image used by the
-# docker_sandbox integration (OCI_DOCKER_SANDBOX_<TEMPLATE>_IMAGE). The coding
-# image is also produced by the sandbox benchmark/reusable workflows; this
-# workflow is the canonical publisher for the Odoo template image that
-# `integrations.docker_sandbox.odoo_sandbox_image` points at
-# (ghcr.io/<repo>:sandbox-odoo-latest) and for the OpenCode-free `minimal`
+# Builds and publishes the per-variant development sandbox images used by the
+# docker_sandbox integration (OCI_DOCKER_SANDBOX_<TEMPLATE>_IMAGE) and by the
+# native msgmate coder auto_sandbox. Each variant maps to a directory under
+# clients/integrations/docker_sandbox_integration/sandboxes/<variant>/ and is
+# published individually as ghcr.io/<repo>:sandbox-<variant>-<hash> with a
+# movable ghcr.io/<repo>:sandbox-<variant>-latest tag. The full palette of
+# variants is authoritative in backend/nativecoder/sandboxpalette.go (ci#807).
+#
+# The Odoo template image that `integrations.docker_sandbox.odoo_sandbox_image`
+# points at (ghcr.io/<repo>:sandbox-odoo-latest) and the OpenCode-free `minimal`
 # template image the native msgmate coder auto_sandbox uses
-# (ghcr.io/<repo>:sandbox-minimal-latest, ci#465).
+# (ghcr.io/<repo>:sandbox-minimal-latest, ci#465) are produced here as well.
 #
 # Only manually dispatched (needs the private integration checkouts). Like every
 # other operational change it must be run explicitly, with DRY_RUN=true first
@@ -16,10 +20,10 @@ name: Build Sandbox Images
 on:
   workflow_dispatch:
     inputs:
-      template:
-        description: Sandbox template to build (odoo, coding, android, vnc or minimal)
+      variants:
+        description: Sandbox variants to build, comma separated, or "all" for the whole palette
         required: false
-        default: odoo
+        default: all
       dry_run:
         description: Build without pushing (true) or push (false)
         required: false
@@ -37,10 +41,59 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# Keep in sync with backend/nativecoder/sandboxpalette.go (ci#807); the
+# `resolve` job fails if a requested variant is not part of this set.
 jobs:
-  build:
-    name: Build sandbox image
+  resolve:
+    name: Resolve sandbox variants
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Build build matrix
+        id: matrix
+        env:
+          REQUESTED: ${{ inputs.variants }}
+        run: |
+          set -euo pipefail
+          # Authoritative palette published by the native coder (ci#807).
+          ALL="minimal coding frontend nix k8s odoo android vnc"
+          REQUESTED="$(echo "${REQUESTED:-all}" | tr ',' ' ' | tr -s ' ')"
+          if [ -z "${REQUESTED}" ] || [ "${REQUESTED}" = "all" ]; then
+            REQUESTED="${ALL}"
+          fi
+          MATRIX="["
+          FIRST=1
+          for VARIANT in ${REQUESTED}; do
+            SANDBOX_DIR="clients/integrations/docker_sandbox_integration/sandboxes/${VARIANT}"
+            if [ ! -f "${SANDBOX_DIR}/Dockerfile" ]; then
+              echo "::error::no Dockerfile for sandbox variant ${VARIANT} (${SANDBOX_DIR})"
+              exit 1
+            fi
+            if [ "${FIRST}" -eq 0 ]; then
+              MATRIX="${MATRIX},"
+            fi
+            MATRIX="${MATRIX}\"${VARIANT}\""
+            FIRST=0
+          done
+          MATRIX="${MATRIX}]"
+          echo "building sandbox variants: ${REQUESTED}"
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build sandbox image (${{ matrix.variant }})
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,7 +111,7 @@ jobs:
       - name: Resolve image tag from content hash
         id: image
         env:
-          TEMPLATE: ${{ inputs.template }}
+          TEMPLATE: ${{ matrix.variant }}
         run: |
           set -euo pipefail
           SANDBOX_DIR="clients/integrations/docker_sandbox_integration/sandboxes/${TEMPLATE}"
@@ -84,7 +137,7 @@ jobs:
         env:
           IMAGE_URL: ${{ steps.image.outputs.image_url }}
           LATEST_URL: ${{ steps.image.outputs.latest_url }}
-          TEMPLATE: ${{ inputs.template }}
+          TEMPLATE: ${{ matrix.variant }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
