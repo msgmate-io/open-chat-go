@@ -1203,6 +1203,19 @@ deployment never disagree. The read-only job
 ticket comment; `--require-ready` turns the gate into a non-zero exit for a
 scripted check.
 
+The last step of the umbrella (ci#585) removes the integration itself:
+`backend/nativecoder/opencoderetirestop.go` renders the *stop delta* -
+`OpencodeRetireStopDelta`, `OpencodeRetireStopDeltaJSON` - which disables the
+`opencode` chat backend, removes its dev bots and then removes the integration,
+in that order, through the same vault-sync path. `ValidateOpencodeRetireStopDelta`
+rejects drift: unknown kinds, missing targets/reasons, duplicates, a native
+runtime named as a stop target, or a bot the registry knows but the delta forgets.
+A stop is only reported as complete once `OpencodeRetireStopRecord` (date,
+operator, `retired` mode, stopped bots) is present *and* the retirement gate is
+open, so the umbrella's final checkbox cannot be ticked while a bot still
+resolves to the opencode backend. The report job exposes the same evidence with
+`--format=stop` and `--require-stopped` (non-zero exit while it is incomplete).
+
 ## Decoupled integration builds (ci#423)
 
 Once an integration's shipped packages no longer import `backend/...` (verified by
