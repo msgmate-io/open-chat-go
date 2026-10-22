@@ -1553,6 +1553,21 @@ func createBotInteraction(
 		return BotInteractionResponse{}, fmt.Errorf("failed to apply integration shared config defaults: %w", defaultsErr)
 	}
 	effectiveConfig = withDefaultsConfig
+	// ci#819 part B: a tool whose init-requiring handshake has not been stored
+	// (tool_init.<tool>) cannot run, and the *agent* used to spend its first turn
+	// calling the initialiser itself (eg coder_select_workspace before the first
+	// coder_bash). The chat-start hook seeds tool_init for every configured
+	// init-requiring tool that has a derivable default (the dispatch `repo:` /
+	// `branch:` tags, else an explicit config repo) so the tool is usable from the
+	// first call. A selection the caller pinned already wins, anything not
+	// resolvable is left to the agent, and a non-coder config is untouched.
+	//
+	// It runs *before* the tools/tool_init validation below, which rejects a
+	// config that omits the init payload of a RequiresInit tool: seeding first is
+	// what makes such a dispatch valid at all.
+	if toolNames, err := collectToolNames(effectiveConfig["tools"]); err == nil {
+		effectiveConfig = nativecoder.WithPreCallInit(effectiveConfig, toolNames, req.Tags, nativecoder.DefaultPreCallInitResolvers())
+	}
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid tools/tool_init: %v", err)}
 	}
