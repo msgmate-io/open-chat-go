@@ -1507,6 +1507,16 @@ func createBotInteraction(
 	if branch := nativecoder.AutoSandboxBranchForInteraction(req.Tags, req.ToolInit); branch != "" {
 		effectiveConfig = nativecoder.WithAutoSandboxBranch(effectiveConfig, branch)
 	}
+	// ci#807: the same dispatch also picks the sandbox *image* the per-chat
+	// sandbox is provisioned from. The palette (nativecoder.DefaultSandboxPalette)
+	// maps the resolved repository to the template whose toolchain its
+	// development work needs, so an agent working on a Nix/Android/heavier
+	// repository no longer starts in a shell-only sandbox. A `sandbox:<template>`
+	// tag or an explicit `coder_sandbox_template` key always wins, and an
+	// interaction that already pins one is left untouched.
+	if template := nativecoder.SandboxTemplateForInteraction(effectiveConfig, req.Tags, req.ConfigOverrides); template != "" {
+		effectiveConfig = nativecoder.WithAutoSandboxTemplate(effectiveConfig, template)
+	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}

@@ -22,6 +22,10 @@ const (
 	// follow-up: the same dispatch tag that pins the auto_sandbox repository
 	// also pins the checkout's branch).
 	BranchTagPrefix = "branch:"
+	// SandboxTagPrefix labels the sandbox image/template a coder interaction was
+	// provisioned from (ci#807), so coder chats can be filtered by
+	// `tags=sandbox:<template>` next to the per-repo tag.
+	SandboxTagPrefix = "sandbox:"
 	// BotTagPrefix labels the bot a coder interaction was dispatched to.
 	BotTagPrefix = "bot:"
 	// DefaultBotTagSlug is used as the per-bot tag value when the bot carries no
@@ -59,6 +63,13 @@ func DefaultInteractionTags(config map[string]interface{}, botName string, expli
 	if !hasTagWithPrefix(tags, RepoTagPrefix) {
 		if repo := repoFromConfig(config); repo != "" {
 			tags = append(tags, RepoTagPrefix+repo)
+		}
+	}
+	// ci#807: label the sandbox image the interaction was provisioned from, so
+	// coder chats can be filtered by `tags=sandbox:<template>`.
+	if !hasTagWithPrefix(tags, SandboxTagPrefix) {
+		if template := SandboxTemplateFromConfig(config); template != "" {
+			tags = append(tags, SandboxTagPrefix+template)
 		}
 	}
 	return tags

@@ -10,16 +10,23 @@ name: Build Sandbox Images
 # (ghcr.io/<repo>:sandbox-minimal-latest, ci#465).
 #
 # Only manually dispatched (needs the private integration checkouts). Like every
-# other operational change it must be run explicitly, with DRY_RUN=true first
-# to build without pushing.
+# other operational change it must be run explicitly, with dry_run=true first to
+# build without pushing.
+#
+# ci#807: the workflow publishes the sandbox *palette* per image. `template`
+# selects a single image (or `all`), every selected template becomes its own
+# matrix leg, so a publisher can build and push exactly one backend image
+# without touching the others. PALETTE_TEMPLATES mirrors
+# nativecoder.DefaultSandboxPalette (backend/nativecoder/sandboxpalette.go); a
+# unit test keeps the two in sync.
 
 on:
   workflow_dispatch:
     inputs:
       template:
-        description: Sandbox template to build (odoo, coding, android, vnc or minimal)
+        description: "Sandbox template to build (all, minimal, coding, nix, android, vnc or odoo)"
         required: false
-        default: odoo
+        default: all
       dry_run:
         description: Build without pushing (true) or push (false)
         required: false
@@ -36,11 +43,58 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Mirror of nativecoder.DefaultSandboxPalette (ci#807);
+  # backend/nativecoder/sandboxpalette_test.go fails if the two drift apart.
+  PALETTE_TEMPLATES: "minimal coding nix android vnc odoo"
 
 jobs:
-  build:
-    name: Build sandbox image
+  plan:
+    name: Resolve sandbox palette leg
     runs-on: ubuntu-latest
+    outputs:
+      templates: ${{ steps.plan.outputs.templates }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+    steps:
+      - name: Resolve the requested templates
+        id: plan
+        env:
+          REQUESTED: ${{ inputs.template }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          PALETTE_TEMPLATES: ${{ env.PALETTE_TEMPLATES }}
+        run: |
+          set -euo pipefail
+          REQUESTED="$(echo "${REQUESTED:-all}" | tr '[:upper:]' '[:lower:]' | xargs)"
+          if [ "${REQUESTED}" = "all" ] || [ -z "${REQUESTED}" ]; then
+            SELECTED="${PALETTE_TEMPLATES}"
+          else
+            SELECTED=""
+            for want in ${REQUESTED//,/ }; do
+              want="$(echo "${want}" | xargs)"
+              [ -z "${want}" ] && continue
+              case " ${PALETTE_TEMPLATES} " in
+                *" ${want} "*) ;;
+                *) echo "::error::unknown sandbox template '${want}' (palette: ${PALETTE_TEMPLATES})"; exit 1 ;;
+              esac
+              SELECTED="${SELECTED} ${want}"
+            done
+          fi
+          JSON="$(printf '%s\n' ${SELECTED} | sed '/^$/d' | sort | uniq | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          echo "templates=${JSON}" >> "$GITHUB_OUTPUT"
+          # Default to a no-push build unless the dispatcher explicitly asked to push.
+          DRY_RUN="true"
+          if [ "${DRY_RUN_INPUT}" = "false" ]; then DRY_RUN="false"; fi
+          echo "dry_run=${DRY_RUN}" >> "$GITHUB_OUTPUT"
+          echo "sandbox palette legs: ${JSON} (dry_run=${DRY_RUN})"
+
+  build:
+    name: Build sandbox image (${{ matrix.template }})
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        template: ${{ fromJSON(needs.plan.outputs.templates) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,7 +112,7 @@ jobs:
       - name: Resolve image tag from content hash
         id: image
         env:
-          TEMPLATE: ${{ inputs.template }}
+          TEMPLATE: ${{ matrix.template }}
         run: |
           set -euo pipefail
           SANDBOX_DIR="clients/integrations/docker_sandbox_integration/sandboxes/${TEMPLATE}"
@@ -71,21 +125,21 @@ jobs:
           echo "sandbox ${TEMPLATE} image content hash: ${HASH}"
 
       - name: Login to GHCR
-        if: inputs.dry_run == false
+        if: needs.plan.outputs.dry_run == 'false'
         run: |
           set -euo pipefail
           echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Set up Docker Buildx
-        if: inputs.dry_run == false
+        if: needs.plan.outputs.dry_run == 'false'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push sandbox image
         env:
           IMAGE_URL: ${{ steps.image.outputs.image_url }}
           LATEST_URL: ${{ steps.image.outputs.latest_url }}
-          TEMPLATE: ${{ inputs.template }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          TEMPLATE: ${{ matrix.template }}
+          DRY_RUN: ${{ needs.plan.outputs.dry_run }}
         run: |
           set -euo pipefail
           SANDBOX_DIR="clients/integrations/docker_sandbox_integration/sandboxes/${TEMPLATE}"
@@ -108,3 +162,4 @@ jobs:
             echo "sandbox image build failed (attempt ${attempt}/3); retrying in 15s..." >&2
             sleep 15
           done
+
