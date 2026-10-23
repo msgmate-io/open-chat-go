@@ -300,6 +300,22 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to resolve shared_config", http.StatusInternalServerError)
 		return
 	}
+	// ci#756: the chat-create path must apply the same native-coder dev setup as
+	// the bot-dispatch path. Without this, a chat started directly against a repo
+	// reached the first LLM turn with no submodules and no build tooling. The
+	// repository comes from the interaction's repo:<...> tag (or the selected
+	// workspace's git_repo); an explicit coder_sandbox_setup_commands script wins.
+	if resolvedSharedConfig != nil && nativecoder.IsCoderAgentConfig(resolvedSharedConfig) {
+		var toolInit map[string]interface{}
+		if data.SharedConfig != nil {
+			toolInit, _ = data.SharedConfig["tool_init"].(map[string]interface{})
+		}
+		resolvedSharedConfig = nativecoder.WithDevSetup(
+			resolvedSharedConfig,
+			nativecoder.DevSetupRepoForInteraction(resolvedSharedConfig, data.Tags, toolInit, nil),
+			nativecoder.DevSetupEnvValue(),
+		)
+	}
 	if resolvedSharedConfig != nil {
 		configData, err := json.Marshal(resolvedSharedConfig)
 		if err != nil {

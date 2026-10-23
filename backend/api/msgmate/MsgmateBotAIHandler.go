@@ -1410,6 +1410,27 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if outcome.Context.BudgetChars > 0 {
 				metadata["context_budget"] = outcome.Context.Metadata()
 			}
+			// ci#747 RC2/RC3: a cap or a transient provider/workspace failure
+			// must not leave the interaction waiting for a human. Enqueue exactly
+			// one scheduled continuation of this chat, with a stable correlation
+			// id so a repeated decision cancels instead of duplicating it.
+			continuationAttempts := 0
+			if message.Content.MetaData != nil {
+				continuationAttempts = ContinuationAttemptsFromMetadata(*message.Content.MetaData)
+			}
+			transientInfra := outcome.TransientFailures > 0 || outcome.SandboxCapacityFailures > 0
+			dispatch, dispatchErr := DispatchCapContinuation(
+				coderScheduleRunner{}, message.Content.ChatUUID, outcome, transientInfra,
+				continuationAttempts, message.Content.ChatUUID, 0,
+			)
+			if dispatchErr != nil {
+				metadata["continuation_error"] = dispatchErr.Error()
+			} else if continuationMetadata := CapContinuationVisibleMetadata(dispatch, message.Content.ChatUUID); len(continuationMetadata) > 0 {
+				for key, value := range continuationMetadata {
+					metadata[key] = value
+				}
+				metadata["ci747_continuation_attempts"] = 1
+			}
 		}
 
 		// ci#809: a successful all_tasks_completed call is the machine-readable
