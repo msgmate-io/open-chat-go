@@ -27,7 +27,7 @@ const (
 // an empty key: an unidentified dispatch cannot be de-duplicated, so the caller
 // must refuse it rather than invent an owner.
 func OwnerKey(ticket, lane string) string {
-	ticket = normaliseKeyPart(ticket)
+	ticket = normaliseTicket(ticket)
 	if ticket == "" {
 		return ""
 	}
@@ -36,6 +36,23 @@ func OwnerKey(ticket, lane string) string {
 		lane = LaneDefault
 	}
 	return OwnerKeyPrefix + ":" + ticket + ":" + lane
+}
+
+// normaliseTicket canonicalises a ticket reference so every spelling of the same
+// ticket yields the same owner. `ci#747`, `CI#747 `, `issue:747`, `gh#747` and
+// `#747` all name one ticket, so they must not be able to hold the same lane
+// twice - which is precisely how a ticket ended up with two interactions
+// (ci#744). A reference that is not a known ticket form is kept as-is rather than
+// dropped, so an unusual identifier still owns its lane.
+func normaliseTicket(ticket string) string {
+	ticket = normaliseKeyPart(ticket)
+	for _, prefix := range []string{"ci#", "gh#", "issue:", "ticket:", "issue/#", "#"} {
+		if strings.HasPrefix(ticket, prefix) {
+			ticket = strings.TrimSpace(strings.TrimPrefix(ticket, prefix))
+			break
+		}
+	}
+	return ticket
 }
 
 // OwnerKeyTag renders the owner key as the interaction tag the dispatcher

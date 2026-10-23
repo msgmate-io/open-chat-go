@@ -8,11 +8,14 @@ func TestOwnerKeyNormalisesTicketAndLane(t *testing.T) {
 		ticket, lane string
 		want         string
 	}{
-		{"plain", "ci#747", "wiring", "owner:ci#747:wiring"},
-		{"case insensitive", "CI#747", "Wiring", "owner:ci#747:wiring"},
-		{"whitespace collapsed", " ci#747 ", "  wiring  ", "owner:ci#747:wiring"},
-		{"empty lane is default", "ci#747", "", "owner:ci#747:default"},
-		{"blank lane is default", "ci#747", "   ", "owner:ci#747:default"},
+		{"plain", "ci#747", "wiring", "owner:747:wiring"},
+		{"case insensitive", "CI#747", "Wiring", "owner:747:wiring"},
+		{"whitespace collapsed", " ci#747 ", "  wiring  ", "owner:747:wiring"},
+		{"empty lane is default", "ci#747", "", "owner:747:default"},
+		{"blank lane is default", "ci#747", "   ", "owner:747:default"},
+		{"issue prefix is the same ticket", "issue:747", "wiring", "owner:747:wiring"},
+		{"bare hash is the same ticket", "#747", "wiring", "owner:747:wiring"},
+		{"unknown form is kept", "proj-42", "wiring", "owner:proj-42:wiring"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
