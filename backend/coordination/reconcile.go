@@ -61,10 +61,14 @@ func Reconcile(interactions []TaggedInteraction) ReconcileReport {
 	grouped := map[string][]TaggedInteraction{}
 
 	for _, interaction := range interactions {
-		ticket, lane := TicketFromTags(interaction.Tags)
-		key := OwnerKey(ticket, lane)
+		key := OwnerKeyFromTags(interaction.Tags)
 		if key == "" {
-			report.Unidentified = append(report.Unidentified, interaction.InteractionUUID)
+			// Only interactions that participate in lane ownership are grouped:
+			// an un-laned interaction is neither an owner nor a duplicate, so it
+			// must not be reported as either.
+			if _, ticket := TicketFromTags(interaction.Tags); ticket == "" {
+				report.Unidentified = append(report.Unidentified, interaction.InteractionUUID)
+			}
 			continue
 		}
 		grouped[key] = append(grouped[key], interaction)
@@ -109,11 +113,12 @@ func pickOwner(members []TaggedInteraction) Owner {
 			best = member
 		}
 	}
+	key := OwnerKeyFromTags(best.Tags)
 	ticket, lane := TicketFromTags(best.Tags)
 	return Owner{
 		Ticket:          ticket,
 		Lane:            lane,
-		OwnerKey:        OwnerKey(ticket, lane),
+		OwnerKey:        key,
 		InteractionUUID: best.InteractionUUID,
 		Active:          best.Active,
 	}

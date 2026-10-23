@@ -88,6 +88,39 @@ func TicketFromTags(tags []string) (string, string) {
 	return ticket, lane
 }
 
+// OwnerKeyFromTags recovers the owner key of an interaction for the reconcile
+// step. It returns an empty key unless the interaction actually participates in
+// lane ownership - it carries an explicit owner key tag, or an explicit lane tag
+// together with a ticket - so an un-laned interaction is never mistaken for a
+// competing owner of the default lane.
+func OwnerKeyFromTags(tags []string) string {
+	for _, tag := range tags {
+		value := strings.TrimSpace(strings.ToLower(tag))
+		if strings.HasPrefix(value, OwnerKeyPrefix+":") {
+			return value
+		}
+	}
+	if !HasLaneTag(tags) {
+		return ""
+	}
+	ticket, lane := TicketFromTags(tags)
+	return OwnerKey(ticket, lane)
+}
+
+// HasLaneTag reports whether the tags explicitly name a lane. An explicit lane
+// is the opt-in that turns (ticket, lane) ownership into a hard gate: a dispatch
+// that declares a lane claims that lane exclusively, while an un-laned dispatch
+// keeps the historical behaviour (only an explicit DedupeKey de-duplicates) so
+// the lead can still run several un-laned workers for one ticket.
+func HasLaneTag(tags []string) bool {
+	for _, tag := range tags {
+		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(tag)), "lane:") {
+			return true
+		}
+	}
+	return false
+}
+
 // normaliseKeyPart lowercases a key part and collapses its internal whitespace,
 // so cosmetic differences cannot masquerade as separate owners.
 func normaliseKeyPart(part string) string {

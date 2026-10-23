@@ -5,16 +5,48 @@ import "testing"
 func TestReconcileFindsOneOwnerPerLane(t *testing.T) {
 	report := Reconcile([]TaggedInteraction{
 		{InteractionUUID: "b", Tags: []string{"repo:open-chat-go", "issue:747", "lane:wiring"}, Active: true},
-		{InteractionUUID: "a", Tags: []string{"repo:open-chat-go", "issue:748"}, Active: true},
+		{InteractionUUID: "a", Tags: []string{"repo:open-chat-go", "issue:748", "lane:default"}, Active: true},
 	})
 	if !report.Clean() {
 		t.Fatalf("expected a clean pass, got %+v", report)
 	}
 	if got := report.Owners["owner:747:wiring"]; got.InteractionUUID != "b" || !got.Active {
-		t.Fatalf("unexpected owner for ci#747/wiring: %+v", got)
+		t.Fatalf("unexpected owner for 747/wiring: %+v", got)
 	}
 	if got := report.Owners["owner:748:default"]; got.InteractionUUID != "a" {
 		t.Fatalf("unexpected owner for 748/default: %+v", got)
+	}
+}
+
+func TestReconcileIgnoresUnlanedInteractions(t *testing.T) {
+	// Only interactions that opt into lane ownership are grouped: an un-laned
+	// interaction is neither an owner nor a duplicate, and it is not
+	// "unidentified" either - it simply does not take part in lane ownership.
+	report := Reconcile([]TaggedInteraction{
+		{InteractionUUID: "unlaned", Tags: []string{"repo:open-chat-go", "issue:747"}, Active: true},
+		{InteractionUUID: "laned", Tags: []string{"issue:747", "lane:wiring"}, Active: true},
+	})
+	if !report.Clean() {
+		t.Fatalf("an un-laned interaction must not be reported as a duplicate: %+v", report)
+	}
+	if len(report.Owners) != 1 || report.Owners["owner:747:wiring"].InteractionUUID != "laned" {
+		t.Fatalf("unexpected owners: %+v", report.Owners)
+	}
+	if len(report.Unidentified) != 0 {
+		t.Fatalf("a ticketed un-laned interaction is not unidentified: %+v", report.Unidentified)
+	}
+}
+
+func TestReconcileUsesTheStampedOwnerKeyTag(t *testing.T) {
+	// The dispatcher stamps the owner key it enforced, so reconcile must read
+	// that key back verbatim - otherwise a lane could be reported as duplicated
+	// (or missed) purely because the derivation drifted.
+	report := Reconcile([]TaggedInteraction{
+		{InteractionUUID: "a", Tags: []string{"issue:747", "owner:747:wiring"}, Active: true},
+		{InteractionUUID: "b", Tags: []string{"issue:747", "owner:747:wiring"}, Active: true},
+	})
+	if len(report.Duplicates) != 1 || report.Duplicates[0].OwnerKey != "owner:747:wiring" {
+		t.Fatalf("the stamped owner key must be used for grouping: %+v", report)
 	}
 }
 
