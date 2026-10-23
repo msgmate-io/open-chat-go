@@ -128,10 +128,27 @@ func ApplyCoderTaskCompletionConfig(config map[string]interface{}, envValue stri
 	if HasExplicitTools(config) {
 		return config, false
 	}
-	existing := stringSliceFromConfig(config[ToolsConfigKey])
+	existing := stringSliceFromConfig(config["tools"])
 	if HasAllCoderTaskCompletionTools(existing) {
 		return config, false
 	}
-	config[ToolsConfigKey] = mergeToolNames(existing, CoderTaskCompletionToolNames())
+	config["tools"] = mergeToolNames(existing, CoderTaskCompletionToolNames())
 	return config, true
+}
+
+// CoderTaskCompletionGuidance is the ci#809 system-prompt instruction appended
+// when, and only when, the completion tool is on the agent's resolved surface.
+//
+// It is deliberately short: the model should finish concisely, emit the
+// machine-readable signal once the requested work is verified, and stop instead
+// of drifting into further exploration. The visible "###TASK_COMPLETED###"
+// sentinel stays the human-facing marker; this call is what the auto-continue
+// loop actually keys on.
+func CoderTaskCompletionGuidance() string {
+	return "Task completion signal: when the requested work is finished and verified, " +
+		"call the `all_tasks_completed` tool once with a concise summary of what changed, " +
+		"then stop. Do not keep exploring or re-planning after that call — it is the " +
+		"machine-readable \"I am done\" signal and ends the auto-continue loop. Reserve it " +
+		"for genuinely finished work; while work remains, keep going and report progress " +
+		"in your visible reply instead."
 }

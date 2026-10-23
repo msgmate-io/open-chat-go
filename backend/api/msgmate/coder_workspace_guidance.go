@@ -43,6 +43,38 @@ func coderWorkspaceSystemPrompt(systemPrompt string, config map[string]interface
 	return trimmed + "\n\n" + guidance
 }
 
+// coderCompletionPromptMarker is the leading token of the ci#809 completion
+// instruction, used to keep the append idempotent when a caller already composed
+// it into the configured prompt.
+const coderCompletionPromptMarker = "Task completion signal:"
+
+// coderCompletionSystemPrompt appends the ci#809 completion instruction to a
+// coder's system prompt, so the model knows it can finish a task deterministically
+// with `all_tasks_completed` instead of relying only on the visible sentinel or on
+// continuing to explore after the work is done.
+//
+// It only advertises the tool when it is actually reachable: a non-coder config is
+// returned untouched, and so is a coder whose resolved `tools` list does not carry
+// `all_tasks_completed` (an explicit operator tools list, or the deployment kill
+// switch). Prompting a tool that cannot be called is worse than staying silent.
+func coderCompletionSystemPrompt(systemPrompt string, config map[string]interface{}, tools []string) string {
+	if !nativecoder.IsCoderAgentConfig(config) {
+		return systemPrompt
+	}
+	if !nativecoder.HasCoderTaskCompletionTool(tools) {
+		return systemPrompt
+	}
+	trimmed := strings.TrimSpace(systemPrompt)
+	if strings.Contains(trimmed, coderCompletionPromptMarker) {
+		return systemPrompt
+	}
+	guidance := nativecoder.CoderTaskCompletionGuidance()
+	if trimmed == "" {
+		return guidance
+	}
+	return trimmed + "\n\n" + guidance
+}
+
 // coderBashToolName is the single shell tool whose leading root navigation the
 // tolerance half rewrites. Every other tool is left alone.
 const coderBashToolName = "coder_bash"

@@ -421,6 +421,11 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	// front, so it stops rediscovering it with a `cd` prefix on every
 	// `coder_bash` call. Non-coder configs are untouched.
 	systemPrompt = coderWorkspaceSystemPrompt(systemPrompt, configMap)
+	// ci#809 (prompt half): tell a native coder that `all_tasks_completed` is the
+	// machine-readable "I am done" signal, but only when the tool is actually on
+	// its resolved surface. Non-coder configs and coders without the tool are
+	// untouched.
+	systemPrompt = coderCompletionSystemPrompt(systemPrompt, configMap, tools)
 	// context_summary is a compacted summary of earlier turns persisted by the
 	// native coder agent (msgmate_coder/coder_compact, ci#394). It is injected
 	// as a leading system message so the dropped history survives in context.

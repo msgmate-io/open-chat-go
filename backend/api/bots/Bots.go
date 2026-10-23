@@ -59,7 +59,14 @@ func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config ma
 	// trigger-coding-interaction GitHub workflow. An explicit non-empty `tools`
 	// list still wins and `OPENCHAT_DEV_AGENT_HIVEMIND_TOOLS=off` disables it.
 	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
-	return nativecoder.ApplyCoderAutonomousConfig(withDispatch), nil
+	// The machine-readable completion signal (ci#809) is a native coder default
+	// too: the msgmate surface registers `all_tasks_completed` and promotes a
+	// successful call into `task_completed` metadata the auto-continue loop
+	// reads, but the native route only ever got the `coder_*` family. An
+	// explicit non-empty `tools` list still wins and
+	// `OPENCHAT_CODER_TASK_COMPLETION_TOOLS=off` disables it.
+	withCompletion, _ := nativecoder.ApplyCoderTaskCompletionConfig(withDispatch, nativecoder.CoderTaskCompletionEnvValue())
+	return nativecoder.ApplyCoderAutonomousConfig(withCompletion), nil
 }
 
 type BotDTO struct {

@@ -44,7 +44,12 @@ func applySharedConfigDefaults(config map[string]interface{}) map[string]interfa
 	// merge is skipped for a non-coder config and for an operator-narrowed
 	// non-empty `tools` list, which always wins.
 	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
-	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withDispatch)
+	// Native coder completion signal (ci#809): keep `all_tasks_completed` on the
+	// coder tool surface so the auto-continue loop can observe `task_completed`,
+	// matching the msgmate surface. An explicit non-empty `tools` list wins and
+	// `OPENCHAT_CODER_TASK_COMPLETION_TOOLS=off` disables it.
+	withCompletion, _ := nativecoder.ApplyCoderTaskCompletionConfig(withDispatch, nativecoder.CoderTaskCompletionEnvValue())
+	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withCompletion)
 	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
 }
 
