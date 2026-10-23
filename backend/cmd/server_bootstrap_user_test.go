@@ -18,7 +18,7 @@ func setupBootstrapUserTestDB(t *testing.T) *database.DBConfig {
 }
 
 func TestEnsureBootstrapUserSingletonAdminRenamesConflictingUsername(t *testing.T) {
-	DB := database.SetupDatabase(*setupBootstrapUserTestDB(t))
+	DB := database.SetupTestDatabase(t, *setupBootstrapUserTestDB(t))
 
 	if err, _ := util.CreateUser(DB, "admin", "LegacyPass1!", false); err != nil {
 		t.Fatalf("failed to create conflicting user: %v", err)

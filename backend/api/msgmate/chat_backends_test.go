@@ -97,6 +97,40 @@ func TestResolveChatBackendIgnoresLLMProviderBackends(t *testing.T) {
 	}
 }
 
+func TestResolveChatBackendSkipsRetiredBackend(t *testing.T) {
+	// The opencode integration is what the native msgmate-coder runtime replaces
+	// (ci#584). Once the cutover is retired, a chat still pinned to it must fall
+	// back to the built-in native path even if the integration is installed.
+	RegisterChatBackend("opencode", func(_ context.Context, _ ChatBackendRequest) error {
+		return nil
+	})
+	RegisterChatBackend("notretiredchatbackendoracle", func(_ context.Context, _ ChatBackendRequest) error {
+		return nil
+	})
+
+	DB := setupBotProfilesTestDB(t)
+	chat := createChatBackendTestChat(t, DB, map[string]interface{}{
+		"chat_backend": "opencode",
+		"model":        "legacy-model",
+	})
+
+	t.Setenv(RuntimeCutoverEnvKey, CutoverModeFallback)
+	if fn, _, ok := ResolveChatBackend(DB, chat.UUID); !ok || fn == nil {
+		t.Fatalf("expected the still-configured opencode backend to resolve during the rollback window")
+	}
+
+	t.Setenv(RuntimeCutoverEnvKey, CutoverModeRetired)
+	if fn, _, ok := ResolveChatBackend(DB, chat.UUID); ok || fn != nil {
+		t.Fatalf("expected a retired chat backend to be skipped, got fn=%v ok=%v", fn, ok)
+	}
+	if IsRegisteredChatBackend("opencode") {
+		t.Fatalf("expected a retired chat backend to report as unregistered")
+	}
+	if !IsRegisteredChatBackend("notretiredchatbackendoracle") {
+		t.Fatalf("expected a non-retired chat backend to stay registered")
+	}
+}
+
 func TestResolveChatBackendWithoutSharedConfig(t *testing.T) {
 	DB := setupBotProfilesTestDB(t)
 	chat := createChatBackendTestChat(t, DB, nil)

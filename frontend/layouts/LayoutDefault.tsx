@@ -12,13 +12,14 @@ import "@fontsource/signika-negative/700.css";
 import "./style.css";
 import "./tailwind.css";
 import "@/integrations/extensions.gen";
+import "@/components/chat/NotificationsSidebarIndicator";
 import React, { useEffect, useRef, useState } from "react";
 import { applyTheme, isThemeName } from "@/lib/theme";
 import { applyDocumentTitle } from "@open-chat-go/ui";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { ImpersonationBanner } from "@/components/ImpersonationBanner";
 import { MobileNativeSafeAreaSpacer } from "@/components/MobileNativeSafeAreaSpacer";
-import { isMobileAppRuntime } from "@open-chat-go/ui";
+import { isMobileAppRuntime, OpenInAppWidget } from "@open-chat-go/ui";
 import { navigate } from "vike/client/router";
 
 function resolveThemeOverrideFromUrl(): "light" | "dark" | "" {
@@ -74,7 +75,16 @@ const SWR_GLOBAL_CONFIG = {
 export default function LayoutDefault({ children }: { children: React.ReactNode }) {
   const theme = useThemeStore((state) => state.theme);
   const safeTheme = isThemeName(theme) ? theme : "dark";
-  const [isMobileRuntime, setIsMobileRuntime] = useState(false);
+  // Read the pre-hydration native-runtime flag written by the bootstrap script
+  // in pages/+Head.tsx. Initialising from it (instead of `false`) keeps the very
+  // first client render on the same layout as the native shell, so the desktop
+  // layout never flashes before flipping to mobile.
+  const [isMobileRuntime, setIsMobileRuntime] = useState(() => {
+    if (typeof document === "undefined") {
+      return false;
+    }
+    return document.documentElement.getAttribute("data-openchat-runtime") === "mobile";
+  });
   // The bootstrap value is only used to paint the first frame without a flash.
   // Re-applying it on every store change would override the user's selection.
   const hasAppliedInitialTheme = useRef(false);
@@ -229,21 +239,18 @@ export default function LayoutDefault({ children }: { children: React.ReactNode 
     return () => document.removeEventListener("click", onDocumentClick);
   }, []);
 
-  const rootClassName = isMobileRuntime
-    ? "h-dvh overflow-hidden bg-background text-foreground flex flex-col"
-    : "h-dvh min-h-0 bg-background text-foreground flex flex-col";
-
-  const contentClassName = isMobileRuntime
-    ? "min-h-0 flex-1 overflow-hidden"
-    : "min-h-0 flex-1 overflow-auto";
-
+  // Stable shell classes: the mobile/web differences are applied via CSS keyed
+  // on `html[data-openchat-runtime]` (see layouts/style.css) so the server HTML
+  // is identical and the pre-hydration attribute can select the right layout
+  // without a re-render flip.
   return (
     <SWRConfig value={SWR_GLOBAL_CONFIG}>
-      <div className={rootClassName}>
+      <div className="oc-app-root h-dvh bg-background text-foreground flex flex-col">
         <MobileNativeSafeAreaSpacer />
         <ImpersonationBanner />
         <OfflineIndicator />
-        <div className={contentClassName}>{children}</div>
+        <div className="oc-app-content min-h-0 flex-1">{children}</div>
+        <OpenInAppWidget />
       </div>
     </SWRConfig>
   );

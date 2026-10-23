@@ -1,7 +1,6 @@
-import React, { useMemo, useState } from "react";
-import useSWR from "swr";
-import { cn, fetcher } from "../../lib/utils";
-import { FileCode2, Info, EllipsisVertical } from "lucide-react";
+import React, { useState } from "react";
+import { cn } from "../../lib/utils";
+import { EllipsisVertical, Info, Maximize2, Server, Settings2, Wrench } from "lucide-react";
 import {
   Badge,
   BotDisplay,
@@ -16,49 +15,28 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Text,
-  TextTypes,
 } from "@open-chat-go/ui";
 import { CollapseIndicator } from "../CollapseIndicator";
+import { ChatDetailsPanel, type ChatDetailsTabId } from "./ChatDetailsPanel";
 
-type ToolRow = {
-  name: string;
-  function_name: string;
-  description: string;
-  type: string;
-  requires_init?: boolean;
-  requires_confirmation?: boolean;
-  stop_on_first_confirmable_tool_call?: boolean;
-  confirmation_block_message?: string;
-  required?: string[];
-  call_schema?: Record<string, unknown>;
-  init_schema?: Record<string, unknown>;
-};
+/**
+ * Chat details (ci#788) live in their own modal instead of expanding the chat
+ * header in place: the header stays compact on every breakpoint and the tabbed
+ * details surface gets the full viewport it needs, including on mobile.
+ */
+export const CHAT_DETAILS_DIALOG_ID = "interaction-chat-details";
 
-type ToolsResponse = {
-  rows: ToolRow[];
-};
-
-function normalizeToolName(toolName: string): string {
-  if (!toolName.includes(":")) return toolName;
-  const parts = toolName.split(":");
-  return parts[parts.length - 1] || toolName;
-}
-
-function SchemaBlock({ title, schema }: { title: string; schema: Record<string, unknown> | undefined }) {
-  const pretty = JSON.stringify(schema ?? { type: "object", properties: {} }, null, 2);
-  return (
-    <div className="rounded-xl border border-border/70 bg-card/90 p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <FileCode2 className="h-4 w-4 text-muted-foreground" />
-        <Text type={TextTypes.Body6} bold>{title}</Text>
-      </div>
-      <pre className="max-h-72 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5">
-        {pretty}
-      </pre>
-    </div>
-  );
-}
+const DETAILS_MENU_ITEMS: ReadonlyArray<{
+  tab: ChatDetailsTabId;
+  label: string;
+  Icon: typeof Info;
+  hiddenInSharedView?: boolean;
+}> = [
+  { tab: "overview", label: "Overview", Icon: Info },
+  { tab: "init", label: "Tool init", Icon: Settings2, hiddenInSharedView: true },
+  { tab: "tools", label: "Browse tools", Icon: Wrench },
+  { tab: "mcp", label: "MCP servers", Icon: Server },
+];
 
 interface InteractionChatInfoProps {
   chat: any;
@@ -67,6 +45,25 @@ interface InteractionChatInfoProps {
   showMobileHeaderControls?: boolean;
   leftPannelCollapsed?: boolean;
   onToggleSidebar?: () => void;
+  /**
+   * Hide the model chip in the header. Integration details panels that render
+   * the model in their own card (eg the msgmate coder) set this so the model is
+   * shown in one place instead of duplicated in the header.
+   */
+  hideModelDisplay?: boolean;
+  /**
+   * Extra items rendered in the header overflow menu. Integrations use this to
+   * surface their own actions (eg "Configure msgmate coder") without forking the
+   * shared interaction header.
+   */
+  extraMenuItems?: React.ReactNode;
+  /**
+   * Actions rendered as a compact, right-aligned row at the bottom of the header
+   * card. Integrations use this to float small controls on the chat header (eg
+   * the msgmate coder's workspace shell and Open-Chat TUI launchers) without
+   * forking the shared interaction header.
+   */
+  headerActions?: React.ReactNode;
 }
 
 type ChatStatusLike = { is_active?: boolean; state?: string } | null | undefined;
@@ -109,52 +106,102 @@ function resolveStatusBadge(
   }
 }
 
+/**
+ * The tabbed chat-details surface rendered inside its own centered modal
+ * (ci#788). Header and content are exposed separately so the dialog can also be
+ * used standalone (eg on the shared-view page) and so tests can pin the header
+ * contract without a live dialog instance.
+ */
+export function ChatDetailsDialogHeader({ isSharedView = false }: { isSharedView?: boolean }) {
+  return (
+    <DialogHeader className="pr-8 text-left">
+      <DialogTitle className="text-base">Chat details</DialogTitle>
+      <DialogDescription className="text-xs">
+        {isSharedView
+          ? "Read-only overview of this shared chat."
+          : "Overview of this chat, its configured tools, tool init payload and MCP servers."}
+      </DialogDescription>
+    </DialogHeader>
+  );
+}
+
+interface ChatDetailsDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  chat: any;
+  user?: any;
+  isSharedView?: boolean;
+  activeTab: ChatDetailsTabId;
+  onTabChange: (tab: ChatDetailsTabId) => void;
+}
+
+export function ChatDetailsDialog({
+  open,
+  onOpenChange,
+  chat,
+  user,
+  isSharedView = false,
+  activeTab,
+  onTabChange,
+}: ChatDetailsDialogProps) {
+  if (!chat) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        id={CHAT_DETAILS_DIALOG_ID}
+        aria-label="Chat details"
+        // Centered sheet on small screens, roomy panel on desktop: the details
+        // surface replaced the header expansion so it must stay usable on every
+        // breakpoint (ci#788).
+        //
+        // Desktop gets a taller, wider panel with a single scroll region so the
+        // details no longer need a scrollbar per section (ci#831).
+        className="max-h-[90dvh] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] gap-3 overflow-hidden p-4 sm:max-w-[640px] sm:p-5 lg:h-[min(88dvh,52rem)] lg:max-h-[88dvh] lg:w-[min(92vw,80rem)] lg:max-w-[80rem] lg:p-6 xl:max-w-[88rem]"
+      >
+        <ChatDetailsDialogHeader isSharedView={isSharedView} />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <ChatDetailsPanel
+            chat={chat}
+            user={user}
+            isSharedView={isSharedView}
+            activeTab={activeTab}
+            onTabChange={onTabChange}
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function InteractionChatInfo({
   chat,
   user,
   isSharedView = false,
   leftPannelCollapsed = false,
   onToggleSidebar,
+  hideModelDisplay = false,
+  extraMenuItems,
+  headerActions,
 }: InteractionChatInfoProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
-  const [showModelPayload, setShowModelPayload] = useState(false);
-  const [showToolInitDialog, setShowToolInitDialog] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<ChatDetailsTabId>("overview");
+  // Opening a section from the overflow menu also selects its tab, so the menu
+  // stays a shortcut into the details modal instead of a second surface.
+  const openDetails = (tab?: ChatDetailsTabId) => {
+    if (tab) setActiveTab(tab);
+    setIsDetailsOpen(true);
+  };
   const config = chat?.config ?? {};
   const partner = chat?.partner;
   const partnerInitial = partner?.name?.charAt(0)?.toUpperCase() ?? "B";
-  const { data: toolsData } = useSWR<ToolsResponse>("/api/v1/tools?page=1&page_size=200", fetcher);
-  const toolsByName = useMemo(() => {
-    const rows = toolsData?.rows ?? [];
-    const map = new Map<string, ToolRow>();
-    rows.forEach((tool) => map.set(tool.name, tool));
-    return map;
-  }, [toolsData?.rows]);
-  const selectedTool = selectedToolName ? toolsByName.get(normalizeToolName(selectedToolName)) : null;
-  const selectedToolPayload = useMemo(() => {
-    if (!selectedTool) return null;
-    const requiredParams = selectedTool.required ?? [];
-    return {
-      type: "function",
-      function: {
-        name: selectedTool.name,
-        description: selectedTool.description || "",
-        parameters: {
-          type: "object",
-          properties: selectedTool.call_schema?.properties ?? {},
-          required: requiredParams,
-          description: "The parameters for the tool",
-        },
-      },
-    };
-  }, [selectedTool]);
-  const integrationEntries = useMemo(() => {
-    const toolInit = config?.tool_init;
-    if (!toolInit || typeof toolInit !== "object") {
-      return [] as Array<[string, any]>;
-    }
-    return Object.entries(toolInit);
-  }, [config?.tool_init]);
+  // A user-visible chat title (set manually or by the internal_automations
+  // integration) takes precedence over the bot name in the header, mirroring
+  // how the chat list labels the row.
+  const chatTitle = (chat?.settings?.title || "").trim();
+  // The tool catalog, the model payload and the init data all live in the
+  // details tabs (ci#749); the header only keeps the toggle and the menu
+  // shortcuts into a section.
 
   const isInteractionChat = chat?.chat_type === "interaction";
   const canViewOnConversation = user?.is_admin === true;
@@ -166,7 +213,7 @@ export function InteractionChatInfo({
 
   return (
     <div className="w-full px-2 pb-2 pt-2.5 md:px-4 md:pt-3">
-      <Card className="mx-auto w-full border border-border/70 bg-card/95 p-2.5 shadow-sm md:max-w-[900px] md:p-3">
+      <Card className="mx-auto w-full border border-border/70 bg-card/95 p-2.5 shadow-sm md:max-w-[960px] md:p-3">
         <div className="flex items-center gap-2">
           {onToggleSidebar ? (
             <CollapseIndicator
@@ -179,13 +226,19 @@ export function InteractionChatInfo({
             {partnerInitial}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {partner?.name || "Bot"} {isInteractionChat ? "interaction" : "conversation"}
-            </p>
-            <BotDisplay
-              selectedModel={config.model}
-              className="max-w-[14rem] rounded-lg border-border/60 bg-card/80 px-2 py-0.5 text-xs shadow-none md:max-w-[18rem] md:px-2.5 md:py-1 md:text-[13px]"
-            />
+            <div className="flex min-w-0 items-center gap-2">
+              <p className="truncate text-sm font-semibold text-foreground">
+                {chatTitle
+                  ? chatTitle
+                  : `${partner?.name || "Bot"} ${isInteractionChat ? "interaction" : "conversation"}`}
+              </p>
+              {hideModelDisplay ? null : (
+                <BotDisplay
+                  selectedModel={config.model}
+                  className="max-w-[8rem] shrink-0 rounded-md border-border/60 bg-muted/30 px-1.5 py-0.5 text-[11px] font-medium shadow-none sm:max-w-[12rem]"
+                />
+              )}
+            </div>
           </div>
           {statusBadge ? (
             <Badge
@@ -195,6 +248,29 @@ export function InteractionChatInfo({
               {statusBadge.label}
             </Badge>
           ) : null}
+          {/*
+            Desktop keeps the integration controls (eg the msgmate coder's
+            workspace Shell and Open-Chat TUI launchers) on the same line as the
+            rest of the widget so the header stays one compact row (ci#831); on
+            small screens they fall back to their own wrapped row below.
+          */}
+          {headerActions ? (
+            <div className="hidden shrink-0 items-center justify-end gap-1 md:flex">
+              {headerActions}
+            </div>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openDetails()}
+            aria-haspopup="dialog"
+            aria-controls={CHAT_DETAILS_DIALOG_ID}
+            title="Show chat details"
+            className="hidden h-7 shrink-0 gap-1 rounded-full px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground sm:inline-flex"
+          >
+            Details
+            <Maximize2 className="size-3.5" aria-hidden />
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -207,175 +283,38 @@ export function InteractionChatInfo({
                 <EllipsisVertical className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              {!isSharedView ? (
-                <DropdownMenuItem onClick={() => setShowToolInitDialog(true)}>
-                  View tool init
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem
-                onClick={() => setIsExpanded((prev) => !prev)}
-                aria-expanded={isExpanded}
-              >
-                {isExpanded ? "Hide details" : "Show details"}
-              </DropdownMenuItem>
+            <DropdownMenuContent align="end" className="w-56">
+              {DETAILS_MENU_ITEMS.map(({ tab, label, Icon, hiddenInSharedView }) => {
+                if (hiddenInSharedView && isSharedView) return null;
+                return (
+                  <DropdownMenuItem key={tab} onClick={() => openDetails(tab)}>
+                    <Icon className="mr-2 h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                    {label}
+                  </DropdownMenuItem>
+                );
+              })}
+              {extraMenuItems}
+              <DropdownMenuItem onClick={() => openDetails()}>Show details</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
 
-        {isExpanded && (
-          <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-            <div className="rounded-xl border border-border/70 bg-muted/30 p-3 text-sm">
-              <p className="mb-2 font-medium text-foreground">Model</p>
-              <div className="space-y-1 text-muted-foreground">
-                <p>Model: <span className="text-foreground">{config.model ?? "-"}</span></p>
-                <p>Backend: <span className="text-foreground">{config.backend ?? "-"}</span></p>
-                <p>Max tokens: <span className="text-foreground">{config.max_tokens ?? "-"}</span></p>
-                <p>Temperature: <span className="text-foreground">{config.temperature ?? "-"}</span></p>
-                <p>Context: <span className="text-foreground">{config.context ?? "-"}</span></p>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border/70 bg-muted/30 p-3 text-sm">
-                <p className="mb-2 font-medium text-foreground">Tools</p>
-                <div className="flex flex-wrap gap-2">
-                  {Array.isArray(config.tools) && config.tools.length > 0 ? (
-                    config.tools.map((tool: string) => (
-                      <Button
-                        key={tool}
-                        variant="outline"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => setSelectedToolName(tool)}
-                        title={`Open definition for ${normalizeToolName(tool)}`}
-                      >
-                        <Info className="mr-1 h-3.5 w-3.5" />
-                        {tool}
-                      </Button>
-                    ))
-                  ) : (
-                    <p className="text-muted-foreground">No tools configured</p>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border/70 bg-muted/30 p-3 text-sm">
-              <p className="mb-2 font-medium text-foreground">Integration</p>
-              {integrationEntries.length > 0 ? (
-                <div className="space-y-1 text-muted-foreground">
-                  {integrationEntries.map(([name, value]) => (
-                    <p key={name}>
-                      {name.replace("signal_", "").replace(/_/g, " ")}: <span className="text-foreground">{typeof value === "object" ? "configured" : String(value)}</span>
-                    </p>
-                  ))}
-                  {config?.tool_init?.signal_send_message?.recipient_phone ? (
-                    <p>
-                      Phone: <span className="text-foreground">{config.tool_init.signal_send_message.recipient_phone}</span>
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-muted-foreground">No integration details available</p>
-              )}
-            </div>
-
-            {config?.system_prompt ? (
-              <div className="rounded-xl border border-border/70 bg-muted/30 p-3 text-sm md:col-span-2 xl:col-span-3">
-                <p className="mb-2 font-medium text-foreground">System prompt</p>
-                <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-muted-foreground">
-                  {config.system_prompt}
-                </p>
-              </div>
-            ) : null}
-          </div>
-        )}
+        {/* Small screens keep the integration controls on their own wrapped row;
+            desktop renders them inline in the header row above (ci#831). */}
+        {headerActions ? (
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-1 md:hidden">{headerActions}</div>
+        ) : null}
       </Card>
 
-      <Dialog open={Boolean(selectedToolName)} onOpenChange={(open) => {
-        if (!open) {
-          setSelectedToolName(null);
-          setShowModelPayload(false);
-        }
-      }}>
-        <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="break-all">{normalizeToolName(selectedToolName || "") || "Tool"}</DialogTitle>
-            <DialogDescription className="break-words">
-              {selectedTool?.description || "No tool metadata found in the catalog API for this tool."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="rounded-xl border border-border/70 bg-gradient-to-r from-muted/20 to-card p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">Type: {selectedTool?.type || "unknown"}</Badge>
-                <Badge variant={selectedTool?.requires_init ? "secondary" : "outline"}>
-                  {selectedTool?.requires_init ? "Init required" : "No init required"}
-                </Badge>
-                <Badge variant={selectedTool?.requires_confirmation ? "secondary" : "outline"}>
-                  {selectedTool?.requires_confirmation ? "Requires confirmation" : "No confirmation"}
-                </Badge>
-                {selectedTool?.requires_confirmation ? (
-                  <Badge variant={selectedTool?.stop_on_first_confirmable_tool_call ? "secondary" : "outline"}>
-                    {selectedTool?.stop_on_first_confirmable_tool_call ? "Stop on first confirmable call" : "Continue after confirm request"}
-                  </Badge>
-                ) : null}
-                {(selectedTool?.required ?? []).length > 0 ? (
-                  <Badge variant="outline">Required input: {(selectedTool?.required ?? []).join(", ")}</Badge>
-                ) : (
-                  <Badge variant="outline">No required input params</Badge>
-                )}
-                <Button size="sm" variant="outline" onClick={() => setShowModelPayload((prev) => !prev)}>
-                  {showModelPayload ? "Hide model API payload" : "View model API payload"}
-                </Button>
-              </div>
-            </div>
-
-            {showModelPayload ? (
-              <div className="rounded-xl border border-border/70 bg-card/90 p-3">
-                <Text type={TextTypes.Body6} bold>Exact tool object sent to the model API</Text>
-                <Text type={TextTypes.Body7} color="muted" className="mt-1">
-                  This is the full tool definition payload included in the `tools` array for chat completions.
-                </Text>
-                <pre className="mt-3 max-h-80 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5">
-                  {JSON.stringify(selectedToolPayload, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-
-            {selectedTool?.requires_confirmation && selectedTool?.confirmation_block_message ? (
-              <div className="rounded-xl border border-border/70 bg-card/90 p-3">
-                <Text type={TextTypes.Body6} bold>Confirmation Block Message</Text>
-                <Text type={TextTypes.Body7} color="muted" className="mt-1">
-                  Message returned to the model while awaiting approval.
-                </Text>
-                <pre className="mt-3 max-h-48 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5">
-                  {selectedTool.confirmation_block_message}
-                </pre>
-              </div>
-            ) : null}
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <SchemaBlock title="Input Parameters (Call Schema)" schema={selectedTool?.call_schema} />
-              <SchemaBlock title="Init Parameters (Init Schema)" schema={selectedTool?.init_schema} />
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showToolInitDialog} onOpenChange={setShowToolInitDialog}>
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Current tool init data</DialogTitle>
-            <DialogDescription>
-              This is the currently configured `tool_init` object used by this interaction.
-            </DialogDescription>
-          </DialogHeader>
-          <pre className="max-h-[60vh] overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-5">
-            {JSON.stringify(config?.tool_init ?? {}, null, 2)}
-          </pre>
-        </DialogContent>
-      </Dialog>
+      <ChatDetailsDialog
+        open={isDetailsOpen}
+        onOpenChange={setIsDetailsOpen}
+        chat={chat}
+        user={user}
+        isSharedView={isSharedView}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+      />
     </div>
   );
 }

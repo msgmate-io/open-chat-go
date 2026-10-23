@@ -25,6 +25,10 @@ const (
 	InteractionConfirmationPending  = "pending"
 	InteractionConfirmationApproved = "approved"
 	InteractionConfirmationRejected = "rejected"
+	// InteractionConfirmationSuperseded marks a rejected gate that was voided by
+	// a re-run (ci#735): the rejection was undone and a fresh pending
+	// confirmation for the same source message took its place.
+	InteractionConfirmationSuperseded = "superseded"
 )
 
 type interactionConfirmationMeta struct {
@@ -37,6 +41,16 @@ type interactionConfirmationMeta struct {
 	ChatUUID          string `json:"chat_uuid,omitempty"`
 	DecidedBy         string `json:"decided_by,omitempty"`
 	DecidedAt         string `json:"decided_at,omitempty"`
+	// ci#735 re-run bookkeeping: a rejected gate can be undone. The voided
+	// confirmation records who/when voided it and which fresh confirmation
+	// replaced it; the fresh confirmation records the gate it re-runs and how
+	// often that gate has been re-run in total.
+	SupersededBy string `json:"superseded_by,omitempty"`
+	SupersededAt string `json:"superseded_at,omitempty"`
+	RerunOf      string `json:"rerun_of,omitempty"`
+	RerunCount   int    `json:"rerun_count,omitempty"`
+	RerunBy      string `json:"rerun_by,omitempty"`
+	RerunAt      string `json:"rerun_at,omitempty"`
 }
 
 // approveInteractionConfirmationRequest is the optional body accepted by the
@@ -191,6 +205,11 @@ type InteractionConfirmationResponse struct {
 	Status  string `json:"status"`
 	Queued  bool   `json:"queued"`
 	State   string `json:"state,omitempty"`
+	// ci#735: the re-run response points the client at the fresh confirmation
+	// that replaced the voided rejection.
+	MessageUUID string `json:"message_uuid,omitempty"`
+	RerunOf     string `json:"rerun_of,omitempty"`
+	RerunCount  int    `json:"rerun_count,omitempty"`
 }
 
 // ApproveInteractionConfirmation approves a pending interaction confirmation
@@ -274,7 +293,7 @@ func (h *ChatsHandler) ApproveInteractionConfirmation(w http.ResponseWriter, r *
 	// Emit the interaction-confirmed notification once the interaction leaves
 	// the pending gate and its deferred reply is enqueued. Best-effort and
 	// detached so notification delivery never delays the approval response.
-	go maybeDispatchInteractionConfirmedNotification(context.Background(), DB, chat, *user)
+	chatsDetachedDBWork.Go(func() { maybeDispatchInteractionConfirmedNotification(context.Background(), DB, chat, *user) })
 
 	writeInteractionConfirmationResponse(w, InteractionConfirmationResponse{
 		Success: true,
@@ -368,9 +387,176 @@ func (h *ChatsHandler) RejectInteractionConfirmation(w http.ResponseWriter, r *h
 }
 
 func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, user *database.User) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
-	chatUUID := r.PathValue("chat_uuid")
+	chat, message, meta, ok := loadInteractionConfirmation(w, r, DB, user, InteractionConfirmationPending)
+	if !ok {
+		return chat, message, meta, false
+	}
+	if meta.Status != InteractionConfirmationPending {
+		http.Error(w, "Confirmation has already been resolved", http.StatusConflict)
+		return database.Chat{}, database.Message{}, nil, false
+	}
+	return chat, message, meta, true
+}
+
+// RerunInteractionConfirmation voids a rejected interaction confirmation so the
+// interaction can be re-dispatched cleanly (ci#735). A rejection is recorded as
+// an error event and settles the gate, which made an accidental rejection
+// unrecoverable: the source interaction could never be approved again.
+//
+// The endpoint is the "undo rejection" affordance of the confirmation widget. It
+//   - flips the rejected gate to "superseded" (kept as the audit record, with
+//     superseded_by/superseded_at),
+//   - creates a fresh pending confirmation for the same source message,
+//     chained to the voided gate via rerun_of and carrying the re-run count, and
+//   - writes a "re-run" event message so the undo is logged in the chat and the
+//     interaction state/API surface the re-run.
+//
+// Only a user with access to the chat (scopedChatQuery) may re-run, and only the
+// chat's rejected gate may be re-run; an already pending or approved gate stays
+// untouched.
+//
+//	@Summary      Re-run rejected interaction confirmation
+//	@Description  Void a rejected interaction confirmation and re-open the interaction gate for a new decision.
+//	@Tags         messages
+//	@Accept       json
+//	@Produce      json
+//	@Security     SessionAuth
+//	@Param        chat_uuid path string true "Chat UUID"
+//	@Param        message_uuid path string true "Rejected confirmation message UUID"
+//	@Success      200 {object} chats.InteractionConfirmationResponse
+//	@Failure      400 {string} string "Invalid request"
+//	@Failure      403 {string} string "Forbidden"
+//	@Failure      404 {string} string "Not found"
+//	@Failure      409 {string} string "Conflict"
+//	@Router       /api/v1/chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/rerun [post]
+func (h *ChatsHandler) RerunInteractionConfirmation(w http.ResponseWriter, r *http.Request) {
+	DB, user, err := util.GetDBAndUser(r)
+	if err != nil {
+		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	chat, message, meta, ok := loadInteractionConfirmation(w, r, DB, user, InteractionConfirmationRejected)
+	if !ok {
+		return
+	}
+	if meta.Status != InteractionConfirmationRejected {
+		http.Error(w, "Only a rejected confirmation can be re-run", http.StatusConflict)
+		return
+	}
+
+	botUser, counterpartyOK := resolveChatBotCounterparty(chat, *user)
+	if !counterpartyOK || !botUser.IsAutomated {
+		http.Error(w, "Confirmation is only available in chats with bots", http.StatusConflict)
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	rerunCount := meta.RerunCount + 1
+
+	var rerunConfirmation database.Message
+	var event database.Message
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		// Void the rejected gate, keeping it as the audit record of the undo.
+		voided := *meta
+		voided.Status = InteractionConfirmationSuperseded
+		voided.SupersededBy = user.UUID
+		voided.SupersededAt = now
+		if err := persistInteractionConfirmationMeta(tx, message, &voided); err != nil {
+			return err
+		}
+
+		// Re-open the gate with a fresh pending confirmation for the same source
+		// message so the interaction can be decided again.
+		title := actionTaskFirstNonEmpty(meta.Title, "Start coding interaction?")
+		fresh := interactionConfirmationMeta{
+			Status:            InteractionConfirmationPending,
+			SourceMessageUUID: meta.SourceMessageUUID,
+			BotUUID:           meta.BotUUID,
+			Title:             title,
+			Description:       meta.Description,
+			ChatUUID:          meta.ChatUUID,
+			RerunOf:           message.UUID,
+			RerunCount:        rerunCount,
+			RerunBy:           user.UUID,
+			RerunAt:           now,
+		}
+		text := title
+		rerunConfirmation = database.Message{
+			ChatId:     chat.ID,
+			SenderId:   message.SenderId,
+			ReceiverId: message.ReceiverId,
+			DataType:   "text",
+			Text:       &text,
+		}
+		if err := tx.Create(&rerunConfirmation).Error; err != nil {
+			return err
+		}
+		fresh.MessageUUID = rerunConfirmation.UUID
+		freshMeta, marshalErr := json.Marshal(map[string]interface{}{
+			"finished":                     true,
+			interactionConfirmationMetaKey: fresh,
+		})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := tx.Model(&rerunConfirmation).Update("meta_data", database.JSONRaw(freshMeta)).Error; err != nil {
+			return err
+		}
+		rerunConfirmation.MetaData = database.JSONRaw(freshMeta)
+
+		// Log the re-run as an event so it is visible in the chat transcript and
+		// never looks like an unexplained new confirmation.
+		eventMeta, marshalErr := json.Marshal(map[string]interface{}{
+			"finished":                        true,
+			"event_type":                      "interaction_confirmation",
+			"event_phase":                     "rerun",
+			"interaction_confirmation_status": InteractionConfirmationSuperseded,
+			"rerun_of":                        message.UUID,
+			"rerun_message_uuid":              rerunConfirmation.UUID,
+			"rerun_count":                     rerunCount,
+		})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		eventText := "The rejected interaction was re-run by the user."
+		event = database.Message{
+			ChatId:     chat.ID,
+			SenderId:   message.SenderId,
+			ReceiverId: message.ReceiverId,
+			DataType:   "event",
+			Text:       &eventText,
+			MetaData:   database.JSONRaw(eventMeta),
+		}
+		if err := tx.Create(&event).Error; err != nil {
+			return err
+		}
+		return tx.Model(&chat).Update("latest_message_id", event.ID).Error
+	})
+	if err != nil {
+		http.Error(w, "Failed to re-run confirmation", http.StatusInternalServerError)
+		return
+	}
+
+	writeInteractionConfirmationResponse(w, InteractionConfirmationResponse{
+		Success:     true,
+		Status:      InteractionConfirmationPending,
+		Queued:      false,
+		State:       "needs_confirmation",
+		MessageUUID: rerunConfirmation.UUID,
+		RerunOf:     message.UUID,
+		RerunCount:  rerunCount,
+	})
+}
+
+// loadInteractionConfirmation loads a chat-scoped interaction confirmation
+// message and its widget meta. expectedStatus, when non-empty, restricts the
+// call to that gate status so the approve/reject/rerun handlers can only act on
+// the state they are meant to resolve.
+func loadInteractionConfirmation(w http.ResponseWriter, r *http.Request, DB *gorm.DB, user *database.User, expectedStatus string) (database.Chat, database.Message, *interactionConfirmationMeta, bool) {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
 	messageUUID := r.PathValue("message_uuid")
-	if chatUUID == "" || messageUUID == "" {
+	if chatUUIDErr != nil || messageUUID == "" {
 		http.Error(w, "Invalid chat/message UUID", http.StatusBadRequest)
 		return database.Chat{}, database.Message{}, nil, false
 	}
@@ -400,7 +586,11 @@ func loadPendingInteractionConfirmation(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "Message is not an interaction confirmation", http.StatusConflict)
 		return database.Chat{}, database.Message{}, nil, false
 	}
-	if meta.Status != InteractionConfirmationPending {
+	if expectedStatus != "" && meta.Status != expectedStatus {
+		if expectedStatus == InteractionConfirmationRejected {
+			http.Error(w, "Only a rejected confirmation can be re-run", http.StatusConflict)
+			return database.Chat{}, database.Message{}, nil, false
+		}
 		http.Error(w, "Confirmation has already been resolved", http.StatusConflict)
 		return database.Chat{}, database.Message{}, nil, false
 	}

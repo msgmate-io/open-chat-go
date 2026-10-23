@@ -4,19 +4,19 @@
     "go_client": {
       "repo": "https://github.com/msgmate-io/open-chat-go-golang-client",
       "ref": "main",
-      "commit": "5e99aba392e3b0fd07539b892746650b1a355d9d",
+      "commit": "79b39a1ef14103d8aca2cf434aefcd19cb6b1789",
       "source": "git"
     },
     "mcp": {
       "repo": "https://github.com/msgmate-io/open-chat-go-mcp-integration",
       "ref": "main",
-      "commit": "cd43e22b6480104643c294fa681c6abda7ad3a48",
+      "commit": "9a90a95ea96909077bdcb8ce4d399ccba608d0dc",
       "source": "git"
     },
     "rest_api_tool": {
       "repo": "https://github.com/msgmate-io/open-chat-go-rest-api-tool-integration",
       "ref": "main",
-      "commit": "b29baf75b10fd43315e8f08963a0d6f049c284b9",
+      "commit": "1075649a6addca88f8043e293212a0e80f2e3ebe",
       "source": "git"
     }
   }

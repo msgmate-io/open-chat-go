@@ -6,11 +6,26 @@ on:
       deployment_name:
         description: Deployment name used by the CI deploy workflow
         required: false
+        type: choice
+        options:
+          - msgmate-io-staging
+          - msgmate-io-ci
+          - msgmate-io-pr-deployment
+          - msgmate-io-production
         default: msgmate-io-staging
       target_ref:
-        description: Target ref or SHA to deploy
+        description: Target ref or SHA to deploy (pick a common ref, or 'custom' to type one below)
         required: false
+        type: choice
+        options:
+          - main
+          - production
+          - custom
         default: main
+      target_ref_custom:
+        description: Custom ref or SHA (used only when target_ref is 'custom')
+        required: false
+        default: ""
       ci_repository:
         description: CI repository that contains the deploy workflow
         required: false
@@ -51,6 +66,26 @@ on:
         description: Deployment URL for release comment links
         required: false
         default: ""
+      DRY_RUN:
+        description: ci#734 - dry-run the CI-failure relay (no comment, no lead message)
+        required: false
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+      pr_number:
+        description: ci#734 - PR number used by the relay dry-run
+        required: false
+        default: ""
+      pr_branch:
+        description: ci#734 - PR head branch used by the relay dry-run (chore/consolidate-*)
+        required: false
+        default: ""
+      pr_sha:
+        description: ci#734 - PR head SHA used by the relay dry-run
+        required: false
+        default: ""
   pull_request:
     types:
       - opened
@@ -61,12 +96,27 @@ on:
       - closed
 
 concurrency:
+  # Key pull-request runs by PR number *and* head SHA. A run that is parked
+  # waiting on a protected deployment environment is not cancelled by
+  # `cancel-in-progress` (GitHub does not cancel environment-gated runs), so a
+  # plain `pr-ci-<number>` group lets one stale, unapproved run block every
+  # later run for the same PR. Scoping to the head SHA lets a fresh push start
+  # immediately; the per-environment `pr-deploy-<number>` job concurrency still
+  # serialises/cancels the actual deploys.
+  #
+  # The same reasoning applies to the post-merge flow: a stalled merged-deploy
+  # run guarded by a protected environment cannot be cancelled with
+  # `cancel-in-progress`, so keying merged runs only by `base.ref` let one stale
+  # merge block every later merge (`merged-deploy-main` starvation). Keying them
+  # by the merge commit lets a fresh merge start immediately;
+  # `cancel-superseded-merged-deployment` then cancels the stale run and the
+  # per-environment dispatch job concurrency serialises the actual deploys.
   group: >-
     ${{ github.event_name == 'workflow_dispatch'
         && format('manual-deploy-{0}', github.run_id)
         || github.event.action == 'closed'
-        && format('merged-deploy-{0}', github.event.pull_request.base.ref)
-        || format('pr-ci-{0}', github.event.pull_request.number) }}
+        && format('merged-deploy-{0}-{1}', github.event.pull_request.base.ref, github.event.pull_request.merge_commit_sha)
+        || format('pr-ci-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
   cancel-in-progress: true
 
 permissions:
@@ -265,10 +315,30 @@ jobs:
   run-pr-ci-tests-and-deployments:
     name: Run PR CI Tests and Deployments
     runs-on: ubuntu-latest
-    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') || (github.event_name == 'pull_request' && github.event.action != 'closed' && (contains(github.event.pull_request.labels.*.name, 'deploy') || contains(github.event.pull_request.labels.*.name, 'test') || contains(github.event.pull_request.labels.*.name, 'build') || contains(github.event.pull_request.labels.*.name, 'ai-test-mock') || contains(github.event.pull_request.labels.*.name, 'ai-test-real') || contains(github.event.pull_request.labels.*.name, 'test-core-only') || contains(github.event.pull_request.labels.*.name, 'release-android') || contains(github.event.pull_request.labels.*.name, 'test-e2e') || contains(github.event.pull_request.labels.*.name, 'e2e') || contains(github.event.pull_request.labels.*.name, 'sandbox-test') || contains(join(github.event.pull_request.labels.*.name, ','), 'sandbox-test') || contains(github.event.pull_request.labels.*.name, 'slow-android-build-test')))
+    # ci#734: a relay dry-run dispatch must stay lightweight - it only inspects
+    # the relay routing and never starts the test/deploy pipeline.
+    # ci#659: never read the event payload's label snapshot here. `gh pr create
+    # -l ...` (and the default `test` label that `no_labels_guidance` attaches in
+    # a second API call) land after the event was emitted, so an `opened` payload
+    # is label-free and a burst of per-label events carries only a partial
+    # snapshot. Gating this job on the payload skipped it while
+    # `pr-test-merge-requirement` (always() gated) read the live label list and
+    # failed with "PR CI did not run for this commit with the test label" for a
+    # commit whose suites were never asked to run (run 39373933834, PR #880).
+    # Start on every pull-request event and let the live snapshot resolved below
+    # - published as the `should_*` outputs every suite and deploy job consumes -
+    # decide what actually runs.
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '' && github.event.inputs.DRY_RUN != 'true') || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
     outputs:
       ci_repository: ${{ steps.context.outputs.ci_repository }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
+      # GitHub environment that gates the deploy/post-deploy suites. Same-repo
+      # PRs targeting `main` use the unprotected `msgmate-io-ci` environment (no
+      # admin confirmation); every other PR keeps the protected
+      # `msgmate-io-pr-deployment` environment. See DEVELOPMENT.md
+      # "Pull-request CI labels and deployment policy".
+      approval_environment: ${{ steps.context.outputs.approval_environment }}
       target_ref: ${{ steps.context.outputs.target_ref }}
       pr_number: ${{ steps.context.outputs.pr_number }}
       source_repository: ${{ steps.context.outputs.source_repository }}
@@ -286,6 +356,7 @@ jobs:
       should_ai_test_mock: ${{ steps.context.outputs.should_ai_test_mock }}
       should_ai_test_real: ${{ steps.context.outputs.should_ai_test_real }}
       should_test_core_only: ${{ steps.context.outputs.should_test_core_only }}
+      should_android_build_test: ${{ steps.context.outputs.should_android_build_test }}
       image_url: ${{ steps.image.outputs.image_url }}
       android_release_run_url: ${{ steps.android_release_dispatch.outputs.android_release_run_url }}
       dispatch_ref: ${{ steps.context.outputs.dispatch_ref }}
@@ -296,6 +367,7 @@ jobs:
       CI_REPOSITORY_INPUT: ${{ github.event.inputs.ci_repository }}
       DEPLOYMENT_NAME_INPUT: ${{ github.event.inputs.deployment_name }}
       TARGET_REF_INPUT: ${{ github.event.inputs.target_ref }}
+      TARGET_REF_CUSTOM_INPUT: ${{ github.event.inputs.target_ref_custom }}
       AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
     steps:
@@ -330,6 +402,31 @@ jobs:
             done
           done
 
+      # ci#659: the labels must be read from the API, not from
+      # `$GITHUB_EVENT_PATH`. `gh pr create -l ...` (and any burst of label
+      # edits) applies the labels in a second API call, so the `opened` event
+      # payload carries an EMPTY label set; a label-driven decision made from
+      # that snapshot is wrong for exactly the PRs the checks exist to gate.
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "Not a pull request event; no labels to resolve."
+            : > "${RUNNER_TEMP}/pr-labels.txt"
+            exit 0
+          fi
+          curl -fsSL \
+            -H "Authorization: Bearer ${LABEL_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
+            | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
+          echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
+
       - name: Resolve context and label actions
         id: context
         run: |
@@ -340,37 +437,34 @@ jobs:
             PR_NUMBER="${{ github.event.pull_request.number }}"
             SOURCE_REPOSITORY="${{ github.repository }}"
             DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PR }}"
-            SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
-            SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_DEPLOY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'deploy' || true)"
+            SHOULD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test' || true)"
             # E2E has several accepted label aliases (e2e/test-e2e/test); when
             # more than one alias label is present the grep would return
             # multiple lines and a multi-line GITHUB_OUTPUT value breaks the
             # job ("Invalid format"). Keep alias support, emit one token only.
-            SHOULD_E2E_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x '(e2e|test-e2e|test)' | head -n1 || true)"
+            SHOULD_E2E_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -x '(e2e|test-e2e|test)' | head -n1 || true)"
             # Sandbox suite trigger: plain `sandbox-test` runs all tests, while
             # `sandbox-test:<tag>` labels run only tests carrying that tag
             # (multiple labels are unioned). Any matching label triggers the
             # suite.
-            SHOULD_SANDBOX_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -x 'sandbox-test(:.*)?' | head -n1 || true)"
-            SHOULD_SANDBOX_TAGS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" \
+            SHOULD_SANDBOX_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -x 'sandbox-test(:.*)?' | head -n1 || true)"
+            SHOULD_SANDBOX_TAGS="$(cat "${RUNNER_TEMP}/pr-labels.txt" \
               | sed -n 's/^sandbox-test://p' \
               | tr '\n' ',' | sed 's/,\+/,/g; s/^,//; s/,$//' || true)"
             # A plain `sandbox-test` label means "run the whole suite"; it must
             # win over any `sandbox-test:<tag>` selectors so adding the tag
             # labels alongside it never narrows the public run to zero tests.
-            if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'sandbox-test'; then
+            if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'sandbox-test'; then
               SHOULD_SANDBOX_TAGS=""
             fi
-            SHOULD_BUILD="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'build' || true)"
-            SHOULD_RELEASE_ANDROID="$(jq -r '
-              ([.pull_request.labels[]?.name // ""]
-              | map(ascii_downcase)
-              | index("release-android")) as $idx
-              | if $idx == null then "" else "release-android" end
-            ' "$GITHUB_EVENT_PATH")"
-            SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
-            SHOULD_AI_TEST_REAL="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-real' || true)"
-            SHOULD_TEST_CORE_ONLY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test-core-only' || true)"
+            SHOULD_BUILD="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'build' || true)"
+            SHOULD_RELEASE_ANDROID="$(grep -i -x 'release-android' "${RUNNER_TEMP}/pr-labels.txt" \
+              | head -n1 | tr '[:upper:]' '[:lower:]' || true)"
+            SHOULD_AI_TEST_MOCK="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-mock' || true)"
+            SHOULD_AI_TEST_REAL="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-real' || true)"
+            SHOULD_TEST_CORE_ONLY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test-core-only' || true)"
+            SHOULD_ANDROID_BUILD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'slow-android-build-test' || true)"
             # Production promotion PRs (base.ref == 'production') always run the
             # full suite. Their labels are added in one burst right after the PR
             # is opened, so each per-label event payload carries only a partial
@@ -391,6 +485,20 @@ jobs:
               SHOULD_AI_TEST_MOCK="ai-test-mock"
               SHOULD_AI_TEST_REAL="ai-test-real"
               SHOULD_TEST_CORE_ONLY="test-core-only"
+              SHOULD_ANDROID_BUILD_TEST="slow-android-build-test"
+            fi
+            # ci#833: `dev` is the non-deploying hop by design - only the
+            # `dev` -> `main` promotion PR (base `main`) dispatches the CI
+            # environment deploy - so a PR based on `dev` must never deploy even
+            # when it carries a `deploy` label. That label is either a stray
+            # leftover or a hand-made exception, and honoring it would dispatch a
+            # staging PR deploy that nothing downstream expects (the merge-time
+            # guard in `auto-approve-consolidation` only refuses to *merge* such
+            # a PR; it cannot un-dispatch an already approved deploy).
+            # Neutralise the flag here, mirroring the production arm above.
+            if [ "${{ github.event.pull_request.base.ref }}" = "dev" ]; then
+              echo "Dev-trunk PR: deployment disabled; only the dev -> main promotion PR deploys."
+              SHOULD_DEPLOY=""
             fi
             RAW_PR_NAME="$(jq -r '.pull_request.head.ref // .pull_request.title // "pr"' "$GITHUB_EVENT_PATH")"
             DISPATCH_REF="${{ github.event.pull_request.head.ref }}"
@@ -401,7 +509,11 @@ jobs:
             fi
           else
             DEPLOYMENT_NAME="${DEPLOYMENT_NAME_INPUT:-${{ env.DEPLOYMENT_STAGING }}}"
-            TARGET_REF="${TARGET_REF_INPUT:-main}"
+            if [ "${TARGET_REF_INPUT:-main}" = "custom" ]; then
+              TARGET_REF="${TARGET_REF_CUSTOM_INPUT:-main}"
+            else
+              TARGET_REF="${TARGET_REF_INPUT:-main}"
+            fi
             PR_NUMBER=""
             SOURCE_REPOSITORY="${{ github.repository }}"
             SHOULD_DEPLOY="deploy"
@@ -414,6 +526,7 @@ jobs:
             SHOULD_AI_TEST_MOCK=""
             SHOULD_AI_TEST_REAL=""
             SHOULD_TEST_CORE_ONLY=""
+            SHOULD_ANDROID_BUILD_TEST=""
             RAW_PR_NAME="$DEPLOYMENT_NAME"
             DISPATCH_REF="$TARGET_REF"
             IS_SAME_REPO_PR="true"
@@ -450,8 +563,22 @@ jobs:
             PR_NAMESPACE=""
             PR_HELM_RELEASE=""
           fi
+          # Approval gate environment. A same-repo PR targeting `main` is the
+          # consolidation / CI-environment case and uses the unprotected
+          # `msgmate-io-ci` environment, so the full suite (including the
+          # post-deploy sandbox and real-AI suites) runs without an admin
+          # confirmation. Every other PR keeps the protected
+          # `msgmate-io-pr-deployment` environment. See DEVELOPMENT.md
+          # "Pull-request CI labels and deployment policy".
+          APPROVAL_ENVIRONMENT="$DEPLOYMENT_NAME"
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+            && [ "${{ github.event.pull_request.base.ref }}" = "main" ] \
+            && [ "$IS_SAME_REPO_PR" = "true" ]; then
+            APPROVAL_ENVIRONMENT="${{ env.DEPLOYMENT_CI }}"
+          fi
           echo "ci_repository=$CI_REPOSITORY" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
+          echo "approval_environment=$APPROVAL_ENVIRONMENT" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "source_repository=$SOURCE_REPOSITORY" >> "$GITHUB_OUTPUT"
@@ -473,6 +600,7 @@ jobs:
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
           echo "should_ai_test_real=$SHOULD_AI_TEST_REAL" >> "$GITHUB_OUTPUT"
           echo "should_test_core_only=$SHOULD_TEST_CORE_ONLY" >> "$GITHUB_OUTPUT"
+          echo "should_android_build_test=$SHOULD_ANDROID_BUILD_TEST" >> "$GITHUB_OUTPUT"
           echo "dispatch_ref=$DISPATCH_REF" >> "$GITHUB_OUTPUT"
           echo "is_same_repo_pr=$IS_SAME_REPO_PR" >> "$GITHUB_OUTPUT"
           echo "Detected labels: deploy=${SHOULD_DEPLOY:-false} test=${SHOULD_TEST:-false} e2e=${SHOULD_E2E_TEST:-false} sandbox=${SHOULD_SANDBOX_TEST:-false} sandbox-tags=${SHOULD_SANDBOX_TAGS:-<all>} build=${SHOULD_BUILD:-false} release-android=${SHOULD_RELEASE_ANDROID:-false} ai-test-mock=${SHOULD_AI_TEST_MOCK:-false} ai-test-real=${SHOULD_AI_TEST_REAL:-false} test-core-only=${SHOULD_TEST_CORE_ONLY:-false}"
@@ -740,12 +868,60 @@ jobs:
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
 
+      # Per-integration checkout cache. `sync --frozen` re-validates the pinned
+      # commits and only clones what is missing, so restoring the checkouts turns
+      # the ~49s clone of ~29 repos into a few seconds.
+      #
+      # Security note (CodeQL actions/cache-poisoning/direct-cache): this workflow
+      # is also triggered by workflow_dispatch, which runs in the default-branch
+      # cache scope while checking out untrusted PR code. Caching a path *inside*
+      # the checkout would let that code write to (and poison) the default-branch
+      # cache, so the cached copy is kept in $RUNNER_TEMP - outside
+      # GITHUB_WORKSPACE - and copied in/out around the materialization step.
+      - name: Cache integration checkouts
+        id: integrations-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openchat-integrations
+          key: integrations-staged-${{ runner.os }}-${{ hashFiles('integrations.lock.json', 'profile_setup.yaml') }}
+          restore-keys: |
+            integrations-staged-${{ runner.os }}-
+
+      - name: Seed integration checkouts from cache
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$RUNNER_TEMP/openchat-integrations"
+          if [ ! -d "$CACHE_DIR" ]; then
+            echo "No cached integration checkouts; sync will clone them."
+            exit 0
+          fi
+          mkdir -p clients/integrations .integrations
+          if [ -d "$CACHE_DIR/clients/integrations" ]; then
+            cp -a "$CACHE_DIR/clients/integrations/." clients/integrations/
+          fi
+          if [ -d "$CACHE_DIR/.integrations" ]; then
+            cp -a "$CACHE_DIR/.integrations/." .integrations/
+          fi
+
       - name: Materialize full integrations
         run: |
           set -euo pipefail
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
           BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
           "$BUILD_TOOLS" sync --frozen --profile full
+
+      - name: Stage integration checkouts for the cache
+        if: always() && steps.integrations-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          CACHE_DIR="$RUNNER_TEMP/openchat-integrations"
+          mkdir -p "$CACHE_DIR/clients/integrations" "$CACHE_DIR/.integrations"
+          if [ -d clients/integrations ]; then
+            cp -a clients/integrations/. "$CACHE_DIR/clients/integrations/"
+          fi
+          if [ -d .integrations ]; then
+            cp -a .integrations/. "$CACHE_DIR/.integrations/"
+          fi
 
       - name: Resolve image metadata
         id: image
@@ -768,6 +944,29 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Persist the container's Go build cache between runs and inject it into
+      # the build through the `gobuildcache` build context (see Dockerfile). The
+      # Dockerfile's type=cache mount is intentionally NOT exported by
+      # cache-to=type=registry, so this actions/cache directory is the only
+      # durable compiler cache for the image build.
+      #
+      # Security note (CodeQL actions/cache-poisoning/direct-cache): keep the
+      # cache outside GITHUB_WORKSPACE. workflow_dispatch runs in the
+      # default-branch cache scope while checking out untrusted PR code, so an
+      # in-workspace path (e.g. .ci-cache/go-build) would let that code poison the
+      # default-branch cache. $RUNNER_TEMP is not under the checkout.
+      - name: Restore Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/open-chat-go-build-cache
+          key: docker-go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            docker-go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
+            docker-go-build-${{ runner.os }}-
+
+      - name: Ensure Go build cache directory exists
+        run: mkdir -p "$RUNNER_TEMP/open-chat-go-build-cache"
+
       - name: Build and push backend image
         id: build
         uses: docker/build-push-action@v6
@@ -779,6 +978,11 @@ jobs:
           tags: ${{ steps.image.outputs.image_url }}
           build-args: |
             INTEGRATION_PROFILE=full
+          # Bind the restored host-side Go build cache into the builder as the
+          # `gobuildcache` named context (the Dockerfile defines an empty scratch
+          # stage with the same name as the local-build fallback).
+          build-contexts: |
+            gobuildcache=${{ runner.temp }}/open-chat-go-build-cache
           # Registry layer cache (mode=max also caches intermediate stages).
           # Measured: adding a second type=gha,mode=max exporter pushed the
           # "Build Backend Image Once" job from ~5m21s to ~6m10s - the GHA cache
@@ -911,7 +1115,7 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
       (github.event.pull_request.base.ref == 'production' ||
-      contains(github.event.pull_request.labels.*.name, 'test'))))
+      needs.run-pr-ci-tests-and-deployments.outputs.should_test != '')))
     strategy:
       fail-fast: false
       matrix:
@@ -919,12 +1123,32 @@ jobs:
     outputs:
       should_test: ${{ steps.context.outputs.should_test }}
     steps:
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "Not a pull request event; no labels to resolve."
+            : > "${RUNNER_TEMP}/pr-labels.txt"
+            exit 0
+          fi
+          curl -fsSL \
+            -H "Authorization: Bearer ${LABEL_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
+            | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
+          echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
+
       - name: Resolve context and label actions
         id: context
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SHOULD_TEST="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'test' || true)"
+            SHOULD_TEST="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'test' || true)"
           else
             SHOULD_TEST="test"
           fi
@@ -959,22 +1183,54 @@ jobs:
             go-build-${{ runner.os }}-${{ hashFiles('backend/go.sum', 'integrations.lock.json') }}-
             go-build-${{ runner.os }}-
 
+      - name: Cache integration checkouts
+        if: steps.context.outputs.should_test != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            clients/integrations
+            .integrations
+          key: integrations-${{ runner.os }}-${{ hashFiles('integrations.lock.json', 'profile_setup.yaml') }}
+          restore-keys: |
+            integrations-${{ runner.os }}-
+
       - name: Materialize full integration test module set
         if: steps.context.outputs.should_test != ''
         run: |
           set -euo pipefail
           # Private integration repos require auth for git clone.
           git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
-          "$BUILD_TOOLS" sync --frozen --profile full
-          "$BUILD_TOOLS" resolve --profile full
+          # This step runs on all four Go-test shards (plus the image build)
+          # concurrently, so a transient pip/git/module-proxy hiccup on one
+          # runner must not fail that shard before tests even start. Every
+          # command below is idempotent, so retry a bounded number of times
+          # before surfacing a genuine error (mirrors backend/full_build.sh).
+          retry() {
+            local attempt=1 max=3 delay=15
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "::error::'$*' failed after $max attempts"
+                return 1
+              fi
+              echo "'$*' failed (attempt ${attempt}/${max}); retrying in ${delay}s..." >&2
+              attempt=$((attempt + 1))
+              sleep "$delay"
+            done
+          }
+          download_modules() { (cd backend && go mod download); }
+          BUILD_TOOLS="$(retry bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          retry "$BUILD_TOOLS" sync --frozen --profile full
+          retry "$BUILD_TOOLS" resolve --profile full
           echo "GOWORK=${GITHUB_WORKSPACE}/backend/go.work" >> "$GITHUB_ENV"
           TAGS="$(cat backend/.generated/build_tags 2>/dev/null || true)"
           if [ -n "$TAGS" ]; then
             echo "GOFLAGS=-tags=${TAGS}" >> "$GITHUB_ENV"
           fi
           # Populate the module cache used by the workspace before tests run.
-          (cd backend && go mod download)
+          # Network hiccups (e.g. module proxy stream errors mid-download) can
+          # abort the fetch after minutes of transfer; retry instead of
+          # failing the shard (mirrors backend/full_build.sh).
+          retry download_modules
 
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
@@ -1063,7 +1319,7 @@ jobs:
       needs.build-backend-image-once.result == 'success' &&
       github.event_name == 'pull_request' && github.event.action != 'closed' &&
       (github.event.pull_request.base.ref == 'production' ||
-      contains(github.event.pull_request.labels.*.name, 'ai-test-mock'))
+      needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       ai_mock_status: ${{ steps.finalize.outputs.ai_mock_status }}
@@ -1071,12 +1327,32 @@ jobs:
       AI_TEST_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       AI_TEST_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
     steps:
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "Not a pull request event; no labels to resolve."
+            : > "${RUNNER_TEMP}/pr-labels.txt"
+            exit 0
+          fi
+          curl -fsSL \
+            -H "Authorization: Bearer ${LABEL_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
+            | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
+          echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
+
       - name: Resolve context and label actions
         id: context
         run: |
           set -euo pipefail
-          SHOULD_AI_TEST_MOCK="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'ai-test-mock' || true)"
-          SHOULD_DEPLOY="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -x 'deploy' || true)"
+          SHOULD_AI_TEST_MOCK="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'ai-test-mock' || true)"
+          SHOULD_DEPLOY="$(cat "${RUNNER_TEMP}/pr-labels.txt" | grep -x 'deploy' || true)"
           echo "should_ai_test_mock=$SHOULD_AI_TEST_MOCK" >> "$GITHUB_OUTPUT"
           echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
 
@@ -1416,7 +1692,7 @@ jobs:
       needs.run-pr-ci-tests-and-deployments.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
+        (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     outputs:
       image_url: ${{ steps.image.outputs.image_url }}
     steps:
@@ -1525,7 +1801,7 @@ jobs:
       (needs.sandbox-android-image-ensure.result == 'success' || needs.sandbox-android-image-ensure.result == 'skipped') &&
       ((github.event_name == 'workflow_dispatch' && github.event.inputs.callback_action == '') ||
        (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-        (contains(github.event.pull_request.labels.*.name, 'slow-android-build-test'))))
+        (needs.run-pr-ci-tests-and-deployments.outputs.should_android_build_test != '')))
     steps:
       - name: Free runner disk space
         uses: jlumbroso/free-disk-space@main
@@ -1639,7 +1915,9 @@ jobs:
     # Second sandbox layer: the private CI repository runs the extended suite
     # (LITTLE WORLD + rest_api_tool, etc.) in parallel with the public sandbox
     # benchmark above. Results are kept privately in the CI repo; the private
-    # workflow links the report from a PR comment and a commit status.
+    # workflow links the report from a PR comment (and, on a `main` run, from a
+    # commit status -- never on a PR head, so an informational status can never
+    # make GitHub report `mergeable_state: blocked`, ci#683).
     needs: [run-pr-ci-tests-and-deployments, build-backend-image-once, approve-and-dispatch-deploy]
     if: |
       always() &&
@@ -1712,7 +1990,16 @@ jobs:
   update-progress-comment-after-tests:
     name: Update Progress Comment After Tests
     runs-on: ubuntu-latest
-    needs: [run-pr-ci-tests-and-deployments]
+    # ci#833 follow-up: wait for the suites this job renders. Without these
+    # needs, a test-only PR (no `deploy`, no `ai-test-real`) re-rendered the
+    # dispatch-era template after the suites had already finished, so the
+    # `(4) test` line stayed at `go=running`. The only renderers with terminal
+    # values are `update-progress-comment-after-approved-dispatch` (needs the
+    # `deploy` label) and `update-progress-comment-after-ai-real` (needs
+    # `ai-test-real`), so for that label set nothing ever reconciled the line.
+    # Run 39866169619 on PR #1033 finished green while the comment still read
+    # `go=running`.
+    needs: [run-pr-ci-tests-and-deployments, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests]
     if: always() && github.event_name == 'pull_request' && github.event.action != 'closed'
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
@@ -1731,12 +2018,35 @@ jobs:
           profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render test-complete progress comment
+        env:
+          # ci#745: thread the comment target explicitly. The sibling steps read
+          # the workflow outputs, but when the upstream job is skipped those
+          # outputs are empty and the URLs collapse to
+          # `repos//issues//comments` (HTTP 404, curl exit 22). Fall back to the
+          # event context so repository/PR number are always populated.
+          SOURCE_REPOSITORY: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository || github.repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number || github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # ci#745 fail-safe: never 404-loop on an empty comment target.
+          if [ -z "${SOURCE_REPOSITORY:-}" ] || [ -z "${PR_NUMBER:-}" ]; then
+            echo "::warning::Skipping test-complete progress comment: repository='${SOURCE_REPOSITORY:-}' pr_number='${PR_NUMBER:-}' are empty."
+            exit 0
+          fi
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
           TPL_STEP_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' && format('- [x] `(2) build` `image={0}`', needs.run-pr-ci-tests-and-deployments.outputs.image_url) || '- [ ] ~~`(2) build` `skipped`~~' }}'
           TPL_STEP_DEPLOY='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_deploy != '' && format('- [ ] `(3) deploy` [`url={0}`]({0}) [`approve here`]({1})', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id)) || '- [ ] ~~`(3) deploy` `skipped`~~' }}'
-          TPL_STEP_TEST='${{ (needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' || needs.run-pr-ci-tests-and-deployments.outputs.should_e2e_test != '') && format('- [ ] `(4) test` `go={3}` `ai-mock={4}` `ai-real={5}`', needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_url, github.run_id, needs.run-pr-ci-tests-and-deployments.outputs.pr_number, needs.run-pr-ci-tests-and-deployments.outputs.should_test != '' && 'running' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_mock != '' && 'running' || 'skipped', needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
+          # ci#833 follow-up: this step runs last and now renders the suite
+          # results instead of the dispatch-era literals, so a test-only PR no
+          # longer sticks at `go=running`. The go/ai-mock mapping
+          # (success -> passed, skipped -> skipped, else failed) is the one
+          # already proven in update-progress-comment-after-approved-dispatch.
+          # `ai-real` only runs after an approved deploy, so it stays `running`
+          # while the `ai-test-real` label asked for it.
+          # Shape note: .github/workflows/build.yaml scrapes this bullet verbatim
+          # out of the existing comment, so it must keep the
+          # '- [x] `(4) test` `go=...`' spelling.
+          TPL_STEP_TEST='${{ (needs.run-pr-ci-go-tests.result != 'skipped' || needs.run-pr-ci-ai-mock-tests.result != 'skipped' || needs.run-pr-ci-e2e-tests.result != 'skipped' || needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '') && format('- [x] `(4) test` `go={0}` `ai-mock={1}` `ai-real={2}`', needs.run-pr-ci-go-tests.result == 'success' && 'passed' || (needs.run-pr-ci-go-tests.result == 'skipped' && 'skipped' || 'failed'), needs.run-pr-ci-ai-mock-tests.result == 'success' && (needs.run-pr-ci-ai-mock-tests.outputs.ai_mock_status || 'passed') || (needs.run-pr-ci-ai-mock-tests.result == 'skipped' && 'skipped' || 'failed'), needs.run-pr-ci-tests-and-deployments.outputs.should_ai_test_real != '' && 'running' || 'skipped') || '- [ ] ~~`(4) test` `skipped`~~' }}'
           TPL_STEP_RELEASE_BUILD='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && '- [ ] `(5) release build`' || '- [ ] ~~`(5) release build` `skipped`~~' }}'
           TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
@@ -1747,7 +2057,7 @@ jobs:
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${PR_NUMBER}/comments" \
               | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
           })"
           if [ -n "$comment_id" ]; then
@@ -1755,42 +2065,42 @@ jobs:
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/comments/${comment_id}" \
               -d "$payload"
           else
             curl -fsSL -X POST \
               -H "Authorization: Bearer ${COMMENT_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
+              "https://api.github.com/repos/${SOURCE_REPOSITORY}/issues/${PR_NUMBER}/comments" \
               -d "$payload"
           fi
 
+  # ci#734: the planner no longer creates fix-plan sessions on every failed PR.
+  # A failed CI run is relayed - quietly - to the open-chat-go development lead,
+  # and only for consolidation PRs (`chore/consolidate-*` -> `main`). Feature and
+  # bugfix PRs get no comment and no interaction at all. The job id/name are kept
+  # unchanged so any required status check keeps reporting.
   ci-failure-planner:
     name: CI Failure Planner (Open-Chat)
     runs-on: ubuntu-latest
     needs: [run-pr-ci-tests-and-deployments, run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, build-backend-image-once]
-    # Security trigger scope: PR events only; the review ping comment is authored
-    # by github-actions (never the rely-on bot user) and notes the failure so the
-    # author can see it. The planning interaction - and, via the server-side
-    # plan_auto_implement post-action, the coding agent - are dispatched directly
-    # through the Open-Chat client; no reusable trigger workflow is involved.
+    # Security trigger scope: same-repo PR events only, and only when the head
+    # branch is a consolidation branch targeting main. Everything else is
+    # intentionally silent: no comment, no interaction, no plan session.
     if: >-
       always() &&
       github.event_name == 'pull_request' &&
       github.event.action != 'closed' &&
       (needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true') &&
-      (contains(needs.*.result, 'failure'))
+      (contains(needs.*.result, 'failure')) &&
+      github.base_ref == 'main' &&
+      startsWith(github.event.pull_request.head.ref, 'chore/consolidate-')
     env:
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-      BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
     steps:
-      - name: Install Open-Chat python client
-        env:
-          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-          pip install "git+https://x-access-token:${GH_TOKEN}@github.com/msgmate-io/open-chat-go-python-client.git"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Collect failing job details
         id: failure
@@ -1802,259 +2112,311 @@ jobs:
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")"
-          {
-            echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo "pr_number=${{ github.event.pull_request.number }}"
-            echo "failed_jobs<<FAILED_JOBS_EOF"
-            jq -r '.jobs[] | select(.conclusion == "failure") | "- [`\(.name)`](\(.html_url))"' <<< "$RUN_JOBS_JSON"
-            echo "FAILED_JOBS_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Count failed CI fix-plan attempts
-        id: attempts
-        env:
-          PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          COMMENTS_JSON="$(curl -fsSL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments?per_page=100")"
-          # Every automatic failure cycle posts a `<!-- open-chat-ci-failure-plan -->`
-          # comment and a fix-plan implementation follows; the marker count is the
-          # durable attempt state for this PR.
-          PREVIOUS="$(jq '[.[] | select(.body | contains("<!-- open-chat-ci-failure-plan -->"))] | length' <<< "$COMMENTS_JSON")"
-          ATTEMPT=$((PREVIOUS + 1))
-          MAX_ATTEMPTS="${{ vars.CI_FIX_MAX_ATTEMPTS || 3 }}"
-          echo "attempt=${ATTEMPT}" >> "$GITHUB_OUTPUT"
-          echo "max_attempts=${MAX_ATTEMPTS}" >> "$GITHUB_OUTPUT"
-          if [ "${ATTEMPT}" -gt "${MAX_ATTEMPTS}" ]; then
-            echo "exhausted=true" >> "$GITHUB_OUTPUT"
-            comment_body="$(printf '%s\n' \
-              "<!-- open-chat-ci-failure-plan -->" \
-              ":warning: **CI fix-cycle limit reached (${ATTEMPT}/${MAX_ATTEMPTS} attempts).**" \
-              "" \
-              "Automatic planning/implementation sessions are stopped for this PR - maintainer intervention is required.")"
-            payload="$(jq -n --arg body "$comment_body" '{body: $body}')"
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+          # ci#606: the relayed `ci_failure` payload also carries a short excerpt
+          # of each failed job's tail, so the development lead has an error line
+          # to triage on instead of job names only (the `failure_logs` field of
+          # the ci#607/#608 contract). The excerpt is truncated, never echoed to
+          # the log, and read with the repo-scoped token; no secret is emitted.
+          FAILURE_LOGS=""
+          while read -r job_id job_name; do
+            [ -n "${job_id:-}" ] || continue
+            job_tail="$(curl -fsSL -L \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-              -d "$payload"
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels" \
-              -d '{"labels":["ci-fix-blocked"]}'
-          fi
+              "https://api.github.com/repos/${{ github.repository }}/actions/jobs/${job_id}/logs" 2>/dev/null \
+              | tail -c 1200 | tr -cd '\11\12\15\40-\176' || true)"
+            if [ -n "$job_tail" ]; then
+              FAILURE_LOGS="${FAILURE_LOGS}${job_name}: ${job_tail}"$'\n'
+            fi
+          done < <(jq -r '.jobs[] | select(.conclusion == "failure") | "\(.id) \(.name)"' <<< "$RUN_JOBS_JSON")
+          # keep the payload printable ASCII so jq never chokes on raw log bytes
+          FAILURE_LOGS="$(printf '%s' "$FAILURE_LOGS" | tr -cd '\11\12\15\40-\176')"
+          FAILURE_LOGS="${FAILURE_LOGS:0:3800}"
+          jq -n \
+            --arg repo "${{ github.repository }}" \
+            --argjson pr_number "${{ github.event.pull_request.number }}" \
+            --arg pr_branch "${{ github.event.pull_request.head.ref }}" \
+            --arg pr_sha "${{ github.event.pull_request.head.sha }}" \
+            --arg base_ref "${{ github.base_ref }}" \
+            --arg run_url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg failure_logs "$FAILURE_LOGS" \
+            --argjson failed_jobs "$(jq -c '[.jobs[] | select(.conclusion == "failure") | {name, html_url}]' <<< "$RUN_JOBS_JSON")" \
+            '{repo: $repo, pr_number: $pr_number, pr_branch: $pr_branch, pr_sha: $pr_sha, base_ref: $base_ref, run_url: $run_url, failed_jobs: $failed_jobs, failure_logs: $failure_logs}' \
+            > "$RUNNER_TEMP/ci-failure-event.json"
 
-      - name: Post CI failure review ping comment on the PR
-        if: steps.attempts.outputs.exhausted != 'true'
-        env:
-          PR_NUMBER: ${{ steps.failure.outputs.pr_number }}
-          RUN_URL: ${{ steps.failure.outputs.run_url }}
-          FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
-          ATTEMPT: ${{ steps.attempts.outputs.attempt }}
-          MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
-          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
-        run: |
-          set -euo pipefail
-          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
-            PLAN_NOTE="@${BOT_USER} a fix-plan + implementation session has been dispatched; follow the fix-plan issue linked in the follow-up comments."
-          else
-            PLAN_NOTE="@${BOT_USER} a fix-plan session has been created and is **awaiting approval before it starts**; open the fix-plan interaction from the badge below and approve the pending confirmation to start the read-only planner."
-          fi
-          COMMENT_BODY="$(cat <<EOF
-          <!-- open-chat-ci-failure-plan -->
-          :x: **PR CI run failed** (fix attempt ${ATTEMPT}/${MAX_ATTEMPTS})
-
-          Failed jobs:
-          ${FAILED_JOBS}
-
-          Run: ${RUN_URL}
-
-          ${PLAN_NOTE}
-          EOF
-          )"
-          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.failure.outputs.pr_number }}/comments" \
-            -d "$payload"
-
-      - name: Dispatch Open-Chat fix-plan interaction
-        id: interaction
-        if: steps.attempts.outputs.exhausted != 'true'
+      - name: Relay the failure to the development lead
         env:
           OPEN_CHAT_API_TOKEN: ${{ secrets.OPEN_CHAT_API_TOKEN }}
           OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
-          OPEN_CHAT_PLAN_BOT: ${{ vars.OPEN_CHAT_PLAN_BOT || 'issue-plan-bot' }}
-          OPEN_CHAT_IMPLEMENT_BOT: ${{ vars.OPEN_CHAT_IMPLEMENT_BOT || vars.OPEN_CHAT_CODING_BOT || 'open-chat-go-repl-bot' }}
-          BOT_USER: ${{ github.event.inputs.BOT_USER || 'cur1ousdude' }}
-          FAILED_JOBS: ${{ steps.failure.outputs.failed_jobs }}
-          RUN_URL: ${{ steps.failure.outputs.run_url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_SHA: ${{ github.event.pull_request.head.sha }}
-          REPO: ${{ github.repository }}
-          ATTEMPT: ${{ steps.attempts.outputs.attempt }}
-          MAX_ATTEMPTS: ${{ steps.attempts.outputs.max_attempts }}
-          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
+          OPEN_CHAT_LEAD_BOT: ${{ vars.OPEN_CHAT_LEAD_BOT || 'msgmate-coder-development-lead' }}
+          OPEN_CHAT_LEAD_CHAT_UUID: ${{ vars.OPEN_CHAT_LEAD_CHAT_UUID || '' }}
+          GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CI_FIX_MAX_ATTEMPTS: ${{ vars.CI_FIX_MAX_ATTEMPTS || '3' }}
+          DRY_RUN: ${{ github.event.inputs.DRY_RUN || '' }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os, json
-          from client.client import OpenChatClient, TokenAuth
+          python3 development/scripts/ci_failure_relay.py relay --event "$RUNNER_TEMP/ci-failure-event.json"
 
-          require_confirmation = os.environ.get("REQUIRE_CONFIRMATION", "true").strip().lower() in ("true", "1", "yes")
-          post_action = {
-              "kind": "plan_auto_implement",
-              "repo": os.environ["REPO"],
-              "number": int(os.environ["PR_NUMBER"]),
-              # The server-side plan_auto_implement action posts the plan as a PR
-              # comment and dispatches the coding agent as a separate,
-              # confirmation-gated interaction. No comment-REPL / reusable
-              # workflow is involved; the dispatch is self-contained.
-              "bot": os.environ["OPEN_CHAT_IMPLEMENT_BOT"],
-              "require_confirmation": require_confirmation,
-              "post_badge": True,
-              "header": (
-                  "<!-- open-chat-post-interaction -->\n"
-                  "## Open-Chat CI fix-plan report (PR #" + os.environ["PR_NUMBER"] + ")"
-              ),
-              "footer": (
-                  "Attempt " + os.environ["ATTEMPT"] + "/" + os.environ["MAX_ATTEMPTS"]
-                  + " | run: " + os.environ["RUN_URL"] + " | PR: " + os.environ["PR_URL"] + "\n\n"
-                  "When the plan is ready, the coding agent runs as a separate"
-                  + (" confirmation-gated" if require_confirmation else "")
-                  + " interaction; approve the implementation badge to start it. The agent should "
-                  "create or update a '[CI fix plan] PR #"
-                  + os.environ["PR_NUMBER"] + "' issue, implement the plan on the PR branch ("
-                  + os.environ["PR_BRANCH"] + ", head "
-                  + os.environ["PR_SHA"] + ") and push the fix commits so CI re-runs. Never poll CI."
-              ),
-          }
-          message = (
-              "You are a CI-failure planning agent reacting to a failed PR CI run.\n"
-              "Investigate the failing CI job for the pull request below using the gh CLI\n"
-              "(gh run list/watch/view --log-failed for the failing run number) and\n"
-              "the repository code. Determine the root cause and prepare a fix plan.\n"
-              "You operate in PLAN MODE: read-only investigation only - do NOT push\n"
-              "commits and do NOT create issues, comments or pull requests yourself.\n"
-              "Produce the plan as your final chat message; the Open-Chat server posts\n"
-              "it automatically as a PR comment when the interaction finishes.\n"
-              "Structure the final message as:\n"
-              "1. '## Root cause' - one-paragraph root-cause analysis with evidence from\n"
-              "   logs/code.\n"
-              "2. '## Fix plan' - a numbered list of small, ordered implementation steps\n"
-              "   a coding agent can execute 1:1 on the PR branch (concrete: file\n"
-              "   paths, commands, expected results).\n"
-              "3. '## Verification' - how the fix can be verified locally and by CI.\n"
-              "Do not include anything else in the final message.\n"
-              "\n"
-              "Context:\n"
-              + "- Repository: " + os.environ["REPO"] + "\n"
-              + "- PR number: " + os.environ["PR_NUMBER"] + "\n"
-              + "- PR title: " + os.environ["PR_TITLE"] + "\n"
-              + "- PR url: " + os.environ["PR_URL"] + "\n"
-              + "- CI run url: " + os.environ["RUN_URL"] + "\n"
-              + "- Fix attempt (of max " + os.environ["MAX_ATTEMPTS"] + "): " + os.environ["ATTEMPT"] + "\n"
-              + "\nFailing jobs (markdown links):\n"
-              + os.environ["FAILED_JOBS"] + "\n"
-          )
-          message = message + ("\n\n(Meta block for the plan issue, paste into the issue body "
-                               "when created, keep verbatim:)\n"
-                               + json.dumps({"pr_number": int(os.environ["PR_NUMBER"]),
-                                             "pr_branch": os.environ["PR_BRANCH"],
-                                             "attempt": int(os.environ["ATTEMPT"]),
-                                             "max_attempts": int(os.environ["MAX_ATTEMPTS"]),
-                                             "run_url": os.environ["RUN_URL"]}))
-          message = message + ("\nFailing jobs (markdown links):\n"
-                               + os.environ["FAILED_JOBS"] + "\n")
-          message = message + ("CI run url: " + os.environ["RUN_URL"] + "\n")
-          message = message + ("PR url: " + os.environ["PR_URL"] + "\n")
-          if require_confirmation:
-              message = message + ("\nNOTE: this planning interaction is confirmation-gated; it will not start until the owner approves the pending confirmation.\n")
+  # ci#734: dry-run the consolidation-PR relay from the Actions UI. This job
+  # performs **no** API call at all - no PR comment and no lead message - and
+  # only prints the message and comment body the real relay would produce, so
+  # the routing can be inspected without touching a live lead interaction.
+  ci-failure-relay-dry-run:
+    name: CI Failure Relay Dry Run (Open-Chat)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.DRY_RUN == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-          client = OpenChatClient(
-              base_url=os.environ.get("OPEN_CHAT_HOST", "https://ci.msgmate.io"),
-              auth=TokenAuth(token=os.environ["OPEN_CHAT_API_TOKEN"]),
-          )
-          me = client.me()
-          print("Authenticated as:", me.name)
-          bot = client.get_bot(os.environ.get("OPEN_CHAT_PLAN_BOT", "issue-plan-bot"))
-          overrides = {"post_action": post_action, "require_confirmation": require_confirmation}
-          interaction = bot.create_interaction(message=message, overrides=overrides, share=True)
-          print("Created interaction chat:", interaction.uuid)
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"chat_uuid={interaction.uuid}\n")
-              share_uuid = getattr(interaction, "_chat_share_uuid", None)
-              if share_uuid:
-                  out.write(f"chat_share_uuid={share_uuid}\n")
-                  out.write(f"shared_url={interaction.shared_url()}\n")
-          PY
-      - name: Reply on PR with planner badge
-        if: steps.interaction.outputs.chat_uuid != ''
+      - name: Build the synthetic CI-failure event
         env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          SHARED_URL: ${{ steps.interaction.outputs.shared_url }}
-          CHAT_UUID: ${{ steps.interaction.outputs.chat_uuid }}
-          SHARE_UUID: ${{ steps.interaction.outputs.chat_share_uuid }}
-          OPEN_CHAT_HOST: ${{ vars.OPEN_CHAT_HOST || 'https://ci.msgmate.io' }}
-          REQUIRE_CONFIRMATION: ${{ vars.CI_FIX_REQUIRE_CONFIRMATION || 'true' }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+          PR_BRANCH: ${{ github.event.inputs.pr_branch }}
+          PR_SHA: ${{ github.event.inputs.pr_sha }}
         run: |
           set -euo pipefail
-          INTERACTION_URL="${SHARED_URL:-${OPEN_CHAT_HOST}/interaction/${CHAT_UUID}}"
-          SHARE_OR_CHAT_UUID="${SHARE_UUID:-${CHAT_UUID}}"
-          BADGE_URL="${OPEN_CHAT_HOST%/}/api/interaction/${SHARE_OR_CHAT_UUID}/badge.svg"
-          if [ "${REQUIRE_CONFIRMATION}" = "false" ]; then
-            NOTE="*Fix-plan agent started for this CI failure; click the badge above to watch live progress. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate interaction.*"
-          else
-            NOTE="*A fix-plan session was created for this CI failure and is **awaiting approval**: click the badge above, review it and approve the pending confirmation to start the read-only planner. When the plan is ready Open-Chat posts it as a PR comment and dispatches the implementation agent as a separate, confirmation-gated interaction.*"
-          fi
-          COMMENT_BODY="$(printf '%s\n' \
-            "[![open-chat fix plan session](%s)](%s)" \
-            "${NOTE}")"
-          COMMENT_BODY="$(printf "$COMMENT_BODY" "$BADGE_URL" "$INTERACTION_URL")"
-          payload="$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')"
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ steps.failure.outputs.pr_number }}/comments" \
-            -d "$payload"
+          jq -n \
+            --arg repo "$REPO" \
+            --arg pr_branch "$PR_BRANCH" \
+            --arg pr_sha "$PR_SHA" \
+            --argjson pr_number "${PR_NUMBER:-0}" \
+            '{repo: $repo, pr_number: $pr_number, pr_branch: $pr_branch, pr_sha: $pr_sha, base_ref: "main", run_url: "", failed_jobs: []}' \
+            > "$RUNNER_TEMP/ci-failure-event.json"
+
+      - name: Dry-run the relay to the development lead
+        env:
+          OPEN_CHAT_LEAD_BOT: ${{ vars.OPEN_CHAT_LEAD_BOT || 'msgmate-coder-development-lead' }}
+          OPEN_CHAT_LEAD_CHAT_UUID: ${{ vars.OPEN_CHAT_LEAD_CHAT_UUID || '' }}
+          CI_FIX_MAX_ATTEMPTS: ${{ vars.CI_FIX_MAX_ATTEMPTS || '3' }}
+          DRY_RUN: "true"
+        run: |
+          set -euo pipefail
+          python3 development/scripts/ci_failure_relay.py relay \
+            --event "$RUNNER_TEMP/ci-failure-event.json" --dry-run
 
   pr-test-merge-requirement:
     name: PR Test Merge Requirement
     runs-on: ubuntu-latest
+    # ci#659: this job is a label-driven gate, so it must never decide from the
+    # event payload snapshot (`gh pr create -l ...` labels the PR in a second
+    # API call, leaving the `opened` payload label-free). Every label read below
+    # consumes the live label list fetched in the first step.
     needs: [run-pr-ci-go-tests, run-pr-ci-ai-mock-tests, run-pr-ci-e2e-tests, run-pr-ci-sandbox-tests-after-deploy]
     if: |
       always() &&
       github.event_name == 'pull_request' &&
       github.event.action != 'closed'
     steps:
+      # ci#659: the superseded-run reconciliation below executes a repository
+      # script, so the workspace must be checked out first. Without this the step
+      # failed with "python3: can't open file .../pr_ci_superseded_reconcile.py"
+      # and, being continue-on-error, silently reported accepted=false (observed
+      # on run 39261844509, PR #844): the gate stayed red for a genuinely
+      # superseded run. Pin the PR head so the reconciler that runs is the one
+      # from the commit being gated.
+      - name: Checkout source repository for the superseded-run reconciler
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Resolve the pull request's live labels
+        id: live_labels
+        env:
+          LABEL_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "Not a pull request event; no labels to resolve."
+            : > "${RUNNER_TEMP}/pr-labels.txt"
+            exit 0
+          fi
+          curl -fsSL \
+            -H "Authorization: Bearer ${LABEL_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/labels?per_page=100" \
+            | jq -r '.[].name' > "${RUNNER_TEMP}/pr-labels.txt"
+          echo "Live PR labels: $(tr '\n' ' ' < "${RUNNER_TEMP}/pr-labels.txt")"
+
+      - name: Require a linked open-chat-go-ci leaf issue
+        # ci#813: every feature/bugfix PR implements exactly one leaf issue in
+        # the private tracker; consolidation PRs must list every leaf issue they
+        # close. GitHub cannot auto-close a cross-repository issue, so this gate
+        # and the post-merge closure in the auto-consolidation runner own the
+        # invariant. Keep this regex in sync with nativecoder.LinkedIssueNumbers.
+        env:
+          LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::warning::Fork PR: linked-issue gate skipped; a maintainer must verify the leaf-issue link."
+            exit 0
+          fi
+          if [ "${{ github.event.pull_request.base.ref }}" = "production" ]; then
+            echo "Production promotion PR: linked-issue gate exempt."
+            exit 0
+          fi
+          consolidation=false
+          case "${{ github.event.pull_request.head.ref }}" in
+            chore/consolidate*) consolidation=true ;;
+          esac
+          if [ "$consolidation" != true ]; then
+            if grep -qx 'dependencies' "${RUNNER_TEMP}/pr-labels.txt"; then
+              echo "Dependency PR: linked-issue gate exempt."
+              exit 0
+            fi
+            if grep -qx 'no-issue' "${RUNNER_TEMP}/pr-labels.txt"; then
+              echo "no-issue PR: linked-issue gate exempt."
+              exit 0
+            fi
+          fi
+          jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          # ci#824: a closing line must be standalone, exactly like
+          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
+          # line (`[ \t]*$`). Without that anchor this pattern also matched
+          # prose such as "Fix ci#824: crash on empty config" or
+          # "Closes ci#824 and also ci#999", importing leaf issues the author
+          # never linked - while the Go parser used by the consolidation runner
+          # ignored them. The two copies are pinned together by
+          # TestWorkflowLinkedIssueGrepStaysAnchored.
+          mapfile -t issues < <(
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
+              | sed -E 's/.*#([0-9]+).*/\1/' \
+              | sort -n -u
+          )
+          if [ "${#issues[@]}" -eq 0 ]; then
+            echo "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line."
+            exit 1
+          fi
+          if [ "$consolidation" != true ] && [ "${#issues[@]}" -ne 1 ]; then
+            echo "::error::A feature/bugfix PR must close exactly one leaf issue; found ${#issues[@]}. Split the work or use a consolidation PR."
+            exit 1
+          fi
+          for number in "${issues[@]}"; do
+            issue="$(curl -fsSL \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/msgmate-io/open-chat-go-ci/issues/${number}")" || {
+                echo "::error::Linked issue ci#${number} was not found in msgmate-io/open-chat-go-ci."
+                exit 1
+              }
+            if jq -e '.pull_request' >/dev/null <<<"$issue"; then
+              echo "::error::ci#${number} is a pull request, not an issue."
+              exit 1
+            fi
+            state="$(jq -r '.state' <<<"$issue")"
+            if [ "$state" != "open" ]; then
+              echo "::error::Linked issue ci#${number} is ${state}; link an open leaf issue."
+              exit 1
+            fi
+            if jq -e '.labels[]? | select(.name == "umbrella")' >/dev/null <<<"$issue"; then
+              echo "::error::ci#${number} is an umbrella issue; link a leaf child issue."
+              exit 1
+            fi
+            echo "Linked CI issue ci#${number} is open and not an umbrella."
+          done
+
+      # ci#659: a cancelled CI run is not a test failure . The workflow concurrency
+      # group is keyed by PR number *and* head SHA with `cancel-in-progress: true`,
+      # and the later job "Cancel superseded workflow runs for this PR" cancels
+      # same-branch runs as well. A burst of `labeled`/`unlabeled` events therefore
+      # cancels the in-flight run for the *identical* commit, while this always()
+      # gated job still executes inside that cancelled run with every
+      # `needs.*.result` equal to `cancelled` - which reported the required check
+      # `PR Test Merge Requirement` as failed for a commit whose tests never ran
+      # (run 39245536652 on PR #835, whose replacement run then starved in queue).
+      #
+      # Blanket-passing the cancelled case would make an untested tree look
+      # mergeable, so the cancellation is reconciled instead:
+      # development/scripts/pr_ci_superseded_reconcile.py accepts only when the
+      # commit no longer needs gating (PR closed, or a newer commit is the live PR
+      # head) or when a *replacement* run for the exact same commit reached this
+      # same gate job with a real verdict, whose conclusion is adopted. Everything
+      # else (no replacement, replacement still running, unknown/cancelled job
+      # state, API failure) fails closed. Output: accepted=true|false.
+      - name: Reconcile a superseded (cancelled) CI run
+        id: superseded-reconcile
+        continue-on-error: true
+        if: >-
+          needs.run-pr-ci-go-tests.result == 'cancelled' ||
+          needs.run-pr-ci-ai-mock-tests.result == 'cancelled' ||
+          needs.run-pr-ci-e2e-tests.result == 'cancelled' ||
+          needs.run-pr-ci-sandbox-tests-after-deploy.result == 'cancelled'
+        env:
+          GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_CI_SUPERSEDED_WAIT_SECONDS: ${{ vars.PR_CI_SUPERSEDED_WAIT_SECONDS || '3600' }}
+          # ci#659: a cancelled run holds the `pr-ci-<PR>-<SHA>` concurrency
+          # group for as long as this `always()`-gated job waits, so a
+          # replacement run for the SAME commit can be starved by us (observed
+          # on #892: run 39407028825 stayed `pending` for 12+ minutes with an
+          # empty repository queue). Once a replacement has been unable to
+          # start for this many seconds the reconciler cancels this run to hand
+          # the group over and reports accepted=false; the replacement run's
+          # gate owns the verdict from then on.
+          PR_CI_SUPERSEDED_YIELD_SECONDS: ${{ vars.PR_CI_SUPERSEDED_YIELD_SECONDS || '60' }}
+        run: |
+          set -uo pipefail
+          set +e
+          # The reconciler lives in the checkout above. Fail closed *and loudly*
+          # if it is missing: the original "can't open file" was invisible behind
+          # `continue-on-error`, which is how the missing checkout went unnoticed.
+          if [ ! -f development/scripts/pr_ci_superseded_reconcile.py ]; then
+            echo "::error::pr_ci_superseded_reconcile.py is missing from the checkout; the gate stays red."
+            echo "accepted=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          python3 development/scripts/pr_ci_superseded_reconcile.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --run-id "${{ github.run_id }}"
+          reconcile_status=$?
+          set -e
+          if [ "${reconcile_status}" -eq 0 ]; then
+            accepted=true
+          else
+            accepted=false
+          fi
+          # Never fail here; the gate step below decides and prints the reason
+          # next to the existing label and result checks.
+          echo "accepted=${accepted}" >> "${GITHUB_OUTPUT}"
+
       - name: Enforce test label and passing tests
         run: |
+          # ci#659: outcome of the superseded-run reconciliation step above
+          # (empty when it did not run, i.e. no upstream suite was cancelled).
+          superseded_accepted="${{ steps.superseded-reconcile.outputs.accepted }}"
+          # A cancelled gate is only acceptable when this run was superseded: the
+          # commit no longer needs gating (PR closed, or a newer commit is the live
+          # PR head) or a replacement run for the exact same commit reached this same
+          # gate job and produced a real verdict, which is adopted here. Everything
+          # else keeps the gate red, so an untested tree can never look mergeable.
+          accept_superseded() {
+            if [ "${superseded_accepted}" = "true" ]; then
+              echo "::notice::$1 were superseded on this commit; adopting the verdict of the replacement run instead of failing the gate."
+              return 0
+            fi
+            echo "::error::$1 were cancelled and this run was not accepted as superseded, so the gate stays red."
+            return 1
+          }
           set -euo pipefail
           # Production promotion PRs run the full suite without relying on
           # labels (burst label-adds race with the event payload snapshot).
           if [ "${{ github.event.pull_request.base.ref }}" != "production" ] &&
-             ! jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e|sandbox-test(:.*)?)'; then
+             ! cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -qx '(test|test-e2e|e2e|sandbox-test(:.*)?)'; then
             echo "::error::PR is missing the required test label."
             exit 1
           fi
           case "${{ needs.run-pr-ci-go-tests.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'test'; then
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test'; then
                 echo "::error::PR CI did not run for this commit with the test label."
                 exit 1
               fi
@@ -2064,44 +2426,43 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI was cancelled."
-              exit 1
+              accept_superseded "PR CI" || exit 1
               ;;
             *)
               echo "::error::PR CI ended with unexpected result: ${{ needs.run-pr-ci-go-tests.result }}"
               exit 1
               ;;
           esac
-          if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
+          if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
             echo "::error::Tests were not executed despite the test label."
             exit 1
           fi
 
           case "${{ needs.run-pr-ci-ai-mock-tests.result }}" in
             success) ;;
-            skipped) ;;
+            skipped)
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -qx 'ai-test-mock'; then
+                echo "::error::PR CI mocked AI process tests did not run for this commit."
+                exit 1
+              fi
+              ;;
             failure)
               echo "::error::PR CI mocked AI process tests failed."
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI mocked AI process tests were cancelled."
-              exit 1
+              accept_superseded "PR CI mocked AI process tests" || exit 1
               ;;
             *)
               echo "::error::PR CI mocked AI process tests ended with unexpected result: ${{ needs.run-pr-ci-ai-mock-tests.result }}"
               exit 1
-               ;;
-           esac
-           if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -qx 'test' && [ -z "${{ needs.run-pr-ci-go-tests.outputs.should_test }}" ]; then
-             echo "::error::Tests were not executed despite the test label."
-             exit 1
-           fi
+              ;;
+          esac
 
           case "${{ needs.run-pr-ci-e2e-tests.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx '(test|test-e2e|e2e)'; then
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -qx '(test|test-e2e|e2e)'; then
                 echo "::error::PR CI E2E tests did not run for this commit."
                 exit 1
               fi
@@ -2111,8 +2472,7 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI E2E tests were cancelled."
-              exit 1
+              accept_superseded "PR CI E2E tests" || exit 1
               ;;
             *)
               echo "::error::PR CI E2E tests ended with unexpected result: ${{ needs.run-pr-ci-e2e-tests.result }}"
@@ -2123,7 +2483,7 @@ jobs:
           case "${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }}" in
             success) ;;
             skipped)
-              if jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | grep -E -qx 'sandbox-test(:.*)?'; then
+              if cat "${RUNNER_TEMP}/pr-labels.txt" | grep -E -qx 'sandbox-test(:.*)?'; then
                 echo "::error::PR CI sandbox tests did not run for this commit."
                 exit 1
               fi
@@ -2133,8 +2493,7 @@ jobs:
               exit 1
               ;;
             cancelled)
-              echo "::error::PR CI sandbox tests were cancelled."
-              exit 1
+              accept_superseded "PR CI sandbox tests" || exit 1
               ;;
              *)
               echo "::error::PR CI sandbox tests ended with unexpected result: ${{ needs.run-pr-ci-sandbox-tests-after-deploy.result }}"
@@ -2187,6 +2546,242 @@ jobs:
 
           echo "Full suite gate satisfied."
 
+  # Final, additive gate. It runs after every existing suite/merge gate (the
+  # deploy-gated sandbox and real-AI suites flow through
+  # `pr-test-merge-requirement` / `full-suite-gate`) and fails the run when any
+  # tracked component is not pinned to the latest upstream `main`:
+  #
+  #   * public submodules  - the gitlink SHA recorded in the commit tree;
+  #   * public integrations - `integrations.lock.json`;
+  #   * private integrations - the private lock mirrored from the `ci` checkout;
+  #   * private repos       - the ref-following repos in `profile_setup.yaml`.
+  #
+  # Escape hatches for deliberate lag (both keep the drift visible in the
+  # check output): the tracked `pin-policy.yaml` allow-list and the
+  # `pin-drift-allowed` pull-request label. The check fails closed with an
+  # itemised report whenever a pin cannot be determined, so it never passes
+  # silently. See `development/scripts/check_pin_freshness.py`.
+  pin-freshness-gate:
+    name: Pin Freshness Gate
+    runs-on: ubuntu-latest
+    needs:
+      - run-pr-ci-tests-and-deployments
+      - pr-test-merge-requirement
+      - full-suite-gate
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      needs.run-pr-ci-tests-and-deployments.result != 'skipped'
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          # Submodule contents are not needed: the gate reads the gitlink SHAs
+          # recorded in the commit tree and compares them with `git ls-remote`.
+          submodules: false
+
+      # ci#734: unit-test the CI-failure relay so the quiet-by-default policy
+      # (comments/interactions only for consolidation PRs) and the
+      # one-comment/one-message behaviour cannot silently regress.
+      - name: CI failure relay unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_ci_failure_relay.py -v
+
+      # ci#659: the superseded-run reconciliation decides whether a cancelled
+      # `PR Test Merge Requirement` gate may pass, so pin its acceptance criteria
+      # (accept only for a closed PR / moved head / a replacement run with a real
+      # verdict, fail closed otherwise) with stdlib-only unit tests.
+      - name: Superseded PR CI run reconciliation unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_superseded_reconcile.py -v
+
+      # ci#740: unit-test the sandbox provider-failure classifier so the
+      # "account failure (never retry)" vs "provider unreachable (transient
+      # infrastructure)" decision the sandbox benchmark workflow relies on
+      # cannot silently regress.
+      - name: Sandbox provider failure classifier unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_provider_failure.sh
+
+      # ci#739: the coding-sandbox readiness probe tells a msgmate-coder agent
+      # whether local Go checks can run at all, and its recovery hint must point
+      # at the submodule-free provisioning entry point
+      # (`development/scripts/build_tools.sh`) so a fresh checkout can always
+      # bootstrap itself.
+      - name: Coder sandbox readiness probe unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_coder_sandbox_readiness.sh
+
+      # ci#613: the pool-level DNS/egress readiness gate decides whether a pooled
+      # backing sandbox may accept leases (follow-up of the ci#546 shared sandbox
+      # networking design). Pin the in-pod probe script contract (single-line
+      # JSON report, non-zero exit for an unhealthy pool, --print-only never
+      # failing the caller, no credential material) so a broken pool can never be
+      # handed out silently.
+      - name: Sandbox pool egress gate unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_pool_egress_gate.sh
+
+      # ci#745: every PR-CI progress-comment step must address an explicit,
+      # non-empty repository/PR target and must skip (instead of 404-looping)
+      # when that target is empty. Pins the workflow wiring; the helper's
+      # runtime behaviour is covered by the hermetic shell test below it.
+      # ci#612: a *pooled* workspace must get its own network namespace, and a
+      # sensitive repo must never be handed a pooled slot (follow-up of the
+      # ci#546 shared sandbox networking design). Pin the in-pod namespace
+      # script contract (deterministic per-workspace namespace, exec prefix,
+      # slirp sidecar keeping egress/DNS, sibling-port isolation refusal,
+      # --print-only never failing, no credential material).
+      - name: Sandbox workspace netns unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_sandbox_workspace_netns.sh
+
+      # ci#787: coding sandboxes are routinely provisioned without a docker
+      # daemon, and the old failure mode was agents improvising raw docker shell
+      # commands (compose up, run, repeated build retries, occasionally
+      # installing a daemon). Pin the contract of the one supported wrapper: a
+      # missing CLI / unreachable daemon reports guidance and exits 3 instead of
+      # a raw docker error, the command's own exit status survives the output
+      # capping, output stays bounded, `run` always passes --rm, and the wrapper
+      # subcommands stay in sync with the typed docker_sandbox_* registry.
+      - name: Coder docker tooling wrapper unit tests
+        run: |
+          set -euo pipefail
+          bash development/scripts/tests/test_coder_docker.sh
+
+      - name: PR CI progress-comment target unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_progress_comment_target.py -v
+          bash development/scripts/tests/test_upsert_pr_ci_progress_comment.sh
+
+      # Pin the mocked-AI merge-gate case so a `skipped` run that was
+      # requested by the `ai-test-mock` label can never satisfy the merge
+      # requirement, and so the dead copy of the go-tests guard cannot come
+      # back.
+      - name: PR CI mocked-AI merge gate unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_ai_mock_gate.py -v
+
+      # ci#833: `dev` is the non-deploying integration trunk, so a PR based on
+      # `dev` must clear the label-derived `should_deploy` before
+      # `approve-and-dispatch-deploy` can act on it. The merge-time guard in
+      # `auto-approve-consolidation` is too late to stop a pre-merge dispatch;
+      # pin the context-step override.
+      - name: PR CI dev-base deploy guard unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_dev_base_deploy_guard.py -v
+
+      # ci#832: the three deploy waiters (the approved-dispatch waiter plus the
+      # two merged-deploy siblings) polled a run's top-level status, which GitHub
+      # can leave at `in_progress` long after every job of that run finished, and
+      # re-read their tab-separated run line with a tab IFS, which collapses the
+      # empty conclusion and shifts every later field. The fix consults the run's
+      # job listing before interpreting a non-`completed` status as "still
+      # deploying" and emits/reads the conclusion last. Both guards are extracted
+      # from this file and executed with a stubbed API fetch, so the assertions
+      # are about the shipped shell.
+      - name: Deploy waiter run-status wedge unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_deploy_waiter_run_status.py -v
+
+      # ci#830: the auto-approve resolver's `commits/{sha}/pulls` lookup is
+      # flaky on api.github.com's side (HTTP 200/500 with an empty or truncated
+      # body) and the old guard accepted only a single-document array, so one
+      # unlucky call - or a multi-page `[...][...]` answer - hard-failed the job
+      # and left an otherwise green consolidation PR BLOCKED/REVIEW_REQUIRED.
+      # The step is extracted from the workflow and run against a stubbed `gh`,
+      # so the bounded retry, the slurped paginated payload and the
+      # `headRefOid`-matched `gh pr list` fallback are asserted on the shipped
+      # shell.
+      - name: Auto-approve flaky PR listing unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_auto_approve_flaky_pulls.py -v
+
+      # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
+      # Deployment of the CI deployment with probe_timeout_too_low,
+      # probe_budget_too_short, startup_probe_missing and
+      # redis_cpu_request_missing - an unbudgeted, unschedulable redis takes the
+      # queue/state endpoint down and leaves fresh interactions dead on arrival.
+      # Pin the read-only contract checker, the emitted strategic-merge patch and
+      # the checked-in patch artifact so they cannot drift apart. The compose
+      # profiles (docker-compose*.yaml) carry the same numbers, so their half of
+      # the contract and its regression test run here too.
+      - name: Redis probe budget contract unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
+          python3 -m unittest development/scripts/test_redis_compose_readiness_contract.py -v
+          python3 development/scripts/redis_compose_readiness_contract.py
+
+      # ci#722 (continued): the live patch above is undone by the next
+      # `helm upgrade`, because the private Helm chart still renders the redis
+      # container with the kubelet probe defaults and no CPU request. Render that
+      # template and check it against the same contract, so the recurring
+      # re-failure (and the ci#638 queue/state eviction) has to be fixed in the
+      # chart, not only in the live object.
+      - name: Redis chart readiness contract unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_redis_chart_readiness_contract.py -v
+
+      - name: Redis chart readiness contract (checked-in chart template)
+        run: |
+          set -euo pipefail
+          python3 development/scripts/redis_chart_readiness_contract.py \
+            --chart-file development/redis-readiness/chart-redis-template.after.yaml
+
+      - name: Profile setup
+        uses: ./.github/actions/profile-setup
+        with:
+          profile: full-ci
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Check every tracked pin against its upstream ref
+        env:
+          PIN_DRIFT_ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'pin-drift-allowed') }}
+        run: |
+          set -euo pipefail
+          # The build-tools venv (created by profile-setup) ships PyYAML, used to
+          # read profile_setup.yaml and pin-policy.yaml; fall back to system
+          # python3 when it is already available.
+          PYTHON="python3"
+          if [ -x ".venv/bin/python" ]; then
+            PYTHON=".venv/bin/python"
+          fi
+          "$PYTHON" development/scripts/check_pin_freshness.py --root .
+
+      - name: Set up Go for the frozen-workspace build
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      # A pin can be perfectly fresh and still not satisfy its consumers
+      # (ci#600/#601): materialise the pinned tree and build it, so a lock bump
+      # cannot merge a workspace that does not compile.
+      - name: Check the pinned workspace still builds
+        run: |
+          set -euo pipefail
+          PYTHON="python3"
+          if [ -x ".venv/bin/python" ]; then
+            PYTHON=".venv/bin/python"
+          fi
+          "$PYTHON" development/scripts/check_frozen_workspace.py --root .
+
   approve-and-dispatch-deploy:
     name: Dispatch Approved Deploy
     runs-on: ubuntu-latest
@@ -2205,12 +2800,22 @@ jobs:
       group: pr-deploy-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     environment:
-      name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
+      name: ${{ needs.run-pr-ci-tests-and-deployments.outputs.approval_environment }}
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    # ci#774 follow-up: record exactly what was dispatched - the ref, that
+    # ref's commit, the HTTP status and the response body - so the waiter can
+    # prove the run it observes is this dispatch and can print the response
+    # body when the CI repository never turns the dispatch into a run.
+    outputs:
+      dispatch_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_ref }}
+      dispatch_ref_sha: ${{ steps.dispatch_ci_deploy.outputs.dispatch_ref_sha }}
+      dispatch_status: ${{ steps.dispatch_ci_deploy.outputs.dispatch_status }}
+      dispatch_response: ${{ steps.dispatch_ci_deploy.outputs.dispatch_response }}
+      dispatch_target_ref: ${{ steps.dispatch_ci_deploy.outputs.dispatch_target_ref }}
     steps:
       - name: Checkout source repository for templates
         uses: actions/checkout@v4
@@ -2248,6 +2853,12 @@ jobs:
           done
 
       - name: Dispatch deployment workflow in CI repository
+        id: dispatch_ci_deploy
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          SRC_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
+          DISPATCH_TARGET_REF: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
+          DISPATCH_PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
         run: |
           set -euo pipefail
           payload="$(
@@ -2279,6 +2890,42 @@ jobs:
                 }
               }'
           )"
+          # ci#774 follow-up: a PR deploy must deploy the PR head, so verify the ref
+          # this dispatch carries against the live head of the source PR. The
+          # pr-deploy-<n> concurrency supersedes a stale approve job, but this makes
+          # the stale case fail loudly instead of dispatching an outdated sha that
+          # the waiter could then never match.
+          if [ -n "${DISPATCH_PR_NUMBER:-}" ] && [ -n "${DISPATCH_TARGET_REF:-}" ]; then
+            live_head_sha="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SRC_REPO}/pulls/${DISPATCH_PR_NUMBER}" \
+              | jq -r '.head.sha // ""')" || live_head_sha=""
+            if [ -z "$live_head_sha" ]; then
+              echo "::error::Could not resolve the head sha of PR #${DISPATCH_PR_NUMBER} in ${SRC_REPO}; refusing to dispatch an unverified deploy."
+              exit 1
+            fi
+            if [ "$live_head_sha" != "$DISPATCH_TARGET_REF" ]; then
+              echo "::error::PR #${DISPATCH_PR_NUMBER} head is ${live_head_sha} but this run would dispatch the outdated ref ${DISPATCH_TARGET_REF}; refusing a stale deploy."
+              exit 1
+            fi
+            echo "Dispatch target verified against PR #${DISPATCH_PR_NUMBER} head ${live_head_sha}."
+          fi
+          # A workflow_dispatch run reports the dispatched ref as head_branch and that
+          # ref's commit as head_sha; resolve the commit now so the waiter can reject a
+          # run that was not created by this dispatch.
+          dispatch_ref_sha="$(curl -fsSL \
+            -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${CI_REPO}/commits/${CI_REF}" \
+            | jq -r '.sha // ""')" || dispatch_ref_sha=""
+          if [ -z "$dispatch_ref_sha" ]; then
+            echo "::warning::Could not resolve the commit of CI ref '${CI_REF}' in ${CI_REPO}; the waiter will match the dispatched ref only."
+          else
+            echo "Dispatching approved deploy from CI ref '${CI_REF}' @ ${dispatch_ref_sha}."
+          fi
           status_code="$(curl -s -o /tmp/ci_deploy_dispatch.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
@@ -2290,6 +2937,24 @@ jobs:
             cat /tmp/ci_deploy_dispatch.json || true
             exit 1
           fi
+          # A 204 returns an empty body; the waiter prints this body when the
+          # dispatch is rejected or never turns into a run (ci#774 follow-up).
+          {
+            echo "dispatch_ref=$CI_REF"
+            echo "dispatch_ref_sha=$dispatch_ref_sha"
+            echo "dispatch_target_ref=$DISPATCH_TARGET_REF"
+            echo "dispatch_status=$status_code"
+            echo "dispatch_response=$(tr '\n' ' ' < /tmp/ci_deploy_dispatch.json | cut -c1-900)"
+          } >> "$GITHUB_OUTPUT"
+          # A 204 only means GitHub accepted the request: a mis-targeted or
+          # silently rejected dispatch (wrong ref, missing workflow_dispatch
+          # trigger, run-name that does not embed the dispatch id) creates no run
+          # at all and used to surface only as a 25-minute "run never appeared"
+          # timeout in the waiter job with nothing to diagnose. Record exactly what
+          # was dispatched here; the waiter fails fast (CI_DISPATCH_GRACE_SECONDS,
+          # default 60s), verifies the run it observes was created from that ref/sha
+          # and prints this response body plus the recent dispatched run titles.
+          echo "::notice::Deploy dispatch accepted (HTTP 204): repo='${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}' ref='${CI_REF:-main}' dispatch_id='${DISPATCH_RUN_ID:-none}' target='${DEPLOYMENT_NAME:-none}' response_body=$(cat /tmp/ci_deploy_dispatch.json 2>/dev/null || echo '(empty)')."
 
       - name: Dispatch build and release workflow in source repository
         if: needs.run-pr-ci-tests-and-deployments.outputs.should_build != '' && needs.run-pr-ci-tests-and-deployments.outputs.is_same_repo_pr == 'true'
@@ -2451,12 +3116,18 @@ jobs:
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       DISPATCH_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      DISPATCH_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_ref }}
+      DISPATCH_REF_SHA: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_ref_sha }}
+      DISPATCH_STATUS: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_status }}
+      DISPATCH_RESPONSE: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_response }}
+      DISPATCH_TARGET_REF: ${{ needs.approve-and-dispatch-deploy.outputs.dispatch_target_ref }}
     steps:
       - name: Wait for dispatched CI deployment workflow
-        timeout-minutes: 6
+        timeout-minutes: 30
         env:
           DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
           PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+          CI_WAIT_MAX_SECONDS: "1500"
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
@@ -2480,15 +3151,67 @@ jobs:
           ci_repo="${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}"
           run_id=""
           run_url=""
+          # Accept any dispatched run of the expected deployment title created
+          # at/after the dispatch (5 min of clock-skew slack) in addition to an
+          # exact DISPATCH_RUN_ID match, so a receiving-repo run-name template
+          # cannot make this loop spin with nothing to match.
+          match_since=$(( $(date +%s) - 300 ))
+          # A run that never appears means the dispatch was dropped or used the
+          # wrong ref - never a slow deploy - so do not burn the 25-minute window.
+          first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
+          # ci#774 follow-up: this is the dispatch grace, not a deploy budget. A
+          # dispatched run appears within seconds; when the CI repository rejects
+          # the dispatch or never creates the run, the waiter must fail fast (and
+          # print the dispatch response body) instead of burning the full
+          # CI_WAIT_MAX_SECONDS / ~90 poll attempts. Overridable for debugging.
+          miss_fail_seconds="${CI_DISPATCH_GRACE_SECONDS:-60}"
+          poll_interval=15
+          # Cover a full 12-25 minute deploy instead of the old ~5 minute bound,
+          # which falsely failed while the dispatched deploy was still running.
+          deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          if [ -n "${DISPATCH_STATUS:-}" ] && [ "$DISPATCH_STATUS" != "204" ]; then
+            echo "::error::The CI deploy dispatch was rejected (HTTP ${DISPATCH_STATUS}); no deployment run will be created."
+            echo "Dispatch ref: ${DISPATCH_REF:-<unknown>}${DISPATCH_REF_SHA:+ @ ${DISPATCH_REF_SHA}}"
+            echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+            exit 1
+          fi
+          attempt=0
 
-          for attempt in $(seq 1 20); do
-            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          while :; do
+            attempt=$((attempt + 1))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
+              break
+            fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" '
+            if ! runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
+              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+              interruptible_sleep "$poll_interval"
+              continue
+            fi
+
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --arg pr "$PR_NUMBER" --argjson since "$match_since" '
               def candidates:
-                [.workflow_runs[]
-                | select((.display_title // "") | endswith($dispatch_id))
-                | select((.display_title // "") | startswith("Deploy " + $deployment))];
+                (( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] ) | unique_by(.id));
               (if $pr != "" then
                 [candidates[] | select((.display_title // "") | contains("PR#" + $pr))][0]
                 // candidates[0]
@@ -2496,20 +3219,107 @@ jobs:
                 [candidates[] | select((.display_title // "") | contains("PR#") | not)][0]
                 // candidates[0]
               end)
-              | if . == null then "" else [.id, .status, (.conclusion // ""), .html_url] | @tsv end
+              | if . == null then "" else [.id, .status, .html_url, (.head_branch // ""), (.head_sha // ""), (.conclusion // "")] | @tsv end
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/20: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (Deploy ${DEPLOYMENT_NAME}...)."
-              interruptible_sleep 15
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent dispatched CI deploy run titles (for diagnosis):"
+                jq -r '[.workflow_runs[]? | (.display_title // .name // "unknown")] | .[:10] | .[]' <<< "$runs_json" 2>/dev/null || true
+              fi
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run 'Deploy ${DEPLOYMENT_NAME}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              # No matching run at all is a dispatch/ref problem, not a slow
+              # deploy. Fail fast and point at the 'Dispatch Approved Deploy' job
+              # notice, which records the dispatch ref, target and response body
+              # (ci#774).
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "Dispatched ref: ${DISPATCH_REF:-<unknown>}${DISPATCH_REF_SHA:+ @ ${DISPATCH_REF_SHA}} target=${DISPATCH_TARGET_REF:-<unknown>}"
+                echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+                echo "::error::No CI deployment run for 'Deploy ${DEPLOYMENT_NAME}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the 'Dispatch Approved Deploy' job notice for the dispatch ref, target and response body - a silently dropped or wrong-ref dispatch looks identical to a very slow deploy."
+                exit 1
+              fi
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "$run_line"
-            echo "Attempt $attempt/20: CI run $run_id status=$run_status conclusion=${run_conclusion:-none}"
+            # ci#832: the fields are ordered with the (empty until the run finishes) conclusion last,
+            # because `read` with a tab IFS collapses tab runs: an empty field used to shift
+            # every later field left by one, so the waiter read the run url as the conclusion
+            # and the head sha as the ref, silently disabling the ref/sha dispatch guards.
+            IFS=$'\t' read -r run_id run_status run_url run_ref run_sha run_conclusion <<< "$run_line"
+            # A matching run was observed, so the dispatch demonstrably was not
+            # dropped: clear the miss timer. The grace window must measure
+            # *consecutive* misses, not total elapsed time since the first one -
+            # otherwise one transient API/pagination miss early on keeps its
+            # clock running while the run is being observed normally, and the
+            # waiter dyes the whole PR run red at 60s even though the dispatched
+            # deploy is in_progress (ci#774 follow-up).
+            first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
+            echo "Attempt ${attempt}: CI run $run_id status=$run_status conclusion=${run_conclusion:-none} ref=${run_ref:-none} sha=${run_sha:-none}"
+            # ci#774 follow-up: the observed run must belong to the ref/sha this job
+            # dispatched, otherwise a run created from another commit would be
+            # observed here and reported as this PR's deploy.
+            # ci#818: a workflow_dispatch can report the resolved commit sha as
+            # the run's head_branch, so a run whose ref equals the dispatched sha
+            # IS this dispatch's run. Rejecting it dyed the whole PR run red while
+            # the deploy itself was fine; only a ref that is neither the dispatched
+            # ref name nor its sha belongs to another dispatch.
+            if [ -n "${DISPATCH_REF:-}" ] && [ -n "${run_ref:-}" ] \
+              && [ "$run_ref" != "$DISPATCH_REF" ] \
+              && [ "$run_ref" != "${DISPATCH_REF_SHA:-}" ]; then
+              echo "::error::CI run $run_id was created from ref '${run_ref}', not the dispatched ref '${DISPATCH_REF}'${DISPATCH_REF_SHA:+ (or its commit ${DISPATCH_REF_SHA})}."
+              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+              exit 1
+            fi
+            if [ -n "${DISPATCH_REF_SHA:-}" ] && [ -n "${run_sha:-}" ] && [ "$run_sha" != "$DISPATCH_REF_SHA" ]; then
+              echo "::error::CI run $run_id was created from sha ${run_sha}, not the dispatched sha ${DISPATCH_REF_SHA}."
+              echo "Dispatch response body: ${DISPATCH_RESPONSE:-<empty>}"
+              exit 1
+            fi
 
             if [ "$run_status" != "completed" ]; then
-              interruptible_sleep 15
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
@@ -2517,11 +3327,19 @@ jobs:
               exit 0
             fi
 
+            if [ "$run_conclusion" = "cancelled" ]; then
+              # A superseded dispatched deploy (cancel-in-progress in the CI
+              # repo's per-deployment concurrency, e.g. after a rapid re-push) is
+              # not a failure: a newer run owns that deploy. Treating it as a
+              # hard failure turned the whole PR run red while the newer deploy
+              # was still running.
+              echo "Dispatched CI deployment workflow was superseded (cancelled); not a failure."
+              exit 0
+            fi
             echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
             exit 1
           done
 
-          echo "Timed out waiting for dispatched CI deployment workflow."
           exit 1
 
   run-pr-ci-ai-real-after-deploy:
@@ -2727,6 +3545,12 @@ jobs:
           profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Update progress comment after approved dispatch
+        env:
+          # ci#745: explicit, non-empty comment target. The orchestration
+          # outputs are empty whenever that job is skipped, which used to
+          # collapse the URL to `repos//issues//comments` (404, curl 22).
+          SOURCE_REPOSITORY: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository || github.repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number || github.event.pull_request.number }}
         run: |
           set -euo pipefail
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
@@ -2737,30 +3561,13 @@ jobs:
           TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comment_id="$({
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
-          })"
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
-              -d "$payload"
-          else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
-              -d "$payload"
-          fi
+          printf '%s' "$body" > "${RUNNER_TEMP}/pr-ci-progress-comment-body.md"
+          development/scripts/upsert_pr_ci_progress_comment.sh \
+            --repo "${SOURCE_REPOSITORY}" \
+            --pr "${PR_NUMBER}" \
+            --body-file "${RUNNER_TEMP}/pr-ci-progress-comment-body.md" \
+            --token "${COMMENT_TOKEN}" \
+            --bot-user "${BOT_USER}"
 
   update-progress-comment-after-ai-real:
     name: Update Progress Comment After AI Real
@@ -2784,6 +3591,12 @@ jobs:
           profile: full-ci
           token: ${{ secrets.BOT_TOKEN || github.token }}
       - name: Render final progress comment with AI real result
+        env:
+          # ci#745: explicit, non-empty comment target. The orchestration
+          # outputs are empty whenever that job is skipped, which used to
+          # collapse the URL to `repos//issues//comments` (404, curl 22).
+          SOURCE_REPOSITORY: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository || github.repository }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number || github.event.pull_request.number }}
         run: |
           set -euo pipefail
           TPL_RUN_URL="${{ format('https://github.com/{0}/actions/runs/{1}', github.repository, github.run_id) }}"
@@ -2794,35 +3607,73 @@ jobs:
           TPL_STEP_ANDROID_RELEASE='${{ needs.run-pr-ci-tests-and-deployments.outputs.should_release_android != '' && format('- [x] `(6) android release` [`dispatched`]({0})', needs.run-pr-ci-tests-and-deployments.outputs.android_release_run_url) || '- [ ] ~~`(6) android release` `skipped`~~' }}'
           export TPL_RUN_URL TPL_STEP_BUILD TPL_STEP_DEPLOY TPL_STEP_TEST TPL_STEP_RELEASE_BUILD TPL_STEP_ANDROID_RELEASE
           body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/006-progress-after-approved-dispatch.md)"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comment_id="$({
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+          printf '%s' "$body" > "${RUNNER_TEMP}/pr-ci-progress-comment-body.md"
+          development/scripts/upsert_pr_ci_progress_comment.sh \
+            --repo "${SOURCE_REPOSITORY}" \
+            --pr "${PR_NUMBER}" \
+            --body-file "${RUNNER_TEMP}/pr-ci-progress-comment-body.md" \
+            --token "${COMMENT_TOKEN}" \
+            --bot-user "${BOT_USER}"
+
+  cancel-superseded-merged-deployment:
+    name: Cancel Superseded Merged Deployments
+    runs-on: ubuntu-latest
+    # The per-merge-scoped top-level concurrency group (see the workflow-level
+    # `concurrency`) lets a fresh merge start immediately instead of queueing
+    # behind a stale merged-deployment run. A stale run can be parked on a
+    # protected deployment environment, and GitHub refuses to auto-cancel
+    # environment-gated runs with `cancel-in-progress`; that stale run then also
+    # holds the per-branch job concurrency group and starves the fresh dispatch.
+    # This job explicitly cancels every superseded merged-deployment run for this
+    # repository so the fresh dispatch can proceed.
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    env:
+      CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+    steps:
+      - name: Cancel superseded merged-deployment runs
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          workflow="run-pr-ci-tests-and-deployments.yaml"
+          current_run="${{ github.run_id }}"
+          now_epoch="$(date +%s)"
+
+          for status in queued in_progress waiting requested pending; do
+            runs_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
-              | jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-ci-progress -->")))][0].id // ""'
-          })"
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/comments/${comment_id}" \
-              -d "$payload"
-          else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}/issues/${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}/comments" \
-              -d "$payload"
-          fi
+              "https://api.github.com/repos/${repo}/actions/workflows/${workflow}/runs?event=pull_request&status=${status}&per_page=50")"
+
+            # A merged/closed PR run no longer carries a `pull_requests` entry,
+            # whereas an open-PR run does. Guard with a short age threshold so a
+            # just-created open-PR run is never cancelled in the brief window
+            # before GitHub attaches its pull request.
+            mapfile -t run_ids < <(jq -r \
+              --arg current "$current_run" \
+              --argjson now "$now_epoch" '
+              .workflow_runs[]
+              | select(.id != ($current | tonumber))
+              | select((.pull_requests // []) | length == 0)
+              | select(((.created_at | fromdateiso8601) // $now) < ($now - 120))
+              | .id' <<< "$runs_json")
+
+            for run_id in "${run_ids[@]:-}"; do
+              [ -n "$run_id" ] || continue
+              echo "Cancelling superseded merged-deployment run ${run_id} (status ${status})."
+              curl -fsSL -X POST \
+                -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${repo}/actions/runs/${run_id}/cancel" \
+                >/dev/null || echo "::warning::Failed to cancel run ${run_id}; continuing."
+            done
+          done
 
   resolve-merged-deployment:
     name: Resolve Merged Deployment
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && (github.event.pull_request.base.ref == 'dev' || github.event.pull_request.base.ref == 'main' || github.event.pull_request.base.ref == 'production')
     outputs:
       should_deploy: ${{ steps.context.outputs.should_deploy }}
       deployment_name: ${{ steps.context.outputs.deployment_name }}
@@ -2843,17 +3694,37 @@ jobs:
             TARGET_REF="$BASE_REF"
           fi
 
-          if [ "$BASE_REF" = "production" ]; then
-            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
-            DEPLOYMENT_URL="https://msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
-          else
-            DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
-            DEPLOYMENT_URL="https://stage.msgmate.io"
-            HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
-          fi
+          # ci#833: the deploy target is derived from the merge base ref and is
+          # correctness-critical. `dev` is the integration trunk: a merge to it
+          # is verified by PR CI only and dispatches NO deployment. `main`
+          # deploys the CI environment (ci.msgmate.io); `production` deploys
+          # msgmate.io. An unknown base ref is a hard error - never guess.
+          case "$BASE_REF" in
+            dev)
+              SHOULD_DEPLOY="false"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
+              DEPLOYMENT_URL="https://stage.msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
+              ;;
+            main)
+              SHOULD_DEPLOY="true"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_STAGING }}"
+              DEPLOYMENT_URL="https://stage.msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_STAGING }}.yaml"
+              ;;
+            production)
+              SHOULD_DEPLOY="true"
+              DEPLOYMENT_NAME="${{ env.DEPLOYMENT_PRODUCTION }}"
+              DEPLOYMENT_URL="https://msgmate.io"
+              HELM_VALUES_FILE="development/helm/backend/values.${{ env.DEPLOYMENT_PRODUCTION }}.yaml"
+              ;;
+            *)
+              echo "::error::Unknown merge base ref '${BASE_REF}': refusing to guess a deployment target (ci#833)."
+              exit 1
+              ;;
+          esac
 
-          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
           echo "deployment_name=$DEPLOYMENT_NAME" >> "$GITHUB_OUTPUT"
           echo "ci_deployment_name=${{ env.DEPLOYMENT_CI }}" >> "$GITHUB_OUTPUT"
           echo "target_ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
@@ -2925,6 +3796,14 @@ jobs:
           )"
 
           if [ -n "$existing_pr_number" ]; then
+            # ci#833 follow-up (G2): unlike the `dev` -> `main` hop, this
+            # `main` -> `production` hop still closes and recreates its promotion
+            # PR. Closing a PR cancels the labelled CI run of the superseded one,
+            # which is exactly the failure mode the `dev` -> `main` job was
+            # changed to avoid; keeping this hop on close-and-recreate is
+            # deliberate for now (the production PR's label set is applied after
+            # creation), but the asymmetry is a known residual risk rather than a
+            # documented invariant of the release flow.
             echo "Closing stale production promotion PR #${existing_pr_number} before opening a fresh one."
             curl -fsSL -X PATCH \
               -H "Authorization: Bearer ${PR_TOKEN}" \
@@ -2964,6 +3843,107 @@ jobs:
             -d '{"labels":["ai-test-mock","ai-test-real","build","test","e2e","test-e2e","test-core-only","sandbox-test","release-android","slow-android-build-test"]}'
 
           echo "Production promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
+
+  open-dev-to-main-promotion-pr:
+    name: Open Dev To Main Promotion PR
+    runs-on: ubuntu-latest
+    needs: [resolve-merged-deployment]
+    # ci#833: `main <- dev` is the ONLY PR that carries the deploy/sandbox
+    # labels and the only one whose merge deploys ci.msgmate.io. A merge to
+    # `dev` refreshes this PR in place (never delete/recreate: closing it would
+    # cancel its labelled CI run) and attaches the automatic label set.
+    if: |
+      needs.resolve-merged-deployment.outputs.merge_target == 'dev'
+    env:
+      PR_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REPO_OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Open or refresh dev to main promotion PR
+        env:
+          MERGED_PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_PR_TITLE: ${{ github.event.pull_request.title }}
+          MERGED_PR_URL: ${{ github.event.pull_request.html_url }}
+          DEV_HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          compare_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/repos/${REPOSITORY}/compare/main...dev")"
+          ahead_by="$(jq -r '.ahead_by // 0' <<< "$compare_json")"
+          if [ "$ahead_by" = "0" ]; then
+            echo "dev is not ahead of main; skipping the dev to main promotion PR."
+            exit 0
+          fi
+
+          title="[Dev promotion] Promote dev -> main - merging deploys ci.msgmate.io (ci#833)"
+          body="$(cat <<EOF
+          <!-- open-chat-dev-promotion -->
+
+          This pull request is maintained automatically (ci#833): every merge to \`dev\` refreshes it in place.
+
+          **Merging this PR promotes \`dev\` to \`main\` and deploys the change to [ci.msgmate.io](https://ci.msgmate.io).**
+
+          | | |
+          | --- | --- |
+          | Head | \`dev\` |
+          | Base | \`main\` |
+          | Labels (automated, never toggled) | \`test\`, \`e2e\`, \`deploy\`, \`sandbox-test\` |
+          | Latest dev merge | [#${MERGED_PR_NUMBER}](${MERGED_PR_URL}) - ${MERGED_PR_TITLE} |
+          | Dev commit | \`${DEV_HEAD_SHA}\` |
+
+          Label policy: feature PRs target \`dev\` with \`test\` only; consolidation PRs (\`chore/consolidate-*\`) target \`dev\` with \`test\`,\`e2e\`; this promotion PR is the only one carrying \`deploy\` and \`sandbox-test\`.
+          EOF
+          )"
+          labels_payload='{"labels":["test","e2e","deploy","sandbox-test"]}'
+
+          existing_pr_number="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls?state=open&head=${REPO_OWNER}:dev&base=main&per_page=1" \
+              | jq -r '.[0].number // ""'
+          )"
+
+          if [ -n "$existing_pr_number" ]; then
+            echo "Refreshing the existing promotion PR #${existing_pr_number} in place."
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls/${existing_pr_number}" \
+              -d "$(jq -n --arg title "$title" '{title: $title}')" >/dev/null
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/issues/${existing_pr_number}/labels" \
+              -d "$labels_payload" >/dev/null
+            echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${existing_pr_number}"
+            exit 0
+          fi
+
+          echo "Creating the dev to main promotion PR."
+          pr_number="$(
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${PR_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${api}/repos/${REPOSITORY}/pulls" \
+              -d "$(jq -n --arg title "$title" --arg body "$body" --arg head "dev" --arg base "main" '{title: $title, body: $body, head: $head, base: $base}')" \
+              | jq -r '.number'
+          )"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${PR_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}/repos/${REPOSITORY}/issues/${pr_number}/labels" \
+            -d "$labels_payload" >/dev/null
+          echo "Promotion PR: ${GITHUB_SERVER_URL}/${REPOSITORY}/pull/${pr_number}"
 
   post-merged-deploy-approval-link:
     name: Post Merged Deploy Approval Link
@@ -3084,7 +4064,7 @@ jobs:
   dispatch-merged-deployment:
     name: Dispatch Merged Deployment
     runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment, post-merged-deploy-approval-link]
+    needs: [resolve-merged-deployment, post-merged-deploy-approval-link, cancel-superseded-merged-deployment]
     if: |
       always() &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
@@ -3111,10 +4091,11 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
-            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+            jq -r --arg deployment "$DEPLOYMENT_NAME" --arg dispatch_id "$DISPATCH_RUN_ID" \
               '.workflow_runs[]
               | select((.display_title // "") | startswith("Deploy " + $deployment))
               | select((.display_title // "") | contains("PR#") | not)
+              | select((.display_title // "") | endswith($dispatch_id) | not)
               | .id' <<< "$runs_json" | while read -r run_id; do
               if [ -n "$run_id" ]; then
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
@@ -3128,6 +4109,28 @@ jobs:
             done
           done
 
+      - name: Reuse the PR-built image (skip the production rebuild)
+        id: built_image
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          SHORT_SHA="${HEAD_SHA:0:12}"
+          IMAGE_URL="ghcr.io/${IMAGE_REPO}:pr-${PR_NUMBER}-${SHORT_SHA}"
+          # The PR CI already builds this image for tests; a squash merge has the
+          # same tree, so deploy it instead of rebuilding the full production image.
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1 || true
+          if docker manifest inspect "$IMAGE_URL" >/dev/null 2>&1; then
+            echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+            echo "Reusing PR-built image: $IMAGE_URL"
+          else
+            echo "image_url=" >> "$GITHUB_OUTPUT"
+            echo "No PR-built image at $IMAGE_URL; the deploy will build it."
+          fi
+
       - name: Dispatch deployment workflow in CI repository
         run: |
           set -euo pipefail
@@ -3136,6 +4139,7 @@ jobs:
               --arg ref "$CI_REF" \
               --arg deploymentName "${{ needs.resolve-merged-deployment.outputs.deployment_name }}" \
               --arg targetRef "${{ needs.resolve-merged-deployment.outputs.target_ref }}" \
+              --arg imageUrl "${{ steps.built_image.outputs.image_url }}" \
               --arg sourceRepository "${{ github.repository }}" \
               --arg botUser "$BOT_USER" \
               --arg dispatchRunId "$DISPATCH_RUN_ID" \
@@ -3144,6 +4148,7 @@ jobs:
                 inputs: {
                   DEPLOYMENT_NAME: $deploymentName,
                   TARGET_REF: $targetRef,
+                  BUILT_IMAGE_URL: $imageUrl,
                   SOURCE_REPOSITORY: $sourceRepository,
                   SOURCE_PR_NUMBER: "",
                   BOT_USER: $botUser,
@@ -3366,9 +4371,10 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
-        timeout-minutes: 25
+        timeout-minutes: 30
         env:
           DEPLOYMENT_NAME: ${{ needs.resolve-merged-deployment.outputs.deployment_name }}
+          CI_WAIT_MAX_SECONDS: "1500"
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
@@ -3390,36 +4396,130 @@ jobs:
           }
 
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_id=""
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          # Accept a run of the expected deployment title created at/after the
+          # dispatch (5 min slack) in addition to an exact DISPATCH_RUN_ID match,
+          # so a run-name template mismatch cannot cause a 25-minute spin, and fail
+          # fast when no run appears at all - that is a dispatch/ref problem, not a
+          # slow deploy (ci#774).
+          match_since=$(( $(date +%s) - 300 ))
+          first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
+          miss_fail_seconds=300
+          poll_interval=15
+          # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
+          # (25 min) of polling, with the job capped 5 min above that.
+          deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          attempt=0
 
-          for attempt in $(seq 1 40); do
-            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          while :; do
+            attempt=$((attempt + 1))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
+              break
+            fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+            if ! runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
+              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+              interruptible_sleep "$poll_interval"
+              continue
+            fi
+
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --argjson since "$match_since" '
               [
-                .workflow_runs[]
-                | select((.display_title // .name // "") | endswith($dispatch_id))
-                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
-                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                ( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] )
+                | unique_by(.id)
+                | .[]
+                | [.id, .status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/40: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
-              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
-                echo "Recent CI workflow titles:"
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent CI workflow titles (for diagnosis):"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
               fi
-              interruptible_sleep 15
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run '${expected_title_prefix}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for '${expected_title_prefix}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the merged-deploy dispatch step notice for the dispatch ref, target and response body."
+                exit 1
+              fi
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
-            echo "Attempt $attempt/40: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
+            # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
+            IFS=$'\t' read -r run_id run_status run_url run_title run_conclusion <<< "$run_line"
+            # Observed a matching run: clear the miss timer so the grace window
+            # measures consecutive misses only (same defect as the PR-deploy
+            # waiter above; a single early miss used to keep its clock running
+            # and red-flag the job while the run was progressing normally).
+            first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
+            echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              interruptible_sleep 15
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
@@ -3427,11 +4527,19 @@ jobs:
             if [ "$run_conclusion" = "success" ]; then
               exit 0
             fi
+            if [ "$run_conclusion" = "cancelled" ]; then
+              # A superseded dispatched deploy (cancel-in-progress in the CI
+              # repo's per-deployment concurrency, e.g. after a rapid re-push) is
+              # not a failure: a newer run owns that deploy. Treating it as a
+              # hard failure turned the whole PR run red while the newer deploy
+              # was still running.
+              echo "Dispatched CI deployment workflow was superseded (cancelled); not a failure."
+              exit 0
+            fi
             echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
             exit 1
           done
 
-          echo "Timed out waiting for dispatched CI deployment workflow."
           if [ -n "$run_url" ]; then
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
@@ -3440,8 +4548,10 @@ jobs:
   dispatch-merged-ci-deployment:
     name: Dispatch Merged CI Deployment
     runs-on: ubuntu-latest
-    needs: [resolve-merged-deployment]
+    needs: [resolve-merged-deployment, cancel-superseded-merged-deployment]
     if: |
+      always() &&
+      needs.resolve-merged-deployment.result == 'success' &&
       needs.resolve-merged-deployment.outputs.should_deploy == 'true' &&
       needs.resolve-merged-deployment.outputs.merge_target == 'main'
     concurrency:
@@ -3466,10 +4576,11 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${CI_REPO}/actions/workflows/test-api-deploy.yaml/runs?status=${status}&per_page=30")"
-            jq -r --arg deployment "$DEPLOYMENT_NAME" \
+            jq -r --arg deployment "$DEPLOYMENT_NAME" --arg dispatch_id "$DISPATCH_RUN_ID" \
               '.workflow_runs[]
               | select((.display_title // "") | startswith("Deploy " + $deployment))
               | select((.display_title // "") | contains("PR#") | not)
+              | select((.display_title // "") | endswith($dispatch_id) | not)
               | .id' <<< "$runs_json" | while read -r run_id; do
               if [ -n "$run_id" ]; then
                 echo "Cancelling superseded CI deployment run ${run_id} (${status})."
@@ -3521,9 +4632,10 @@ jobs:
 
       - name: Wait for dispatched CI deployment workflow
         id: wait_ci_deploy
-        timeout-minutes: 25
+        timeout-minutes: 30
         env:
           DEPLOYMENT_NAME: ${{ env.DEPLOYMENT_CI }}
+          CI_WAIT_MAX_SECONDS: "1500"
         run: |
           set -euo pipefail
           trap 'echo "::notice::Cancelled — exiting CI wait loop."; exit 130' INT TERM
@@ -3545,36 +4657,130 @@ jobs:
           }
 
           ci_repo="${{ needs.resolve-merged-deployment.outputs.ci_repository }}"
+          run_id=""
           run_url=""
           expected_title_prefix="Deploy ${DEPLOYMENT_NAME}"
+          # Accept a run of the expected deployment title created at/after the
+          # dispatch (5 min slack) in addition to an exact DISPATCH_RUN_ID match,
+          # so a run-name template mismatch cannot cause a 25-minute spin, and fail
+          # fast when no run appears at all - that is a dispatch/ref problem, not a
+          # slow deploy (ci#774).
+          match_since=$(( $(date +%s) - 300 ))
+          first_miss_at=""
+          # ci#829: api.github.com intermittently answers these run listings with
+          # HTTP 200 and an EMPTY body/array for this repository (reproduced live:
+          # 2 of 6 consecutive calls to the dispatched-run listing returned
+          # total_count=0/[] while the same workflow reported 1016 runs and the
+          # dispatched deploy run was visible seconds later). The matcher then
+          # finds no candidate and starts the dropped-dispatch clock, so a stale
+          # read dyes an otherwise healthy PR run red at 60s. Empty listings get
+          # their own bounded clock instead of feeding that fail-fast clock.
+          stale_first_at=""
+          stale_reads=0
+          miss_fail_seconds=300
+          poll_interval=15
+          # Wall-clock bound that actually covers a 12-25 minute deploy: 1500s
+          # (25 min) of polling, with the job capped 5 min above that.
+          deadline=$(( $(date +%s) + CI_WAIT_MAX_SECONDS ))
+          attempt=0
 
-          for attempt in $(seq 1 40); do
-            runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"
+          while :; do
+            attempt=$((attempt + 1))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out after ${CI_WAIT_MAX_SECONDS}s (${attempt} poll attempts) waiting for the dispatched CI deployment workflow."
+              break
+            fi
 
-            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" '
+            if ! runs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/workflows/test-api-deploy.yaml/runs?event=workflow_dispatch&per_page=30")"; then
+              echo "Attempt ${attempt}: GitHub API request failed; retrying."
+              interruptible_sleep "$poll_interval"
+              continue
+            fi
+
+            run_line="$(jq -r --arg dispatch_id "$DISPATCH_RUN_ID" --arg deployment "$DEPLOYMENT_NAME" --argjson since "$match_since" '
               [
-                .workflow_runs[]
-                | select((.display_title // .name // "") | endswith($dispatch_id))
-                | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
-                | [.status, (.conclusion // ""), .html_url, (.display_title // .name // "")]
+                ( [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | endswith($dispatch_id))
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                  ]
+                  + [
+                    .workflow_runs[]?
+                    | select((.display_title // .name // "") | startswith("Deploy " + $deployment))
+                    | select((((.created_at // "") | try fromdateiso8601 catch 0) >= $since))
+                  ] )
+                | unique_by(.id)
+                | .[]
+                | [.id, .status, .html_url, (.display_title // .name // ""), (.conclusion // "")]
                 | @tsv
               ][0] // ""
             ' <<< "$runs_json")"
 
             if [ -z "$run_line" ]; then
-              echo "Attempt $attempt/40: waiting for CI workflow run ending with '${DISPATCH_RUN_ID}' (${expected_title_prefix}...)."
-              if [ "$attempt" = "1" ] || [ $((attempt % 5)) -eq 0 ]; then
-                echo "Recent CI workflow titles:"
+              # ci#829: an empty listing is a stale api.github.com read, not
+              # evidence that the dispatch was dropped, so it must not start the
+              # fail-fast clock. Retry it on its own bounded clock.
+              rows="$(printf '%s' "${runs_json:-}" | jq -r 'if type == "object" then ([.workflow_runs[]?] | length) else -1 end' 2>/dev/null || echo -1)"
+              if [ "${runs_json:-}" = "" ] || [ "$rows" = "0" ]; then
+                stale_reads=$((stale_reads + 1))
+                [ -n "$stale_first_at" ] || stale_first_at="$(date +%s)"
+                stale_seconds=$(( $(date +%s) - stale_first_at ))
+                echo "Attempt ${attempt}: the CI run listing came back empty (stale read ${stale_reads}, ${stale_seconds}s); not counting it as a missing dispatch."
+                if [ "$stale_seconds" -ge "$miss_fail_seconds" ]; then
+                  echo "::error::The ${ci_repo} run listing kept answering with an empty body for ${stale_seconds}s, so this dispatch's run could be neither matched nor ruled out. That is an api.github.com empty-listing failure (ci#829), not a dropped dispatch."
+                  exit 1
+                fi
+                interruptible_sleep "$poll_interval"
+                continue
+              fi
+              if [ -z "$first_miss_at" ]; then
+                first_miss_at="$(date +%s)"
+                echo "Recent CI workflow titles (for diagnosis):"
                 jq -r '.workflow_runs[:8][] | "- \(.display_title // .name // "unknown")"' <<< "$runs_json"
               fi
-              interruptible_sleep 15
+              miss_seconds=$(( $(date +%s) - first_miss_at ))
+              echo "Attempt ${attempt}: waiting for CI workflow run '${expected_title_prefix}...' (dispatch id '${DISPATCH_RUN_ID}'); ${miss_seconds}s without a matching run."
+              if [ "$miss_seconds" -ge "$miss_fail_seconds" ]; then
+                echo "::error::No CI deployment run for '${expected_title_prefix}' (dispatch id '${DISPATCH_RUN_ID}') appeared within ${miss_seconds}s although the dispatch reported success. See the merged-deploy dispatch step notice for the dispatch ref, target and response body."
+                exit 1
+              fi
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
-            IFS=$'\t' read -r run_status run_conclusion run_url run_title <<< "$run_line"
-            echo "Attempt $attempt/40: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
+            # ci#832: conclusion last; see the field-order note in the PR-deploy waiter above.
+            IFS=$'\t' read -r run_id run_status run_url run_title run_conclusion <<< "$run_line"
+            # Observed a matching run: clear the miss timer so the grace window
+            # measures consecutive misses only (same defect as the PR-deploy
+            # waiter above; a single early miss used to keep its clock running
+            # and red-flag the job while the run was progressing normally).
+            first_miss_at=""
+            # ci#829: a genuine match was observed, so the empty-listing clock
+            # must not carry into a later transient stale read.
+            stale_first_at=""
+            stale_reads=0
+            echo "Attempt ${attempt}: matched CI run '${run_title}' status=$run_status conclusion=${run_conclusion:-none}"
             if [ "$run_status" != "completed" ]; then
-              interruptible_sleep 15
+            # ci#832: GitHub can leave a run's top-level status at in_progress long after
+            # every job of that run has finished (observed on the dispatched deploy: the run's
+            # single job completed successfully 30+ minutes before the run record settled), so
+            # polling only the top-level status timed out at CI_WAIT_MAX_SECONDS and dyed the
+            # whole run red although the dispatched deploy had actually succeeded. When the
+            # top-level status is stale but every job is already terminal, trust the jobs.
+            jobs_json="$(github_api_get "https://api.github.com/repos/${ci_repo}/actions/runs/${run_id}/jobs?per_page=100" || true)"
+            jobs_total="$(jq -r '.total_count // 0' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            jobs_pending="$(jq -r '[.jobs[]? | select(.status != "completed")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_failed="$(jq -r '[.jobs[]? | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 1)"
+            jobs_cancelled="$(jq -r '[.jobs[]? | select(.conclusion == "cancelled")] | length' <<< "${jobs_json:-"{}"}" 2>/dev/null || echo 0)"
+            if [ "${jobs_total:-0}" -gt 0 ] && [ "${jobs_pending:-1}" -eq 0 ]; then
+              if [ "${jobs_failed:-1}" -eq 0 ]; then
+                echo "::notice::CI run ${run_id} still reports status=${run_status}, but all ${jobs_total} of its jobs are terminal and none failed (${jobs_cancelled} cancelled): treating the dispatched deploy as successful (ci#832)."
+                exit 0
+              fi
+              echo "::error::CI run ${run_id} reports status=${run_status}, but ${jobs_failed} of its ${jobs_total} jobs already failed."
+              exit 1
+            fi
+              interruptible_sleep "$poll_interval"
               continue
             fi
 
@@ -3582,11 +4788,19 @@ jobs:
             if [ "$run_conclusion" = "success" ]; then
               exit 0
             fi
+            if [ "$run_conclusion" = "cancelled" ]; then
+              # A superseded dispatched deploy (cancel-in-progress in the CI
+              # repo's per-deployment concurrency, e.g. after a rapid re-push) is
+              # not a failure: a newer run owns that deploy. Treating it as a
+              # hard failure turned the whole PR run red while the newer deploy
+              # was still running.
+              echo "Dispatched CI deployment workflow was superseded (cancelled); not a failure."
+              exit 0
+            fi
             echo "Dispatched CI deployment workflow failed with conclusion: $run_conclusion"
             exit 1
           done
 
-          echo "Timed out waiting for dispatched CI deployment workflow."
           if [ -n "$run_url" ]; then
             echo "ci_run_url=$run_url" >> "$GITHUB_OUTPUT"
           fi
@@ -3650,3 +4864,84 @@ jobs:
             -d '{"state":"closed"}' >/dev/null
 
           echo "Closed deployment approval issue #${issue_number}."
+
+  close-linked-ci-issues:
+    name: Close linked open-chat-go-ci issues
+    runs-on: ubuntu-latest
+    # ci#813: a merged PR closes the leaf issues named by its standalone
+    # `Closes msgmate-io/open-chat-go-ci#N` lines. GitHub cannot auto-close a
+    # cross-repository issue, so the transition is performed here for every
+    # merged PR (the consolidation runner also does it on its own merge path).
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true
+    steps:
+      - name: Close every linked leaf issue
+        env:
+          LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "::warning::Fork PR: linked-issue closure skipped; a maintainer must close the linked issue."
+            exit 0
+          fi
+          jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "${RUNNER_TEMP}/pr-body.md"
+          # ci#824: a closing line must be standalone, exactly like
+          # nativecoder.LinkedIssueNumbers, whose regex anchors the end of the
+          # line (`[ \t]*$`). Without that anchor this pattern also matched
+          # prose such as "Fix ci#824: crash on empty config" or
+          # "Closes ci#824 and also ci#999", importing leaf issues the author
+          # never linked - while the Go parser used by the consolidation runner
+          # ignored them. The two copies are pinned together by
+          # TestWorkflowLinkedIssueGrepStaysAnchored.
+          mapfile -t issues < <(
+            grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$' "${RUNNER_TEMP}/pr-body.md" \
+              | sed -E 's/.*#([0-9]+).*/\1/' \
+              | sort -n -u
+          )
+          if [ "${#issues[@]}" -eq 0 ]; then
+            echo "No linked CI issues in the merged PR body; nothing to close."
+            exit 0
+          fi
+          if [ -z "${LINK_TOKEN:-}" ]; then
+            echo "::error::BOT_TOKEN is required to close linked CI issues."
+            exit 1
+          fi
+          for number in "${issues[@]}"; do
+            issue="$(curl -fsSL \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/msgmate-io/open-chat-go-ci/issues/${number}")" || {
+                echo "::warning::Linked issue ci#${number} was not found; skipping."
+                continue
+              }
+            if jq -e '.labels[]? | select(.name == "umbrella")' >/dev/null <<<"$issue"; then
+              echo "::warning::ci#${number} is an umbrella issue; not auto-closing."
+              continue
+            fi
+            state="$(jq -r '.state' <<<"$issue")"
+            if [ "$state" = "closed" ]; then
+              echo "ci#${number} is already closed."
+              continue
+            fi
+            comment="$(jq -n \
+              --arg pr "#${{ github.event.pull_request.number }}" \
+              --arg url "${{ github.event.pull_request.html_url }}" \
+              --arg sha "${{ github.event.pull_request.merge_commit_sha }}" \
+              '{body: ("Closed by " + $pr + " (" + $url + "), merged as `" + $sha + "`.")}')"
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/msgmate-io/open-chat-go-ci/issues/${number}/comments" \
+              -d "$comment" >/dev/null
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${LINK_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/msgmate-io/open-chat-go-ci/issues/${number}" \
+              -d '{"state":"closed","state_reason":"completed"}' >/dev/null
+            echo "Closed ci#${number}."
+          done

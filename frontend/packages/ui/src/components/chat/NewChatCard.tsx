@@ -1,5 +1,6 @@
 import { CollapseIndicator } from "./CollapseIndicator";
 import { Text, TextTypes } from "../text";
+import { listChatSidebarHeaderActions } from "../../integration/components/chat/chat-ui/registry";
 import type { SVGProps } from "react";
 
 export const NewMessageButton = ({ onClick }: { onClick: () => void }) => {
@@ -53,7 +54,12 @@ export function NewChatCard({
       <Text type={TextTypes.Body5} tag="span" bold className="min-w-0 flex-1 truncate">
         {title}
       </Text>
-      <NewMessageButton onClick={() => navigateTo("/chat/new")} />
+      <div className="flex shrink-0 items-center">
+        {listChatSidebarHeaderActions().map(({ id, Component }) => (
+          <Component key={id} navigateTo={navigateTo} />
+        ))}
+        <NewMessageButton onClick={() => navigateTo("/chat/new")} />
+      </div>
     </div>
   );
 }

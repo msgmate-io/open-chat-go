@@ -4,11 +4,14 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 type ListedChat struct {
@@ -27,6 +30,11 @@ type ListedChat struct {
 	Pinned        bool   `json:"pinned"`
 	ChatShareUUID string `json:"chat_share_uuid,omitempty"`
 	SharedChatURL string `json:"shared_interaction_url,omitempty"`
+	// State is the resolved interaction state of the chat (idle, active,
+	// finished, failed or needs_confirmation), resolved with the same logic as
+	// /api/v1/chats/states. It travels with the list row so the sidebar can
+	// filter server-side without a second state request (ci#761).
+	State string `json:"state,omitempty"`
 	// AdminView is set when an admin is listing/viewing a chat they do not
 	// participate in, so the UI can clearly mark that another user's chat is
 	// being rendered.
@@ -41,10 +49,14 @@ type AdminChatView struct {
 }
 
 type ListedChatsPage struct {
-	Limit      int          `json:"limit"`
-	Page       int          `json:"page"`
-	TotalPages int          `json:"total_pages"`
-	Rows       []ListedChat `json:"rows"`
+	Limit      int `json:"limit"`
+	Page       int `json:"page"`
+	TotalPages int `json:"total_pages"`
+	// Total is the number of chats matching the active filters. The chat list
+	// uses it to decide whether older chats remain to be fetched, so the
+	// "load more" affordance does not rely on a full-page heuristic (ci#579).
+	Total int          `json:"total"`
+	Rows  []ListedChat `json:"rows"`
 }
 
 // parseChatTimeParam parses an optional RFC3339 timestamp query parameter. An
@@ -73,7 +85,7 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 	if chat.SharedConfig != nil {
 		// The ConfigData is already JSON, just unmarshal it
 		if err := json.Unmarshal(chat.SharedConfig.ConfigData, &config); err != nil {
-			log.Printf("Error unmarshaling config data: %v", err)
+			logging.Errorf("Error unmarshaling config data: %v", err)
 		}
 	}
 
@@ -121,8 +133,9 @@ func convertChatToListedChat(user *database.User, chat database.Chat) ListedChat
 //	@Param        exclude_tags query string false "Comma-separated tags to exclude (a chat carrying any is hidden)"
 //	@Param        time_from query string false "Only chats with activity at/after this RFC3339 timestamp"
 //	@Param        time_to query string false "Only chats with activity at/before this RFC3339 timestamp"
+//	@Param        state query string false "Comma-separated interaction states to filter by (idle, active, finished, failed, needs_confirmation)"
 //	@Success      200 {object} chats.ListedChatsPage "Paginated list of chats"
-//	@Failure      400 {string} string "Unable to get database or user"
+//	@Failure      400 {string} string "Unable to get database or user, or invalid state filter"
 //	@Failure      500 {string} string "Internal server error"
 //	@Router       /api/v1/chats/list [get]
 func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +145,17 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		return
+	}
+
+	// The state filter cannot be expressed as a SQL predicate on the chat row:
+	// a chat's state depends on live queue activity, pending user actions and
+	// the newest message. Requests carrying `state` are therefore served by the
+	// dedicated filtered path below, which resolves the candidate states before
+	// pagination (ci#761).
+	stateFilter, stateErr := parseChatStateFilter(r.URL.Query()["state"])
+	if stateErr != nil {
+		http.Error(w, "Invalid state filter (expected a comma-separated list of idle, active, finished, failed, needs_confirmation)", http.StatusBadRequest)
 		return
 	}
 
@@ -148,16 +172,10 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build the base query. Admins may request scope=all to inspect every chat
-	// ("see all" mode); everyone else only sees their own chats.
-	query := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
-	if user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
-		query = DB
-	}
-
 	// Restricted browser tokens may only see interaction chats, regardless of the
-	// requested chat_types filter.
-	if database.IsBrowserToken(r.Context()) {
+	// requested chat_types filter. Validate before building any query.
+	browserToken := database.IsBrowserToken(r.Context())
+	if browserToken {
 		if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
 			for _, chatType := range strings.Split(chatTypesParam, ",") {
 				if strings.TrimSpace(chatType) != "interaction" {
@@ -166,76 +184,6 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		query = query.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
-	} else if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
-		// Handle chat_types filter
-		chatTypes := strings.Split(chatTypesParam, ",")
-		if len(chatTypes) > 0 {
-
-			// Check if we need wildcard matching for namespaced chat types
-			hasIntegration := false
-			hasInteraction := false
-			for _, chatType := range chatTypes {
-				if chatType == "integration" {
-					hasIntegration = true
-				}
-				if chatType == "interaction" {
-					hasInteraction = true
-				}
-			}
-
-			// Build the query conditions
-			if hasIntegration && hasInteraction {
-				query = query.Where(
-					"chat_type IN ? OR chat_type LIKE ? OR chat_type LIKE ?",
-					chatTypes,
-					"integration:%",
-					"interaction:%",
-				)
-			} else if hasIntegration {
-				query = query.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "integration:%")
-			} else if hasInteraction {
-				query = query.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "interaction:%")
-			} else {
-				// Use the original exact matching
-				query = query.Where("chat_type IN ?", chatTypes)
-			}
-		}
-	}
-
-	// Filter by tag/category. Multiple tags use AND semantics: a chat must
-	// carry every requested tag. Tags are stored as a JSON array, so a quoted
-	// substring match on the serialized value matches whole tag names only.
-	if tagsParam := strings.TrimSpace(r.URL.Query().Get("tags")); tagsParam != "" {
-		for _, tag := range strings.Split(tagsParam, ",") {
-			tag = strings.TrimSpace(tag)
-			if tag == "" {
-				continue
-			}
-			query = query.Where("CAST(tags AS TEXT) LIKE ?", "%\""+tag+"\"%")
-		}
-	}
-
-	// Exclude by tag/category. A chat carrying any excluded tag is hidden, so
-	// `exclude_tags=automation,trigger` drops automation- and trigger-generated
-	// chats. COALESCE keeps chats with no tags (NULL) in the result.
-	if excludeParam := strings.TrimSpace(r.URL.Query().Get("exclude_tags")); excludeParam != "" {
-		for _, tag := range strings.Split(excludeParam, ",") {
-			tag = strings.TrimSpace(tag)
-			if tag == "" {
-				continue
-			}
-			query = query.Where("COALESCE(CAST(tags AS TEXT), '') NOT LIKE ?", "%\""+tag+"\"%")
-		}
-	}
-
-	// Free-text search over chat titles. Titles live in the chat settings JSON
-	// blob; CAST(... AS TEXT) keeps this portable across SQLite and Postgres.
-	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
-		titleSubquery := DB.Model(&database.ChatSettings{}).
-			Select("chat_id").
-			Where("CAST(config_data AS TEXT) LIKE ?", "%"+search+"%")
-		query = query.Where("id IN (?)", titleSubquery)
 	}
 
 	// Optional inclusive time range over the chat's latest activity.
@@ -249,12 +197,116 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid time_to (expected RFC3339)", http.StatusBadRequest)
 		return
 	}
-	if timeFrom != nil {
-		query = query.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at >= ?", *timeFrom))
+
+	// newFilteredQuery builds a fresh, unpaginated query carrying the caller's
+	// visibility scope and every active filter. It is called twice: once for the
+	// paginated page and once for the pinned top-up. GORM mutates the statement
+	// in place when the pagination scope applies LIMIT/OFFSET/ORDER, so the
+	// pinned top-up must NOT reuse the already-paginated query (doing so silently
+	// capped the top-up at one page of pins and older pins still disappeared,
+	// ci#512).
+	newFilteredQuery := func() *gorm.DB {
+		q := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+		if user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
+			q = DB
+		}
+
+		if browserToken {
+			q = q.Where("chat_type = ? OR chat_type LIKE ?", "interaction", "interaction:%")
+		} else if chatTypesParam := r.URL.Query().Get("chat_types"); chatTypesParam != "" {
+			// Handle chat_types filter
+			chatTypes := strings.Split(chatTypesParam, ",")
+			if len(chatTypes) > 0 {
+				// Check if we need wildcard matching for namespaced chat types
+				hasIntegration := false
+				hasInteraction := false
+				for _, chatType := range chatTypes {
+					if chatType == "integration" {
+						hasIntegration = true
+					}
+					if chatType == "interaction" {
+						hasInteraction = true
+					}
+				}
+
+				// Build the query conditions
+				if hasIntegration && hasInteraction {
+					q = q.Where(
+						"chat_type IN ? OR chat_type LIKE ? OR chat_type LIKE ?",
+						chatTypes,
+						"integration:%",
+						"interaction:%",
+					)
+				} else if hasIntegration {
+					q = q.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "integration:%")
+				} else if hasInteraction {
+					q = q.Where("chat_type IN ? OR chat_type LIKE ?", chatTypes, "interaction:%")
+				} else {
+					// Use the original exact matching
+					q = q.Where("chat_type IN ?", chatTypes)
+				}
+			}
+		}
+
+		// Filter by tag/category. Multiple tags use AND semantics: a chat must
+		// carry every requested tag. Tags are stored as a JSON array, so a quoted
+		// substring match on the serialized value matches whole tag names only.
+		if tagsParam := strings.TrimSpace(r.URL.Query().Get("tags")); tagsParam != "" {
+			for _, tag := range strings.Split(tagsParam, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag == "" {
+					continue
+				}
+				q = q.Where("CAST(tags AS TEXT) LIKE ?", "%\""+tag+"\"%")
+			}
+		}
+
+		// Exclude by tag/category. A chat carrying any excluded tag is hidden, so
+		// `exclude_tags=automation` drops internally generated automation chats
+		// (ci#746: git-triggered coding interactions are no longer tagged
+		// `trigger`, so they are visible by default). COALESCE keeps chats with no
+		// tags (NULL) in the result.
+		if excludeParam := strings.TrimSpace(r.URL.Query().Get("exclude_tags")); excludeParam != "" {
+			for _, tag := range strings.Split(excludeParam, ",") {
+				tag = strings.TrimSpace(tag)
+				if tag == "" {
+					continue
+				}
+				q = q.Where("COALESCE(CAST(tags AS TEXT), '') NOT LIKE ?", "%\""+tag+"\"%")
+			}
+		}
+
+		// Free-text search over chat titles. Titles live in the chat settings JSON
+		// blob; CAST(... AS TEXT) keeps this portable across SQLite and Postgres.
+		if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
+			titleSubquery := DB.Model(&database.ChatSettings{}).
+				Select("chat_id").
+				Where("CAST(config_data AS TEXT) LIKE ?", "%"+search+"%")
+			q = q.Where("id IN (?)", titleSubquery)
+		}
+
+		if timeFrom != nil {
+			q = q.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at >= ?", *timeFrom))
+		}
+		if timeTo != nil {
+			q = q.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at <= ?", *timeTo))
+		}
+
+		return q
 	}
-	if timeTo != nil {
-		query = query.Where("latest_message_id IN (?)", DB.Model(&database.Message{}).Select("id").Where("created_at <= ?", *timeTo))
+
+	if len(stateFilter) > 0 {
+		// The state-filtered page resolves the state of the newest matching
+		// chats and paginates that subset itself, so it must not use the
+		// SQL-paginated query above (ci#761). The asynq inspector is optional:
+		// without it chats whose state depends on the live queue simply resolve
+		// to idle instead of failing the list.
+		inspector, _ := util.GetAsynqInspector(r)
+		h.listChatsFilteredByState(w, DB, user, pagination, stateFilter, newFilteredQuery, inspector)
+		return
 	}
+
+	query := newFilteredQuery()
 
 	// Apply pagination and preloads. The count must run against the filtered
 	// query so TotalPages reflects the active filters.
@@ -268,7 +320,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Error != nil {
 		// A single corrupt message row must never blank the whole chat list.
 		// Retry without the latest-message preload so the list still renders.
-		log.Printf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
+		logging.Errorf("Failed to list chats with latest message preload, retrying without it: %v", q.Error)
 		chats = nil
 		q = query.Scopes(database.Paginate(&chats, &pagination, query)).
 			Preload("User1").
@@ -281,9 +333,60 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Pinned chats must stay visible even after they age out of the current
+	// page (ci#512): an old pinned chat that is no longer among the most recent
+	// rows used to silently disappear from the list. The first page is topped
+	// up with every pinned chat that still matches the active filters, so the
+	// frontend can fetch the history in small incremental batches (ci#579) and
+	// the pins are always part of the first batch it merges, no matter how deep
+	// the loaded window grows. Deduplicate by id so a pin that already appears
+	// in the page is not returned twice.
+	if pagination.Page <= 1 {
+		pinnedChats := []database.Chat{}
+		pinnedErr := newFilteredQuery().
+			Where("id IN (?)", DB.Model(&database.ChatPin{}).
+				Select("chat_id").
+				Where("user_id = ?", user.ID)).
+			Order("id DESC").
+			Preload("User1").
+			Preload("User2").
+			Preload("SharedConfig").
+			Preload("LatestMessage").
+			Find(&pinnedChats).Error
+		if pinnedErr != nil {
+			// Never let the pinned top-up break the primary list.
+			logging.Errorf("Failed to load pinned chats for user %d: %v", user.ID, pinnedErr)
+		} else if len(pinnedChats) > 0 {
+			seen := make(map[uint]bool, len(chats))
+			for _, chat := range chats {
+				seen[chat.ID] = true
+			}
+			merged := make([]database.Chat, 0, len(pinnedChats)+len(chats))
+			for _, chat := range pinnedChats {
+				if !seen[chat.ID] {
+					merged = append(merged, chat)
+					seen[chat.ID] = true
+				}
+			}
+			chats = append(merged, chats...)
+		}
+	}
+
 	listedChats := make([]ListedChat, len(chats))
 	for i, chat := range chats {
 		listedChats[i] = convertChatToListedChat(user, chat)
+	}
+
+	// The unfiltered page also carries the resolved state per row (ci#761), so
+	// the sidebar can render the correct badge from the list response while the
+	// /api/v1/chats/states poll keeps refreshing it. The resolver is the same
+	// one the state filter and the batch states endpoint use.
+	if len(chats) > 0 {
+		inspector, _ := util.GetAsynqInspector(r)
+		states := ResolveChatStates(DB, inspector, chats)
+		for i := range listedChats {
+			listedChats[i].State = states[chats[i].UUID]
+		}
 	}
 
 	chatIDs := make([]uint, 0, len(chats))
@@ -305,6 +408,7 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:      pagination.Limit,
 		Page:       pagination.Page,
 		TotalPages: pagination.TotalPages,
+		Total:      int(pagination.TotalRows),
 		Rows:       listedChats,
 	}
 

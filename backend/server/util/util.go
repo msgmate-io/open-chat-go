@@ -17,6 +17,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+
+	"backend/logging"
 )
 
 func GetDBAndUser(r *http.Request) (*gorm.DB, *database.User, error) {
@@ -84,11 +86,10 @@ func CreateUserPwPreHashed(
 
 	if q.Error != nil {
 		if q.Error.Error() != "record not found" {
-			log.Fatal(q.Error)
-			return fmt.Errorf("Error reading user from db"), nil
+			return fmt.Errorf("error reading user from db: %w", q.Error), nil
 		}
 	} else {
-		log.Println("User already exists")
+		logging.Debug("User already exists")
 		return nil, &user
 	}
 
@@ -104,8 +105,7 @@ func CreateUserPwPreHashed(
 	q = DB.Create(&user)
 
 	if q.Error != nil {
-		log.Fatal(q.Error)
-		return fmt.Errorf("Error writing user to db"), nil
+		return fmt.Errorf("error writing user to db: %w", q.Error), nil
 	}
 
 	return nil, &user
@@ -117,18 +117,17 @@ func CreateUser(
 	password string,
 	isAdminUser bool,
 ) (error, *database.User) {
-	log.Println("Creating user", username, "isAdminUser: ", isAdminUser)
+	logging.Debugf("%v %v %v %v", "Creating user", username, "isAdminUser: ", isAdminUser)
 	// first chaeck if that user already exists
 	var user database.User
 	q := DB.First(&user, "email = ? OR username = ?", username, username)
 
 	if q.Error != nil {
 		if q.Error.Error() != "record not found" {
-			log.Fatal(q.Error)
-			return fmt.Errorf("Error reading user from db"), nil
+			return fmt.Errorf("error reading user from db: %w", q.Error), nil
 		}
 	} else {
-		log.Println("User already exists")
+		logging.Debug("User already exists")
 		return nil, &user
 	}
 
@@ -150,8 +149,7 @@ func CreateUser(
 	q = DB.Create(&user)
 
 	if q.Error != nil {
-		log.Fatal(q.Error)
-		return fmt.Errorf("Error writing user to db"), nil
+		return fmt.Errorf("error writing user to db: %w", q.Error), nil
 	}
 
 	return nil, &user

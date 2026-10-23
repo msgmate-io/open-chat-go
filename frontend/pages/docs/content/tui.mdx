@@ -1,0 +1,120 @@
+---
+title: Terminal UI (TUI)
+path: tui
+description: Chat with Open Chat from the terminal using the built-in TUI client.
+order: 54
+adminOnly: false
+section: Clients
+---
+
+Open Chat Go ships a full-screen terminal client as a Go integration that runs
+in-process in the `open-chat` binary. It connects to one or more Open Chat
+servers, keeps you signed in on the device, and lets you chat with your default
+bot — or attach to an existing chat — without leaving the shell.
+
+## Launching
+
+```bash
+open-chat tui
+```
+
+The TUI is the `tui` integration: it is part of the standard `open-chat` build
+and runs directly from the `open-chat tui` subcommand (no separate binary is
+downloaded, extracted or looked up on `PATH`). If your build omits the `tui`
+integration, the subcommand is not registered.
+
+## Using it
+
+- Move with the arrow keys or `j`/`k`, confirm with `Enter`.
+- **Servers** — add, edit, delete and switch between Open Chat servers. A local
+  server (`http://127.0.0.1:1984`) is available by default.
+- **Sign in** — either through **Browser Login**, which opens the Open Chat CLI
+  authorization page and polls until the device is approved, or by pasting a
+  personal access token (`ocat_…`) under **Authorize via API key**.
+- **Chat** — messages go to your default bot; the conversation renders in the
+  same terminal session. When a chat is pre-bound (see below) the TUI attaches
+  to it directly instead of creating a new one.
+
+## Status and control
+
+While a turn is running the TUI renders a compact status footer driven by
+`GET /api/v1/chats/{chat_uuid}/status` (the same response the web integration
+consumes): `is_active`, `state`, `latest_message_finished`, optional
+auto-continuation (`auto_continue`, `auto_continue_turns` / `auto_continue_max`,
+`auto_continue_stop_reason`), `stalled` (with `stall_reason`,
+`stall_age_seconds`, `stall_threshold_seconds`), `queued_replies` and
+`auto_continue_incomplete_retries`.
+
+- **Poll cadence** — poll `/status` about every 2s *while `is_active`* and stop
+  as soon as the turn finishes; there is no need to poll an idle chat.
+- **Follow the stream** — `GET /api/v1/chats/{chat_uuid}/messages/streaming`
+  returns the in-flight assistant snapshot (with a `seq`). Poll it at a faster
+  cadence (~500ms) to render output that arrives between message polls, then
+  let the authoritative message from `messages/list` replace the snapshot once
+  the turn lands.
+- **Stop a turn** — press `Esc` (or `Ctrl-C`) to `POST
+  /api/v1/chats/{chat_uuid}/signals/interrupt`. The interrupt cancels the live
+  bot-reply task, drops the replies queued behind it, and asks a detached chat
+  backend (for example an external coding agent) to abort its generation; work
+  the stopped turn already persisted is preserved.
+- **Queue instead of interrupting** — sending a message while a turn is live is
+  queued by default (`delivery_mode: "queued"`, surfaced as `queued_replies`);
+  `delivery_mode: "interrupt"` stops the live turn and starts the new one
+  immediately, which is what a "send now" affordance uses.
+
+## Configuration
+
+Servers and tokens are stored in a device-scoped JSON file under the platform's
+user config directory (for example
+`~/.config/open-chat-go/tui/config.json` on Linux). Tokens are written with
+`0600` permissions on Unix, so the device stays authorized until the token
+expires. Override the location with `OPEN_CHAT_TUI_CONFIG_DIR`.
+
+```json
+{
+  "servers": [
+    { "name": "msgmate.io", "url": "https://msgmate.io", "token": "…" },
+    { "name": "local", "url": "http://127.0.0.1:1984" }
+  ],
+  "active": "msgmate.io",
+  "default_bot": "bot"
+}
+```
+
+Useful flags:
+
+```bash
+open-chat tui --where      # print the config file path
+open-chat tui --version
+```
+
+### Environment overrides
+
+The TUI also honours environment variables, which is how the forwarded
+sandbox TUI is started authenticated:
+
+- `OPENCHAT_SERVER_URL` — server to dial back
+  to (overrides the active server's URL).
+- `OPENCHAT_ACCESS_TOKEN` — bearer token to use without an interactive login
+  (an integrating deployment may also inject a namespaced alias of the same
+  variables; see its integration docs).
+- `OPENCHAT_CHAT_UUID` — attach to this existing chat instead of creating a new
+  one.
+- `OPEN_CHAT_TUI_CONFIG_DIR` — directory holding the generated `config.json`.
+
+The TUI talks to the regular HTTP API (version probe, `user/self`, the CLI
+browser-auth endpoints, chats and messages), so anything that works in a browser
+session works from the terminal too.
+
+## Forwarded TUI in a coding sandbox
+
+Some deployments forward this TUI into a chat's coding sandbox, so a freshly
+provisioned sandbox opens an authenticated TUI attached to the chat
+(`OPENCHAT_SERVER_URL`, `OPENCHAT_CHAT_UUID`, `OPENCHAT_ACCESS_TOKEN`). Because
+the TUI ships inside the `open-chat` binary as the `tui` integration, the
+sandbox only needs `open-chat` itself on `PATH` — put it in the sandbox image,
+or install it through the workspace `setup_commands` — and the forwarded
+session just runs `open-chat tui`. The integration that provides the forwarding —
+including how the short-lived, audience-bound (`coder-tui`) access token is
+minted — is documented in its own integration docs, which require an account
+with access; open them from the `/integrations` overview.

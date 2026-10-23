@@ -1,0 +1,42 @@
+# Pin freshness policy (public, reviewable).
+#
+# The final "Pin Freshness Gate" job in
+# .github/workflows/run-pr-ci-tests-and-deployments.yaml compares every tracked
+# component against the tip of its upstream ref (default: `main`) and fails the
+# pull request when a pin is stale.
+#
+# Tracked components and their pin sources:
+#   * public submodules        -> the gitlink SHA recorded in the commit tree
+#   * public integrations      -> integrations.lock.json
+#   * private integrations     -> .integrations/private/integrations.private.lock.json
+#   * private repos            -> profile_setup.yaml (ref-following; validated
+#                                 against the remote and against the materialized
+#                                 checkout when present)
+#
+# There are legitimate reasons for a pin to stay behind `main`: an in-progress
+# production promotion / release-candidate pin, a pending revert, or a
+# known-broken upstream. Those cases must be opted out of *explicitly*, never by
+# silently disabling the gate. Two mechanisms exist:
+#
+#   1. This allow-list. Add an entry under `allow` with the component id and a
+#      short reason. `id` matches the component identifier exactly, or as an
+#      fnmatch glob (e.g. `private-integration:*`). Components listed here are
+#      reported as `ALLOWED` and their reason is printed in the check output.
+#
+#   2. The `pin-drift-allowed` pull-request label. When present the gate prints
+#      the full drift report, marks every stale component `ALLOWED`, and passes.
+#      Use it for a deliberate, reviewed lag (for example a tooling-only PR that
+#      intentionally does not absorb unrelated upstream pin bumps).
+#
+# Refresh this file per consolidation: remove entries once the pin has caught up
+# so that drift cannot accumulate unnoticed.
+version: 1
+
+# Component ids are printed by the gate and by:
+#   python3 development/scripts/check_pin_freshness.py --root .
+allow: []
+# Examples:
+#   - id: "submodule:clients/oc_python_client"
+#     reason: "pinned to the released client version; bumped by the release job"
+#   - id: "private-integration:opencode"
+#     reason: "holding the known-broken upstream opencode main until #NNN lands"

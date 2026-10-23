@@ -34,7 +34,7 @@ func createAutomatedUser(t *testing.T, DB *gorm.DB, username string, isAdmin boo
 
 func TestSetupBaseConnectionsCreatesDefaultBotRuntimeOwnedByAdmin(t *testing.T) {
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	err, admin := util.CreateUser(DB, "admin_user", "AdminPass1!", true)
 	if err != nil {
@@ -67,7 +67,7 @@ func TestSetupBaseConnectionsCreatesDefaultBotRuntimeOwnedByAdmin(t *testing.T) 
 
 func TestSetupBaseConnectionsReassignsDefaultBotRuntimeToAdmin(t *testing.T) {
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	err, admin := util.CreateUser(DB, "admin_user", "AdminPass1!", true)
 	if err != nil {

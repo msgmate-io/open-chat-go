@@ -8,5 +8,5 @@ import (
 )
 
 func openSQLite(filePath string) (*gorm.DB, error) {
-	return gorm.Open(sqlite.Open(filePath), &gorm.Config{})
+	return gorm.Open(sqlite.Open(filePath), &gorm.Config{Logger: gormLoggerFor(false)})
 }

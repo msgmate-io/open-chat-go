@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"math"
@@ -296,6 +297,7 @@ func TestProcessStreamingRequestForwardsSamplingParams(t *testing.T) {
 
 	messages := []map[string]interface{}{{"role": "user", "content": "hello"}}
 	_, err := processStreamingRequest(
+		context.Background(),
 		server.URL, "some-model", "litellm", messages, nil, map[string]Tool{}, "test-key",
 		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params, providerRequestMeta{},
 	)
@@ -356,6 +358,7 @@ func TestProcessStreamingRequestUsesMaxCompletionTokensForOpenAIModel(t *testing
 
 	messages := []map[string]interface{}{{"role": "user", "content": "hello"}}
 	_, err := processStreamingRequest(
+		context.Background(),
 		server.URL, "gpt-5.6-luna", "openai", messages, nil, map[string]Tool{}, "test-key",
 		map[string]string{}, chunkChan, usageChan, toolChan, errChan, params, providerRequestMeta{},
 	)

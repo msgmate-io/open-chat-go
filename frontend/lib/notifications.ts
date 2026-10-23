@@ -55,7 +55,8 @@ export function useUnreadNotificationCount(enabled: boolean) {
     enabled ? "/api/v1/integrations/notifications/inbox/count" : null,
     fetcher,
     {
-      refreshInterval: () => (typeof document !== "undefined" && document.hidden ? 0 : 15000),
+      refreshInterval: () =>
+        typeof document !== "undefined" && document.visibilityState === "hidden" ? 0 : 15000,
       revalidateOnFocus: true,
     },
   );

@@ -1128,6 +1128,12 @@
                         "description": "Only chats with activity at/before this RFC3339 timestamp",
                         "name": "time_to",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated interaction states to filter by (idle, active, finished, failed, needs_confirmation)",
+                        "name": "state",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -4385,6 +4391,10 @@
                 "shared_interaction_url": {
                     "type": "string"
                 },
+                "state": {
+                    "description": "State is the resolved interaction state of the chat (idle, active,\nfinished, failed or needs_confirmation), resolved with the same logic as\n/api/v1/chats/states. It travels with the list row so the sidebar can\nfilter server-side without a second state request (ci#761).",
+                    "type": "string"
+                },
                 "tags": {
                     "type": "array",
                     "items": {
@@ -4410,6 +4420,9 @@
                     "items": {
                         "$ref": "#/definitions/chats.ListedChat"
                     }
+                },
+                "total": {
+                    "type": "integer"
                 },
                 "total_pages": {
                     "type": "integer"
@@ -4479,6 +4492,26 @@
                 }
             }
         },
+        "chats.PublicFollowUp": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "string"
+                },
+                "chat_share_uuid": {
+                    "type": "string"
+                },
+                "chat_uuid": {
+                    "type": "string"
+                },
+                "interaction_url": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
         "chats.PublicInteractionChat": {
             "type": "object",
             "properties": {
@@ -4489,6 +4522,9 @@
                     "type": "string"
                 },
                 "config": {},
+                "follow_up": {
+                    "$ref": "#/definitions/chats.PublicFollowUp"
+                },
                 "interaction_details": {
                     "type": "object",
                     "additionalProperties": true

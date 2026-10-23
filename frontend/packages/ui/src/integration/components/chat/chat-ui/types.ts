@@ -1,4 +1,6 @@
 import type { ComponentType } from "react";
+import type { ConfirmableAction } from "../ConfirmableActionWidget";
+import type { BotReplyDeliveryMode } from "../../../../lib/delivery-mode";
 
 export interface ChatUIAttachment {
   file_id: string;
@@ -11,6 +13,11 @@ export interface ChatUISendPayload {
   /** Controlled additions to the chat's shared config during creation. */
   shared_config?: Record<string, unknown>;
   attachments?: ChatUIAttachment[];
+  /**
+   * ci#656: `queued` (default, wait behind the running reply) or `interrupt`
+   * (send immediately, cancelling the running reply).
+   */
+  delivery_mode?: BotReplyDeliveryMode;
 }
 
 export interface ChatUIContact {
@@ -78,6 +85,99 @@ export interface ChatUIMessageExtrasProps {
 export type ChatUIMessageRenderer = ComponentType<ChatUIMessageExtrasProps>;
 
 /**
+ * Props passed to a chat-backend's custom assistant message body. It lets an
+ * integration render the assistant text and its tool calls the way it wants
+ * (for example inline, in the order the tools ran) instead of the core's single
+ * summarised tool-call block. The core still renders the thoughts blocks and
+ * the confirmable-action widgets around it.
+ */
+export interface ChatUIMessageBodyProps {
+  /** UUID of the message being rendered. */
+  messageUUID: string;
+  /** Assistant text of this message (reasoning/think tags already stripped). */
+  text: string;
+  /** Tool calls of this message, in the order the model emitted them. */
+  toolCalls: ChatUIToolCall[];
+  /** Raw message meta_data; custom views read their own keys. */
+  meta: Record<string, unknown>;
+  /** True while the message is still streaming (not yet marked finished). */
+  isGenerating: boolean;
+  interactionState?: string | null;
+  /**
+   * UUID of the chat, for bodies that render confirmable-action widgets and
+   * therefore call the confirm/reject API. Present for live chats; absent on
+   * the read-only docs previews.
+   */
+  chatUUID?: string;
+  /**
+   * Confirmable actions attached to this message (the proposals the model
+   * paused on, with their execution status and result). Supplied when the
+   * extension declares `inlineConfirmableActions`, so the body can render them
+   * inline with its tool calls.
+   */
+  confirmableActions?: ConfirmableAction[];
+  /**
+   * When set, the message is still syncing and the confirmable actions must not
+   * be executed yet; pass it to the confirm widget's `executionBlockedReason`.
+   */
+  executionBlockedReason?: string;
+  /** Invalidate chat data after a widget side effect (confirm/reject). */
+  onMutate?: () => void;
+}
+
+export type ChatUIMessageBody = ComponentType<ChatUIMessageBodyProps>;
+
+/**
+ * Props passed to an extension's optional compact thoughts renderer. The core
+ * collects the assistant's reasoning (from `thoughts`, think-tags and the
+ * per-step `thinking_steps`) and hands it over so an integration can render it
+ * more densely than the default blockquote list.
+ */
+export interface ChatUIThoughtsProps {
+  /** UUID of the message being rendered. */
+  messageUUID: string;
+  /** Reasoning blocks (already de-duplicated, trimmed and possibly streaming). */
+  thoughts: string[];
+  /** Structured thinking steps with their durations, when the backend reports them. */
+  steps: Array<{ text: string; duration?: string }>;
+  /** Human-readable total thinking time, when available. */
+  thinkingTime?: string;
+  /** True while the message is still streaming. */
+  isGenerating: boolean;
+  /** True once the message has finished streaming. */
+  isFinished: boolean;
+}
+
+/**
+ * Props passed to an extension's optional compact booting/queued status
+ * indicator. The core shows a placeholder while an empty, in-flight assistant
+ * turn has nothing to render yet; an integration can replace it with a smaller,
+ * on-brand status (for example a small chip with a status dot) instead of the
+ * default text block.
+ */
+export interface ChatUIStatusIndicatorProps {
+  /** "queued" while the interaction waits in the provider queue, else "booting". */
+  kind: "booting" | "queued";
+  /** Default human-readable label ("Msgmate Booting" / "Msgmate Agent Queued"). */
+  label: string;
+}
+
+/**
+ * Context a chat UI extension predicate is resolved against. It lets an
+ * integration select its views for a chat that has no explicit `chat_backend`
+ * key (eg a tool-only agent whose bots never set one), by matching on the chat
+ * object and/or the tool calls of the message being rendered.
+ */
+export interface ChatUIExtensionMatchContext {
+  /** The chat's chat_backend key (or legacy backend), if any. */
+  chatBackend?: string;
+  /** The full chat object (partner/config/status) when available. */
+  chat?: any;
+  /** Tool calls of the message being rendered (message-body matching only). */
+  toolCalls?: ChatUIToolCall[];
+}
+
+/**
  * Props passed to a chat search action. Integrations register actions here to
  * surface a contextual button next to the chat sidebar search (e.g. "Ask chat
  * finder bot"). The action component decides its own visibility (for example by
@@ -101,6 +201,29 @@ export interface ChatSearchAction {
   Component: ComponentType<ChatSearchActionProps>;
 }
 
+/**
+ * Props passed to a sidebar header action. Core and integrations register here
+ * to surface a compact control in the chat sidebar header, left of the compose
+ * button (for example the notifications unread indicator on mobile). The action
+ * component decides its own visibility (for example by hiding itself above the
+ * small-mobile breakpoint).
+ */
+export interface ChatSidebarHeaderActionProps {
+  /** Navigate to an app route, e.g. the notifications inbox. */
+  navigateTo: (to: string) => void;
+}
+
+/**
+ * A control contributed to the chat sidebar header.
+ */
+export interface ChatSidebarHeaderAction {
+  /** Stable id used for React keys and de-duplication. */
+  id: string;
+  /** Ordering hint; lower values render first. */
+  order?: number;
+  Component: ComponentType<ChatSidebarHeaderActionProps>;
+}
+
 export interface ChatUIExtension {
   /**
    * Discriminator value: the "chat_backend" key of the chat's shared config
@@ -108,8 +231,65 @@ export interface ChatUIExtension {
    * key keeps its meaning as the LLM provider and is not used here.
    */
   chatBackend: string;
+  /**
+   * Optional predicate that selects this extension for a chat even when it has
+   * no `chat_backend` key (eg a tool-only agent whose bots never set one). The
+   * keyed chatBackend lookup still wins when a chat has an explicit key.
+   */
+  match?: (ctx: ChatUIExtensionMatchContext) => boolean;
   /** Custom chat details panel; replaces InteractionChatInfo when provided. */
   ChatDetails?: ComponentType<ChatUIDetailsProps>;
+  /**
+   * Optional custom renderer for the assistant message body and its tool calls.
+   * When provided it replaces the default summarised tool-call block and the
+   * markdown body, so an integration can render tool calls inline, in order, as
+   * they stream in. The thoughts blocks are still rendered by the core, and the
+   * confirmable-action widgets too unless the extension sets
+   * `inlineConfirmableActions`.
+   */
+  MessageBody?: ChatUIMessageBody;
+  /**
+   * When true, the extension's `MessageBody` owns the message's confirmable
+   * actions (typically rendering the confirm/execute widget inline with its
+   * tool calls). The core then suppresses its own confirmable-action widgets,
+   * the "review and confirm" hint and the standalone
+   * `confirmable_action_execute` event bubbles (requested/completed/failed/
+   * rejected), so the confirmation is rendered completely in-line.
+   */
+  inlineConfirmableActions?: boolean;
+  /**
+   * When true, the core omits the per-message bot avatar column (the bot
+   * profile icon and the actions menu it hosts) while keeping the sender label.
+   * Lets a chat-backend render flat, wide messages.
+   */
+  hideBotAvatar?: boolean;
+  /**
+   * When true, the core omits the per-message actions menu (copy/regenerate).
+   * Only has an effect while the avatar column that hosts it is rendered.
+   */
+  hideMessageActions?: boolean;
+  /**
+   * When true, consecutive assistant messages from the same sender are merged
+   * into a single bubble (one sender header) while preserving their original
+   * order. Integrations whose bot emits many short turns — typically an agent
+   * that pauses after each tool call or confirmation — use this to avoid a wall
+   * of repeated sender headers. A normal user message (or a visible event
+   * message) ends the run, so unrelated turns are never merged.
+   */
+  groupConsecutiveMessages?: boolean;
+  /**
+   * Optional compact renderer for the assistant's thinking/thoughts. When
+   * provided it replaces the core's thoughts blocks (both the live "Thinking…"
+   * and the finished "Thoughts"/step variants).
+   */
+  Thoughts?: ComponentType<ChatUIThoughtsProps>;
+  /**
+   * Optional compact renderer for the "booting" / "queued" placeholder shown
+   * while an empty, in-flight assistant turn has nothing to render yet. When
+   * provided it replaces the core's larger `ShinyText` booting block — used by
+   * the coder to keep the wait calm and small on small/native screens.
+   */
+  StatusIndicator?: ComponentType<ChatUIStatusIndicatorProps>;
   /** Message input with two modes: before the chat started and after. */
   MessageInput?: {
     isPreStart: (ctx: ChatUIContext) => boolean;

@@ -2,15 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"golang.org/x/crypto/ssh"
 )
 
 // TestLoadOpenChatConfigAcceptsBootstrapUsers proves the open-chat config JSON
@@ -159,169 +154,6 @@ anchors:
 	}
 }
 
-// TestStagingOpenChatConfigLoads guards that the committed staging config stays
-// parseable by the real loader. It skips when the file is not present (e.g. the
-// dev container does not mount development/).
-func TestStagingOpenChatConfigLoads(t *testing.T) {
-	path := filepath.Join("..", "development", "ci", "open-chat-staging.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("staging config not present at %s: %v", path, err)
-	}
-
-	if raw[0] != '{' {
-		t.Fatalf("config must start with '{' to be usable as inline OPEN_CHAT_CONFIG, got %q", raw[0])
-	}
-
-	cfg, err := loadOpenChatConfig(raw, path)
-	if err != nil {
-		t.Fatalf("loadOpenChatConfig rejected staging config: %v", err)
-	}
-	if len(cfg.Env) == 0 {
-		t.Fatalf("expected non-empty env section")
-	}
-}
-
-// TestDockerSandboxConfigLoadsAndConnects verifies that open-chat.json correctly
-// parses and configures the docker-sandbox SSH key, server, and OpenCode project,
-// and tests live SSH connectivity to the dev-sandbox container if running.
-func TestDockerSandboxConfigLoadsAndConnects(t *testing.T) {
-	candidates := []string{
-		"open-chat.json",
-		filepath.Join("..", "open-chat.json"),
-		filepath.Join("..", "development", "ci", "open-chat-sandbox-benchmark.json"),
-		filepath.Join("development", "ci", "open-chat-sandbox-benchmark.json"),
-	}
-	var raw []byte
-	var loadedPath string
-	for _, c := range candidates {
-		if data, err := os.ReadFile(c); err == nil {
-			raw = data
-			loadedPath = c
-			break
-		}
-	}
-	if len(raw) == 0 {
-		t.Skipf("no sandbox config found in %v (skipping)", candidates)
-	}
-
-	cfg, err := loadOpenChatConfig(raw, loadedPath)
-	if err != nil {
-		t.Fatalf("loadOpenChatConfig failed: %v", err)
-	}
-	if cfg.Bootstrap == nil || cfg.Bootstrap.SSH == nil {
-		t.Fatalf("missing bootstrap.ssh in open-chat.json")
-	}
-
-	// Verify SSH key
-	type keySpec struct {
-		Name       string `json:"name"`
-		PrivateKey string `json:"private_key"`
-	}
-	var keys []keySpec
-	if err := json.Unmarshal(cfg.Bootstrap.SSH.Keys, &keys); err != nil {
-		t.Fatalf("failed decoding ssh keys: %v", err)
-	}
-	var sandboxKey *keySpec
-	for _, k := range keys {
-		if k.Name == "docker-sandbox" {
-			kCopy := k
-			sandboxKey = &kCopy
-			break
-		}
-	}
-	if sandboxKey == nil {
-		t.Fatalf("docker-sandbox key not found in bootstrap.ssh.keys")
-	}
-
-	// Verify SSH server
-	type serverSpec struct {
-		Name       string `json:"name"`
-		SSHKeyName string `json:"ssh_key_name"`
-		Host       string `json:"host"`
-		Port       int    `json:"port"`
-		Username   string `json:"username"`
-	}
-	var servers []serverSpec
-	if err := json.Unmarshal(cfg.Bootstrap.SSH.Servers, &servers); err != nil {
-		t.Fatalf("failed decoding ssh servers: %v", err)
-	}
-	var sandboxServer *serverSpec
-	for _, s := range servers {
-		if s.Name == "docker-sandbox" {
-			sCopy := s
-			sandboxServer = &sCopy
-			break
-		}
-	}
-	if sandboxServer == nil {
-		t.Fatalf("docker-sandbox server not found in bootstrap.ssh.servers")
-	}
-
-	// Verify OpenCode project
-	if cfg.Bootstrap.Opencode == nil {
-		t.Fatalf("missing bootstrap.opencode in open-chat.json")
-	}
-	type projectSpec struct {
-		Name          string `json:"name"`
-		Mode          string `json:"mode"`
-		SSHServerName string `json:"ssh_server_name"`
-		ProjectPath   string `json:"project_path"`
-	}
-	var projects []projectSpec
-	if err := json.Unmarshal(cfg.Bootstrap.Opencode.Projects, &projects); err != nil {
-		t.Fatalf("failed decoding opencode projects: %v", err)
-	}
-	var sandboxProject *projectSpec
-	for _, p := range projects {
-		if p.Name == "docker-sandbox" {
-			pCopy := p
-			sandboxProject = &pCopy
-			break
-		}
-	}
-	if sandboxProject == nil {
-		t.Fatalf("docker-sandbox project not found in bootstrap.opencode.projects")
-	}
-	if sandboxProject.Mode != "managed_ssh" || sandboxProject.SSHServerName != "docker-sandbox" {
-		t.Fatalf("unexpected sandbox project config: %+v", sandboxProject)
-	}
-
-	// Live SSH test if host is resolvable / reachable
-	signer, err := ssh.ParsePrivateKey([]byte(sandboxKey.PrivateKey))
-	if err != nil {
-		t.Fatalf("failed parsing private key: %v", err)
-	}
-
-	addr := net.JoinHostPort(sandboxServer.Host, strconv.Itoa(sandboxServer.Port))
-	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
-		User:            sandboxServer.Username,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         5 * time.Second,
-	})
-	if err != nil {
-		t.Logf("dev-sandbox is not reachable at %s (skipping live SSH test): %v", addr, err)
-		return
-	}
-	defer client.Close()
-
-	session, err := client.NewSession()
-	if err != nil {
-		t.Fatalf("failed opening ssh session: %v", err)
-	}
-	defer session.Close()
-
-	output, err := session.CombinedOutput("echo live-ssh-test-ok && opencode --version")
-	if err != nil {
-		t.Fatalf("failed executing remote command: %v, output: %s", err, string(output))
-	}
-	if !strings.Contains(string(output), "live-ssh-test-ok") {
-		t.Fatalf("unexpected ssh command output: %s", string(output))
-	}
-	t.Logf("Live SSH to %s succeeded! Output: %s", addr, strings.TrimSpace(string(output)))
-}
-
 // TestLoadOpenChatConfigAcceptsYAMLWithAnchors proves the loader accepts YAML
 // config documents (including anchors/aliases and multi-line strings) and
 // applies the same strict schema as JSON configs.
@@ -333,9 +165,9 @@ anchors:
     apiVersion: v1
     kind: Config
 integrations:
-  docker_sandbox:
+  sample_runtime:
     kubeconfig: *kubeconfig
-  git:
+  sample_git:
     bootstrap_tokens:
       - name: ci-token
         provider: github
@@ -357,9 +189,9 @@ anchors:
     apiVersion: v1
     clusters: []
 integrations:
-  docker_sandbox:
+  sample_runtime:
     kubeconfig: *kubeconfig
-  git:
+  sample_git:
     bootstrap_tokens:
       - name: ci-token
         provider: github
@@ -372,15 +204,15 @@ env:
 	if err != nil {
 		t.Fatalf("loadOpenChatConfig rejected YAML config: %v", err)
 	}
-	if got := cfg.Integrations["git"]["bootstrap_tokens"]; got == nil {
-		t.Fatalf("expected git bootstrap_tokens from YAML")
+	if got := cfg.Integrations["sample_git"]["bootstrap_tokens"]; got == nil {
+		t.Fatalf("expected integration bootstrap_tokens from YAML")
 	}
-	if _, ok := cfg.Integrations["docker_sandbox"]["kubeconfig"]; !ok {
-		t.Fatalf("expected docker_sandbox kubeconfig alias to resolve")
+	if _, ok := cfg.Integrations["sample_runtime"]["kubeconfig"]; !ok {
+		t.Fatalf("expected sample_runtime kubeconfig alias to resolve")
 	}
-	tokens, ok := cfg.Integrations["git"]["bootstrap_tokens"].([]interface{})
+	tokens, ok := cfg.Integrations["sample_git"]["bootstrap_tokens"].([]interface{})
 	if !ok || len(tokens) != 1 {
-		t.Fatalf("expected one git bootstrap token from YAML alias, got %#v", cfg.Integrations["git"]["bootstrap_tokens"])
+		t.Fatalf("expected one git bootstrap token from YAML alias, got %#v", cfg.Integrations["sample_git"]["bootstrap_tokens"])
 	}
 	tokenRow, _ := tokens[0].(map[string]interface{})
 	if tokenRow["token"] != "vault-token-8f2" {
@@ -400,14 +232,14 @@ env:
 func TestLoadOpenChatConfigYamlTrailingAnchors(t *testing.T) {
 	raw := []byte(`
 integrations:
-  docker_sandbox:
+  sample_runtime:
     kubeconfig: "$anchors.kubeconfig"
-  git:
+  sample_git:
     bootstrap_tokens:
       - name: ci-token
         provider: github
         token: "$anchors.ci_token"
-  kubernetes:
+  sample_nested:
     kubeconfig_yaml: "$anchors.nested"
 env:
   NODE_VERSION: "16"
@@ -432,19 +264,19 @@ anchors:
 	if err != nil {
 		t.Fatalf("loadOpenChatConfig rejected trailing-anchor YAML config: %v", err)
 	}
-	if kube, _ := cfg.Integrations["docker_sandbox"]["kubeconfig"].(string); kube != "apiVersion: v1\nkind: Config\nclusters: []\n" {
+	if kube, _ := cfg.Integrations["sample_runtime"]["kubeconfig"].(string); kube != "apiVersion: v1\nkind: Config\nclusters: []\n" {
 		t.Fatalf("kubeconfig $anchors reference did not resolve: %q", kube)
 	}
-	if token, _ := cfg.Integrations["git"]["bootstrap_tokens"].([]interface{})[0].(map[string]interface{})["token"].(string); token != "vault-token-8f2" {
+	if token, _ := cfg.Integrations["sample_git"]["bootstrap_tokens"].([]interface{})[0].(map[string]interface{})["token"].(string); token != "vault-token-8f2" {
 		t.Fatalf("token $anchors reference did not resolve: %q", token)
 	}
 	if key := cfg.Bootstrap.SSH; key == nil {
 		t.Fatalf("expected ssh bootstrap from trailing-anchor YAML config")
 	}
-	if nested := cfg.Integrations["kubernetes"]["kubeconfig_yaml"]; nested != "apiVersion: v1\nkind: Config\nclusters: []\n" {
+	if nested := cfg.Integrations["sample_nested"]["kubeconfig_yaml"]; nested != "apiVersion: v1\nkind: Config\nclusters: []\n" {
 		t.Fatalf("nested $anchors reference did not resolve: %#v", nested)
 	}
-	for _, values := range []map[string]interface{}{cfg.Env, cfg.Integrations["docker_sandbox"]} {
+	for _, values := range []map[string]interface{}{cfg.Env, cfg.Integrations["sample_runtime"]} {
 		for _, value := range values {
 			if str, ok := value.(string); ok && strings.HasPrefix(str, "$anchors.") {
 				t.Fatalf("unresolved $anchors reference found: %q", str)
@@ -543,31 +375,6 @@ func TestLoadOpenChatConfigJSONUnknownAnchorRef(t *testing.T) {
 	}
 }
 
-// TestCIMsgmateYamlConfigLoads guards the YAML CI config variant (anchors +
-// multi-line kubeconfigs / SSH keys) against loader regressions.
-func TestCIMsgmateYamlConfigLoads(t *testing.T) {
-	path := filepath.Join("..", "development", "ci", "open-chat-ci.yaml")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("yaml CI config not present at %s: %v", path, err)
-	}
-	cfg, err := loadOpenChatConfig(raw, path)
-	if err != nil {
-		t.Fatalf("loadOpenChatConfig rejected YAML CI config: %v", err)
-	}
-	if len(cfg.Integrations) == 0 || cfg.Bootstrap == nil {
-		t.Fatalf("expected integrations + bootstrap in yaml CI config")
-	}
-	if _, ok := cfg.Integrations["docker_sandbox"]; !ok {
-		t.Fatalf("missing docker_sandbox integration")
-	}
-	// The kubeconfig must come from the alias, not from a literal "*ref".
-	dsb := cfg.Integrations["docker_sandbox"]
-	if kube, _ := dsb["kubeconfig"].(string); !strings.HasPrefix(kube, "apiVersion") {
-		t.Fatalf("docker_sandbox kubeconfig alias did not resolve: %q", kube[:min(len(kube), 40)])
-	}
-}
-
 // TestResolveConfigSourceInlineYAML guards against passing the whole YAML
 // config document inline (e.g. via the OPEN_CHAT_CONFIG env var): content with
 // line breaks cannot be a file path and must be parsed as an inline document,
@@ -597,5 +404,85 @@ func TestResolveConfigSourceInlineYAML(t *testing.T) {
 	}
 	if _, err := loadOpenChatConfig(content, "inline --config YAML"); err != nil {
 		t.Fatalf("long single-line inline YAML failed to load: %v", err)
+	}
+}
+
+// TestLoadOpenChatConfigResolvesLinkedFiles covers ci#759: a config value may
+// link a text file with a "$file.<path>" marker instead of inlining it, which
+// lets authors keep markdown prompts and other long artifacts as real files in
+// their config directory. Paths resolve relative to the config file.
+func TestLoadOpenChatConfigResolvesLinkedFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	body := "# System prompt\n\nBe helpful.\n"
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "system.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write linked file: %v", err)
+	}
+	raw := []byte("env:\n  SYSTEM_PROMPT: \"$file.prompts/system.md\"\n  OTHER: inline\n")
+
+	cfg, err := loadOpenChatConfig(raw, filepath.Join(dir, "open-chat.yaml"))
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected a $file. link: %v", err)
+	}
+	if got := cfg.Env["SYSTEM_PROMPT"]; got != body {
+		t.Fatalf("linked file content not substituted: %#v", got)
+	}
+	if got := cfg.Env["OTHER"]; got != "inline" {
+		t.Fatalf("unrelated value changed: %#v", got)
+	}
+}
+
+// TestLoadOpenChatConfigLinkedFileJSON guards the JSON fast-path: minified JSON
+// (what the CI config publisher emits) must resolve "$file." links exactly like
+// the YAML variant instead of handing the literal marker to the runtime.
+func TestLoadOpenChatConfigLinkedFileJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("linked notes"), 0o644); err != nil {
+		t.Fatalf("write linked file: %v", err)
+	}
+	raw := []byte("{\"env\":{\"NOTES\":\"$file.notes.md\"}}")
+
+	cfg, err := loadOpenChatConfig(raw, filepath.Join(dir, "open-chat.json"))
+	if err != nil {
+		t.Fatalf("loadOpenChatConfig rejected a JSON $file. link: %v", err)
+	}
+	if got := cfg.Env["NOTES"]; got != "linked notes" {
+		t.Fatalf("JSON $file. link did not resolve: %#v", got)
+	}
+}
+
+// TestLoadOpenChatConfigLinkedFileErrors makes sure a broken link fails the boot
+// with a message naming the problem instead of silently passing the marker (or
+// a binary blob) through to the runtime.
+func TestLoadOpenChatConfigLinkedFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "binary.md"), []byte("text\x00binary"), 0o644); err != nil {
+		t.Fatalf("write binary file: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{"missing file", "env:\n  PROMPT: \"$file.nope.md\"\n", "nope.md"},
+		{"directory", "env:\n  PROMPT: \"$file.prompts\"\n", "is a directory"},
+		{"binary file", "env:\n  PROMPT: \"$file.binary.md\"\n", "not a text file"},
+		{"escapes config dir", "env:\n  PROMPT: \"$file.../outside.md\"\n", "outside the config directory"},
+		{"absolute path", "env:\n  PROMPT: \"$file./etc/hostname\"\n", "relative to the config directory"},
+		{"embedded marker", "env:\n  SCRIPT: |\n    echo \"$file.notes.md\"\n", "entire config value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadOpenChatConfig([]byte(tc.raw), filepath.Join(dir, "open-chat.yaml"))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected an error mentioning %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }

@@ -11,7 +11,37 @@ export {
   FileAttachmentDisplay,
   FileAttachmentsList,
 } from "./FileAttachment"
-export { FileUpload, FileAttachButton, AttachFileMenuItem, UploadedFilesPreview } from "./FileUpload"
+export {
+  FileUpload,
+  FileAttachButton,
+  AttachFileMenuItem,
+  AttachImageMenuItem,
+  FilePickerInput,
+  FileDropOverlay,
+  UploadedFilesPreview,
+  UploadErrorsNotice,
+  useFileDropzone,
+  useFileUpload,
+  hasFileDrag,
+  filesFromDataTransfer,
+  collectDroppedItems,
+  hasDirectoryDrag,
+  getUploadRejection,
+  partitionUploadBatch,
+  uploadRejectionMessage,
+  formatFileSize,
+  isSupportedUploadType,
+  MAX_ATTACHMENT_COUNT,
+  MAX_UPLOAD_SIZE,
+  MAX_UPLOAD_SIZE_LABEL,
+  SUPPORTED_UPLOAD_TYPES_LABEL,
+  IMAGE_UPLOAD_ACCEPT,
+  FILE_UPLOAD_ACCEPT,
+  type UploadedFileRecord,
+  type UploadRejection,
+  type UploadRejectionReason,
+  type DroppedItems,
+} from "./FileUpload"
 export { GuestAccountCard } from "./GuestAccountCard"
 export { LoadingSpinner } from "./loading-spinner"
 export { MessageInput, CancelResponseButton } from "./MessageInput"

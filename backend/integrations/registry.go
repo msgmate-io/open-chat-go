@@ -1,7 +1,7 @@
 package integrations
 
 import (
-	_ "backend/integrations/externalintegrations"
+	extgen "backend/integrations/externalintegrations"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -136,6 +136,54 @@ func validateAndNormalizeDefinition(def extiface.Definition) (extiface.Definitio
 		frontendPages = append(frontendPages, page)
 	}
 	def.FrontendPages = frontendPages
+
+	frontendDocs := make([]extiface.FrontendDoc, 0, len(def.FrontendDocs))
+	if len(def.FrontendDocs) > 0 && def.FrontendAssets == nil {
+		return def, fmt.Errorf("integration %q defines frontend docs but no frontend assets filesystem", name)
+	}
+	for idx, doc := range def.FrontendDocs {
+		routePath := normalizeFrontendRoute(doc.Route)
+		if routePath == "" {
+			return def, fmt.Errorf("integration %q frontend_docs[%d] is missing route", name, idx)
+		}
+		if strings.Contains(routePath, " ") {
+			return def, fmt.Errorf("integration %q frontend doc route %q must not include method prefixes", name, routePath)
+		}
+		if strings.HasPrefix(routePath, "/api/") || routePath == "/api" {
+			return def, fmt.Errorf("integration %q frontend doc route %q cannot use /api prefix", name, routePath)
+		}
+		expectedPrefix := expectedIntegrationFrontendPrefix(name)
+		if !doc.Root && routePath != expectedPrefix && !strings.HasPrefix(routePath, expectedPrefix+"/") {
+			return def, fmt.Errorf("integration %q frontend doc route %q must be under %q (or set Root)", name, routePath, expectedPrefix)
+		}
+		assetPath := normalizeFrontendAssetPath(doc.AssetPath)
+		if assetPath == "" {
+			return def, fmt.Errorf("integration %q frontend doc route %q has invalid asset path %q", name, routePath, doc.AssetPath)
+		}
+		doc.Route = routePath
+		doc.AssetPath = assetPath
+		doc.Title = strings.TrimSpace(doc.Title)
+		doc.Description = strings.TrimSpace(doc.Description)
+		doc.Section = strings.TrimSpace(doc.Section)
+		frontendDocs = append(frontendDocs, doc)
+	}
+	def.FrontendDocs = frontendDocs
+
+	labels := make([]string, 0, len(def.Labels))
+	seenLabels := map[string]struct{}{}
+	for _, label := range def.Labels {
+		trimmed := strings.TrimSpace(label)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seenLabels[key]; exists {
+			continue
+		}
+		seenLabels[key] = struct{}{}
+		labels = append(labels, trimmed)
+	}
+	def.Labels = labels
 
 	runtimeEnvVars := make([]extiface.RuntimeEnvVar, 0, len(def.RuntimeEnvVars))
 	runtimeEnvByKey := map[string]struct{}{}
@@ -392,6 +440,52 @@ func Has(name string) bool {
 	return ok
 }
 
+// LabelsFor returns the effective, de-duplicated labels for an integration.
+// Every compiled integration is labelled "core" when it belongs to the public
+// `core-only` profile in integrations.yaml and "full" otherwise; the labels
+// declared on the definition are merged on top.
+func LabelsFor(def extiface.Definition) []string {
+	profileLabel := "full"
+	if _, isCore := coreOnlyIntegrationNames[normalizeIntegrationName(def.Name)]; isCore {
+		profileLabel = "core"
+	}
+	out := make([]string, 0, len(def.Labels)+1)
+	seen := map[string]struct{}{}
+	for _, label := range append([]string{profileLabel}, def.Labels...) {
+		trimmed := strings.TrimSpace(label)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SourceRepository returns the source repository declaration for an
+// integration, if the build generated one. It lets the /integrations overview
+// link back to the code that implements a model, route or function.
+func SourceRepository(name string) (extgen.SourceRepository, bool) {
+	key := normalizeIntegrationName(name)
+	if src, ok := extgen.SourceRepositories[key]; ok {
+		return src, true
+	}
+	// A few definitions append "_integration" to their manifest id (e.g. the
+	// go-client integration registers as "go_client_integration"). Fall back to
+	// the manifest id so those still resolve.
+	if trimmed := strings.TrimSuffix(key, "_integration"); trimmed != key {
+		if src, ok := extgen.SourceRepositories[trimmed]; ok {
+			return src, true
+		}
+	}
+	return extgen.SourceRepository{}, false
+}
+
 func Get(name string) (extiface.Definition, bool) {
 	EnsureLoaded()
 	registryMu.RLock()
@@ -456,6 +550,29 @@ func RegisterFrontendRoutes(root *http.ServeMux, wrapper func(http.Handler, bool
 				h = wrapper(h, frontendPage.Public)
 			}
 			root.Handle(frontendPage.Route, h)
+		}
+
+		for _, frontendDoc := range def.FrontendDocs {
+			frontendDoc := frontendDoc
+			if owner, exists := routeOwners[frontendDoc.Route]; exists {
+				return fmt.Errorf("duplicate integration frontend route %q from %q and %q", frontendDoc.Route, owner, def.Name)
+			}
+			routeOwners[frontendDoc.Route] = def.Name
+
+			content, err := fs.ReadFile(def.FrontendAssets, frontendDoc.AssetPath)
+			if err != nil {
+				return fmt.Errorf("integration %q frontend doc %q failed to read asset %q: %w", def.Name, frontendDoc.Route, frontendDoc.AssetPath, err)
+			}
+
+			h := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(content)
+			}))
+			if wrapper != nil {
+				h = wrapper(h, frontendDoc.Public)
+			}
+			root.Handle(frontendDoc.Route, h)
 		}
 
 		for _, frontendRoute := range def.FrontendRoutes {

@@ -15,7 +15,7 @@ func setupAccountStateFallbackTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return SetupDatabase(cfg)
+	return SetupTestDatabase(t, cfg)
 }
 
 func createAccountStatesTable(t *testing.T, db *gorm.DB) {

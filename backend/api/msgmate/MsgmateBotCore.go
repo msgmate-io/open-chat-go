@@ -21,12 +21,11 @@ type BotConfig struct {
 
 // BotContext represents the runtime context for a bot instance
 type BotContext struct {
-	Config       BotConfig
-	Client       *client.Client
-	BotUser      database.User
-	WSHandler    *wsapi.WebSocketHandler
-	ChatCanceler *ChatCanceler
-	SessionMu    sync.Mutex
+	Config    BotConfig
+	Client    *client.Client
+	BotUser   database.User
+	WSHandler *wsapi.WebSocketHandler
+	SessionMu sync.Mutex
 }
 
 // AIHandler defines the interface for AI response generation
@@ -48,47 +47,4 @@ type FileHandler interface {
 
 	// UploadToOpenAI uploads a file to OpenAI's API
 	UploadToOpenAI(fileID, mimeType string) (openAIFileID string, err error)
-}
-
-// ChatCanceler manages cancellation contexts for different chats
-type ChatCanceler struct {
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
-}
-
-// NewChatCanceler creates a new ChatCanceler instance
-func NewChatCanceler() *ChatCanceler {
-	return &ChatCanceler{
-		cancels: make(map[string]context.CancelFunc),
-	}
-}
-
-// Store stores a cancellation function for a chat
-func (cc *ChatCanceler) Store(chatUUID string, cancel context.CancelFunc) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-	cc.cancels[chatUUID] = cancel
-}
-
-// Load retrieves a cancellation function for a chat
-func (cc *ChatCanceler) Load(chatUUID string) (context.CancelFunc, bool) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-	cf, ok := cc.cancels[chatUUID]
-	return cf, ok
-}
-
-// Delete removes a cancellation function for a chat
-func (cc *ChatCanceler) Delete(chatUUID string) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-	delete(cc.cancels, chatUUID)
-}
-
-// CancelChatResponse cancels the response for a specific chat
-func CancelChatResponse(chatCanceler *ChatCanceler, chatUUID string) {
-	if cancel, found := chatCanceler.Load(chatUUID); found {
-		cancel()
-		chatCanceler.Delete(chatUUID)
-	}
 }

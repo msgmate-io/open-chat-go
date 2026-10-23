@@ -4,16 +4,17 @@ import (
 	"backend/api/msgmate"
 	userapi "backend/api/user"
 	"backend/database"
+	"backend/integrationhost"
 	"backend/integrations"
 	"backend/queue"
 	"backend/runtimecfg"
 	"backend/server"
 	"backend/server/util"
+	"backend/workqueue"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -30,6 +31,8 @@ import (
 	"github.com/urfave/cli/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // generateRandomPassword generates a secure random password with:
@@ -291,6 +294,18 @@ func GetServerFlags() []cli.Flag {
 			Name:    "asynq-concurrency",
 			Usage:   "Number of concurrent worker goroutines",
 			Value:   10,
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("DB_SKIP_MIGRATIONS"),
+			Name:    "skip-migrations",
+			Usage:   "skip the automatic database migration pass (set on secondary processes so they do not race the primary process)",
+			Value:   false,
+		},
+		&cli.BoolFlag{
+			Sources: cli.EnvVars("WORKER_SCHEDULER"),
+			Name:    "run-scheduler",
+			Usage:   "run the integration scheduler in this process (exactly one process must own it)",
+			Value:   true,
 		},
 		&cli.BoolFlag{
 			Sources: cli.EnvVars("SIGNUP_REQUIRES_ADMIN_APPROVAL"),
@@ -787,6 +802,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	credentialsOutputDir = filepath.Dir(c.String("db-path"))
 
 	integrations.EnsureLoaded()
+	integrationhost.Install()
 	msgmate.EnsureExternalToolsRegistered()
 	database.RegisterExternalModels(integrations.AdditionalModels()...)
 	for _, migration := range integrations.AdditionalMigrations() {
@@ -833,6 +849,14 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		"FRONTEND_PROXY":    {Value: c.String("frontend-proxy"), Sensitive: false},
 		"START_WORKER":      {Value: fmt.Sprintf("%t", c.Bool("start-worker")), Sensitive: false},
 		"ASYNQ_CONCURRENCY": {Value: fmt.Sprintf("%d", c.Int("asynq-concurrency")), Sensitive: false},
+		"DB_SKIP_MIGRATIONS": {
+			Value:     fmt.Sprintf("%t", c.Bool("skip-migrations")),
+			Sensitive: false,
+		},
+		"WORKER_SCHEDULER": {
+			Value:     fmt.Sprintf("%t", c.Bool("run-scheduler")),
+			Sensitive: false,
+		},
 		"SIGNUP_REQUIRES_ADMIN_APPROVAL": {
 			Value:     fmt.Sprintf("%t", c.Bool("signup-requires-admin-approval")),
 			Sensitive: false,
@@ -905,18 +929,21 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	defer redisRuntime.Cleanup()
 	if redisRuntime.Mode == queue.RedisModeEmbedded {
 		if redisRuntime.FallbackReason != nil {
-			log.Printf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
+			logging.Errorf("External redis unavailable (%v); started embedded redis at %s", redisRuntime.FallbackReason, redisRuntime.Address)
 		} else {
-			log.Printf("Started embedded redis at %s", redisRuntime.Address)
+			logging.Infof("Started embedded redis at %s", redisRuntime.Address)
 		}
 	} else {
-		log.Printf("Using external redis at %s", redisRuntime.Address)
+		logging.Infof("Using external redis at %s", redisRuntime.Address)
 	}
 
 	queueClient := asynq.NewClient(redisRuntime.ConnOpt)
 	defer queueClient.Close()
 
 	queueInspector := asynq.NewInspector(redisRuntime.ConnOpt)
+	// ci#724: publish the queue handles process-wide so in-turn tools that have
+	// no request scope (eg the scheduling tool) can enqueue future work.
+	workqueue.SetGlobalQueueHandles(queueClient, queueInspector)
 	asynqUIHandler := asynqmon.New(asynqmon.Options{
 		RootPath:     "/admin/asynq/ui",
 		RedisConnOpt: redisRuntime.ConnOpt,
@@ -925,14 +952,27 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	defer asynqUIHandler.Close()
 
 	DB := database.SetupDatabase(database.DBConfig{
-		Backend:  c.String("db-backend"),
-		FilePath: c.String("db-path"),
-		Debug:    c.Bool("debug"),
-		ResetDB:  c.Bool("reset-db"),
+		Backend:        c.String("db-backend"),
+		FilePath:       c.String("db-path"),
+		Debug:          c.Bool("debug"),
+		ResetDB:        c.Bool("reset-db"),
+		SkipMigrations: c.Bool("skip-migrations"),
 	})
 	database.SetGlobalDB(DB)
 
-	if err := database.SeedModelConfigs(DB); err != nil {
+	// Expired sessions are rejected by the auth middleware but never removed, so
+	// the sessions table only grows. Sweep them on an interval from the server
+	// process (ci#729 follow-up); OPEN_CHAT_SESSION_SWEEP_INTERVAL tunes it.
+	if sweepInterval := database.SessionSweepInterval(); sweepInterval > 0 {
+		logging.Infof("Sweeping expired sessions every %s", sweepInterval)
+		defer database.StartSessionSweeper(DB, sweepInterval)()
+	} else {
+		logging.Infof("Expired session sweeping disabled (%s=off)", database.SessionSweepIntervalEnv)
+	}
+
+	if err := runStartupBootstrapDBStep(ctx, "seed-model-configs", func() error {
+		return database.SeedModelConfigs(DB)
+	}); err != nil {
 		return err
 	}
 
@@ -970,7 +1010,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	adminUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+	adminUser, err := ensureBootstrapUserWithBusyRetry(ctx, "root-credentials", DB, bootstrapUserSpec{
 		Label:            "root-credentials",
 		Credentials:      rootCredentials,
 		IsAdmin:          true,
@@ -981,7 +1021,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 
-	botUser, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+	botUser, err := ensureBootstrapUserWithBusyRetry(ctx, "default-bot", DB, bootstrapUserSpec{
 		Label:            "default-bot",
 		Credentials:      c.String("default-bot"),
 		IsAdmin:          false,
@@ -997,7 +1037,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			continue
 		}
 		extraLabel := fmt.Sprintf("create-extra-user[%d]", i)
-		if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		if _, err := ensureBootstrapUserWithBusyRetry(ctx, extraLabel, DB, bootstrapUserSpec{
 			Label:            extraLabel,
 			Credentials:      extra,
 			IsAdmin:          false,
@@ -1012,7 +1052,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			continue
 		}
 		extraLabel := fmt.Sprintf("create-extra-bot[%d]", i)
-		if _, err := ensureBootstrapUser(DB, bootstrapUserSpec{
+		if _, err := ensureBootstrapUserWithBusyRetry(ctx, extraLabel, DB, bootstrapUserSpec{
 			Label:            extraLabel,
 			Credentials:      extra,
 			IsAdmin:          false,
@@ -1024,23 +1064,34 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	}
 
 	userSpecs := append([]string{}, openChatBootstrap.UserSpecs...)
-	if err := applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug")); err != nil {
+	if err := runStartupBootstrapSeedOnce(ctx, DB, "bootstrap.users", userSpecs, func() error {
+		return applyUserBootstrapConfigFiles(DB, userSpecs, !c.Bool("debug"))
+	}); err != nil {
 		return err
 	}
 
 	botSpecs := append([]string{}, c.StringSlice("add-bot-from-config")...)
 	botSpecs = append(botSpecs, openChatBootstrap.BotSpecs...)
-	if err := applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug")); err != nil {
+	if err := runStartupBootstrapSeedOnce(ctx, DB, "add-bot-from-config", botSpecs, func() error {
+		return applyBotBootstrapConfigFiles(DB, botSpecs, !c.Bool("debug"))
+	}); err != nil {
 		return err
 	}
 	integrationBotDecls := integrations.BotBootstrapDeclarations()
 	integrationBotConfigs := make([]botBootstrapConfig, 0, len(integrationBotDecls))
 	for _, decl := range integrationBotDecls {
 		integrationBotConfigs = append(integrationBotConfigs, decl.Config)
-		sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
-		if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
-			return err
+	}
+	if err := runStartupBootstrapDBStep(ctx, "integration-bot-bootstrap", func() error {
+		for _, decl := range integrationBotDecls {
+			sourcePrefix := fmt.Sprintf("integration:%s.bot_bootstrap_configs[%d]", decl.IntegrationName, decl.Index)
+			if err := applyIntegrationBotBootstrapConfigs(DB, sourcePrefix, []botBootstrapConfig{decl.Config}, !c.Bool("debug")); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	sshDefaultOwners := append([]string{}, c.StringSlice("add-ssh-default-owner")...)
@@ -1053,7 +1104,9 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	sshKeyGrantSpecs = append(sshKeyGrantSpecs, openChatBootstrap.SSHKeyGrantSpecs...)
 	sshServerGrantSpecs := append([]string{}, c.StringSlice("add-ssh-server-grants-from-config")...)
 	sshServerGrantSpecs = append(sshServerGrantSpecs, openChatBootstrap.SSHServerGrantSpecs...)
-	if err := applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "add-ssh-from-config", func() error {
+		return applySSHBootstrapSources(DB, adminUser.Username, sshDefaultOwners, sshKeySpecs, sshServerSpecs, sshKeyGrantSpecs, sshServerGrantSpecs)
+	}); err != nil {
 		return err
 	}
 
@@ -1062,11 +1115,15 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	// declared template sandbox in this same startup pass.
 	dockerSandboxDefaultOwners := append([]string{}, openChatBootstrap.DockerSandboxDefaultOwners...)
 	dockerSandboxSpecs := append([]string{}, openChatBootstrap.DockerSandboxSpecs...)
-	if err := applyDockerSandboxBootstrapSources(DB, adminUser.Username, dockerSandboxDefaultOwners, dockerSandboxSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "add-docker-sandboxes-from-config", func() error {
+		return applyDockerSandboxBootstrapSources(DB, adminUser.Username, dockerSandboxDefaultOwners, dockerSandboxSpecs)
+	}); err != nil {
 		return err
 	}
 
-	if err := applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "opencode-bootstrap", func() error {
+		return applyOpencodeBootstrapSources(DB, adminUser.Username, openChatBootstrap.OpencodeDefaultOwners, openChatBootstrap.OpencodeProjectSpecs)
+	}); err != nil {
 		return err
 	}
 
@@ -1076,31 +1133,43 @@ func runServer(ctx context.Context, c *cli.Command) error {
 	gitWorkspaceSpecs := append([]string{}, openChatBootstrap.GitWorkspaceSpecs...)
 	gitWorkspaceGrantSpecs := append([]string{}, openChatBootstrap.GitWorkspaceGrantSpecs...)
 	gitTriggerSpecs := append([]string{}, openChatBootstrap.GitTriggerSpecs...)
-	if err := applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs, gitTriggerSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "git-bootstrap", func() error {
+		return applyGitBootstrapSources(DB, adminUser.Username, gitDefaultOwners, gitTokenSpecs, gitRepositorySpecs, gitWorkspaceSpecs, gitWorkspaceGrantSpecs, gitTriggerSpecs)
+	}); err != nil {
 		return err
 	}
 
 	mcpDefaultOwners := append([]string{}, openChatBootstrap.MCPDefaultOwners...)
 	mcpServerSpecs := append([]string{}, openChatBootstrap.MCPServerSpecs...)
-	if err := applyMCPBootstrapSources(DB, adminUser.Username, mcpDefaultOwners, mcpServerSpecs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "mcp-bootstrap", func() error {
+		return applyMCPBootstrapSources(DB, adminUser.Username, mcpDefaultOwners, mcpServerSpecs)
+	}); err != nil {
 		return err
 	}
 
-	if err := applyKubernetesBootstrapSources(DB, adminUser.Username); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "kubernetes-bootstrap", func() error {
+		return applyKubernetesBootstrapSources(DB, adminUser.Username)
+	}); err != nil {
 		return err
 	}
 
 	// Integration-owned bootstrap hooks. New integrations declare
 	// Definition.Bootstrap instead of adding core bootstrap files/build tags.
-	if err := applyIntegrationBootstrapHooks(ctx, DB, adminUser.Username); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "integration-bootstrap-hooks", func() error {
+		return applyIntegrationBootstrapHooks(ctx, DB, adminUser.Username)
+	}); err != nil {
 		return err
 	}
 
-	providerSyncResult, err := database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
-	if err != nil {
+	var providerSyncResult database.DefaultBotProviderKeySyncResult
+	if err := runStartupBootstrapDBStep(ctx, "default-bot-provider-key-sync", func() error {
+		var syncErr error
+		providerSyncResult, syncErr = database.SyncDefaultBotModelsByProviderKeys(DB, botUser.Name)
+		return syncErr
+	}); err != nil {
 		return err
 	}
-	log.Printf(
+	logging.Debugf(
 		"Synced default bot provider-key model access bot=%s assigned=%d unassigned=%d skipped_unmanaged=%d skipped_invalid=%d",
 		botUser.Name,
 		providerSyncResult.Assigned,
@@ -1108,14 +1177,20 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		providerSyncResult.SkippedUnmanaged,
 		providerSyncResult.SkippedInvalid,
 	)
-	if err := syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "inherit-default-model-access", func() error {
+		return syncBotsInheritingDefaultModelAccess(DB, botUser.Name, integrationBotConfigs)
+	}); err != nil {
 		return err
 	}
 
-	if err := msgmate.SyncAutomatedBotProfiles(DB); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "sync-automated-bot-profiles", func() error {
+		return msgmate.SyncAutomatedBotProfiles(DB)
+	}); err != nil {
 		return err
 	}
-	if err := server.SetupBaseConnections(DB, adminUser.ID, botUser.ID); err != nil {
+	if err := runStartupBootstrapDBStep(ctx, "setup-base-connections", func() error {
+		return server.SetupBaseConnections(DB, adminUser.ID, botUser.ID)
+	}); err != nil {
 		return err
 	}
 
@@ -1128,6 +1203,7 @@ func runServer(ctx context.Context, c *cli.Command) error {
 				Queues: map[string]int{
 					queue.QueueDefault: 1,
 				},
+				ErrorHandler: queue.BotReplyTerminalDrain(DB),
 			},
 		)
 
@@ -1139,15 +1215,46 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		if workerErr := workerServer.Start(processor.NewServeMux()); workerErr != nil {
 			return fmt.Errorf("embedded asynq worker failed to start: %w", workerErr)
 		}
-		log.Printf("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
+		logging.Infof("Started embedded asynq worker with concurrency=%d", c.Int("asynq-concurrency"))
 	}
 
-	integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
-	if err != nil {
-		return err
-	}
-	if integrationScheduler != nil {
-		defer integrationScheduler.Shutdown()
+	if c.Bool("run-scheduler") {
+		integrationScheduler, err := queue.StartIntegrationSchedulers(redisRuntime.ConnOpt)
+		if err != nil {
+			return err
+		}
+		if integrationScheduler != nil {
+			defer integrationScheduler.Shutdown()
+		}
+		// ci#747 (RC1, depends on ci#744): seed the declarative self-message
+		// schedules (OPEN_CHAT_SELF_MESSAGE_SCHEDULES) in the same single-owner
+		// gate as the integration scheduler, so a configured actor re-fires its
+		// own loop instead of idling until a human re-dispatches it. The runtime
+		// is a no-op (nil, nil) when nothing is configured.
+		//
+		// ci#744 / ci#785: self-messaging is an optional convenience on top of the
+		// queue scheduler, so it is armed exactly once here and *never* fatally. A
+		// deployment that does not know the configured bot (a fresh CI database
+		// where the bot user was never seeded, a renamed user, a bot without a
+		// chat) must keep serving: the runtime logs the degraded schedule and
+		// keeps reconciling, so a bot seeded later self-resumes on the next tick.
+		// r57 shipped a second, unconditional start whose `if err != nil { return
+		// err }` aborted the boot of every GitHub Actions deployment; that
+		// duplicate is why the backend never opened port 1984. Do not re-add a
+		// second start (see TestServerBootArmsSelfMessageSchedules).
+		selfMessageRuntime, selfErr := msgmate.StartSelfMessageRuntime(ctx, DB, queueClient, queueInspector)
+		switch {
+		case selfErr != nil:
+			logging.Errorf("self-message schedules disabled, idle interactions will not self-resume: %v", selfErr)
+		case selfMessageRuntime != nil:
+			defer selfMessageRuntime.Shutdown()
+			logging.Infof("Armed the self-message schedules (ci#744); idle interactions now self-resume")
+		default:
+			logging.Infof("No self-message schedules configured (%s unset)", msgmate.SelfMessageScheduleEnvVar)
+
+		}
+	} else {
+		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
 
 	serverErrCh := make(chan error, 1)
@@ -1172,13 +1279,13 @@ func runServer(ctx context.Context, c *cli.Command) error {
 			return err
 		}
 	case <-signalCtx.Done():
-		log.Printf("Shutting down server (signal: %v)", signalCtx.Err())
+		logging.Infof("Shutting down server (signal: %v)", signalCtx.Err())
 		forceSigCh := make(chan os.Signal, 1)
 		signal.Notify(forceSigCh, os.Interrupt)
 		defer signal.Stop(forceSigCh)
 		go func() {
 			<-forceSigCh
-			log.Printf("Received additional interrupt; forcing immediate exit")
+			logging.Debugf("Received additional interrupt; forcing immediate exit")
 			os.Exit(130)
 		}()
 		ch.Shutdown()

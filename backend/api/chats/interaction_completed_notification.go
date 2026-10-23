@@ -3,7 +3,6 @@ package chats
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/url"
 	"strings"
 
@@ -12,6 +11,8 @@ import (
 
 	"github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // Interaction notification slugs emitted by the core interaction lifecycle.
@@ -70,7 +71,7 @@ func maybeDispatchInteractionCompletedNotification(ctx context.Context, db *gorm
 	body := buildInteractionCompletedBody(interactionURL, interactionType, tags)
 
 	if err := dispatchInteractionNotification(ctx, db, notificationSlugInteractionCompleted, "Interaction completed", body, ownerUUID, interactionCompletedContext(db, chat, interactionURL, tags)); err != nil {
-		log.Printf("interaction-completed notification dispatch failed for chat %s: %v", chat.UUID, err)
+		logging.Errorf("interaction-completed notification dispatch failed for chat %s: %v", chat.UUID, err)
 	}
 }
 
@@ -99,7 +100,7 @@ func maybeDispatchInteractionConfirmedNotification(ctx context.Context, db *gorm
 	body := buildInteractionConfirmedBody(interactionURL, interactionType, tags)
 
 	if err := dispatchInteractionNotification(ctx, db, notificationSlugInteractionConfirmed, "Interaction confirmed", body, ownerUUID, interactionCompletedContext(db, chat, interactionURL, tags)); err != nil {
-		log.Printf("interaction-confirmed notification dispatch failed for chat %s: %v", chat.UUID, err)
+		logging.Errorf("interaction-confirmed notification dispatch failed for chat %s: %v", chat.UUID, err)
 	}
 }
 
@@ -136,7 +137,7 @@ func MaybeDispatchInteractionActionTakenNotification(ctx context.Context, db *go
 	}
 
 	if err := dispatchInteractionNotification(ctx, db, notificationSlugInteractionActionTaken, "Interaction action taken", body, receiverUUID, contextMap); err != nil {
-		log.Printf("interaction-action-taken notification dispatch failed for chat %s: %v", chat.UUID, err)
+		logging.Errorf("interaction-action-taken notification dispatch failed for chat %s: %v", chat.UUID, err)
 	}
 }
 

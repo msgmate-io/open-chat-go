@@ -3,11 +3,12 @@ package cmd
 import (
 	"context"
 	"errors"
-	"log"
 	"time"
 
 	"github.com/kardianos/service"
 	"github.com/urfave/cli/v3"
+
+	"backend/logging"
 )
 
 const (
@@ -100,7 +101,7 @@ func runService(ctx context.Context, c *cli.Command) error {
 	}
 
 	if service.Interactive() {
-		log.Printf("Running Open Chat as a service in the foreground; press Ctrl+C to stop")
+		logging.Infof("Running Open Chat as a service in the foreground; press Ctrl+C to stop")
 	}
 
 	return s.Run()

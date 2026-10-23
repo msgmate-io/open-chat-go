@@ -190,6 +190,51 @@ export function isMobileServerAuthenticatedWithProbe(
   return activeServerProbeAuthenticated && server.id === activeServerId;
 }
 
+// A per-server map of the last live-probe result. Unlike a single active-server
+// flag, this keeps each server's own last-known auth state, so switching servers
+// no longer has to re-derive (and briefly blank) another server's badge.
+export type MobileServerAuthProbeState = Record<string, boolean | undefined>;
+
+// resolveMobileServerAuthenticated combines a server's native cookie hint with
+// its own live-probe result. The native host derives `isAuthenticated` from the
+// WebView cookie jar, which can miss on a cold start or when a Google-login
+// callback replied through a different path; the per-server probe covers that.
+export function resolveMobileServerAuthenticated(
+  server: MobileServerConfig | null | undefined,
+  probeState: MobileServerAuthProbeState,
+): boolean {
+  if (!server) {
+    return false;
+  }
+  if (server.isAuthenticated === true) {
+    return true;
+  }
+  return probeState[server.id] === true;
+}
+
+// recordMobileServerAuthProbe stores a probe result for one server. A
+// known-authenticated server is sticky: a transient probe failure (the runtime
+// proxy restarts during a server switch, or the share sheet resumes and races
+// the session cookie commit) must not flip a server that was authenticated
+// moments before back to "No auth". A later successful probe still confirms it,
+// so the state self-heals on the next focus/switch probe.
+export function recordMobileServerAuthProbe(
+  state: MobileServerAuthProbeState,
+  serverId: string,
+  authenticated: boolean,
+): MobileServerAuthProbeState {
+  if (!serverId) {
+    return state;
+  }
+  if (state[serverId] === true && !authenticated) {
+    return state;
+  }
+  if (state[serverId] === authenticated) {
+    return state;
+  }
+  return { ...state, [serverId]: authenticated };
+}
+
 // probeActiveMobileServerAuthenticated performs a lightweight same-origin probe
 // of the currently active server's session. In the native app the WebView is
 // fronted by the local runtime proxy, so `/api/v1/user/self` is rewritten to the

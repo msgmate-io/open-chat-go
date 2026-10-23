@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Text, TextTypes } from "@open-chat-go/ui";
 import { ExternalLink } from "lucide-react";
 import { DocsLayout } from "@/components/docs/DocsLayout";
+import { DocsAccessNotice } from "@/components/docs/DocsAccessNotice";
+import { getDocGateReason, useDocsAccess } from "@/components/docs/useDocsAccess";
 import { docs } from "./docs";
 import { useCurrentUser } from "@open-chat-go/ui";
 
@@ -15,6 +17,7 @@ const getInitialDocPath = () => {
 
 export default function Page() {
   const { data: user } = useCurrentUser();
+  const docsAccess = useDocsAccess();
   const visibleDocs = useMemo(
     () => docs.filter((doc) => !doc.adminOnly || !!user?.is_admin),
     [user?.is_admin],
@@ -23,6 +26,9 @@ export default function Page() {
   const [activeDocPath, setActiveDocPath] = useState(getInitialDocPath);
   const activeDoc = visibleDocs.find((doc) => doc.path === activeDocPath) ?? visibleDocs[0];
   const ActiveDoc = activeDoc?.component;
+  // Private integration docs are linked from the public docs but only rendered
+  // for visitors with a session and the matching integration access.
+  const gateReason = activeDoc ? getDocGateReason(activeDoc, docsAccess) : "none";
 
   const selectDoc = useCallback((path: string) => {
     setActiveDocPath(path);
@@ -123,29 +129,35 @@ export default function Page() {
     <DocsLayout activeDocPath={activeDocPath} onSelect={selectDoc}>
       {activeDoc ? (
         <article className="docs-content">
-          <header className="docs-article-header">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <Text type={TextTypes.Heading4} tag="h1" className="docs-h1">
-                  {activeDoc.title}
-                </Text>
-                {activeDoc.description ? (
-                  <Text type={TextTypes.Body5} tag="p" color="muted" className="docs-p">
-                    {activeDoc.description}
+          {gateReason === "none" ? (
+            <header className="docs-article-header">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Text type={TextTypes.Heading4} tag="h1" className="docs-h1">
+                    {activeDoc.title}
                   </Text>
+                  {activeDoc.description ? (
+                    <Text type={TextTypes.Body5} tag="p" color="muted" className="docs-p">
+                      {activeDoc.description}
+                    </Text>
+                  ) : null}
+                </div>
+                {activeDoc.sourceUrl ? (
+                  <Button asChild variant="outline" size="sm">
+                    <a href={activeDoc.sourceUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink className="mr-2 size-4" />
+                      MDX Source
+                    </a>
+                  </Button>
                 ) : null}
               </div>
-              {activeDoc.sourceUrl ? (
-                <Button asChild variant="outline" size="sm">
-                  <a href={activeDoc.sourceUrl} target="_blank" rel="noreferrer">
-                    <ExternalLink className="mr-2 size-4" />
-                    MDX Source
-                  </a>
-                </Button>
-              ) : null}
-            </div>
-          </header>
-          <ActiveDoc components={mdxComponents} />
+            </header>
+          ) : null}
+          {gateReason === "none" ? (
+            <ActiveDoc components={mdxComponents} />
+          ) : (
+            <DocsAccessNotice reason={gateReason} />
+          )}
         </article>
       ) : (
         <Text type={TextTypes.Body5} color="muted">

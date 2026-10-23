@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"backend/logging"
+
 	"gorm.io/gorm"
 )
 
@@ -80,7 +82,7 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 		if err := db.Set("gorm:table_options", "").Migrator().CreateTable(&TempChat{}); err != nil {
 			return fmt.Errorf("failed to create chat table: %v", err)
 		}
-		fmt.Println("Chat table created")
+		logging.Infof("Chat table created")
 	} else {
 		// Check if ChatType column exists, add it if not
 		if !db.Migrator().HasColumn(&Chat{}, "chat_type") {
@@ -91,7 +93,7 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 			if err := db.Exec("UPDATE chats SET chat_type = 'conversation' WHERE chat_type IS NULL").Error; err != nil {
 				return fmt.Errorf("failed to set default chat_type for existing rows: %v", err)
 			}
-			fmt.Println("Added chat_type column to chats table")
+			logging.Infof("Added chat_type column to chats table")
 		}
 	}
 
@@ -99,14 +101,14 @@ func (c ChatAndMessageMigration) Migrate(db *gorm.DB) error {
 		if err := db.Set("gorm:table_options", "").Migrator().CreateTable(&TempSharedConfig{}); err != nil {
 			return fmt.Errorf("failed to create shared chat config table: %v", err)
 		}
-		fmt.Println("SharedChatConfig table created")
+		logging.Infof("SharedChatConfig table created")
 	}
 
 	if !db.Migrator().HasTable("messages") {
 		if err := db.Set("gorm:table_options", "").Migrator().CreateTable(&TempMessage{}); err != nil {
 			return fmt.Errorf("failed to create message table: %v", err)
 		}
-		fmt.Println("Message table created")
+		logging.Infof("Message table created")
 	}
 
 	if err := db.AutoMigrate(&Message{}); err != nil {
@@ -262,6 +264,7 @@ var Tabels []interface{} = []interface{}{
 	&AccessToken{},
 	&IntegrationAccess{},
 	&ActionTaskDismissal{},
+	&WorkspaceLease{},
 }
 
 var Migrations []Migration = []Migration{
@@ -289,6 +292,7 @@ var Migrations []Migration = []Migration{
 	TableMigration{&AccessToken{}},
 	TableMigration{&IntegrationAccess{}},
 	TableMigration{&ActionTaskDismissal{}},
+	TableMigration{&WorkspaceLease{}},
 	GrantDefaultPermissionsMigration{},
 }
 

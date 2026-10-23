@@ -1,0 +1,31 @@
+diff --git a/backend/templates/redis.yaml b/backend/templates/redis.yaml
+--- a/backend/templates/redis.yaml
++++ b/backend/templates/redis.yaml
+@@ -33,11 +33,27 @@
+               port: {{ .Values.redis.service.port }}
+             initialDelaySeconds: 5
+             periodSeconds: 10
++            timeoutSeconds: 2
++            failureThreshold: 3
+           readinessProbe:
+             tcpSocket:
+               port: {{ .Values.redis.service.port }}
+             initialDelaySeconds: 3
+             periodSeconds: 5
++            timeoutSeconds: 2
++            failureThreshold: 6
++          startupProbe:
++            tcpSocket:
++              port: {{ .Values.redis.service.port }}
++            initialDelaySeconds: 0
++            periodSeconds: 5
++            timeoutSeconds: 2
++            failureThreshold: 12
++          resources:
++            requests:
++              cpu: 100m
++            limits:
++              cpu: 500m
+           {{- if .Values.redis.persistence.enabled }}
+           volumeMounts:
+             - name: redis-data

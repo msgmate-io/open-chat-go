@@ -5,11 +5,12 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 type ListedMessage struct {
@@ -89,8 +90,8 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
-	if chatUuid == "" {
+	chatUuid, err := parseChatUUID(r)
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -121,7 +122,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 			return
 		}
-		log.Printf("Failed to load chat %s: %v", chatUuid, result.Error)
+		logging.Errorf("Failed to load chat %s: %v", chatUuid, result.Error)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -130,15 +131,23 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Now list the messages paginated
-	result = DB.Scopes(database.Paginate(&messages, &pagination, DB)).
+	// The chat filter has to exist BEFORE pagination runs: Paginate derives
+	// TotalPages from the count of the handle it receives, and counting the bare
+	// DB handle described every message in the database rather than this chat's,
+	// so a short chat advertised hundreds of pages and clients kept paging into
+	// empty ones (ci#789, ci#825). Build the filtered query first - the same
+	// shape backend/api/chats/List.go uses - and paginate that.
+	messageQuery := DB.
 		Where("chat_id = ?", chat.ID).
-		Where("deleted_at IS NULL").
+		Where("deleted_at IS NULL")
+
+	// Now list the messages paginated
+	result = messageQuery.Scopes(database.Paginate(&messages, &pagination, messageQuery)).
 		Preload("Sender").
 		Find(&messages)
 
 	if result.Error != nil {
-		log.Printf("Failed to list messages for chat %s: %v", chatUuid, result.Error)
+		logging.Errorf("Failed to list messages for chat %s: %v", chatUuid, result.Error)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

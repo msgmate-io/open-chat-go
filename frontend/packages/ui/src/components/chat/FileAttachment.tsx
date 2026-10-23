@@ -111,26 +111,38 @@ export const FileAttachmentsList: React.FC<FileAttachmentsListProps> = ({
     return null;
   }
 
-  // Check if there's only one image attachment
-  const isSingleImage = attachments.length === 1 && attachments[0].mimeType?.startsWith('image/');
-
-  if (isSingleImage) {
-    const image = attachments[0];
-    return (
-      <div className="mt-2">
-        <img
-          src={`/api/v1/files/${image.fileId}`}
-          alt={image.displayName || image.fileName}
-          className="max-w-full h-auto rounded-lg border"
-          style={{ maxHeight: '400px' }}
-        />
-      </div>
-    );
-  }
+  const images = attachments.filter((attachment) => attachment.mimeType?.startsWith('image/'));
+  const files = attachments.filter((attachment) => !attachment.mimeType?.startsWith('image/'));
 
   return (
     <div className="flex flex-col gap-2 mt-2">
-      {attachments.map((attachment, index) => (
+      {images.length > 0 ? (
+        <div className={images.length === 1 ? "flex" : "flex flex-wrap gap-2"}>
+          {images.map((image, index) => (
+            <a
+              key={`${image.fileId}-${index}`}
+              href={`/api/v1/files/${image.fileId}`}
+              target="_blank"
+              rel="noreferrer"
+              className={images.length === 1 ? "block" : "block max-w-[12rem]"}
+            >
+              <img
+                src={`/api/v1/files/${image.fileId}`}
+                alt={image.displayName || image.fileName}
+                loading="lazy"
+                className={
+                  images.length === 1
+                    ? "max-w-full h-auto rounded-lg border"
+                    : "h-32 w-full rounded-lg border object-cover"
+                }
+                style={images.length === 1 ? { maxHeight: '400px' } : undefined}
+              />
+            </a>
+          ))}
+        </div>
+      ) : null}
+
+      {files.map((attachment, index) => (
         <FileAttachmentDisplay
           key={`${attachment.fileId}-${index}`}
           fileId={attachment.fileId}

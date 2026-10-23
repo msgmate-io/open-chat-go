@@ -575,6 +575,100 @@ func TestSaveRawIntegrationSettingsPreservesRedacted(t *testing.T) {
 	}
 }
 
+func TestMutateRawIntegrationSettingsRequiresAdmin(t *testing.T) {
+	req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/mutate",
+		[]byte(`{"set":[{"path":"anchors.x","value":"y"}]}`), &database.User{IsAdmin: false})
+	rr := httptest.NewRecorder()
+	MutateRawIntegrationSettings(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin, got %d", rr.Code)
+	}
+}
+
+func TestMutateRawIntegrationSettingsRejectsEmptyDelta(t *testing.T) {
+	req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/mutate",
+		[]byte(`{}`), settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	MutateRawIntegrationSettings(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty delta, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestMutateRawIntegrationSettingsSetsAnchor(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	path, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host"},"anchors":{"existing":"keep"}}`)
+	defer cleanup()
+
+	body := []byte(`{"set":[{"path":"anchors.little-world-odoo-admin-kubeconfig-b64","value":"cGxhY2Vob2xkZXI="}]}`)
+	req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/mutate", body, settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	MutateRawIntegrationSettings(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var payload rawConfigMutateResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !payload.Persisted {
+		t.Fatalf("expected persisted, got persist_error %q", payload.PersistError)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	anchors := root["anchors"].(map[string]interface{})
+	if anchors["little-world-odoo-admin-kubeconfig-b64"] != "cGxhY2Vob2xkZXI=" {
+		t.Fatalf("expected anchor written, got %#v", anchors)
+	}
+	if anchors["existing"] != "keep" {
+		t.Fatalf("expected unrelated anchor preserved, got %#v", anchors)
+	}
+}
+
+func TestMutateRawIntegrationSettingsAcceptsPathValueConvenience(t *testing.T) {
+	ensureTestSettingsIntegration(t)
+	path, cleanup := rawSettingsState(t, `{"env":{"OCI_TEST_CORE_SETTINGS_HOST":"orig-host"},"anchors":{}}`)
+	defer cleanup()
+
+	req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/mutate",
+		[]byte(`{"path":"anchors.convenience","value":"ok"}`), settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	MutateRawIntegrationSettings(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if root["anchors"].(map[string]interface{})["convenience"] != "ok" {
+		t.Fatalf("expected convenience set applied, got %#v", root["anchors"])
+	}
+}
+
+func TestMutateRawIntegrationSettingsRejectsUnknownTopLevelKey(t *testing.T) {
+	req := settingsRequest(http.MethodPost, "/api/v1/admin/integration-settings/mutate",
+		[]byte(`{"set":[{"path":"nope.x","value":"y"}]}`), settingsAdminUser(t))
+	rr := httptest.NewRecorder()
+	MutateRawIntegrationSettings(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown top-level key, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestSaveRawIntegrationSettingsRejectsInvalid(t *testing.T) {
 	ensureTestSettingsIntegration(t)
 	req := settingsRequest(http.MethodPut, "/api/v1/admin/integration-settings/raw",

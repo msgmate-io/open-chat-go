@@ -24,5 +24,6 @@ exec /dev_bin/CompileDaemon \
   -exclude-dir=/backend/.devbin \
   -exclude="swagger.json" \
   -exclude="imports_gen.go" \
+  -exclude="sources_gen.go" \
   -exclude="*.db" \
   -exclude="*.db-*"

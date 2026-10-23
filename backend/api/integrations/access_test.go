@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"backend/database"
+	backendintegrations "backend/integrations"
 	"backend/server/util"
 	"context"
 	"encoding/json"
@@ -12,6 +13,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// requireIntegration skips a test when the named integration is not present in
+// the compiled registry. The `ssh`, `account_management` and `admin`
+// integrations come from the private manifest and only exist in the `full`
+// profile; in a public `core-only` checkout the registry holds just the
+// manifest's public entries, so assertions about those integrations have
+// nothing to observe. This mirrors the build-profile skip in
+// backend/api/bots/config_validation_test.go.
+func requireIntegration(t *testing.T, name string) {
+	t.Helper()
+	if !backendintegrations.Has(name) {
+		t.Skipf("integration %q not available in current build profile", name)
+	}
+}
+
 func setupIntegrationsTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	cfg := database.DBConfig{
@@ -20,7 +35,7 @@ func setupIntegrationsTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	return database.SetupTestDatabase(t, cfg)
 }
 
 func createUserForIntegrationsTest(t *testing.T, db *gorm.DB, email string, isAdmin bool) *database.User {
@@ -44,6 +59,7 @@ func requestWithDBUser(path string, db *gorm.DB, user *database.User) *httptest.
 }
 
 func TestListShowsOnlyUserVisibleIntegrationsForRegularUsers(t *testing.T) {
+	requireIntegration(t, "ssh")
 	db := setupIntegrationsTestDB(t)
 	user := createUserForIntegrationsTest(t, db, "regular@example.com", false)
 
@@ -79,6 +95,7 @@ func TestListShowsOnlyUserVisibleIntegrationsForRegularUsers(t *testing.T) {
 }
 
 func TestGrantAccessRejectsAdminOnlyForRegularUser(t *testing.T) {
+	requireIntegration(t, "admin")
 	db := setupIntegrationsTestDB(t)
 	admin := createUserForIntegrationsTest(t, db, "admin@example.com", true)
 	target := createUserForIntegrationsTest(t, db, "regular@example.com", false)
@@ -100,6 +117,7 @@ func TestGrantAccessRejectsAdminOnlyForRegularUser(t *testing.T) {
 }
 
 func TestAdminOnlyIntegrationStaysHiddenForRegularUserEvenIfAssigned(t *testing.T) {
+	requireIntegration(t, "admin")
 	db := setupIntegrationsTestDB(t)
 	user := createUserForIntegrationsTest(t, db, "regular@example.com", false)
 	if err := database.EnsureIntegrationAccess(db, user.ID, "admin"); err != nil {

@@ -3,17 +3,50 @@ package chats
 import (
 	"backend/chatstate"
 	"backend/database"
+	"backend/nativecoder"
 	"backend/server/util"
+	"backend/sharecensor"
 	"backend/workqueue"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
+
+// applySharedConfigDefaults merges the compiled-in integrations' shared-config
+// defaults and then the native coder's default-ON auto-consolidation block
+// (ci#653), so a native `msgmate_coder` agent consolidates its own ready PRs
+// unless the agent (or the deployment kill switch) switches it off. An explicit
+// per-agent value always wins; a non-coder config is never touched.
+//
+// It also promotes an explicit `agent_dispatch.autonomous` request into the
+// `coder_interaction: autonomous` contract (ci#506), so an interaction created
+// for a headless dispatched agent never parks on a per-action confirmation, and
+// records the per-chat tool-call budget snapshot (ci#709) in the config this
+// chat is created with, so the budget a chat was started with survives a
+// re-attach and a re-provision and stays inspectable as structured state
+// instead of only appearing in an abort error.
+func applySharedConfigDefaults(config map[string]interface{}) map[string]interface{} {
+	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
+	// integration defaults fill the full coder tool set instead of being
+	// suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
+	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+	// ci#757: a native coder/dev-agent chat also defaults to the hive-mind
+	// dispatch family so a development lead can start/steer peer agents natively
+	// instead of the deprecated trigger-coding-interaction GitHub workflow. The
+	// merge is skipped for a non-coder config and for an operator-narrowed
+	// non-empty `tools` list, which always wins.
+	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
+	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withDispatch)
+	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
+}
 
 // TODO: should also supply user Id
 type CreateChat struct {
@@ -95,7 +128,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 		if requestSharedConfig == nil {
 			return nil, nil
 		}
-		withDefaults := extiface.ApplySharedConfigDefaults(requestSharedConfig)
+		withDefaults := applySharedConfigDefaults(requestSharedConfig)
 		return withDefaults, nil
 	}
 	var runtime database.BotRuntimeConfig
@@ -103,7 +136,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 		if requestSharedConfig == nil {
 			return nil, nil
 		}
-		withDefaults := extiface.ApplySharedConfigDefaults(requestSharedConfig)
+		withDefaults := applySharedConfigDefaults(requestSharedConfig)
 		return withDefaults, nil
 	}
 	runtimeConfig := map[string]interface{}{}
@@ -122,7 +155,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 		merged := mergeJSONMaps(runtimeConfig, requestSharedConfig)
 		resolved = applyModelConfigBindingForUser(DB, runtime.OwnerUserId, merged)
 	}
-	withDefaults := extiface.ApplySharedConfigDefaults(resolved)
+	withDefaults := applySharedConfigDefaults(resolved)
 	return withDefaults, nil
 }
 
@@ -140,7 +173,7 @@ func resolveSharedConfigForChat(DB *gorm.DB, botUser database.User, requestShare
 //	@Failure      500  {string}  string	"Internal server error - failed to marshal attachment metadata" Example("Failed to marshal attachment metadata")
 //	@Router       /api/v1/chats/create [post]
 func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	log.Printf("=== ChatsHandler.Create START ===")
+	logging.Debugf("=== ChatsHandler.Create START ===")
 
 	DB, user, err := util.GetDBAndUser(r)
 
@@ -161,13 +194,13 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Received CreateChat data:")
-	log.Printf("  ContactToken: %s", data.ContactToken)
-	log.Printf("  FirstMessage: %s", data.FirstMessage)
-	log.Printf("  Attachments: %+v", data.Attachments)
-	log.Printf("  ChatType: %s", data.ChatType)
-	log.Printf("  AutoShare: %v", data.AutoShare)
-	log.Printf("  SharedConfig keys: %d", len(data.SharedConfig))
+	logging.Debugf("Received CreateChat data:")
+	logging.Debugf("  ContactToken: %s", data.ContactToken)
+	logging.Debugf("  FirstMessage: %s", data.FirstMessage)
+	logging.Debugf("  Attachments: %+v", data.Attachments)
+	logging.Debugf("  ChatType: %s", data.ChatType)
+	logging.Debugf("  AutoShare: %v", data.AutoShare)
+	logging.Debugf("  SharedConfig keys: %d", len(data.SharedConfig))
 
 	// Security check: Only allow known public chat types for non-admin users.
 	// Admins may use custom chat types.
@@ -217,7 +250,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// Prepare metadata for attachments if any
 		var metaData []byte
 		if len(data.Attachments) > 0 {
-			log.Printf("Processing %d attachments for first message", len(data.Attachments))
+			logging.Debugf("Processing %d attachments for first message", len(data.Attachments))
 			// Validate ownership, share with the receiver and enrich with the
 			// uploaded file's mime type / name / size so the bot reply pipeline
 			// can process (eg vision) attachments.
@@ -237,11 +270,11 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 			metaData, err = json.Marshal(metaDataMap)
 			if err != nil {
-				log.Printf("Failed to marshal attachment metadata: %v", err)
+				logging.Errorf("Failed to marshal attachment metadata: %v", err)
 				http.Error(w, "Failed to marshal attachment metadata", http.StatusInternalServerError)
 				return
 			}
-			log.Printf("Created metadata for attachments: %s", string(metaData))
+			logging.Infof("Created metadata for attachments: %s", string(metaData))
 		}
 
 		message := database.Message{
@@ -261,6 +294,22 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if resolveSharedErr != nil {
 		http.Error(w, "Failed to resolve shared_config", http.StatusInternalServerError)
 		return
+	}
+	// ci#756: the chat-create path must apply the same native-coder dev setup as
+	// the bot-dispatch path. Without this, a chat started directly against a repo
+	// reached the first LLM turn with no submodules and no build tooling. The
+	// repository comes from the interaction's repo:<...> tag (or the selected
+	// workspace's git_repo); an explicit coder_sandbox_setup_commands script wins.
+	if resolvedSharedConfig != nil && nativecoder.IsCoderAgentConfig(resolvedSharedConfig) {
+		var toolInit map[string]interface{}
+		if data.SharedConfig != nil {
+			toolInit, _ = data.SharedConfig["tool_init"].(map[string]interface{})
+		}
+		resolvedSharedConfig = nativecoder.WithDevSetup(
+			resolvedSharedConfig,
+			nativecoder.DevSetupRepoForInteraction(resolvedSharedConfig, data.Tags, toolInit, nil),
+			nativecoder.DevSetupEnvValue(),
+		)
 	}
 	if resolvedSharedConfig != nil {
 		configData, err := json.Marshal(resolvedSharedConfig)
@@ -283,14 +332,14 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			queueClient, clientErr := util.GetAsynqClient(r)
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)
 			if clientErr != nil || inspectorErr != nil {
-				log.Printf("Failed to access async queue for initial bot reply: clientErr=%v inspectorErr=%v", clientErr, inspectorErr)
+				logging.Errorf("Failed to access async queue for initial bot reply: clientErr=%v inspectorErr=%v", clientErr, inspectorErr)
 			} else {
 				if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
 					ChatUUID:    chat.UUID,
 					MessageUUID: createdMessage.UUID,
 					BotUserID:   otherUser.ID,
 				}); enqueueErr != nil {
-					log.Printf("Failed to enqueue initial bot reply for chat %s: %v", chat.UUID, enqueueErr)
+					logging.Errorf("Failed to enqueue initial bot reply for chat %s: %v", chat.UUID, enqueueErr)
 				}
 			}
 		} else {
@@ -298,7 +347,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			var wsAttachments *[]FileAttachment
 			if len(data.Attachments) > 0 {
 				wsAttachments = &data.Attachments
-				log.Printf("Sending websocket message with %d attachments", len(data.Attachments))
+				logging.Debugf("Sending websocket message with %d attachments", len(data.Attachments))
 			}
 
 			SendWebsocketMessage(ch, otherUser.UUID, chat.UUID, *user, SendMessage{
@@ -311,7 +360,9 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	DB.Preload("User1").Preload("User2").Preload("LatestMessage").First(&chat, chat.ID)
 	listedChat := convertChatToListedChat(user, chat)
 	if data.AutoShare {
-		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID, "public", nil)
+		// Auto-share always starts censored: the safe content mode is the
+		// default and can only be widened explicitly through the share API.
+		share, shareErr := ensureOwnedChatShare(DB, chat, user.ID, "public", nil, sharecensor.ContentModeCensored)
 		if shareErr != nil {
 			http.Error(w, "Failed to auto-share chat", http.StatusInternalServerError)
 			return
@@ -323,7 +374,7 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("=== ChatsHandler.Create END ===")
+	logging.Debugf("=== ChatsHandler.Create END ===")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(listedChat)
 

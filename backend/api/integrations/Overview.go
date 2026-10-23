@@ -69,6 +69,9 @@ type IntegrationFrontendRouteOverview struct {
 	Public      bool   `json:"public"`
 	Description string `json:"description,omitempty"`
 	AssetPath   string `json:"asset_path,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Section     string `json:"section,omitempty"`
+	Order       int    `json:"order,omitempty"`
 }
 
 type IntegrationRuntimeEnvVarOverview struct {
@@ -101,6 +104,9 @@ type IntegrationOverviewResponse struct {
 	Functions         []string                           `json:"functions"`
 	RuntimeEnvVars    []IntegrationRuntimeEnvVarOverview `json:"runtime_env_vars"`
 	DefaultBots       []IntegrationDefaultBotOverview    `json:"default_bots"`
+	Labels            []string                           `json:"labels"`
+	SourceRepository  string                             `json:"source_repository,omitempty"`
+	SourceRef         string                             `json:"source_ref,omitempty"`
 }
 
 func pathParamsFromRoute(route string) []IntegrationAPIParameterOverview {
@@ -359,7 +365,7 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		return routeOverview[i].Route < routeOverview[j].Route
 	})
 
-	frontendRoutes := make([]IntegrationFrontendRouteOverview, 0, len(def.FrontendRoutes)+len(def.FrontendPages))
+	frontendRoutes := make([]IntegrationFrontendRouteOverview, 0, len(def.FrontendRoutes)+len(def.FrontendPages)+len(def.FrontendDocs))
 	for _, route := range def.FrontendRoutes {
 		frontendRoutes = append(frontendRoutes, IntegrationFrontendRouteOverview{
 			Route:       route.Route,
@@ -377,7 +383,22 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 			AssetPath:   page.AssetPath,
 		})
 	}
+	for _, doc := range def.FrontendDocs {
+		frontendRoutes = append(frontendRoutes, IntegrationFrontendRouteOverview{
+			Route:       doc.Route,
+			Kind:        "doc",
+			Public:      doc.Public,
+			Description: doc.Description,
+			AssetPath:   doc.AssetPath,
+			Title:       doc.Title,
+			Section:     doc.Section,
+			Order:       doc.Order,
+		})
+	}
 	sort.Slice(frontendRoutes, func(i, j int) bool {
+		if frontendRoutes[i].Route == frontendRoutes[j].Route {
+			return frontendRoutes[i].Kind < frontendRoutes[j].Kind
+		}
 		return frontendRoutes[i].Route < frontendRoutes[j].Route
 	})
 
@@ -445,6 +466,13 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		return defaultBots[i].PrimaryOwner < defaultBots[j].PrimaryOwner
 	})
 
+	sourceRepository := ""
+	sourceRef := ""
+	if source, ok := backendintegrations.SourceRepository(def.Name); ok {
+		sourceRepository = strings.TrimSpace(source.Repository)
+		sourceRef = strings.TrimSpace(source.Ref)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(IntegrationOverviewResponse{
 		Name:              def.Name,
@@ -456,5 +484,8 @@ func (h *IntegrationsHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		Functions:         functions,
 		RuntimeEnvVars:    runtimeEnvVars,
 		DefaultBots:       defaultBots,
+		Labels:            backendintegrations.LabelsFor(def),
+		SourceRepository:  sourceRepository,
+		SourceRef:         sourceRef,
 	})
 }

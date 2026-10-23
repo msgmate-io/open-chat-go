@@ -22,6 +22,8 @@ type DocsNavContentProps = {
 
 export function DocsNavContent({ activeDocPath, onSelect, header }: DocsNavContentProps) {
   const { data: user } = useCurrentUser()
+  // Gated docs stay listed: selecting one renders the sign-in / no-access
+  // notice instead of the private content.
   const visibleDocs = useMemo(
     () => docs.filter((doc) => !doc.adminOnly || !!user?.is_admin),
     [user?.is_admin],

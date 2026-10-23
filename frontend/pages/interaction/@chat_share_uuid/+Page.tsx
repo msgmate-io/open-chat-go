@@ -1,4 +1,5 @@
 import useSWR from "swr"
+import { useEffect } from "react"
 import { usePageContext } from "vike-react/usePageContext"
 import logoUrl from "@/assets/logo.png"
 import { fetcher } from "@/lib/utils"
@@ -7,7 +8,7 @@ import { InteractionChatInfo } from "@open-chat-go/ui"
 import { SharedInteractionWebsocketHandler } from "@/components/chat/SharedInteractionWebsocketHandler"
 import { usePartialMessageStore } from "@open-chat-go/ui"
 import { BotDisplay, Button, LoadingSpinner, Text, TextTypes } from "@open-chat-go/ui"
-import { ExternalLink, LogIn } from "lucide-react"
+import { ExternalLink, LogIn, ShieldCheck } from "lucide-react"
 
 type SharedInteractionAccessResponse = {
   authenticated?: boolean
@@ -19,6 +20,11 @@ type SharedChatResponse = {
   uuid: string
   chat_share_uuid: string
   chat_type: string
+  /**
+   * How much of the chat this share exposes. "censored" (default) hides tool
+   * parameters/results and message meta-data; "unsecure" exposes everything.
+   */
+  content_mode?: "censored" | "unsecure" | string
   published_at?: string
   partner?: {
     uuid?: string
@@ -44,6 +50,19 @@ type SharedChatResponse = {
     tools?: string[]
     tool_init?: Record<string, unknown>
     system_prompt?: string
+  }
+  /**
+   * Follow-up interaction this interaction handed off to (e.g. the agent a
+   * runtime-selector/chooser bot picked). When present, opening the share
+   * redirects to the follow-up so clicking the interaction badge lands on the
+   * interaction that is actually doing the work.
+   */
+  follow_up?: {
+    chat_uuid?: string
+    chat_share_uuid?: string
+    interaction_url?: string
+    agent?: string
+    state?: string
   }
 }
 
@@ -74,6 +93,24 @@ export default function SharedInteractionPage() {
     return state.partialMessages[chat.uuid]
   })
 
+  const followUpURL =
+    chat?.follow_up?.interaction_url ||
+    (chat?.follow_up?.chat_share_uuid ? `/interaction/${chat.follow_up.chat_share_uuid}` : "") ||
+    (chat?.follow_up?.chat_uuid ? `/chat/${chat.follow_up.chat_uuid}` : "")
+  // `?original=1` keeps the original (pre-follow-up) interaction view reachable.
+  const isOriginalRequested =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("original") === "1"
+
+  // An interaction that handed off to a follow-up (e.g. an agent chooser bot
+  // that picked and started the real agent) should redirect the viewer to the
+  // follow-up so clicking the interaction badge lands on the active work.
+  useEffect(() => {
+    if (!followUpURL || isOriginalRequested || typeof window === "undefined") {
+      return
+    }
+    window.location.replace(followUpURL)
+  }, [followUpURL, isOriginalRequested])
+
   if (chatError || messageError) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4 text-center">
@@ -93,6 +130,23 @@ export default function SharedInteractionPage() {
     )
   }
 
+  if (followUpURL && !isOriginalRequested) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-4 text-center">
+        <LoadingSpinner />
+        <Text type={TextTypes.Body6} color="muted">
+          Opening the follow-up interaction{chat.follow_up?.agent ? ` (${chat.follow_up.agent})` : ""}…
+        </Text>
+        <a href={followUpURL} className="text-sm underline">
+          Continue if you are not redirected
+        </a>
+        <a href="?original=1" className="text-xs text-muted-foreground underline">
+          View the original interaction
+        </a>
+      </div>
+    )
+  }
+
   const renderedChat = {
     ...chat,
     config: chat.interaction_details || chat.config,
@@ -102,6 +156,7 @@ export default function SharedInteractionPage() {
     },
   }
   const botUUID = chat.partner?.uuid || ""
+  const isCensored = chat.content_mode !== "unsecure"
 
   return (
     <div className="flex h-screen w-full flex-col items-center px-4">
@@ -129,6 +184,14 @@ export default function SharedInteractionPage() {
 
       <div className="chat-messages-column">
         <InteractionChatInfo chat={renderedChat} isSharedView />
+        {isCensored ? (
+          <div className="mx-4 mt-2 flex items-center justify-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-2 py-1">
+            <ShieldCheck className="size-3.5 text-muted-foreground" />
+            <Text type={TextTypes.Body7} color="muted">
+              Censored share · tool parameters, results and message meta-data are hidden
+            </Text>
+          </div>
+        ) : null}
         <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-12">
           {[...(messages.rows || [])].reverse().map((message) => {
             const isBotSender = message.sender_is_automated === true || (botUUID !== "" && message.sender_uuid === botUUID)

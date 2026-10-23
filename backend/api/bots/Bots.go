@@ -5,6 +5,7 @@ import (
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/integrations"
+	"backend/nativecoder"
 	"backend/server/util"
 	"backend/workqueue"
 	"crypto/rand"
@@ -16,8 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -28,7 +31,35 @@ var errAmbiguousIdentifier = errors.New("ambiguous bot identifier")
 func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config map[string]interface{}) (map[string]interface{}, error) {
 	_ = DB
 	_ = user
-	return extiface.ApplySharedConfigDefaults(config), nil
+	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
+	// integration defaults fill the full coder tool set (coder_bash/coder_git/
+	// coder_read) instead of being suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
+	// Auto-consolidation is a first-class default of the native msgmate_coder
+	// agent (ci#653): an agent that declares itself as a coder agent gets the
+	// `auto_consolidation` block unless it is switched off. Applying the default
+	// here as well as through the integration keeps it working in a core-only
+	// build, and an explicit per-agent value always wins.
+	//
+	// The autonomous-confirmation contract (ci#506) is promoted here as well, so
+	// an interaction that the trusted dispatch surface created with
+	// `autonomous: true` states `coder_interaction: autonomous` on its own
+	// shared config — the key the coder integration reads — and never parks on a
+	// per-action confirmation. An already configured mode always wins and a
+	// non-dispatch config is untouched.
+	//
+	// The tool-call budget snapshot (ci#709) is deliberately NOT recorded here:
+	// this helper also builds a bot's *default* shared config, which is the live
+	// source a cap raise comes from. The snapshot belongs to a chat and is
+	// recorded on the chat itself (chats.Create, createBotInteraction).
+	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
+	// The native agent-dispatch tool family (ci#757) is a default of a native
+	// coder/dev-agent config too, so a lead agent can start and steer peer agents
+	// through the hive mind instead of shelling out to the deprecated
+	// trigger-coding-interaction GitHub workflow. An explicit non-empty `tools`
+	// list still wins and `OPENCHAT_DEV_AGENT_HIVEMIND_TOOLS=off` disables it.
+	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
+	return nativecoder.ApplyCoderAutonomousConfig(withDispatch), nil
 }
 
 type BotDTO struct {
@@ -790,6 +821,34 @@ func parseBoolQuery(raw string) bool {
 	}
 }
 
+// resolveActingUser maps a session principal to the user an owner-scoped bot
+// call acts for. A human session acts for itself; an automated (bot) session
+// acts for the owner of its bot runtime config, falling back to the bot itself
+// when no owner is recorded.
+//
+// A bot session owns no `bot_runtime_owners` row itself — the fleet is owned by
+// the runtime owner — so scoping a canonical bot route by the raw principal left
+// an automated caller with an empty `bots/list` and a 404 on `bots/{identifier}`
+// (ci#824). Every owner-scoped lookup on List/Get/CreateInteraction resolves the
+// acting user first, exactly like the agent-dispatch surface already did. It is
+// a no-op for humans, so no owner scope is widened, and permission checks that
+// must stay on the raw principal keep using it.
+func resolveActingUser(DB *gorm.DB, sessionUser *database.User) (*database.User, error) {
+	if sessionUser == nil {
+		return nil, errors.New("no authenticated user")
+	}
+	if !sessionUser.IsAutomated {
+		return sessionUser, nil
+	}
+	var runtime database.BotRuntimeConfig
+	err := DB.Preload("OwnerUser").Where("bot_user_id = ? AND is_active = ?", sessionUser.ID, true).First(&runtime).Error
+	if err == nil && runtime.OwnerUser.ID != 0 {
+		owner := runtime.OwnerUser
+		return &owner, nil
+	}
+	return sessionUser, nil
+}
+
 func resolveReadableBot(DB *gorm.DB, user *database.User, identifier string) (database.BotRuntimeConfig, error) {
 	if identifier == "" {
 		return database.BotRuntimeConfig{}, gorm.ErrRecordNotFound
@@ -902,6 +961,15 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same acting-user resolution as the other write paths (ci#824 follow-up): a
+	// bot session creates the bot for its runtime owner, not for itself. The
+	// permission gate above stays on the raw session principal.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	var req CreateBotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -916,7 +984,7 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "default_shared_config is required", http.StatusBadRequest)
 		return
 	}
-	defaultsAppliedConfig, err := applyIntegrationDefaultsForUser(DB, user, req.DefaultSharedConfig)
+	defaultsAppliedConfig, err := applyIntegrationDefaultsForUser(DB, actingUser, req.DefaultSharedConfig)
 	if err != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
 		return
@@ -926,11 +994,11 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -973,27 +1041,29 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 
 		isPublic := false
+		// The public-visibility privilege stays on the raw session principal
+		// (least privilege); only ownership follows the acting user.
 		if user.IsAdmin {
 			isPublic = req.IsPublic
 		}
 
 		runtime = database.BotRuntimeConfig{
 			BotUserId:           botUser.ID,
-			OwnerUserId:         user.ID,
+			OwnerUserId:         actingUser.ID,
 			Name:                req.Name,
 			Description:         req.Description,
-			DefaultSharedConfig: configJSON,
+			DefaultSharedConfig: database.JSONRaw(configJSON),
 			IsPublic:            isPublic,
 			IsActive:            true,
 		}
 		if err := tx.Create(&runtime).Error; err != nil {
 			return err
 		}
-		if err := database.EnsureBotRuntimeOwner(tx, runtime.ID, user.ID); err != nil {
+		if err := database.EnsureBotRuntimeOwner(tx, runtime.ID, actingUser.ID); err != nil {
 			return err
 		}
 
-		if err := ensureContactAndDirectChat(tx, *user, botUser); err != nil {
+		if err := ensureContactAndDirectChat(tx, *actingUser, botUser); err != nil {
 			return err
 		}
 
@@ -1041,10 +1111,18 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actingUser, actingErr := resolveActingUser(DB, user)
+	if actingErr != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	page, limit := parsePagination(r, 40)
 	includePublic := parseBoolQuery(r.URL.Query().Get("include_public"))
 
-	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, user.ID)
+	// ci#824: an automated (bot) session owns no runtime itself, so the list is
+	// scoped to the acting user (the runtime owner) instead of the raw principal.
+	ownedIDs := runtimeIDsOwnedByUserSubquery(DB, actingUser.ID)
 	query := DB.Model(&database.BotRuntimeConfig{}).
 		Where("is_active = ? AND id IN (?)", true, ownedIDs)
 	if includePublic {
@@ -1101,7 +1179,14 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	// ci#824: resolve the acting user first, so an automated (bot) session reads
+	// the runtime owned by its owner instead of 404ing on the raw principal.
+	actingUser, actingErr := resolveActingUser(DB, user)
+	if actingErr != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1134,8 +1219,18 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write paths resolve the acting user too (ci#824 follow-up): an automated
+	// (bot) session owns no bot_runtime_owners row itself — its fleet belongs to
+	// the runtime owner — so scoping by the raw principal 404s on a bot that
+	// genuinely exists. For a human session resolveActingUser is a no-op.
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveOwnedBot(DB, user, identifier)
+	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1151,7 +1246,7 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.DefaultSharedConfig != nil {
-		defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, req.DefaultSharedConfig)
+		defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, req.DefaultSharedConfig)
 		if defaultsErr != nil {
 			http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
 			return
@@ -1161,11 +1256,11 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := validateAndAttachDynamicToolsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+		if err := validateAndAttachDynamicToolsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := validateAndAttachMCPIntegrationsForUser(DB, user, req.DefaultSharedConfig); err != nil {
+		if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, req.DefaultSharedConfig); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1244,8 +1339,15 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same acting-user resolution as Update (ci#824 follow-up).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveOwnedBot(DB, user, identifier)
+	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1262,7 +1364,7 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, config)
+	defaultsAppliedConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, config)
 	if defaultsErr != nil {
 		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
 		return
@@ -1272,11 +1374,11 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachDynamicToolsForUser(DB, user, config); err != nil {
+	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := validateAndAttachMCPIntegrationsForUser(DB, user, config); err != nil {
+	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1318,8 +1420,15 @@ func (h *BotsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same acting-user resolution as Update/SaveConfig (ci#824 follow-up).
+	actingUser, err := resolveActingUser(DB, user)
+	if err != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveOwnedBot(DB, user, identifier)
+	runtime, err := resolveOwnedBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1365,7 +1474,14 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	}
 
 	identifier := strings.TrimSpace(r.PathValue("identifier"))
-	runtime, err := resolveReadableBot(DB, user, identifier)
+	// ci#824: an automated (bot) session resolves the bot through its owner and
+	// the interaction is created for that acting user.
+	actingUser, actingErr := resolveActingUser(DB, user)
+	if actingErr != nil {
+		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		return
+	}
+	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
 			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
@@ -1385,6 +1501,42 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	response, err := createBotInteraction(DB, queueClient, queueInspector, actingUser, runtime, req, requestBaseURL(r))
+	if err != nil {
+		writeCreateInteractionError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// errInteractionMessageRequired is returned by createBotInteraction when the
+// interaction carries no first message. Callers map it to HTTP 400.
+var errInteractionMessageRequired = errors.New("message is required")
+
+// createBotInteraction is the reusable core of POST /bots/{identifier}/interactions.
+// It builds the effective shared config, creates the interaction chat with its
+// first message (owner-scoped via actingUser), optionally gates it behind a
+// confirmation widget and enqueues the bot reply. It is shared by the
+// user-facing handler and the trusted agent-dispatch surface so both create
+// interactions through one code path.
+func createBotInteraction(
+	DB *gorm.DB,
+	queueClient *asynq.Client,
+	queueInspector *asynq.Inspector,
+	actingUser *database.User,
+	runtime database.BotRuntimeConfig,
+	req CreateBotInteractionRequest,
+	baseURL string,
+) (BotInteractionResponse, error) {
+	if actingUser == nil {
+		return BotInteractionResponse{}, errors.New("acting user is required")
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		return BotInteractionResponse{}, errInteractionMessageRequired
+	}
+
 	effectiveConfig := decodeSharedConfig(runtime.DefaultSharedConfig)
 	effectiveConfig = applyInteractionConfigOverrides(effectiveConfig, req.ConfigOverrides, req.ToolInit)
 	// A bot may default every interaction to require explicit user confirmation
@@ -1393,35 +1545,86 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	// confirmation always wins; the config key is consumed here so it is not
 	// forwarded to the chat backend as shared config.
 	requireConfirmation := req.RequireConfirmation || consumeRequireConfirmationDefault(effectiveConfig)
-	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, user, effectiveConfig)
+	// The management-scope declaration is a bot-only key consumed here too so it
+	// is never forwarded to the chat backend as shared config (ci#540 follow-up).
+	consumeAgentScopeTagsDefault(effectiveConfig)
+	withDefaultsConfig, defaultsErr := applyIntegrationDefaultsForUser(DB, actingUser, effectiveConfig)
 	if defaultsErr != nil {
-		http.Error(w, "Failed to apply integration shared config defaults", http.StatusInternalServerError)
-		return
+		return BotInteractionResponse{}, fmt.Errorf("failed to apply integration shared config defaults: %w", defaultsErr)
 	}
 	effectiveConfig = withDefaultsConfig
-	if err := validateAndAttachDynamicToolsForUser(DB, user, effectiveConfig); err != nil {
-		http.Error(w, fmt.Sprintf("invalid tools/tool_init: %v", err), http.StatusBadRequest)
-		return
+	// ci#819 part B: a tool whose init-requiring handshake has not been stored
+	// (tool_init.<tool>) cannot run, and the *agent* used to spend its first turn
+	// calling the initialiser itself (eg coder_select_workspace before the first
+	// coder_bash). The chat-start hook seeds tool_init for every configured
+	// init-requiring tool that has a derivable default (the dispatch `repo:` /
+	// `branch:` tags, else an explicit config repo) so the tool is usable from the
+	// first call. A selection the caller pinned already wins, anything not
+	// resolvable is left to the agent, and a non-coder config is untouched.
+	//
+	// It runs *before* the tools/tool_init validation below, which rejects a
+	// config that omits the init payload of a RequiresInit tool: seeding first is
+	// what makes such a dispatch valid at all.
+	if toolNames, err := collectToolNames(effectiveConfig["tools"]); err == nil {
+		effectiveConfig = nativecoder.WithPreCallInit(effectiveConfig, toolNames, req.Tags, nativecoder.DefaultPreCallInitResolvers())
 	}
-	if err := validateAndAttachMCPIntegrationsForUser(DB, user, effectiveConfig); err != nil {
-		http.Error(w, fmt.Sprintf("invalid integrations: %v", err), http.StatusBadRequest)
-		return
+	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
+		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid tools/tool_init: %v", err)}
+	}
+	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, effectiveConfig); err != nil {
+		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid integrations: %v", err)}
+	}
+	// ci#709: the *chat* records the tool-call budget it was created with, so
+	// the budget survives a re-attach / re-provision and is reported as
+	// structured state. The bot's default shared config stays the live source,
+	// so a later cap raise still reaches this interaction.
+	effectiveConfig = nativecoder.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
+	// ci#413: a native coder interaction provisions its disposable per-chat
+	// sandbox from tool_init.coder_select_workspace.git_repo, so the sandbox must
+	// clone the repository this interaction was dispatched for instead of the
+	// bot-wide default checkout. An explicit `repo:<...>` tag wins, otherwise the
+	// effective config's repo key (bot/trigger default); a repository the caller
+	// pinned itself in tool_init/config_overrides is never touched. It is a no-op
+	// for bots that do not switch auto_sandbox on, so fixed workspaces and
+	// non-coder bots keep exactly the config they were created with.
+	if repo := nativecoder.AutoSandboxRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides); repo != "" {
+		effectiveConfig = nativecoder.WithAutoSandboxRepo(effectiveConfig, repo)
+	}
+	// ci#756: a native coder interaction also prepares the full development
+	// set-up of the repository it works on *before* the agent starts, so the
+	// first tool call already sees submodules and the build tooling (helm, ci,
+	// mobile, ...) the requested profile pulls in. The resolved repository is
+	// the one the sandbox clones (`repo:<...>` tag, else the effective config's
+	// repo key); an explicit `coder_sandbox_setup_commands` script always wins,
+	// and non-coder interactions are untouched.
+	effectiveConfig = nativecoder.WithDevSetup(effectiveConfig, nativecoder.DevSetupRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides), nativecoder.DevSetupEnvValue())
+	// ci#413 follow-up: the same dispatch can name the branch the per-chat
+	// sandbox should check out (`branch:<name>` tag), eg the branch of an open
+	// pull request, so a re-run for that PR resumes the right checkout instead of
+	// the bot default (usually `main`). A branch the caller pinned in tool_init is
+	// never touched, and the value keeps its case (git branches are
+	// case-sensitive; only the `refs/heads/` prefix is stripped).
+	if branch := nativecoder.AutoSandboxBranchForInteraction(req.Tags, req.ToolInit); branch != "" {
+		effectiveConfig = nativecoder.WithAutoSandboxBranch(effectiveConfig, branch)
 	}
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
-		http.Error(w, "Failed to process config", http.StatusBadRequest)
-		return
+		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
 	}
 
-	tags := database.NormalizeChatTags(req.Tags)
+	// ci#650: a native coder interaction additionally carries a per-bot and a
+	// per-repo tag (mirroring the opencode integration's single tag), so coder
+	// chats can be grouped per bot/repo and filtered by `tags=repo:<owner/name>`.
+	// Non-coder bots keep exactly the tags their caller asked for.
+	tags := database.NormalizeChatTags(nativecoder.DefaultInteractionTags(effectiveConfig, botDisplayName(runtime), req.Tags))
 	var chat database.Chat
 	var message database.Message
 	var share database.SharedChatInstance
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if user.ID < runtime.BotUserId {
-			chat = database.Chat{User1Id: user.ID, User2Id: runtime.BotUserId, ChatType: "interaction", Tags: tags}
+		if actingUser.ID < runtime.BotUserId {
+			chat = database.Chat{User1Id: actingUser.ID, User2Id: runtime.BotUserId, ChatType: "interaction", Tags: tags}
 		} else {
-			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: user.ID, ChatType: "interaction", Tags: tags}
+			chat = database.Chat{User1Id: runtime.BotUserId, User2Id: actingUser.ID, ChatType: "interaction", Tags: tags}
 		}
 		if err := tx.Create(&chat).Error; err != nil {
 			return err
@@ -1437,7 +1640,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 
 		message = database.Message{
 			ChatId:     chat.ID,
-			SenderId:   user.ID,
+			SenderId:   actingUser.ID,
 			ReceiverId: runtime.BotUserId,
 			Text:       &req.Message,
 		}
@@ -1449,7 +1652,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 					DisplayName: attachment.DisplayName,
 				}
 			}
-			enriched, attachErr := chats.EnrichAndShareAttachments(tx, user.ID, runtime.BotUserId, chatAttachments)
+			enriched, attachErr := chats.EnrichAndShareAttachments(tx, actingUser.ID, runtime.BotUserId, chatAttachments)
 			if attachErr != nil {
 				return attachErr
 			}
@@ -1468,7 +1671,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 				tx,
 				chat,
 				runtime.BotUserId,
-				user.ID,
+				actingUser.ID,
 				runtime.UUID,
 				message,
 				"Start coding interaction?",
@@ -1484,7 +1687,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if req.AutoShare {
-			createdShare, shareErr := ensureOwnedChatShare(tx, chat.ID, user.ID)
+			createdShare, shareErr := ensureOwnedChatShare(tx, chat.ID, actingUser.ID)
 			if shareErr != nil {
 				return shareErr
 			}
@@ -1493,15 +1696,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return nil
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			http.Error(w, "Invalid file attachment", http.StatusBadRequest)
-		case errors.Is(err, chats.ErrAttachmentNotOwned):
-			http.Error(w, "Access denied to file attachment", http.StatusForbidden)
-		default:
-			http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
-		}
-		return
+		return BotInteractionResponse{}, err
 	}
 
 	if !requireConfirmation {
@@ -1510,8 +1705,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			MessageUUID: message.UUID,
 			BotUserID:   runtime.BotUserId,
 		}); enqueueErr != nil {
-			http.Error(w, "Failed to enqueue bot reply", http.StatusInternalServerError)
-			return
+			return BotInteractionResponse{}, fmt.Errorf("failed to enqueue bot reply: %w", enqueueErr)
 		}
 	}
 
@@ -1522,14 +1716,35 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 			ChatUUID:      chat.UUID,
 			ChatShareUUID: share.ChatShareUUID,
 		}
-		baseURL := requestBaseURL(r)
 		if baseURL != "" {
 			response.SharedInteractionURL = baseURL + "/interaction/" + share.ChatShareUUID
 		}
 	}
+	return response, nil
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+// interactionConfigError marks a client-supplied config/tool_init problem so the
+// HTTP layer can answer 400 instead of 500.
+type interactionConfigError struct{ message string }
+
+func (e *interactionConfigError) Error() string { return e.message }
+
+// writeCreateInteractionError maps a createBotInteraction error to the same HTTP
+// responses the original CreateInteraction handler produced.
+func writeCreateInteractionError(w http.ResponseWriter, err error) {
+	var configErr *interactionConfigError
+	switch {
+	case errors.Is(err, errInteractionMessageRequired):
+		http.Error(w, "message is required", http.StatusBadRequest)
+	case errors.As(err, &configErr):
+		http.Error(w, configErr.message, http.StatusBadRequest)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		http.Error(w, "Invalid file attachment", http.StatusBadRequest)
+	case errors.Is(err, chats.ErrAttachmentNotOwned):
+		http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+	default:
+		http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+	}
 }
 
 // requireConfirmationConfigKey is the default_shared_config key that makes a bot
@@ -1558,4 +1773,15 @@ func consumeRequireConfirmationDefault(config map[string]interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// consumeAgentScopeTagsDefault removes the default_shared_config.agent_scope_tags
+// key so a bot's management-scope declaration is never forwarded to the chat
+// backend as shared config. The key only governs the trusted /api/v1/agents
+// management gate (ci#540 follow-up).
+func consumeAgentScopeTagsDefault(config map[string]interface{}) {
+	if config == nil {
+		return
+	}
+	delete(config, agentScopeTagsConfigKey)
 }

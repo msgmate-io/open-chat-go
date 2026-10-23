@@ -34,6 +34,8 @@ import (
 
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 //go:embed all:frontend routes.json swagger.json
@@ -155,7 +157,7 @@ func pathValuesFromRoute(route string, r *http.Request) map[string]string {
 		if val := r.PathValue(match[1]); val != "" {
 			pathValues[match[1]] = val
 		} else {
-			log.Printf("Warning: No value found for path parameter %s", match[1])
+			logging.Warnf("Warning: No value found for path parameter %s", match[1])
 			pathValues[match[1]] = match[1]
 		}
 	}
@@ -174,7 +176,7 @@ func trimPageContextSuffix(value string) string {
 func serveFrontendRouteFile(route string, pathEnding string, pathValues map[string]string, w http.ResponseWriter, r *http.Request) bool {
 	fsys, err := fs.Sub(frontendFS, "frontend")
 	if err != nil {
-		log.Println(err)
+		logging.Debugf("%v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return false
 	}
@@ -183,7 +185,7 @@ func serveFrontendRouteFile(route string, pathEnding string, pathValues map[stri
 	staticFile := fmt.Sprintf("%s%s", cleanRoute, pathEnding)
 	indexFile, err := fsys.Open(staticFile)
 	if err != nil {
-		log.Printf("Error opening %s for route %s: %v", pathEnding, cleanRoute, err)
+		logging.Errorf("Error opening %s for route %s: %v", pathEnding, cleanRoute, err)
 		http.Error(w, "Page Not Found", http.StatusNotFound)
 		return false
 	}
@@ -191,7 +193,7 @@ func serveFrontendRouteFile(route string, pathEnding string, pathValues map[stri
 
 	content, err := io.ReadAll(indexFile)
 	if err != nil {
-		log.Println(err)
+		logging.Debugf("%v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return false
 	}
@@ -435,6 +437,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/rerun", chatsHandler.RerunMessage)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/approve", chatsHandler.ApproveInteractionConfirmation)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/reject", chatsHandler.RejectInteractionConfirmation)
+	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/interaction-confirmation/rerun", chatsHandler.RerunInteractionConfirmation)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/runtime-selector/resolve", chatsHandler.ResolveRuntimeSelector)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute", toolsHandler.ExecuteConfirmableAction)
 	v1PrivateApis.HandleFunc("POST /chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/reject", toolsHandler.RejectConfirmableAction)
@@ -447,6 +450,17 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("PUT /bots/{identifier}/config", botsHandler.SaveConfig)
 	v1PrivateApis.HandleFunc("DELETE /bots/{identifier}", botsHandler.Delete)
 	v1PrivateApis.HandleFunc("POST /bots/{identifier}/interactions", botsHandler.CreateInteraction)
+
+	// Trusted agent dispatch/management surface. A coding/lead/admin agent (or
+	// the hive-mind integration acting for it) starts and manages other agents
+	// from inside Open-Chat without the GitHub workflow. The acting user is the
+	// session principal, or its owner when the caller is an automated bot.
+	v1PrivateApis.HandleFunc("POST /agents/dispatch", botsHandler.AgentDispatch)
+	v1PrivateApis.HandleFunc("GET /agents/interactions", botsHandler.AgentList)
+	v1PrivateApis.HandleFunc("GET /agents/interactions/{chat_uuid}", botsHandler.AgentGet)
+	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/continue", botsHandler.AgentContinue)
+	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/stop", botsHandler.AgentStop)
+	v1PrivateApis.HandleFunc("POST /agents/interactions/{chat_uuid}/tags", botsHandler.AgentRetag)
 	v1PrivateApis.HandleFunc("POST /models", modelsHandler.Create)
 	v1PrivateApis.HandleFunc("PATCH /models/{model_uuid}", modelsHandler.Patch)
 	v1PrivateApis.HandleFunc("DELETE /models/{model_uuid}", modelsHandler.Delete)
@@ -492,6 +506,19 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/tasks/{task_id}", admin.GetAsynqTask)
 	v1PrivateApis.HandleFunc("GET /admin/asynq/queues/{queue}/stats", admin.GetAsynqQueueStats)
 	v1PrivateApis.HandleFunc("POST /admin/bots/{bot_uuid}/models/selection", admin.UpdateBotModelSelection)
+	// Effective native-coder provider admission state (ci#620): the cap that is
+	// actually in force plus the current in-flight/queue counts.
+	v1PrivateApis.HandleFunc("GET /admin/provider-admission", admin.GetProviderAdmissionStatus)
+	// Pool-level DNS/egress readiness gate (ci#613, follow-up of the ci#546
+	// shared-sandbox networking design): the verdict a pooled backing sandbox
+	// has to pass before it accepts leases, plus the ingestion of the in-pod
+	// probe report that decides it.
+	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-egress", admin.GetSandboxPoolEgressStatus)
+	// Resolved pool network plan (ci#792, follow-up of the ci#546 shared-sandbox
+	// networking design): the isolation mode, the port block geometry and the
+	// block/alias each live workspace owns.
+	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-network", admin.GetSandboxPoolNetworkStatus)
+	v1PrivateApis.HandleFunc("POST /admin/sandbox-pool-egress/report", admin.IngestSandboxPoolEgressReport)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings", admin.ListIntegrationSettings)
 	v1PrivateApis.HandleFunc("GET /admin/integration-settings/{integration_name}", admin.GetIntegrationSettings)
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/{integration_name}", admin.SaveIntegrationSettings)
@@ -501,6 +528,7 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/view", admin.ViewRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/validate", admin.ValidateRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("PUT /admin/integration-settings/raw", admin.SaveRawIntegrationSettings)
+	v1PrivateApis.HandleFunc("POST /admin/integration-settings/mutate", admin.MutateRawIntegrationSettings)
 	v1PrivateApis.HandleFunc("POST /admin/integration-settings/raw/download", admin.DownloadRawIntegrationSettings)
 
 	v1PrivateApis.HandleFunc("GET /metrics", metricsHandler.Metrics)
@@ -523,13 +551,13 @@ func BackendRouting(
 	if mobileProxyCfg.Enabled {
 		target, parseErr := url.Parse(mobileProxyCfg.Target)
 		if parseErr != nil {
-			log.Printf("Invalid MOBILE_UPSTREAM_URL %q, disabling mobile API/WS proxy: %v", mobileProxyCfg.Target, parseErr)
+			logging.Errorf("Invalid MOBILE_UPSTREAM_URL %q, disabling mobile API/WS proxy: %v", mobileProxyCfg.Target, parseErr)
 			mobileProxyCfg.Enabled = false
 		} else {
 			proxyHandler := commonMiddlewares(Logging(newMobileAPIWSReverseProxy(target)))
 			mux.Handle("/api/", proxyHandler)
 			mux.Handle("/ws/", proxyHandler)
-			log.Printf("Mobile API/WS proxy enabled: /api and /ws -> %s", mobileProxyCfg.Target)
+			logging.Infof("Mobile API/WS proxy enabled: /api and /ws -> %s", mobileProxyCfg.Target)
 		}
 	}
 
@@ -617,7 +645,7 @@ func BackendRouting(
 			// Create swagger reference handler with embedded content
 			swaggerContent, err := frontendFS.ReadFile("swagger.json")
 			if err != nil {
-				log.Printf("Warning: Failed to read embedded swagger.json: %v", err)
+				logging.Errorf("Warning: Failed to read embedded swagger.json: %v", err)
 				mux.HandleFunc("/api/openapi.json", func(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, "OpenAPI spec unavailable", http.StatusNotFound)
 				})
@@ -641,8 +669,16 @@ func BackendRouting(
 	} else {
 		mux.HandleFunc("/reference", reference.ScalarReference)
 		mux.HandleFunc("/api/reference", reference.ScalarReference)
-		log.Printf("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
+		logging.Infof("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
 	}
+
+	// ci#739: the public liveness probe. It is registered *outside*
+	// AuthMiddleware (and outside the mobile-proxy branch, so a hosted
+	// deployment can always be probed) on purpose: the crash watchdog and the
+	// ci2 profile's health_http probe poll it unauthenticated, and the 403 the
+	// authenticated /api/v1/ mux returned for the undefined path made a healthy
+	// host look crashed to a "not 200 means down" watchdog.
+	mux.Handle("GET /api/v1/metrics/health", commonMiddlewares(Logging(http.HandlerFunc(metricsHandler.Liveness))))
 
 	registerIntegrationFrontendRoutes := !(debug && strings.TrimSpace(frontendProxy) != "")
 	if registerIntegrationFrontendRoutes {
@@ -656,13 +692,13 @@ func BackendRouting(
 			log.Fatalf("failed to register integration frontend routes: %v", err)
 		}
 	} else {
-		log.Printf("Skipping integration frontend route registration in dev proxy mode")
+		logging.Infof("Skipping integration frontend route registration in dev proxy mode")
 	}
 
 	if frontendProxy == "" {
 		routes, err := getFrontendRoutes()
 		if err != nil {
-			log.Printf("Warning: Failed to load routes from routes.json: %v", err)
+			logging.Errorf("Warning: Failed to load routes from routes.json: %v", err)
 			routes = []string{}
 		}
 
@@ -673,6 +709,9 @@ func BackendRouting(
 			}
 			for _, frontendPage := range integrationDef.FrontendPages {
 				integrationFrontendRoutes[frontendPage.Route] = struct{}{}
+			}
+			for _, frontendDoc := range integrationDef.FrontendDocs {
+				integrationFrontendRoutes[frontendDoc.Route] = struct{}{}
 			}
 		}
 
@@ -686,7 +725,7 @@ func BackendRouting(
 		routes = filteredRoutes
 
 		for _, route := range routes {
-			fmt.Printf("Serving route: %s\n", route)
+			logging.Debugf("Serving route: %s", route)
 			mux.Handle(route, commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(ServeFrontendRoute(route, "/index.html")))))
 		}
 		mux.Handle("/", commonMiddlewares(FrontendAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

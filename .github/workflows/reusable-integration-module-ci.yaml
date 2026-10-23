@@ -1,0 +1,108 @@
+# Reusable Integration Module CI (ci#600 item 1).
+#
+# Integration repos are *inside* the open-chat Go workspace: their go.mod uses
+# relative `replace` directives (`backend => ../../../backend`), so compiling one
+# needs the monorepo layout around it. No integration repo has PR CI that
+# compiles the module, which is how the ci#514 PR train landed a non-compiling
+# `main` (undefined: toolNameEnv). This workflow is that safety net.
+#
+# Caller (`.github/workflows/ci.yaml` in an integration repo):
+#
+#   name: CI
+#   on: [pull_request, push]
+#   jobs:
+#     module:
+#       uses: msgmate-io/open-chat-go/.github/workflows/reusable-integration-module-ci.yaml@main
+#       with:
+#         # manifest path used by the workspace, e.g.
+#         workspace_path: clients/integrations/msgmate_coder_integration
+#       secrets: inherit
+#
+# It materializes the public `core-only` profile workspace, drops the calling
+# (PR) checkout at `workspace_path` and runs gofmt/vet/build/test there with
+# GOWORK=off, so the module compiles exactly as a consumer builds it.
+name: Reusable Integration Module CI
+
+on:
+  workflow_call:
+    inputs:
+      workspace_path:
+        description: Workspace-relative path the integration is built at
+        required: true
+        type: string
+      open_chat_ref:
+        description: open-chat-go ref providing the workspace and build-tools
+        required: false
+        type: string
+        default: main
+      integration_repository:
+        description: >-
+          Integration repository to build (defaults to the calling repository).
+          Set this to smoke-test another repo (e.g. from open-chat-go itself).
+        required: false
+        type: string
+        default: ""
+      integration_ref:
+        description: Integration ref to build (defaults to the repo's default branch)
+        required: false
+        type: string
+        default: ""
+      profile:
+        description: Integration profile to materialize before building
+        required: false
+        type: string
+        default: core-only
+      run_tests:
+        description: Run `go test ./...` in addition to build/vet/gofmt
+        required: false
+        type: boolean
+        default: true
+      decoupled:
+        description: >-
+          ci#423: build against the integration's minimal compile inputs only
+          (skip profile materialization) and require the decoupling guard to
+          pass. Set this for an integration whose `replace backend` cleanup has
+          landed; it is the per-integration prebuild precondition.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  module:
+    name: build ${{ inputs.workspace_path }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the integration (PR) checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.integration_repository || github.repository }}
+          ref: ${{ inputs.integration_ref }}
+          path: integration-src
+
+      - name: Check out the open-chat-go workspace
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go
+          ref: ${{ inputs.open_chat_ref }}
+          path: workspace
+          submodules: recursive
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: integration-src/go.mod
+          cache-dependency-path: integration-src/go.sum
+
+      - name: Run integration module CI
+        working-directory: workspace
+        env:
+          INTEGRATION_SRC: ${{ github.workspace }}/integration-src
+          WORKSPACE_PATH: ${{ inputs.workspace_path }}
+          INTEGRATION_PROFILE: ${{ inputs.profile }}
+          RUN_TESTS: ${{ inputs.run_tests }}
+          DECOUPLED: ${{ inputs.decoupled }}
+        run: bash development/scripts/integration_module_ci.sh

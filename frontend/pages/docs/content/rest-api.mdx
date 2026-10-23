@@ -26,7 +26,6 @@ to include caller-owned resources.
 | `POST` | `/api/v1/tools/typing/{tool_name}/call/validate` | Validate a tool call payload. |
 | `POST` | `/api/v1/tools/typing/{tool_name}/init/validate` | Validate tool init data. |
 | `GET` | `/api/version` | Server version information. |
-| `GET` | `/metrics` | Prometheus-style metrics. |
 
 ### Shared interaction capability URLs
 
@@ -39,6 +38,9 @@ Shared interactions are readable by anyone holding the unguessable
 | `GET` | `/api/interaction/{chat_share_uuid}/messages` |
 | `GET` | `/api/interaction/{chat_share_uuid}/status` |
 | `GET` | `/api/interaction/{chat_share_uuid}/badge.svg` |
+
+`GET /api/interaction/{chat_share_uuid}/access` reports whether the current
+viewer is authenticated and can open the full interaction.
 
 The badge is also reachable at `GET /interaction/{chat_share_uuid}/badge.svg`
 (without the `/api` prefix) for embeds built from the human-facing interaction
@@ -99,6 +101,7 @@ All `/api/v1/*` routes not listed above require an authenticated session or an
 | --- | --- |
 | `POST` | `/api/v1/contacts/add` |
 | `GET` | `/api/v1/contacts/list` |
+| `GET` | `/api/v1/contacts/default-bot` |
 | `GET` | `/api/v1/contacts/{contact_token}` |
 | `GET` | `/api/v1/user/self` |
 | `GET` | `/api/v1/user/permissions` |
@@ -117,6 +120,7 @@ All `/api/v1/*` routes not listed above require an authenticated session or an
 | `GET` | `/api/v1/files/{file_id}/info` |
 | `GET` | `/api/v1/files/{file_id}/data` |
 | `DELETE` | `/api/v1/files/{file_id}` |
+| `GET` | `/metrics` | Prometheus-style metrics (requires auth). |
 
 ## Authentication endpoints
 

@@ -1,12 +1,15 @@
 package msgmate
 
 import (
+	"backend/logging"
+	"backend/nativecoder"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +30,60 @@ type ToolCall struct {
 	Result    string
 	Status    string
 	Error     string
+	// StartedAtUnixMs is when execution of the call began (unix milliseconds),
+	// and DurationMs is how long it took. They let the chat UI show a live timer
+	// while a call runs and its duration once it completes (ci#569).
+	StartedAtUnixMs int64
+	DurationMs      int64
+	// Retries is how many extra attempts the call needed after a transient
+	// environmental failure, and BudgetExempt marks a failed call that was
+	// exempted from the agent's failed-tool budget (ci#688). Both are surfaced
+	// in the message metadata so a bursty sandbox/host condition is visible in
+	// the transcript instead of only in the backend log.
+	Retries      int
+	BudgetExempt bool
+	// SandboxCapacity marks a failed provisioning call whose sandbox the
+	// scheduler could not place because the node ran out of capacity (ci#691).
+	// Such a call is budget-exempt like any transient failure, and it is
+	// reported separately so a saturated node is visible in the transcript.
+	SandboxCapacity bool
+	// Reason is the optional human-readable "why this call" text the model
+	// attached to the call (ci#723). It is surfaced on the call row so a
+	// multi-tool coder turn reads as a narrated session instead of a bare
+	// stack of call rows.
+	Reason string
+}
+
+// IsTerminalToolCallStatus reports whether a tool-call status means the call
+// will not produce any further timing. Only a terminal call reports a recorded
+// duration, so an ongoing call keeps ticking instead of freezing at 0ms.
+func IsTerminalToolCallStatus(status string) bool {
+	switch status {
+	case ToolCallStatusSucceeded, ToolCallStatusFailed, ToolCallStatusPendingConfirmation:
+		return true
+	default:
+		return false
+	}
+}
+
+// toolCallTimingFields builds the per-call timing fields the chat UI renders
+// (ci#569): `started_at` lets the widget tick while the call runs, and
+// `duration_ms` is the recorded execution time once the call finished.
+//
+// A completed call reports its duration even when it was zero — a cached
+// (already executed) call finishes instantly — because the widget must show
+// "0ms" rather than inventing an elapsed time from the start stamp. An ongoing
+// call never reports a duration: its duration field is still zero and would
+// freeze the live timer.
+func toolCallTimingFields(status string, startedAtUnixMs, durationMs int64) map[string]interface{} {
+	fields := map[string]interface{}{}
+	if startedAtUnixMs > 0 {
+		fields["started_at"] = startedAtUnixMs
+	}
+	if durationMs > 0 || (IsTerminalToolCallStatus(status) && startedAtUnixMs > 0) {
+		fields["duration_ms"] = durationMs
+	}
+	return fields
 }
 
 const (
@@ -34,35 +91,54 @@ const (
 	ToolCallStatusSucceeded           = "succeeded"
 	ToolCallStatusFailed              = "failed"
 	ToolCallStatusPendingConfirmation = "pending_confirmation"
-	DefaultToolCallMaxTotal           = 12
-	DefaultToolCallMaxFailed          = 3
+	// Fleet-wide floor for the per-turn tool-call budget. The effective cap is
+	// the maximum of the chat snapshot, the chat/bot config and this default, so
+	// a higher floor raises chats that were created with the old 100-call cap
+	// without losing an explicitly declared larger budget (ci#709).
+	DefaultToolCallMaxTotal           = 500
+	DefaultToolCallMaxFailed          = 20
 	DefaultContextRetryTailMessages   = 14
 	DefaultToolResultMaxCharsForModel = 12000
+
+	// Context-window retry (ci#394 gap 7). When a provider rejects a request for
+	// exceeding the context window the tool loop trims the history and retries.
+	// A single cut is often not enough for a long session and a cut that lands
+	// inside a tool-call/tool-result pair yields a request the provider rejects
+	// outright, so the retry shrinks in rounds down to a floor, repairing the
+	// tool pairing after every cut and finally falling back to truncating
+	// oversized message contents when the message count cannot be reduced
+	// further.
+	contextRetryShrinkRounds      = 4
+	contextRetryTailFloorMessages = 4
+	contextRetryMaxMessageChars   = 4000
 )
 
 type ToolCallsResult struct {
 	ToolCalls []ToolCall
 }
 
+// printToolDefinition dumps one tool definition at debug level. It used to
+// write to stdout, which bypassed LOG_LEVEL entirely and made every chat
+// interaction print the full registry regardless of the configured level.
 func printToolDefinition(tool Tool) {
-	fmt.Println("=== TOOL DEFINITION ===")
-	fmt.Printf("Name: %s\n", tool.GetToolName())
-	fmt.Printf("Type: %s\n", tool.GetToolType())
-	fmt.Printf("Description: %s\n", tool.GetToolDescription())
-	fmt.Printf("Requires Init: %v\n", tool.GetRequiresInit())
-	fmt.Printf("Requires Confirmation: %v\n", tool.GetRequiresConfirmation())
+	logging.Debugf("=== TOOL DEFINITION ===")
+	logging.Debugf("Name: %s", tool.GetToolName())
+	logging.Debugf("Type: %s", tool.GetToolType())
+	logging.Debugf("Description: %s", tool.GetToolDescription())
+	logging.Debugf("Requires Init: %v", tool.GetRequiresInit())
+	logging.Debugf("Requires Confirmation: %v", tool.GetRequiresConfirmation())
 
-	// Print parameters
-	fmt.Println("Parameters:")
+	// Parameters.
+	logging.Debugf("Parameters:")
 	params := tool.GetToolParameters()
 	paramsJson, _ := json.MarshalIndent(params, "  ", "  ")
-	fmt.Printf("  %s\n", string(paramsJson))
+	logging.Debugf("  %s", string(paramsJson))
 
-	// Print the constructed tool definition
+	// The constructed tool definition.
 	toolDef, _ := json.MarshalIndent(tool.ConstructTool(), "  ", "  ")
-	fmt.Println("Full Tool Definition:")
-	fmt.Printf("  %s\n", string(toolDef))
-	fmt.Println("=====================")
+	logging.Debugf("Full Tool Definition:")
+	logging.Debugf("  %s", string(toolDef))
+	logging.Debugf("=====================")
 }
 
 func buildConfirmationSuggestion(toolName string, toolInput interface{}, continueAfterExecute bool) string {
@@ -95,6 +171,27 @@ func buildToolErrorPlaceholder(toolName string, runErr error) string {
 		"Tool %s failed with error: %s. Please continue and provide the best possible response without this tool result.",
 		toolName,
 		runErr.Error(),
+	)
+}
+
+// buildTransientToolErrorPlaceholder builds the model-facing result of a call
+// that failed for an *environmental* reason and already exhausted its retries
+// (ci#688). It tells the model three things it cannot infer from the bare
+// error: the failure was infrastructure rather than its own arguments, it did
+// not consume the failed-tool budget, and retrying after a short wait (or
+// moving on) is the right response instead of abandoning the task.
+func buildTransientToolErrorPlaceholder(toolName string, runErr error, attempts int) string {
+	reason := "unknown error"
+	if runErr != nil {
+		reason = runErr.Error()
+	}
+	return fmt.Sprintf(
+		"Tool %s failed with an environment/infrastructure error after %d attempt(s): %s. "+
+			"This is not caused by your arguments and it does NOT count against your failed-tool budget. "+
+			"Retry the call after a short wait (the underlying sandbox/host condition is usually transient) or continue with another step.",
+		toolName,
+		attempts,
+		reason,
 	)
 }
 
@@ -169,11 +266,11 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 			return
 		}
 
-		// Pretty print response body for debugging
+		// Pretty print response body for debugging.
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		var prettyJSON bytes.Buffer
 		if err := json.Indent(&prettyJSON, bodyBytes, "", "    "); err == nil {
-			fmt.Printf("Response body:\n%s\n", prettyJSON.String())
+			logging.Debugf("Response body:\n%s", prettyJSON.String())
 		}
 
 		// Create new reader from the body bytes for further processing
@@ -201,7 +298,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 
 		// Send usage information if present
 		if response.Usage != nil {
-			log.Printf("Token usage - Prompt: %d, Completion: %d, Total: %d",
+			logging.Debugf("Token usage - Prompt: %d, Completion: %d, Total: %d",
 				response.Usage.PromptTokens,
 				response.Usage.CompletionTokens,
 				response.Usage.TotalTokens)
@@ -237,6 +334,7 @@ func toolRequest(host string, model string, backend string, messages []map[strin
 //  2. usage: a channel for usage information (if any occur)
 //  3. errs: a channel for errors (if any occur)
 func streamChatCompletion(
+	ctx context.Context,
 	host string,
 	model string,
 	backend string,
@@ -266,39 +364,39 @@ func streamChatCompletion(
 
 		// Execute interaction_start tools at the beginning
 		if len(interactionStartTools) > 0 {
-			log.Printf("Executing %d interaction_start tools", len(interactionStartTools))
+			logging.Debugf("Executing %d interaction_start tools", len(interactionStartTools))
 			for _, toolName := range interactionStartTools {
 				// Extract the actual tool name after the prefix
 				actualToolName := strings.TrimPrefix(toolName, "interaction_start:")
-				log.Printf("Executing interaction_start tool: %s %s", toolName, actualToolName)
+				logging.Debugf("Executing interaction_start tool: %s %s", toolName, actualToolName)
 
 				// Execute the function using the handler if available
 				if handler != nil {
 					tool, exists := toolMap[toolName]
 					if !exists {
-						log.Printf("Warning: Tool '%s' not found in toolMap", actualToolName)
+						logging.Warnf("Warning: Tool '%s' not found in toolMap", actualToolName)
 						continue
 					}
 
 					toolResult, err := tool.RunTool(map[string]interface{}{})
 					if err != nil {
-						log.Printf("Error executing interaction_start tool %s: %v", actualToolName, err)
+						logging.Errorf("Error executing interaction_start tool %s: %v", actualToolName, err)
 						continue
 					}
-					log.Printf("Successfully executed interaction_start tool %s with result: %v", actualToolName, toolResult)
+					logging.Debugf("Successfully executed interaction_start tool %s with result: %v", actualToolName, toolResult)
 				} else {
-					log.Printf("No handler available, would execute interaction_start tool: %s", actualToolName)
+					logging.Debugf("No handler available, would execute interaction_start tool: %s", actualToolName)
 				}
 			}
 		}
 
 		// Add verbose logging of all tools
-		fmt.Println("=== REGISTERED TOOLS ===")
+		logging.Debugf("=== REGISTERED TOOLS ===")
 		for toolName, tool := range toolMap {
-			fmt.Printf("Tool registered: %s\n", toolName)
+			logging.Debugf("Tool registered: %s", toolName)
 			printToolDefinition(tool)
 		}
-		fmt.Println("=======================")
+		logging.Debugf("=======================")
 
 		if toolCallMaxTotal < 1 {
 			toolCallMaxTotal = DefaultToolCallMaxTotal
@@ -306,42 +404,198 @@ func streamChatCompletion(
 		if toolCallMaxFailed < 1 {
 			toolCallMaxFailed = DefaultToolCallMaxFailed
 		}
+		// ci#709: the caller resolves the per-chat tool-call budget (snapshot,
+		// chat config, the bot's *current* config, default) and hands it over, so
+		// raising the caps on a bot reaches chats that already exist. A direct
+		// caller without a budget keeps its explicit arguments.
+		if meta.Budget != nil {
+			if meta.Budget.MaxTotal > 0 {
+				toolCallMaxTotal = meta.Budget.MaxTotal
+			}
+			if meta.Budget.MaxFailed > 0 {
+				toolCallMaxFailed = meta.Budget.MaxFailed
+			}
+		}
 
 		currentMessages := messages
 		totalToolCalls := 0
 		failedToolCalls := 0
+		// transientToolFailures counts the calls that failed for an
+		// environmental reason and were therefore exempted from the
+		// failed-tool budget (ci#688). They are reported separately so a
+		// saturated sandbox pool is visible without aborting the turn.
+		transientToolFailures := 0
+		// sandboxCapacityFailures counts the subset of the above that the
+		// scheduler rejected for node capacity (ci#691), so a saturated node
+		// is visible in the completion payload on its own.
+		sandboxCapacityFailures := 0
+		// ci#724: budgetExemptToolCalls counts the calls of this turn that
+		// were bookkeeping rather than work (`coder_schedule`) and therefore
+		// did not consume the total tool-call budget. They are reported
+		// separately so a turn that re-armed its own next pulse is readable
+		// from the outcome.
+		budgetExemptToolCalls := 0
+		// ci#680: the context budget of this turn (the caller resolves it from
+		// the chat config and the deployment env) and the running count of tool
+		// results this turn's per-tool output budget cut.
+		contextBudget := meta.Context.WithDefaults()
+		truncatedToolResults := 0
+		lastContextReport := ContextUsageReport{}
 		processedToolIds := make(map[string]bool)            // Track processed tool IDs
 		toolCallDetails := make([]map[string]interface{}, 0) // Track detailed tool call information
 		executedToolResults := make(map[string]string)
 		aiResponseComplete := false
+		emptyContinuationRetried := false
+		malformedInlineToolCallRetried := false
 		var toolCallResult *toolCallResult
 		var err error
 
+		// ci#709: the tool-call budget of this turn, plus a recorder for how the
+		// turn ended. The reader reports the reason and the consumed/remaining
+		// counters as structured state, so a turn that stops after many tool
+		// calls never has to be explained by an error string alone.
+		budget := turnBudgetFromMeta(meta, toolCallMaxTotal, toolCallMaxFailed)
+		recordOutcome := func(reason string) {
+			if meta.Outcome == nil {
+				return
+			}
+			meta.Outcome.Reason = reason
+			meta.Outcome.ToolCalls = totalToolCalls
+			meta.Outcome.FailedToolCalls = failedToolCalls
+			meta.Outcome.TransientFailures = transientToolFailures
+			meta.Outcome.SandboxCapacityFailures = sandboxCapacityFailures
+			// ci#724: calls of a bookkeeping tool (`coder_schedule`) are
+			// deliberately not charged to the total tool-call budget.
+			meta.Outcome.BudgetExemptCalls = budgetExemptToolCalls
+			meta.Outcome.Budget = budget
+			// ci#680: the context/token usage of the last request the turn sent
+			// travels with the outcome, so the chat metadata and the
+			// `coder_context` tool report the real numbers.
+			meta.Outcome.Context = lastContextReport
+		}
+
 		for {
+			// A stop signal aborts the whole tool loop: once the context is
+			// cancelled neither the provider request nor any further tool body
+			// may run, so the already-dispatched turn cannot keep emitting
+			// results after the user pressed stop.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				recordOutcome(TurnEndedCancelled)
+				errChan <- ctxErr
+				return
+			}
 			if totalToolCalls >= toolCallMaxTotal {
-				errChan <- fmt.Errorf("exceeded maximum number of tool calls (%d)", toolCallMaxTotal)
+				recordOutcome(TurnEndedToolCallCap)
+				errChan <- newToolCallCapError(toolCallCapErrorKindTotal, toolCallMaxTotal, totalToolCalls, failedToolCalls)
 				return
 			}
 			if failedToolCalls >= toolCallMaxFailed {
-				errChan <- fmt.Errorf("exceeded maximum number of failed tool calls (%d)", toolCallMaxFailed)
+				recordOutcome(TurnEndedFailedToolCallCap)
+				errChan <- newToolCallCapError(toolCallCapErrorKindFailed, toolCallMaxFailed, totalToolCalls, failedToolCalls)
 				return
 			}
 
+			// ci#822 r46: the notice is merged into the *leading system*
+			// message, which neither compaction pass ever rewrites. Text added
+			// there can therefore no longer be compensated by a later
+			// compaction, so a round that measured as fitting before the notice
+			// (59889 of 60000 chars) was still sent at 60190 chars. Resolve the
+			// notice *first*, reserve its length in the compaction budget, and
+			// only then compact: the guard now measures the exact request that
+			// goes out.
+			noticeProbe := BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, ContextCompactionStats{}, contextBudget.Limits, truncatedToolResults)
+			notice := contextBudgetNoticeFor(currentMessages, noticeProbe)
+			reserve := 0
+			if notice != "" {
+				// The merged prompt is base + "\n\n" + notice, and the notice of
+				// an earlier round is replaced (never stacked), so the reserve
+				// is the separator plus the notice's own length.
+				reserve = len(notice) + len("\n\n")
+				if previous := leadingSystemNoticeText(currentMessages); previous != "" {
+					reserve -= len(previous)
+				}
+				if reserve < 0 {
+					reserve = 0
+				}
+				// The numbers in the notice grow with the history; the constant
+				// headroom covers a notice that is re-rendered slightly longer
+				// than the one measured here.
+				if reserve < contextBudgetNoticeReserveChars {
+					reserve = contextBudgetNoticeReserveChars
+				}
+			}
+
+			// ci#680: keep the outgoing request under the chat's context budget
+			// *before* it is sent. Older tool results and intermediate narration
+			// are evicted (and, as a last resort, whole old messages dropped) so a
+			// turn with several large tool outputs continues instead of failing
+			// with "exceeded maximum context". The notice reserve keeps the
+			// post-injection request under the same budget.
+			budgetStats := ContextCompactionStats{}
+			if compacted, stats, changed := compactMessagesToContextBudgetReserving(currentMessages, contextBudget.BudgetChars, reserve); changed {
+				currentMessages = compacted
+				budgetStats = stats
+			}
+			// Once the conversation approaches its budget the model gets a
+			// one-line self-throttling notice (targeted reads, shallow listings)
+			// merged into the system prompt. The notice is replaced on every
+			// round, never stacked.
+			preReport := BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
+			currentMessages = injectContextBudgetNotice(currentMessages, preReport)
+
+			// ci#822 r46: belt and braces. The compaction above reserves the
+			// notice, but the *final* list is what the provider sees, so verify
+			// it and squeeze again (now measuring the notice too) until the
+			// request fits - e.g. when the reserve was under-estimated by a
+			// longer re-rendered notice, or when the second compaction freed
+			// room for a longer notice again.
+			for attempt := 0; attempt < 3 && messagesCharCount(currentMessages) > contextBudget.BudgetChars; attempt++ {
+				compacted, stats, changed := compactMessagesToContextBudget(currentMessages, contextBudget.BudgetChars)
+				if !changed {
+					// Nothing left to evict (e.g. only protected tail messages
+					// remain); dropping further would break the conversation.
+					break
+				}
+				currentMessages = compacted
+				budgetStats = mergeContextCompactionStats(budgetStats, stats)
+				preReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
+				currentMessages = injectContextBudgetNotice(currentMessages, preReport)
+			}
+
+			// ci#680: record the usage report of the request that is about to be
+			// sent, so the chat metadata and the `coder_context` tool can report
+			// the numbers and an agent can self-throttle.
+			lastContextReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
+			lastContextReport.ChatUUID = meta.ChatUUID
+			RecordContextUsage(meta.ChatUUID, lastContextReport)
+
 			// Make initial request (with provider retries when enabled).
-			fmt.Println("\n=== STARTING NEW REQUEST ROUND ===")
-			fmt.Printf("Current tool-call counts: total=%d/%d failed=%d/%d\n", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
+			logging.Debugf("\n=== STARTING NEW REQUEST ROUND ===")
+			logging.Debugf("Current tool-call counts: total=%d/%d failed=%d/%d", totalToolCalls, toolCallMaxTotal, failedToolCalls, toolCallMaxFailed)
+			logging.Debugf("Context budget: %d/%d chars (~%d tokens, %d%%)", lastContextReport.UsedChars, lastContextReport.BudgetChars, lastContextReport.EstimatedTokens, lastContextReport.UsedPercent)
 			maxAttempts := effectiveProviderRetryAttempts(retryOpts)
 			attempts := 0
 			for {
 				attempts++
 				toolCallResult, err = processStreamingRequest(
-					host, model, backend, currentMessages, tools, toolMap, apiKey,
+					ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 					executedToolResults,
 					chunkChan, usageChan, toolChan, errChan,
 					samplingParams,
-					providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts},
+					providerRequestMeta{
+						ChatUUID:             meta.ChatUUID,
+						TrackUsage:           meta.TrackUsage,
+						Attempt:              attempts,
+						ProviderAdmission:    meta.ProviderAdmission,
+						ProviderAdmissionKey: meta.ProviderAdmissionKey,
+					},
 				)
 				if err == nil {
+					break
+				}
+				// A cancelled context is terminal: never retry (which would
+				// re-run the generation after a stop).
+				if ctx.Err() != nil {
 					break
 				}
 				// Never retry mid-stream failures (they may have already
@@ -355,39 +609,87 @@ func streamChatCompletion(
 				}
 				delay := providerRetryBackoffDelay(attempts, retryOpts.BaseBackoff, retryOpts.MaxBackoff)
 				retryAt := time.Now().Add(delay)
-				log.Printf(
+				logging.Debugf(
 					"Provider request failed (attempt %d/%d): %v; retrying in %s",
 					attempts, maxAttempts, err, delay,
 				)
 				if retryOpts.OnRetryAttempt != nil {
 					retryOpts.OnRetryAttempt(attempts, maxAttempts, err, retryAt)
 				}
-				time.Sleep(delay)
+				// Wait for the backoff, but abandon it immediately if the user
+				// stops the response.
+				select {
+				case <-ctx.Done():
+				case <-time.After(delay):
+				}
+				if ctx.Err() != nil {
+					err = ctx.Err()
+					break
+				}
 			}
 			// Record how many attempts were made so the final error message
 			// can describe the retries.
 			if preErr, ok := err.(*ProviderRequestError); ok {
 				preErr.Attempts = attempts
 			}
-			if err != nil && isContextWindowExceededError(err) {
-				trimmedMessages, trimmed := trimMessagesForContextRetry(currentMessages)
-				if trimmed {
-					log.Printf(
-						"Context window exceeded; retrying with trimmed history (%d -> %d messages)",
+			if err != nil && ctx.Err() == nil && isContextWindowExceededError(err) {
+				// Progressive shrink (ci#394 gap 7). Each round cuts a larger
+				// tail (never the leading system messages, so an injected
+				// compaction summary survives) and repairs the tool-call /
+				// tool-result pairing so the retried request stays valid; when
+				// the message count can no longer be reduced, oversized message
+				// contents are truncated instead.
+				//
+				// ci#680: the proactive budget guard below should already have
+				// kept the request under the budget, so reaching this path means
+				// the provider window is smaller than the character budget
+				// assumes (or a single message alone exceeds it). The rounds
+				// still run, so a deployment with a tiny window keeps working
+				// without a config change.
+				for round := 0; round <= contextRetryShrinkRounds; round++ {
+					shrunkMessages, shrunk := shrinkMessagesForContextRetry(currentMessages, round)
+					if !shrunk {
+						shrunkMessages, shrunk = shrinkOversizedContextMessages(currentMessages, contextRetryMaxMessageChars)
+					}
+					if !shrunk {
+						break
+					}
+					logging.Debugf(
+						"Context window exceeded; retrying with trimmed history (%d -> %d messages, round %d)",
 						len(currentMessages),
-						len(trimmedMessages),
+						len(shrunkMessages),
+						round,
 					)
-					currentMessages = trimmedMessages
+					currentMessages = shrunkMessages
 					toolCallResult, err = processStreamingRequest(
-						host, model, backend, currentMessages, tools, toolMap, apiKey,
+						ctx, host, model, backend, currentMessages, tools, toolMap, apiKey,
 						executedToolResults,
 						chunkChan, usageChan, toolChan, errChan,
 						samplingParams,
-						providerRequestMeta{ChatUUID: meta.ChatUUID, TrackUsage: meta.TrackUsage, Attempt: attempts + 1},
+						providerRequestMeta{
+							ChatUUID:             meta.ChatUUID,
+							TrackUsage:           meta.TrackUsage,
+							Attempt:              attempts + 1,
+							ProviderAdmission:    meta.ProviderAdmission,
+							ProviderAdmissionKey: meta.ProviderAdmissionKey,
+						},
 					)
+					if err == nil || ctx.Err() != nil || !isContextWindowExceededError(err) {
+						break
+					}
 				}
 			}
+			// An inline tool-call block from which no call could be recovered is
+			// intermittent provider corruption; retry the round once so the
+			// model can re-emit a well-formed call instead of abandoning the
+			// task (ci#428).
+			if err != nil && ctx.Err() == nil && errors.Is(err, errMalformedInlineToolCall) && !malformedInlineToolCallRetried {
+				malformedInlineToolCallRetried = true
+				logging.Debugf("Model emitted an unrecoverable inline tool-call block; retrying once")
+				continue
+			}
 			if err != nil {
+				recordOutcome(TurnEndedProviderError)
 				errChan <- err
 				return
 			}
@@ -399,7 +701,40 @@ func streamChatCompletion(
 
 			// If we encountered an error, we're done
 			if toolCallResult.err != nil {
-				log.Printf("Error: %v", toolCallResult.err)
+				logging.Errorf("Error: %v", toolCallResult.err)
+				recordOutcome(TurnEndedNoUsableCall)
+				return
+			}
+
+			// A post-confirmation continuation that produces neither text nor a
+			// tool call is useless and is often a truncated provider emission;
+			// retry it once before giving up so an intermittent blip does not
+			// silently abandon the remaining task steps (ci#428). A round whose
+			// only output was a leaked context-compaction transcript is in the
+			// same class: the transcript was stripped (ci#562), so the turn has
+			// no usable answer either and is worth exactly one retry.
+			if aiResponseComplete && !emptyContinuationRetried &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" &&
+				(meta.PostConfirmationContinuation || toolCallResult.compactionOnly) {
+				emptyContinuationRetried = true
+				aiResponseComplete = false
+				logging.Debugf(
+					"Assistant round produced no usable text (post-confirmation continuation: %t, leaked compaction transcript: %t); retrying once",
+					meta.PostConfirmationContinuation,
+					toolCallResult.compactionOnly,
+				)
+				continue
+			}
+
+			// The retry after a leaked transcript produced another transcript:
+			// the round has no answer and nothing left to retry. Report it as a
+			// generation failure so the turn ends with a clear, human-readable
+			// error (the work already done is kept) instead of finishing on an
+			// empty message (ci#562).
+			if aiResponseComplete && toolCallResult.compactionOnly &&
+				strings.TrimSpace(toolCallResult.aiResponse) == "" && emptyContinuationRetried {
+				recordOutcome(TurnEndedProviderError)
+				errChan <- errLeakedCompactionTranscript
 				return
 			}
 
@@ -407,17 +742,17 @@ func streamChatCompletion(
 			if aiResponseComplete {
 				// Execute interaction_complete tools before finishing
 				if len(interactionCompleteTools) > 0 {
-					log.Printf("Executing %d interaction_complete tools", len(interactionCompleteTools))
+					logging.Debugf("Executing %d interaction_complete tools", len(interactionCompleteTools))
 					for _, toolName := range interactionCompleteTools {
 						// Extract the actual tool name after the prefix
 						actualToolName := strings.TrimPrefix(toolName, "interaction_complete:")
-						log.Printf("Executing interaction_complete tool: %s", actualToolName)
+						logging.Debugf("Executing interaction_complete tool: %s", actualToolName)
 
 						// Execute the function using the handler if available
 						if handler != nil {
 							tool, exists := toolMap[toolName]
 							if !exists {
-								log.Printf("Warning: Tool '%s' not found in toolMap", actualToolName)
+								logging.Warnf("Warning: Tool '%s' not found in toolMap", actualToolName)
 								continue
 							}
 
@@ -463,103 +798,160 @@ func streamChatCompletion(
 							completionData["tool_call_failed_count"] = failedToolCalls
 							completionData["tool_call_max_total"] = toolCallMaxTotal
 							completionData["tool_call_max_failed"] = toolCallMaxFailed
+							// ci#688: transient/environmental failures are
+							// budget-exempt, so report them separately.
+							completionData["tool_call_transient_failed_count"] = transientToolFailures
+							// ci#691: of those, the ones the scheduler rejected
+							// for node capacity, so a saturated node is visible.
+							completionData["tool_call_sandbox_capacity_failed_count"] = sandboxCapacityFailures
+							// ci#724: calls that were bookkeeping rather than
+							// work (`coder_schedule`) do not consume the
+							// total tool-call budget; report them separately
+							// so a self-re-arming turn is readable.
+							completionData["tool_call_budget_exempt_count"] = budgetExemptToolCalls
 
 							toolResult, err := tool.RunTool(completionData)
 							if err != nil {
-								log.Printf("Error executing interaction_complete tool %s: %v", actualToolName, err)
+								logging.Errorf("Error executing interaction_complete tool %s: %v", actualToolName, err)
 								continue
 							}
-							log.Printf("Successfully executed interaction_complete tool %s with result: %v", actualToolName, toolResult)
+							logging.Debugf("Successfully executed interaction_complete tool %s with result: %v", actualToolName, toolResult)
 						} else {
-							log.Printf("No handler available, would execute interaction_complete tool: %s", actualToolName)
+							logging.Debugf("No handler available, would execute interaction_complete tool: %s", actualToolName)
 						}
 					}
 				}
+				recordOutcome(TurnEndedCompleted)
 				return
 			}
 
-			// Check if we've already processed this tool ID
-			if toolCallResult.id != "" && processedToolIds[toolCallResult.id] {
-				log.Printf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", toolCallResult.id)
-				continue
-			}
-
-			// Mark this tool ID as processed
-			if toolCallResult.id != "" {
-				processedToolIds[toolCallResult.id] = true
-			}
-
-			// Track detailed tool call information
-			if toolCallResult.usedTool && toolCallResult.id != "" {
-				toolCallInfo := map[string]interface{}{
-					"id":        toolCallResult.id,
-					"name":      toolCallResult.toolName,
-					"arguments": toolCallResult.arguments,
-					"result":    toolCallResult.result,
-					"status":    toolCallResult.status,
-					"error":     toolCallResult.error,
+			// A round can surface a batch of tool calls. Feed every call of the
+			// round back to the model, in emission order and attributed by its
+			// call id, so the transcript the model sees is deterministic and
+			// matches the calls it made — instead of only the last call of a
+			// batch, which left the model guessing which results existed and in
+			// what order (ci#655).
+			appended, updatedMessages, roundTruncatedResults := appendExecutedToolCalls(currentMessages, toolCallResult.calls, processedToolIds, contextBudget.Limits)
+			currentMessages = updatedMessages
+			truncatedToolResults += roundTruncatedResults
+			for _, call := range appended {
+				details := map[string]interface{}{
+					"id":        call.id,
+					"name":      call.name,
+					"arguments": call.arguments,
+					"result":    call.result,
+					"status":    call.status,
+					"error":     call.error,
 					"timestamp": time.Now().Format(time.RFC3339),
 				}
-				toolCallDetails = append(toolCallDetails, toolCallInfo)
+				// ci#723: carry the model's optional reason for the call into
+				// the turn's completion payload.
+				if call.reason != "" {
+					details["call_reason"] = call.reason
+				}
+				if call.retries > 0 {
+					details["retries"] = call.retries
+				}
+				if call.budgetExempt {
+					details["budget_exempt"] = true
+				}
+				// ci#724: a bookkeeping call (`coder_schedule`) is
+				// reported but not charged to the total tool-call
+				// budget, so the transcript shows why the turn survived
+				// past the cap it would otherwise have reached.
+				if call.turnBudgetExempt {
+					details["turn_budget_exempt"] = true
+				}
+				// ci#691: a call that could not be scheduled because the node
+				// ran out of capacity is reported separately, so the chat
+				// shows "the node is out of CPU/memory" instead of a generic
+				// tool failure.
+				if call.sandboxCapacity {
+					details["sandbox_capacity"] = true
+				}
+				toolCallDetails = append(toolCallDetails, details)
+				logging.Debugf("Called tool: %s with result: %v", call.name, call.result)
 			}
+			// ci#724: charge only the calls that actually did work; a
+			// bookkeeping call (see above) never shortens the turn that
+			// scheduled it. The exemption is capped per turn so that it
+			// can never make the turn unbounded.
+			roundCounted, roundBudgetExempt := toolCallBudgetAccounting(appended, budgetExemptToolCalls)
+			totalToolCalls += roundCounted
+			budgetExemptToolCalls += roundBudgetExempt
+			// ci#688: only failures the model can act on consume the
+			// failed-tool budget; a transient environmental failure that
+			// survived its retries is counted separately, so one bursty
+			// sandbox provision cannot abort the interaction.
+			roundFailed, roundTransient := toolCallFailureAccounting(appended)
+			failedToolCalls += roundFailed
+			transientToolFailures += roundTransient
+			// ci#691: of those, the ones the scheduler rejected for capacity
+			// are surfaced on their own, so a saturated node is visible in the
+			// transcript and in the interaction_complete payload.
+			sandboxCapacityFailures += sandboxCapacityFailureCount(appended)
 
-			fmt.Println("Called tool: ", toolCallResult.toolName, "with result: ", toolCallResult.result)
-
-			if toolCallResult.stopAfterTool {
-				log.Printf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
+			// A round whose every call was already processed (or that surfaced no
+			// usable call) would otherwise spin without adding anything to the
+			// transcript: finish instead of re-requesting forever.
+			if len(appended) == 0 {
+				// The loop guard: this round added nothing to the transcript, so
+				// the turn must end - record why so the reader can explain it.
+				recordOutcome(TurnEndedNoUsableCall)
 				return
 			}
 
-			totalToolCalls++
-			if toolCallResult.status == ToolCallStatusFailed {
-				failedToolCalls++
+			if toolCallResult.stopAfterTool {
+				logging.Debugf("Stopping response after confirmable tool call: %s", toolCallResult.toolName)
+				recordOutcome(TurnEndedConfirmablePause)
+				return
 			}
-
-			// Add the tool call to the message history
-			toolsCallMessage := map[string]interface{}{
-				"role":         "assistant",
-				"tool_call_id": toolCallResult.id,
-				"content":      "",
-				"tool_calls": []map[string]interface{}{
-					{
-						"type": "function",
-						"id":   toolCallResult.id,
-						"function": map[string]interface{}{
-							"arguments": toolCallResult.arguments,
-							"name":      toolCallResult.toolName,
-						},
-					},
-				},
-			}
-			currentMessages = append(currentMessages, toolsCallMessage)
-
-			// Add tool result to messages and continue conversation
-			modelToolResult := truncateToolResultForModel(toolCallResult.result)
-			if modelToolResult != toolCallResult.result {
-				log.Printf(
-					"Truncated tool result for model context (%d -> %d chars): %s",
-					len(toolCallResult.result),
-					len(modelToolResult),
-					toolCallResult.toolName,
-				)
-			}
-			toolResultMsg := map[string]interface{}{
-				"role":         "tool",
-				"tool_call_id": toolCallResult.id,
-				"content":      modelToolResult,
-			}
-			currentMessages = append(currentMessages, toolResultMsg)
 
 			currentMessagesIndented, _ := json.MarshalIndent(currentMessages, "", "    ")
-			fmt.Println("Current messages: ", string(currentMessagesIndented))
+			logging.Debugf("Current messages: %s", string(currentMessagesIndented))
 
 			// Instead, we'll continue the loop but with logging
-			fmt.Println("Tool processing complete for this round. Continuing conversation...")
+			logging.Debugf("Tool processing complete for this round. Continuing conversation...")
 			continue
 		}
 	}()
 
 	return chunkChan, usageChan, toolChan, errChan
+}
+
+// executedToolCall is one fully-resolved tool call of a single streaming round.
+// A round may surface a batch of calls; they are kept in emission order so the
+// caller can feed every result back to the model deterministically (ci#655).
+type executedToolCall struct {
+	id        string
+	name      string
+	arguments string
+	result    string
+	status    string
+	error     string
+	// reason is the model's optional "why this call" text (ci#723).
+	reason string
+	// budgetExempt marks a failed call that must not consume the agent's
+	// failed-tool budget: a transient environmental failure (sandbox
+	// provisioning under load, host resource exhaustion, a connection blip
+	// towards the integration host) that survived the retries of ci#688. It is
+	// still reported to the model as a failed call, and the total tool-call cap
+	// keeps the turn bounded.
+	budgetExempt bool
+	// turnBudgetExempt marks a call that must not consume the turn's *total*
+	// tool-call budget either (ci#724): `coder_schedule` only re-arms a later
+	// turn, it does no work, so scheduling the next pulse must not shorten the
+	// turn the agent is currently running. The failed-tool budget is not
+	// affected — a schedule that cannot be enqueued is a real failure.
+	turnBudgetExempt bool
+	// retries is how many extra attempts the call needed after a transient
+	// failure (0 for the common case).
+	retries int
+	// sandboxCapacity marks a failed provisioning call whose sandbox the
+	// scheduler could not place because the node ran out of capacity (ci#691).
+	// It is budget-exempt (a transient environmental failure) and reported
+	// separately so a saturated node is visible in the transcript.
+	sandboxCapacity bool
 }
 
 type toolCallResult struct {
@@ -575,10 +967,103 @@ type toolCallResult struct {
 	error             string
 	err               error
 	aiResponse        string
-	usage             *TokenUsage
+	// compactionOnly records that the round's only output was a leaked
+	// context-compaction transcript, which was stripped and must never be
+	// persisted as the answer; the loop retries such a round once (ci#562).
+	compactionOnly bool
+	// repetitionLoop records that the round collapsed into an unbounded
+	// repetition loop: the stream was cut off early and the persisted text
+	// carries the "stopped: repeated output detected" note instead of the junk
+	// (ci#670).
+	repetitionLoop bool
+	usage          *TokenUsage
+	// calls holds every tool call of the round, in the order the model
+	// emitted them (ci#655). The singular id/toolName/result/... fields above
+	// mirror the last call for backwards compatibility.
+	calls []executedToolCall
+}
+
+// appendExecutedToolCalls appends, for every executed call that has not already
+// been processed, an assistant message carrying exactly that one tool call
+// followed by its matching tool-result message — in the order the calls were
+// made. That is the transcript the model reads back on the next round, so it
+// must be complete, ordered and attributed by call id (ci#655). It returns the
+// updated message list and the calls it actually appended, and marks each
+// appended id in processed so a repeated id is never fed back twice.
+//
+// Keeping this in one place makes the "every call of the batch reaches the
+// model, in order" contract unit-testable without a live provider.
+//
+// Every result is hard-truncated at its per-tool output budget (ci#680) before
+// it enters the transcript: a `coder_list` of the monorepo or a `coder_bash`
+// dump is tens of KB, and a few of them used to blow the provider window and
+// kill the turn with "exceeded maximum context". The returned count reports how
+// many results were cut, so the turn's usage report can say so.
+func appendExecutedToolCalls(
+	currentMessages []map[string]interface{},
+	calls []executedToolCall,
+	processed map[string]bool,
+	limits ToolResultLimits,
+) ([]executedToolCall, []map[string]interface{}, int) {
+	messages := currentMessages
+	appended := make([]executedToolCall, 0, len(calls))
+	truncatedResults := 0
+	for _, call := range calls {
+		if call.id != "" && processed[call.id] {
+			logging.Warnf("Warning: Tool ID %s has already been processed, skipping to avoid duplicate calls", call.id)
+			continue
+		}
+		if call.id != "" {
+			processed[call.id] = true
+		}
+
+		messages = append(messages, map[string]interface{}{
+			"role":         "assistant",
+			"tool_call_id": call.id,
+			"content":      "",
+			"tool_calls": []map[string]interface{}{
+				{
+					"type": "function",
+					"id":   call.id,
+					"function": map[string]interface{}{
+						"arguments": call.arguments,
+						"name":      call.name,
+					},
+				},
+			},
+		})
+
+		modelToolResult, cut := truncateToolResultForTool(call.result, call.name, limits)
+		// ci#739: a failed `coder_*` call whose output shows the sandbox
+		// toolchain was not on PATH or the private integration modules were
+		// never materialized is a workspace-provisioning problem, not a code
+		// defect. Append the readiness guidance *after* truncation so the
+		// budget can never cut it off, and only for failed calls so a
+		// successful run whose output happens to mention a module is untouched.
+		if call.status == ToolCallStatusFailed {
+			modelToolResult = nativecoder.FrameSandboxFailureGuidance(call.name, modelToolResult)
+		}
+		if cut {
+			truncatedResults++
+			logging.Debugf(
+				"Truncated tool result for model context (%d -> %d chars): %s (ci#680 per-tool output budget)",
+				len(call.result),
+				len(modelToolResult),
+				call.name,
+			)
+		}
+		messages = append(messages, map[string]interface{}{
+			"role":         "tool",
+			"tool_call_id": call.id,
+			"content":      modelToolResult,
+		})
+		appended = append(appended, call)
+	}
+	return appended, messages, truncatedResults
 }
 
 func processStreamingRequest(
+	ctx context.Context,
 	host, model, backend string,
 	messages []map[string]interface{},
 	tools []interface{},
@@ -597,7 +1082,7 @@ func processStreamingRequest(
 		if err != nil {
 			return nil, err
 		}
-		return processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+		return processStreamingResponseReader(ctx, reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 	}
 
 	normalizedMessages := normalizeMessagesForBackend(messages, backend)
@@ -625,6 +1110,22 @@ func processStreamingRequest(
 	}
 	runProviderRequestMiddleware(middlewareCtx)
 
+	// Provider admission (ci#620): wait for a per-key in-flight slot instead of
+	// firing the request into the provider's 402/429 in-flight cap. The release
+	// runs when this attempt is done (streamed out or failed), and the effective
+	// cap plus the current in-flight count are logged so the admission decision
+	// is observable.
+	admissionRelease, admissionErr := admitProviderRequest(ctx, meta.ProviderAdmissionKey, meta.ProviderAdmission, providerAdmissionSlotMeta{
+		RequestID: providerAdmissionRequestID(meta.ChatUUID, meta.Attempt),
+		ChatID:    meta.ChatUUID,
+		Attempt:   meta.Attempt,
+	})
+	if admissionErr != nil {
+		reportProviderRequestResult(middlewareCtx, meta.Attempt, 0, admissionErr, 0, nil, nil)
+		return nil, admissionErr
+	}
+	defer admissionRelease()
+
 	requestStart := time.Now()
 	reportOutcome := func(statusCode int, requestErr error, usage *TokenUsage, response map[string]interface{}) {
 		reportProviderRequestResult(
@@ -645,7 +1146,7 @@ func processStreamingRequest(
 		return nil, fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/chat/completions", host), bytes.NewBuffer(jsonData))
 	if err != nil {
 		reportOutcome(0, fmt.Errorf("failed to create request: %w", err), nil, nil)
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -677,7 +1178,7 @@ func processStreamingRequest(
 	}
 
 	reader := bufio.NewReader(resp.Body)
-	result, streamErr := processStreamingResponseReader(reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
+	result, streamErr := processStreamingResponseReader(ctx, reader, toolMap, executedToolResults, chunkChan, usageChan, toolChan)
 
 	var usage *TokenUsage
 	var response map[string]interface{}
@@ -689,6 +1190,11 @@ func processStreamingRequest(
 		}
 		if result.aiResponse != "" {
 			response["content"] = result.aiResponse
+		}
+		// Surface the degeneracy on the response record so usage tracking and
+		// metrics see it without parsing the assistant text (ci#670).
+		if result.repetitionLoop {
+			response["failure_reason"] = FailureReasonRepetitionLoop
 		}
 		if result.toolName != "" {
 			toolCallRepr := map[string]interface{}{
@@ -747,53 +1253,576 @@ func isContextWindowExceededError(err error) bool {
 		strings.Contains(errLower, "context length")
 }
 
+// trimMessagesForContextRetry trims the oldest turns once the provider has
+// rejected a request for exceeding the context window. It preserves every
+// leading system message (so an injected compaction summary survives) and
+// returns false when the history cannot be reduced further.
 func trimMessagesForContextRetry(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
-	if len(messages) <= DefaultContextRetryTailMessages {
-		return messages, false
-	}
-
-	hasLeadingSystemMessage := false
-	if len(messages) > 0 {
-		role, _ := messages[0]["role"].(string)
-		hasLeadingSystemMessage = role == "system"
-	}
-
-	tailStart := len(messages) - DefaultContextRetryTailMessages
-	if hasLeadingSystemMessage && tailStart < 1 {
-		tailStart = 1
-	}
-	if !hasLeadingSystemMessage && tailStart < 0 {
-		tailStart = 0
-	}
-
-	trimmed := make([]map[string]interface{}, 0, DefaultContextRetryTailMessages+1)
-	if hasLeadingSystemMessage {
-		trimmed = append(trimmed, messages[0])
-	}
-	trimmed = append(trimmed, messages[tailStart:]...)
-
-	if len(trimmed) >= len(messages) {
-		return messages, false
-	}
-
-	return trimmed, true
+	return shrinkMessagesForContextRetry(messages, 0)
 }
 
+// contextRetryTailForRound halves the retained tail on every successive shrink
+// round, down to a floor that still leaves the model enough recent turns to
+// continue the work.
+func contextRetryTailForRound(round int) int {
+	tail := DefaultContextRetryTailMessages
+	for i := 0; i < round; i++ {
+		tail /= 2
+		if tail <= contextRetryTailFloorMessages {
+			return contextRetryTailFloorMessages
+		}
+	}
+	return tail
+}
+
+// shrinkMessagesForContextRetry cuts the history back to round's tail size,
+// keeping the leading system messages, and repairs the tool-call/tool-result
+// pairing of the result. It reports false when the message count cannot be
+// reduced (round 0), or when the cut would leave the history shorter than the
+// caller can retry with.
+func shrinkMessagesForContextRetry(messages []map[string]interface{}, round int) ([]map[string]interface{}, bool) {
+	if round < 0 {
+		round = 0
+	}
+	tail := contextRetryTailForRound(round)
+	if len(messages) <= tail {
+		return messages, false
+	}
+
+	leadingSystem := leadingSystemMessageCount(messages)
+	tailStart := len(messages) - tail
+	if tailStart < leadingSystem {
+		tailStart = leadingSystem
+	}
+	if tailStart <= 0 {
+		return messages, false
+	}
+
+	trimmed := make([]map[string]interface{}, 0, leadingSystem+tail)
+	trimmed = append(trimmed, messages[:leadingSystem]...)
+	trimmed = append(trimmed, messages[tailStart:]...)
+
+	// A cut can land inside an assistant tool_calls message and its tool
+	// results; the provider rejects such a history outright, so repair the
+	// pairing before retrying with it.
+	repaired, _ := repairToolCallPairing(trimmed)
+
+	if len(repaired) >= len(messages) {
+		return messages, false
+	}
+	if !hasConversationalTurn(repaired) {
+		return messages, false
+	}
+	return repaired, true
+}
+
+// leadingSystemMessageCount counts the leading system messages of a request.
+func leadingSystemMessageCount(messages []map[string]interface{}) int {
+	count := 0
+	for count < len(messages) {
+		role, _ := messages[count]["role"].(string)
+		if role != "system" {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+// hasConversationalTurn reports whether a message list still carries at least
+// one non-system turn to answer.
+func hasConversationalTurn(messages []map[string]interface{}) bool {
+	for _, message := range messages {
+		if role, _ := message["role"].(string); role != "system" {
+			return true
+		}
+	}
+	return false
+}
+
+// toolCallIDsOf returns the tool-call ids declared by an assistant message,
+// tolerating both the []map[string]interface{} shape the loop builds and the
+// []interface{} shape a decoded request carries.
+func toolCallIDsOf(message map[string]interface{}) []string {
+	raw, ok := message["tool_calls"]
+	if !ok {
+		return nil
+	}
+	ids := make([]string, 0, 2)
+	appendCall := func(call map[string]interface{}) {
+		id, _ := call["id"].(string)
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	switch calls := raw.(type) {
+	case []map[string]interface{}:
+		for _, call := range calls {
+			appendCall(call)
+		}
+	case []interface{}:
+		for _, entry := range calls {
+			if call, ok := entry.(map[string]interface{}); ok {
+				appendCall(call)
+			}
+		}
+	}
+	return ids
+}
+
+// toolCallIDOf returns the tool_call_id a tool-result message answers.
+func toolCallIDOf(message map[string]interface{}) string {
+	id, _ := message["tool_call_id"].(string)
+	return strings.TrimSpace(id)
+}
+
+// repairToolCallPairing makes a message list acceptable to an OpenAI-compatible
+// provider after an arbitrary cut:
+//
+//   - a declared tool call with no tool result anywhere in the list is removed
+//     from its assistant message (an unanswered call is a hard provider error),
+//   - an assistant message left with neither tool calls nor content is dropped,
+//   - a tool result whose id was never declared *before* it (an orphaned result
+//     from a mid-pair cut) is dropped.
+//
+// It returns the repaired list and whether anything changed. When nothing
+// changed the original slice is returned unchanged.
+func repairToolCallPairing(messages []map[string]interface{}) ([]map[string]interface{}, bool) {
+	answered := map[string]bool{}
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		if role != "tool" {
+			continue
+		}
+		if id := toolCallIDOf(message); id != "" {
+			answered[id] = true
+		}
+	}
+
+	changed := false
+	declared := map[string]bool{}
+	out := make([]map[string]interface{}, 0, len(messages))
+
+	for _, message := range messages {
+		role, _ := message["role"].(string)
+		switch role {
+		case "assistant":
+			ids := toolCallIDsOf(message)
+			if len(ids) == 0 {
+				out = append(out, message)
+				continue
+			}
+			unanswered := false
+			for _, id := range ids {
+				if !answered[id] {
+					unanswered = true
+					break
+				}
+			}
+			if !unanswered {
+				for _, id := range ids {
+					declared[id] = true
+				}
+				out = append(out, message)
+				continue
+			}
+			// At least one declared call is unanswered: keep the answered ones.
+			changed = true
+			kept := keepAnsweredToolCalls(message["tool_calls"], answered)
+			if len(kept) == 0 {
+				if !messageHasContent(message) {
+					continue // drop the empty assistant tool-call shell
+				}
+				stripped := make(map[string]interface{}, len(message))
+				for key, value := range message {
+					if key == "tool_calls" {
+						continue
+					}
+					stripped[key] = value
+				}
+				out = append(out, stripped)
+				continue
+			}
+			clone := make(map[string]interface{}, len(message))
+			for key, value := range message {
+				clone[key] = value
+			}
+			clone["tool_calls"] = kept
+			for _, call := range kept {
+				if id, _ := call["id"].(string); strings.TrimSpace(id) != "" {
+					declared[strings.TrimSpace(id)] = true
+				}
+			}
+			out = append(out, clone)
+		case "tool":
+			id := toolCallIDOf(message)
+			if id == "" || !declared[id] {
+				changed = true
+				continue
+			}
+			out = append(out, message)
+		default:
+			out = append(out, message)
+		}
+	}
+
+	if !changed {
+		return messages, false
+	}
+	return out, true
+}
+
+// keepAnsweredToolCalls filters a message's tool_calls to the ones that have a
+// matching tool result, preserving the original ordering and value shape.
+func keepAnsweredToolCalls(raw interface{}, answered map[string]bool) []map[string]interface{} {
+	kept := make([]map[string]interface{}, 0, 2)
+	appendCall := func(call map[string]interface{}) {
+		id, _ := call["id"].(string)
+		if answered[strings.TrimSpace(id)] {
+			kept = append(kept, call)
+		}
+	}
+	switch calls := raw.(type) {
+	case []map[string]interface{}:
+		for _, call := range calls {
+			appendCall(call)
+		}
+	case []interface{}:
+		for _, entry := range calls {
+			if call, ok := entry.(map[string]interface{}); ok {
+				appendCall(call)
+			}
+		}
+	}
+	return kept
+}
+
+// messageHasContent reports whether a message carries non-empty content.
+func messageHasContent(message map[string]interface{}) bool {
+	switch content := message["content"].(type) {
+	case string:
+		return strings.TrimSpace(content) != ""
+	case []map[string]interface{}:
+		return len(content) > 0
+	case []interface{}:
+		return len(content) > 0
+	}
+	return false
+}
+
+// shrinkOversizedContextMessages is the last-resort context fallback: when the
+// message count can no longer be reduced (for example a very long session whose
+// history is already only a few huge tool results), truncate the oversized
+// string contents instead. Leading system messages are never touched, so an
+// injected compaction summary survives intact.
+func shrinkOversizedContextMessages(messages []map[string]interface{}, maxChars int) ([]map[string]interface{}, bool) {
+	if maxChars <= 0 {
+		return messages, false
+	}
+	changed := false
+	out := make([]map[string]interface{}, len(messages))
+	copy(out, messages)
+	for i, message := range out {
+		if role, _ := message["role"].(string); role == "system" {
+			continue
+		}
+		content, ok := message["content"].(string)
+		if !ok || len(content) <= maxChars {
+			continue
+		}
+		notice := fmt.Sprintf("\n\n[context retry: content truncated from %d to %d chars to fit the model context]", len(content), maxChars)
+		clone := make(map[string]interface{}, len(message))
+		for key, value := range message {
+			clone[key] = value
+		}
+		// headOfString keeps this last-resort cut on a UTF-8 rune boundary: the
+		// content that reaches here is usually an oversized tool result, i.e.
+		// source files, diffs or sandbox logs where non-ASCII is normal, and a
+		// torn rune would make the retry request itself unparseable - the very
+		// failure this fallback exists to survive (ci#680).
+		clone["content"] = headOfString(content, maxChars) + notice
+		out[i] = clone
+		changed = true
+	}
+	if !changed {
+		return messages, false
+	}
+	// A cut can also leave an orphaned tool result behind, so keep the retry
+	// request valid.
+	repaired, _ := repairToolCallPairing(out)
+	if !hasConversationalTurn(repaired) {
+		return messages, false
+	}
+	return repaired, true
+}
+
+// truncateToolResultForModel keeps the historical, tool-agnostic truncation
+// helper available to callers that have no resolved per-tool limits: it applies
+// the compiled-in default budget. The tool loop itself uses
+// truncateToolResultForTool with the chat's resolved limits (ci#680).
 func truncateToolResultForModel(result string) string {
-	if len(result) <= DefaultToolResultMaxCharsForModel {
-		return result
+	truncated, _ := truncateToolResultForTool(result, "", ResolveToolResultLimits(nil))
+	return truncated
+}
+
+// processParsedToolCall executes or surfaces a single fully parsed tool call,
+// whether it came from a structured streaming delta or was recovered from a
+// DeepSeek DSML block in the assistant content. It mirrors the structured
+// path's confirmation/caching semantics and records the outcome on result. The
+// caller is responsible for stopping the enclosing batch once result.stopAfterTool
+// is set.
+func processParsedToolCall(
+	ctx context.Context,
+	id string,
+	name string,
+	arguments string,
+	toolMap map[string]Tool,
+	executedToolResults map[string]string,
+	result *toolCallResult,
+	toolChan chan<- ToolCall,
+) {
+	if name == "" || arguments == "" {
+		return
 	}
 
-	notice := fmt.Sprintf("\n\n[tool output truncated to %d chars out of %d to fit model context]", DefaultToolResultMaxCharsForModel, len(result))
-	maxContentLen := DefaultToolResultMaxCharsForModel - len(notice)
-	if maxContentLen < 0 {
-		maxContentLen = 0
+	// The stop button cancels the generation context; never dispatch a tool
+	// body after that, even if the provider stream still delivered the call.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		logging.Debugf("Skipping tool %s: generation cancelled", name)
+		return
 	}
 
-	return result[:maxContentLen] + notice
+	tool, exists := toolMap[name]
+	if !exists {
+		logging.Warnf("Warning: Tool '%s' not found in toolMap", name)
+		return
+	}
+
+	// ci#819 part A (tolerance half): drop a redundant leading `cd <workspace
+	// root>` from a `coder_bash` command before it is parsed, dispatched and
+	// cached, so an older `cd $(git rev-parse --show-toplevel) && ...` habit costs
+	// no call and the duplicate-call signature matches the unprefixed spelling.
+	arguments = normalizeCoderBashArguments(name, arguments)
+
+	toolInput, parseErr := tool.ParseArguments(arguments)
+	if parseErr != nil {
+		return
+	}
+
+	// ci#723: the model may attach a short human-readable reason to the call;
+	// carry it through on every emission of this call.
+	callReason := ExtractToolCallReason(toolInput)
+
+	logging.Debugf("\n=== EXECUTING TOOL: %s ===", name)
+	logging.Debugf("Tool ID: %s", id)
+	logging.Debugf("Arguments: %s", arguments)
+
+	contentSignature := fmt.Sprintf("%s:%s", name, strings.TrimSpace(arguments))
+	if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
+		// Only successful calls are cached, so a cache hit is a repeat of a call
+		// that already succeeded. Failures are deliberately not cached: the state
+		// may change between two identical calls (e.g. a coding workspace becomes
+		// selected after the first read failed), and replaying a stale error would
+		// trap the model in a failure loop instead of letting it recover.
+		logging.Warnf("Warning: Duplicate tool call detected with content signature: %s, reusing prior successful result", contentSignature)
+
+		// ci#728: a replayed result must be visibly a replay. Returning the
+		// cached payload verbatim let the model believe the call had just run
+		// again, so it re-issued the identical call until the turn was killed
+		// (ci#569: 110 tool calls, 18 identical `coder_read`). The transcript
+		// version carries an explicit duplicate-call frame; the replayed
+		// payload itself is preserved verbatim inside it.
+		framedResult := FrameDuplicateToolCallResult(name, cachedResult)
+
+		result.usedTool = true
+		// Mark the round as a replay so later stages (and the pending
+		// no-progress guard, ci#728 item 4) can tell a cached repeat from a
+		// fresh execution without re-deriving it from the frame text.
+		result.duplicateToolCall = true
+		result.id = id
+		result.toolName = name
+		result.arguments = arguments
+		result.result = framedResult
+		result.status = ToolCallStatusSucceeded
+		result.error = ""
+		result.calls = append(result.calls, executedToolCall{
+			id:        id,
+			name:      name,
+			arguments: arguments,
+			result:    framedResult,
+			status:    ToolCallStatusSucceeded,
+			reason:    callReason,
+			// ci#724: a cached duplicate of a bookkeeping call
+			// (`coder_schedule`) stays budget-exempt, otherwise the
+			// duplicate-call cache would silently reintroduce the charge
+			// the exemption exists to avoid.
+			turnBudgetExempt: toolCallBudgetExempt(name),
+		})
+
+		toolChan <- ToolCall{
+			ToolName:  name,
+			ToolInput: toolInput,
+			Id:        id,
+			// The UI row keeps the plain cached payload: the duplicate-call
+			// frame is a model instruction, not user-facing output.
+			Result: cachedResult,
+			Status: ToolCallStatusSucceeded,
+			Error:  "",
+			Reason: callReason,
+			// A cache hit is also a completed call: report a zero-length
+			// duration so the UI can render its timing row (ci#569).
+			StartedAtUnixMs: time.Now().UnixMilli(),
+		}
+		return
+	}
+
+	result.usedTool = true
+	result.id = id
+	result.toolName = name
+	result.arguments = arguments
+
+	startedAtUnixMs := time.Now().UnixMilli()
+	toolChan <- ToolCall{
+		ToolName:        name,
+		ToolInput:       toolInput,
+		Id:              id,
+		Result:          "",
+		Status:          ToolCallStatusOngoing,
+		StartedAtUnixMs: startedAtUnixMs,
+		Reason:          callReason,
+	}
+
+	var toolResult string
+	status := ToolCallStatusSucceeded
+	toolErr := ""
+	// ci#688: how many extra attempts the call needed after a transient
+	// environmental failure, and whether the (still) failed call is exempt
+	// from the agent's failed-tool budget.
+	toolRetries := 0
+	toolBudgetExempt := false
+	// ci#691: whether the call failed because the scheduler could not place
+	// the sandbox (node capacity), which is reported to the model with its own
+	// guidance and starts the process-wide provisioning cooldown.
+	toolSandboxCapacity := false
+	requiresConfirmation, resolvedResult := tool.ResolveConfirmation(toolInput)
+	switch {
+	case requiresConfirmation:
+		continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
+		toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
+		status = ToolCallStatusPendingConfirmation
+
+		modelResult := toolResult
+		if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
+			modelResult = blockMessage
+		}
+		result.result = modelResult
+		if tool.GetStopOnFirstConfirmableToolCall() {
+			result.stopAfterTool = true
+		}
+	case resolvedResult != "":
+		// A code-defined resolver (eg coder_ask in an autonomous session)
+		// decided the call must not be confirmed and supplied the answer
+		// itself; use it as the tool result and continue instead of pausing
+		// for the user.
+		toolResult = resolvedResult
+		result.result = resolvedResult
+		status = ToolCallStatusSucceeded
+	default:
+		// ci#688: a tool body can fail for purely environmental reasons (a
+		// per-chat sandbox that could not be provisioned under high
+		// parallelism, host resource exhaustion, a connection blip towards the
+		// integration host). Such a failure is retried with an exponential
+		// backoff — bounded by the generation context, so a user stop is never
+		// resurrected — and, when it survives the retries, it is reported to
+		// the model as a failed call that does *not* consume the failed-tool
+		// budget. Only failures the model can actually fix count against it.
+		//
+		// ci#691: a sandbox that the scheduler could not *place* ("0/1 nodes
+		// are available: 1 Insufficient cpu") is the same class of failure but
+		// a different timescale. The retry policy gives it a slower, bounded
+		// backoff, and while the node is known to be saturated the other
+		// provisioning calls of the fleet are held back too, so the agents do
+		// not stampede the scheduler and re-create the burst.
+		awaitSandboxCapacityCooldown(ctx, name)
+		run := func() (string, error) {
+			if contextTool, ok := tool.(ContextTool); ok {
+				return contextTool.RunToolContext(ctx, toolInput)
+			}
+			return tool.RunTool(toolInput)
+		}
+		executedResult, runErr, retries := runToolWithTransientRetry(ctx, name, run)
+		toolRetries = retries
+		if runErr != nil {
+			logging.Errorf("Error executing tool %s (after %d attempt(s)): %v", name, retries+1, runErr)
+			toolBudgetExempt = isTransientToolFailure(runErr)
+			toolSandboxCapacity = isSandboxCapacityFailure(runErr)
+			if toolSandboxCapacity {
+				// Start the process-wide cooldown so the next provisioning
+				// call of any agent waits for capacity instead of racing the
+				// scheduler again (ci#691).
+				noteSandboxCapacityFailure(sandboxCapacityBackoffDelay(retries + 1))
+				toolResult = buildSandboxCapacityToolErrorPlaceholder(name, runErr, retries+1)
+			} else if isSandboxRegistryConflict(runErr) {
+				// ci#739: deterministic, so never retried (isTransientToolFailure
+				// excludes it), but the bare error reads like a blip and invites
+				// the one response that cannot work: repeating the identical
+				// call, whose chat-derived sandbox name collides byte-for-byte
+				// every time. Name the class and the remedies instead.
+				toolResult = buildSandboxRegistryConflictToolErrorPlaceholder(name, runErr)
+			} else if toolBudgetExempt {
+				toolResult = buildTransientToolErrorPlaceholder(name, runErr, retries+1)
+			} else {
+				toolResult = buildToolErrorPlaceholder(name, runErr)
+			}
+			result.result = toolResult
+			status = ToolCallStatusFailed
+			toolErr = runErr.Error()
+		} else {
+			toolResult = executedResult
+			result.result = executedResult
+			status = ToolCallStatusSucceeded
+		}
+	}
+
+	toolChan <- ToolCall{
+		ToolName:        name,
+		ToolInput:       toolInput,
+		Id:              id,
+		Result:          toolResult,
+		Status:          status,
+		Error:           toolErr,
+		StartedAtUnixMs: startedAtUnixMs,
+		DurationMs:      time.Since(time.UnixMilli(startedAtUnixMs)).Milliseconds(),
+		Retries:         toolRetries,
+		BudgetExempt:    toolBudgetExempt,
+		SandboxCapacity: toolSandboxCapacity,
+		Reason:          callReason,
+	}
+	result.status = status
+	result.error = toolErr
+	result.calls = append(result.calls, executedToolCall{
+		id:               id,
+		name:             name,
+		arguments:        arguments,
+		result:           toolResult,
+		status:           status,
+		error:            toolErr,
+		budgetExempt:     toolBudgetExempt,
+		turnBudgetExempt: toolCallBudgetExempt(name),
+		retries:          toolRetries,
+		sandboxCapacity:  toolSandboxCapacity,
+		reason:           callReason,
+	})
+	// Cache only successful results. Caching failures would make an identical
+	// retry (after the underlying state changed) replay the stale error instead
+	// of re-executing the tool.
+	if status == ToolCallStatusSucceeded {
+		executedToolResults[contentSignature] = toolResult
+	}
 }
 
 func processStreamingResponseReader(
+	ctx context.Context,
 	reader *bufio.Reader,
 	toolMap map[string]Tool,
 	executedToolResults map[string]string,
@@ -803,14 +1832,40 @@ func processStreamingResponseReader(
 ) (*toolCallResult, error) {
 	result := &toolCallResult{}
 
-	var currentToolCall struct {
+	// A single assistant round can stream several tool calls and the provider
+	// interleaves their deltas: the `index` field identifies which call a delta
+	// belongs to, one call's arguments arrive across several deltas, and deltas
+	// for different calls can alternate. Reassemble each call by index (falling
+	// back to its id) and only execute it once the stream ends, in emission
+	// order, so every result is delivered exactly once, attributed to its call
+	// id and in call order instead of being run as partial deltas arrive
+	// (ci#655).
+	type streamedCall struct {
 		id        string
 		name      string
 		arguments string
 	}
+	var streamedKeys []string
+	streamed := map[string]*streamedCall{}
+	lastKey := ""
+	streamedToolCallsSeen := false
 	var aiResponseBuilder strings.Builder
+	// inlineToolCallDetected records that the model emitted an inline tool-call
+	// block (DeepSeek DSML or Anthropic/XML) in the content. Such content is
+	// never user-facing: it is withheld from the client stream and recovered
+	// (or reported) at the end.
+	inlineToolCallDetected := false
+	// repetitionLoopDetected records that the round collapsed into an unbounded
+	// repetition loop and was cut off early (ci#670). Reading stops, and the
+	// truncated text plus a clear note is returned as the round's answer.
+	repetitionLoopDetected := false
 
 	for {
+		// A stop aborts the reader immediately: don't keep consuming the
+		// provider stream (or dispatch its tool calls) after cancellation.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		line, err := reader.ReadString('\n')
 		if err == io.EOF {
 			break
@@ -853,153 +1908,186 @@ func processStreamingResponseReader(
 		delta := chunk.Choices[0].Delta
 
 		if delta.Content != "" {
-			chunkChan <- delta.Content
 			aiResponseBuilder.WriteString(delta.Content)
+			accumulated := aiResponseBuilder.String()
+			// Detect against the *accumulated* content: an inline call marker
+			// (DeepSeek DSML, Anthropic/XML or the bracket placeholder some
+			// models emit) can be split across deltas, and a marker recognised
+			// only once it is complete would already have leaked its prefix to
+			// the client and — worse — been stored as the assistant text
+			// (ci#428, ci#562).
+			if !inlineToolCallDetected && containsInlineToolCall(accumulated, toolMap) {
+				inlineToolCallDetected = true
+			}
+			// A leaked context-compaction transcript must not reach the client
+			// either: hold back content from the delta that opens a block (and
+			// any still-ambiguous opening prefix of one, which releases again
+			// as soon as the answer diverges). Prose forwarded before the block
+			// started is genuine and stays.
+			compactionSuspect := compactionBlockRe.MatchString(accumulated) || compactionOutputSuspected(accumulated)
+			if !inlineToolCallDetected && !compactionSuspect {
+				chunkChan <- delta.Content
+			}
+			// A stream that has collapsed into a repetition loop is cut off
+			// here instead of being persisted verbatim: it used to write
+			// 150–255 KB of the same line into the chat before the turn was
+			// cancelled, polluting the next turn's context and burning the
+			// completion budget on nothing (ci#670). detectDegenerateTail
+			// covers both degeneracy shapes — a byte-identical unit repeated
+			// back to back and a single line shape looped with a mutated
+			// detail — so the runaway tail is stopped as soon as it forms.
+			// The one-line note is streamed so the persisted message (built
+			// from the streamed text) ends with a clear statement of why it
+			// stops.
+			if _, looping := detectDegenerateTail(accumulated); looping {
+				repetitionLoopDetected = true
+				chunkChan <- repetitionLoopNote
+				break
+			}
 		}
 
 		if len(delta.ToolCalls) == 0 {
 			continue
 		}
 
-		result.usedTool = true
+		streamedToolCallsSeen = true
 		for _, tc := range delta.ToolCalls {
 			toolCall, ok := tc.(map[string]interface{})
 			if !ok {
 				continue
 			}
 
-			if id, ok := toolCall["id"].(string); ok && id != "" {
-				if id != currentToolCall.id {
-					result.id = id
-					currentToolCall = struct {
-						id        string
-						name      string
-						arguments string
-					}{id: id}
-				}
+			id, _ := toolCall["id"].(string)
+			key := ""
+			if index, hasIndex := toolCallIndexValue(toolCall); hasIndex {
+				key = fmt.Sprintf("index:%d", index)
+			} else if id != "" {
+				key = "id:" + id
+			} else {
+				// A continuation delta without an index or id belongs to the
+				// call that was opened last.
+				key = lastKey
 			}
-
+			if key == "" {
+				continue
+			}
+			call := streamed[key]
+			if call == nil {
+				call = &streamedCall{}
+				streamed[key] = call
+				streamedKeys = append(streamedKeys, key)
+			}
+			lastKey = key
+			if id != "" {
+				call.id = id
+			}
 			if function, ok := toolCall["function"].(map[string]interface{}); ok {
 				if name, ok := function["name"].(string); ok && name != "" {
-					currentToolCall.name = name
-					result.toolName = name
+					call.name = name
 				}
 				if args, ok := function["arguments"].(string); ok {
-					currentToolCall.arguments += args
+					call.arguments += args
 				}
 			}
-
-			if currentToolCall.name == "" || currentToolCall.arguments == "" {
-				continue
-			}
-
-			tool, exists := toolMap[currentToolCall.name]
-			if !exists {
-				log.Printf("Warning: Tool '%s' not found in toolMap", currentToolCall.name)
-				continue
-			}
-
-			toolInput, parseErr := tool.ParseArguments(currentToolCall.arguments)
-			if parseErr != nil {
-				continue
-			}
-
-			fmt.Printf("\n=== EXECUTING TOOL: %s ===\n", currentToolCall.name)
-			fmt.Printf("Tool ID: %s\n", currentToolCall.id)
-			fmt.Printf("Arguments: %s\n", currentToolCall.arguments)
-
-			contentSignature := fmt.Sprintf("%s:%s", currentToolCall.name, strings.TrimSpace(currentToolCall.arguments))
-			if cachedResult, alreadyExecuted := executedToolResults[contentSignature]; alreadyExecuted {
-				log.Printf("Warning: Duplicate tool call detected with content signature: %s, reusing prior result", contentSignature)
-
-				status := ToolCallStatusSucceeded
-				toolErr := ""
-				if strings.Contains(strings.ToLower(cachedResult), " failed with error:") {
-					status = ToolCallStatusFailed
-					toolErr = "duplicate tool call reused prior failure result"
-				}
-
-				result.usedTool = true
-				result.id = currentToolCall.id
-				result.toolName = currentToolCall.name
-				result.arguments = currentToolCall.arguments
-				result.result = cachedResult
-				result.status = status
-				result.error = toolErr
-
-				toolChan <- ToolCall{
-					ToolName:  currentToolCall.name,
-					ToolInput: toolInput,
-					Id:        currentToolCall.id,
-					Result:    cachedResult,
-					Status:    status,
-					Error:     toolErr,
-				}
-				break
-			}
-
-			result.usedTool = true
-			result.id = currentToolCall.id
-			result.toolName = currentToolCall.name
-			result.arguments = currentToolCall.arguments
-
-			toolChan <- ToolCall{
-				ToolName:  currentToolCall.name,
-				ToolInput: toolInput,
-				Id:        currentToolCall.id,
-				Result:    "",
-				Status:    ToolCallStatusOngoing,
-			}
-
-			var toolResult string
-			status := ToolCallStatusSucceeded
-			toolErr := ""
-			if tool.GetRequiresConfirmation() {
-				continueAfterExecute := tool.GetStopOnFirstConfirmableToolCall()
-				toolResult = buildConfirmationSuggestion(tool.GetToolName(), toolInput, continueAfterExecute)
-				status = ToolCallStatusPendingConfirmation
-
-				modelResult := toolResult
-				if blockMessage := strings.TrimSpace(tool.GetConfirmationBlockMessage()); blockMessage != "" {
-					modelResult = blockMessage
-				}
-				result.result = modelResult
-				if tool.GetStopOnFirstConfirmableToolCall() {
-					result.stopAfterTool = true
-				}
-			} else {
-				executedResult, runErr := tool.RunTool(toolInput)
-				if runErr != nil {
-					log.Printf("Error executing tool %s: %v", currentToolCall.name, runErr)
-					toolResult = buildToolErrorPlaceholder(currentToolCall.name, runErr)
-					result.result = toolResult
-					status = ToolCallStatusFailed
-					toolErr = runErr.Error()
-				} else {
-					toolResult = executedResult
-					result.result = toolResult
-					status = ToolCallStatusSucceeded
-				}
-			}
-
-			toolChan <- ToolCall{
-				ToolName:  currentToolCall.name,
-				ToolInput: toolInput,
-				Id:        currentToolCall.id,
-				Result:    toolResult,
-				Status:    status,
-				Error:     toolErr,
-			}
-			result.status = status
-			result.error = toolErr
-			executedToolResults[contentSignature] = toolResult
-
-			break
 		}
 	}
 
 	result.aiResponse = aiResponseBuilder.String()
+
+	// Cut the detected repetition run off the accumulated assistant text and
+	// replace it with a clear one-line note, so the persisted message states
+	// why it ends instead of carrying the junk (ci#670). The mid-stream check
+	// and this one run on the same accumulated text, so a mid-stream trip
+	// always truncates here too; the flag is set from either signal.
+	truncatedResponse, responseTruncated := applyRepetitionLoopGuard(result.aiResponse)
+	if responseTruncated {
+		result.aiResponse = truncatedResponse
+	}
+	result.repetitionLoop = repetitionLoopDetected || responseTruncated
+
+	// A leaked context-compaction transcript is model bookkeeping, never a
+	// user-facing answer: strip it so it can never be stored as (or posted as)
+	// the turn's reply, and flag the round when the transcript was its only
+	// output so the tool loop retries once instead of finishing on it (ci#562).
+	if sanitized, onlyBlob := sanitizeCompactionOutput(result.aiResponse); onlyBlob {
+		result.aiResponse = sanitized
+		result.compactionOnly = true
+	}
+
+	// Recover an inline tool-call block (DeepSeek DSML or Anthropic/XML) that
+	// the provider did not map onto the structured tool_calls field. Without
+	// this the raw fragment was stored as the assistant text and the tool loop
+	// finished silently, abandoning the rest of a multi-step task (ci#428).
+	if !streamedToolCallsSeen && inlineToolCallDetected {
+		recovered := parseInlineToolCalls(result.aiResponse, toolMap)
+		if len(recovered) == 0 {
+			return result, errMalformedInlineToolCall
+		}
+		for i, call := range recovered {
+			processParsedToolCall(
+				ctx,
+				fmt.Sprintf("inline-call-%d", i+1),
+				call.ToolName,
+				call.Arguments,
+				toolMap,
+				executedToolResults,
+				result,
+				toolChan,
+			)
+			if result.stopAfterTool {
+				break
+			}
+		}
+		// The raw inline fragment is not user-facing assistant text.
+		result.aiResponse = ""
+		return result, nil
+	}
+
+	// Execute the reassembled calls in emission order, each once. Only the
+	// first stop-on-confirmable call is surfaced; the rest of the batch is
+	// dropped so approving it does not re-apply already-applied mutations.
+	for _, key := range streamedKeys {
+		call := streamed[key]
+		if call == nil || call.name == "" || call.arguments == "" {
+			continue
+		}
+		result.usedTool = true
+		processParsedToolCall(
+			ctx,
+			call.id,
+			call.name,
+			call.arguments,
+			toolMap,
+			executedToolResults,
+			result,
+			toolChan,
+		)
+		if result.stopAfterTool {
+			logging.Debugf("Stopping stream parsing after first confirmable tool call: %s", result.toolName)
+			break
+		}
+	}
+
 	return result, nil
+}
+
+// toolCallIndexValue reads the OpenAI streaming `index` that identifies which
+// tool call of a batched assistant turn a delta belongs to. Providers that do
+// not emit it fall back to id-based attribution.
+func toolCallIndexValue(toolCall map[string]interface{}) (int, bool) {
+	switch v := toolCall["index"].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
 }
 
 func buildTestBackendStreamingReader(

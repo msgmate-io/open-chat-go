@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	tooldefs "backend/api/msgmate/tools"
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -23,10 +24,23 @@ type Tool interface {
 	GetAdminOnly() bool
 	GetRequiresInit() bool
 	GetRequiresConfirmation() bool
+	// ResolveConfirmation returns the call-time confirmation requirement. Tools
+	// without a code-defined resolver fall back to GetRequiresConfirmation.
+	// When confirmation is not required, a non-empty resolved result replaces
+	// the tool's own Run output (e.g. an autonomous answer).
+	ResolveConfirmation(input interface{}) (requiresConfirmation bool, resolvedResult string)
 	GetStopOnFirstConfirmableToolCall() bool
 	GetConfirmationBlockMessage() string
 	ConstructTool() interface{}
 	SetInitData(data interface{})
+}
+
+// ContextTool is the optional cancellation-aware extension of Tool. A tool that
+// can honour a user stop (eg the native coder's workspace tools, which call
+// back into the integration over HTTP) implements it; every other tool is
+// executed through Tool.RunTool as before.
+type ContextTool interface {
+	RunToolContext(ctx context.Context, input interface{}) (string, error)
 }
 
 type ToolConstructor func() Tool
@@ -43,6 +57,36 @@ var (
 func init() {
 	registerBuiltinTools()
 	EnsureExternalToolsRegistered()
+	// ci#680: `coder_context` reports the per-chat context/token budget. It is
+	// registered only when no external integration already owns the name (the
+	// coding integration may ship its own `coder_context`), so the core can
+	// never panic on a duplicate constructor and never silently replace the
+	// integration's tool.
+	registerToolConstructorIfFree("coder_context", nil, NewCoderContextTool)
+	// ci#724: `coder_schedule` lets a lead agent queue a later turn of its own
+	// chat, so an autonomous loop needs no external CronJob. Same free-name
+	// rule: an integration shipping its own `coder_schedule` keeps ownership.
+	registerToolConstructorIfFree("coder_schedule", nil, NewCoderScheduleTool)
+	// ci#809: `all_tasks_completed` is the explicit machine-readable end of a
+	// task; the turn reader promotes its call into `task_completed` metadata.
+	registerToolConstructorIfFree("all_tasks_completed", nil, NewAllTasksCompletedTool)
+}
+
+// registerToolConstructorIfFree registers a builtin constructor only when the
+// tool name is still unowned (neither a builtin nor an external integration
+// tool). It reports whether the constructor was registered.
+func registerToolConstructorIfFree(name string, aliases []string, constructor ToolConstructor) bool {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if _, exists := toolConstructors[name]; exists {
+		return false
+	}
+	if _, exists := toolAliases[name]; exists {
+		return false
+	}
+	registerToolConstructorLocked(name, aliases, constructor)
+	refreshAllToolsLocked()
+	return true
 }
 
 func registerToolConstructor(name string, aliases []string, constructor ToolConstructor) {
@@ -89,6 +133,18 @@ func registerExternalToolsLocked() {
 		if _, seen := externalToolDefs[name]; seen {
 			continue
 		}
+		// A name already owned by a builtin constructor is never re-registered
+		// from the external registry: registerToolConstructorLocked panics on a
+		// duplicate, and an integration declaring a name the core already
+		// implements (eg the ci#680 `coder_context`) must not crash every turn.
+		if _, taken := toolConstructors[name]; taken {
+			externalToolDefs[name] = struct{}{}
+			continue
+		}
+		if _, taken := toolAliases[name]; taken {
+			externalToolDefs[name] = struct{}{}
+			continue
+		}
 		def := tooldefs.ToolDefinition{
 			Name:                           name,
 			FunctionName:                   externalDef.FunctionName,
@@ -103,6 +159,7 @@ func registerExternalToolsLocked() {
 			RequiredParams:                 externalDef.RequiredParams,
 			Parameters:                     externalDef.Parameters,
 			RunFunction:                    externalDef.Run,
+			ResolveConfirmation:            externalDef.ResolveConfirmation,
 		}
 		defCopy := def
 
@@ -222,6 +279,13 @@ func (t *BaseTool) GetRequiresConfirmation() bool {
 	return t.RequiresConfirmation
 }
 
+// ResolveConfirmation is the default confirmation resolution: it mirrors the
+// static RequiresConfirmation flag and never auto-resolves. Tools that need a
+// call-time decision (eg the coder_ask autonomous answer) override it.
+func (t *BaseTool) ResolveConfirmation(input interface{}) (bool, string) {
+	return t.RequiresConfirmation, ""
+}
+
 func (t *BaseTool) GetStopOnFirstConfirmableToolCall() bool {
 	return t.StopOnFirstConfirmableToolCall
 }
@@ -271,16 +335,60 @@ func (t *BaseTool) GetToolParameters() map[string]interface{} {
 }
 
 func (t *BaseTool) GetToolInputSchema() map[string]interface{} {
+	var schema map[string]interface{}
 	if t.ToolInputSchema != nil {
-		return t.ToolInputSchema
+		schema = normalizeToolInputSchema(t.ToolInputSchema)
+	} else {
+		schema = normalizeToolInputSchema(map[string]interface{}{
+			"type":        "object",
+			"properties":  t.GetToolParameters(),
+			"required":    t.RequiredParams,
+			"description": "The parameters for the tool",
+		})
 	}
+	// ci#723: only the coding integration's tools advertise the optional
+	// `reason` argument, so a coder turn can narrate why each tool runs while
+	// every other tool keeps its previous schema.
+	if IsCoderToolName(t.ToolName) {
+		schema = withToolCallReasonProperty(schema)
+	}
+	return schema
+}
 
-	return map[string]interface{}{
-		"type":        "object",
-		"properties":  t.GetToolParameters(),
-		"required":    t.RequiredParams,
-		"description": "The parameters for the tool",
+// normalizeToolInputSchema guarantees a JSON Schema that strict providers
+// accept. OpenRouter rejects a schema whose `"required"` is `null` (as emitted
+// when a tool has no RequiredParams) with
+// `tools.N.function.parameters/required: invalid JSON Schema`, which would
+// otherwise break every coder turn; DeepInfra tolerates it, so the bug only
+// surfaced on the OpenRouter-backed suites. `"properties"` is likewise coerced
+// to an object (never null) and non-string `required` entries are dropped.
+func normalizeToolInputSchema(schema map[string]interface{}) map[string]interface{} {
+	if schema == nil {
+		schema = map[string]interface{}{}
 	}
+	if _, ok := schema["type"].(string); !ok {
+		schema["type"] = "object"
+	}
+	if properties, ok := schema["properties"].(map[string]interface{}); !ok || properties == nil {
+		schema["properties"] = map[string]interface{}{}
+	}
+	switch required := schema["required"].(type) {
+	case []string:
+		if required == nil {
+			schema["required"] = []string{}
+		}
+	case []interface{}:
+		names := make([]string, 0, len(required))
+		for _, raw := range required {
+			if name, ok := raw.(string); ok {
+				names = append(names, name)
+			}
+		}
+		schema["required"] = names
+	default:
+		schema["required"] = []string{}
+	}
+	return schema
 }
 
 func (t *BaseTool) GetToolInitSchema() map[string]interface{} {

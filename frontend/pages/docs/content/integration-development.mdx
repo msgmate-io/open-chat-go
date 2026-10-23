@@ -1,19 +1,49 @@
 ---
 title: Integration Development
 path: integration-development
-description: Build an Open-Chat integration or tool, and add a custom integration to a profile.
+description: Build an Open Chat Go integration or tool and register it with a profile.
 order: 33
 section: Platform
 ---
 
-Open-Chat is extended through **integrations** and **tools**. Both live in their
-own repositories and are wired into the server through stable Go interfaces, so
-the core stays small and integrations can be developed, versioned and (when
-needed) kept private independently.
+Open Chat Go is extended through **integrations** and **tools**. Both live in
+their own repositories and are wired into the server through stable Go
+interfaces, so the core stays small while capabilities can be developed,
+versioned and (when needed) distributed separately from the core.
 
-This page covers the integration/tool interfaces, the manifest and profile
-system, the frontend page linking contract, a step-by-step walkthrough for
-**adding a custom integration**, and the local development loop.
+This page covers the integration and tool interfaces, the manifest and profile
+system, the frontend page contract, a step-by-step walkthrough for **adding a
+custom integration**, and the local development loop.
+
+## Documentation visibility
+
+Documentation of an integration is owned by the integration, not by the core
+docs. A private (or otherwise restricted) integration keeps its documentation in
+its own repository and exposes it as `kind: "doc"` frontend routes; those routes
+are listed in the `/integrations/<name>` navigation, and opening one requires a
+session plus access to that integration — otherwise the docs route renders the
+access notice instead of the content.
+
+The core `/docs` pages follow the same rule, driven by frontmatter:
+
+```yaml
+---
+title: My Integration
+path: my-integration
+visibility: integration   # public | authenticated | integration
+integration: my_integration
+---
+```
+
+- `public` (default) — rendered for everyone.
+- `authenticated` — rendered for signed-in users only.
+- `integration` — rendered only for users with access to `integration`.
+
+Public pages must never inline material from a restricted integration: mention
+it in one short sentence and link to the integration's own docs. A gated page
+renders "You have to sign in to view these docs" for anonymous visitors and
+"You don't have access to view this integration's docs" for signed-in users
+without access.
 
 ## The interfaces
 
@@ -29,6 +59,7 @@ package my_integration
 
 import (
     "github.com/msgmate-io/go-integration-interface/integrationinterface"
+    "github.com/msgmate-io/go-tool-interface/toolinterface"
 )
 
 func init() {
@@ -50,38 +81,120 @@ The server discovers integrations through generated side-effect imports
 (`backend/integrations/externalintegrations/imports_gen.go`) that the manager
 writes for the selected profile — the core never hardcodes an integration.
 
-### Tools
+### The Host boundary (no `backend/...` imports)
+
+An integration must not import `backend/...` packages: doing so ties its compile
+inputs to the monorepo and drags every backend dependency into the integration's
+own build, which is what blocks per-integration prebuilds (ci#345 design,
+ci#410 footprint, ci#423). Everything an integration needs from the core is
+reached through the versioned Host interface in
+[`go_integration_interface`](https://github.com/msgmate-io/open-chat-go-integration-interface)
+(`integrationinterface.RequireHost()`); the backend implements it in
+`backend/integrationhost`. The Host surface deliberately exposes *capabilities*,
+never `fs.FS`, `http.ServeMux` or `*gorm.DB`.
+
+Migration recipe for one integration:
+
+1. Read the module's coupling report:
+   `python3 development/scripts/check_integration_decoupling.py --module-dir .`
+   (or `--json` for a machine-readable before/after diff of the shipped
+   dependency surface).
+2. Replace each `backend/...` use in the **shipped** packages (not `_test.go`
+   files) with the matching Host capability — config/runtime values, logging,
+   storage/DB access, HTTP helpers.
+3. Only once `go list -deps ./...` reports no `backend/...` package, drop the
+   `backend` requirement and the `replace backend => ...` directive from
+   `go.mod`, and re-run the guard: it must print `decoupled`.
+4. Set `REQUIRE_DECOUPLED=true` for that integration in the module CI so the
+   report becomes an enforced gate.
+
+Test-only `backend/...` imports are tolerated during the migration: the guard
+measures the shipped artifact (`go list -deps`, without `-test`).
+
+### Measuring the dependency surface
+
+The migration is verified by measurement, not by intent:
+`backend/scripts/integration_dep_surface.py` prints, per integration, the
+transitive package count of its shipped graph and how many of those packages are
+`backend/...` (that number must reach `0`), plus the same two numbers including
+tests. Run it from the Go workspace that `use`s `backend/` and the integrations:
+
+```bash
+GOWORK="$PWD/go.work" python3 backend/scripts/integration_dep_surface.py
+```
+
+To measure the before/after delta of a migration, record the surface first and
+diff against it afterwards:
+
+```bash
+GOWORK="$PWD/go.work" python3 backend/scripts/integration_dep_surface.py \
+    --write-baseline integrations.dep-surface.json
+GOWORK="$PWD/go.work" python3 backend/scripts/integration_dep_surface.py \
+    --baseline integrations.dep-surface.json
+```
+
+`--baseline` adds a `d_pkgs`/`d_backend` column per integration and fails when an
+integration pulls more `backend/...` packages than the baseline (or a package
+that was not recorded). The committed `integrations.dep-surface.json` pins the
+integrations that are already migrated (`go_client`, `rest_api_tool`) at zero
+`backend/...` packages, so re-coupling them fails the check; `--write-baseline`
+refreshes the file after a migration.
+
+Only integrations that are already decoupled may be pinned in the baseline; a
+pinned entry that still records `backend/...` packages would silently neuter the
+check. That invariant is verified without a Go toolchain, which is how CI
+validates the committed file:
+
+```bash
+python3 backend/scripts/integration_dep_surface.py \
+    --check-baseline integrations.dep-surface.json
+```
+
+The same script is exercised hermetically (stub `go`, no toolchain needed) by
+`development/scripts/tests/test_integration_dep_surface.sh`, which pins the
+exit codes above and runs in CI.
+
+## Tools
 
 Tools are declared on the integration definition and implement the tool
-interface from `go_tool_interface`. A tool definition describes its function
-name, description and input JSON schema; the server exposes it to models for the
-integrations a user can access.
+interface. A tool definition describes its function name, description and input
+JSON schema; the server exposes it to models for the integrations a user can
+access. Tools can also require initialisation data (`requires_init`) or an
+explicit user confirmation before they run (`requires_confirmation`).
 
 ## Manifest and profiles
 
-Integrations are declared in `integrations.yaml` at the repository root and
-fetched on demand by the `openchat-integrations` manager
-([`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools),
-vendored at `development/build-tools`). No integration is a git submodule.
+Integrations are declared in
+[`integrations.yaml`](https://github.com/msgmate-io/open-chat-go/blob/main/integrations.yaml)
+at the repository root and fetched on demand by the `openchat-integrations`
+manager from
+[`open-chat-go-build-tools`](https://github.com/msgmate-io/open-chat-go-build-tools)
+(vendored at `development/build-tools`). No integration is a git submodule.
 
-- **Profiles** select which integrations are compiled and served: `core-only`
-  (public default), `default`, `full`, `full-ci` and `full-android`.
-- **Private content** (private integrations, the private profiles, the CI
-  tooling, the Helm chart and the mobile client) lives outside the public
-  repository. `openchat-integrations setup` materializes it per
-  `profile_setup.yaml` and mirrors the private integrations manifest into
-  `.integrations/private/`.
-- **Lockfile**: `integrations.lock.json` pins public integration commits; the
-  private pins live in the private `ci` repository. `sync --frozen` checks out
-  the pinned commits.
+A **profile** selects which integrations are compiled and served:
+
+- `core-only` (the public default) includes `mcp`, `rest_api_tool` and
+  `go_client`.
+- Deployments can define additional profiles in their own manifest to pull in
+  further integrations. The manager is not tied to a fixed list: whatever a
+  profile names is fetched, linked and compiled.
+
+`integrations.lock.json` pins the resolved commits so `sync --frozen` checks out
+exactly the recorded revisions (used by CI and release builds).
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install ./development/build-tools
 
-.venv/bin/openchat-integrations setup   --profile full   # repos + symlinks + private manifest
-.venv/bin/openchat-integrations prepare --profile full   # sync + resolve + frontend link
+.venv/bin/openchat-integrations list    --profile core-only
+.venv/bin/openchat-integrations prepare --profile core-only  # sync + resolve + frontend link
 ```
+
+`prepare` is the high-level path: it fetches checkouts, generates the Go
+workspace (`backend/go.work`) and the side-effect import file, and links
+integration frontend pages. See the
+[build tools README](https://github.com/msgmate-io/open-chat-go-build-tools)
+for the full CLI.
 
 ## Frontend pages owned by an integration
 
@@ -141,6 +254,44 @@ on `FrontendPage`/`FrontendRoute` to mount a first-party route elsewhere; the
 server serves the embedded page there and reserves it (core page routes that
 collide are de-registered in favour of the integration page).
 
+### Integration documentation pages
+
+An integration can publish documentation pages whose React code lives in the
+integration repository, exactly like its other frontend pages. Declare them with
+`FrontendDocs` and register the matching Vike page/asset in
+`integration.frontend.json`:
+
+```go
+FrontendDocs: []integrationinterface.FrontendDoc{
+    {
+        Route:       "/integrations/my_integration/docs/getting-started",
+        Title:       "Getting Started",
+        Description: "Install and configure the integration.",
+        AssetPath:   "docs/getting-started/index.html",
+        Section:     "Guides",
+        Order:       1,
+    },
+}
+```
+
+`Title`, `Section` and `Order` drive the documentation navigation; `Route` and
+`AssetPath` behave like `FrontendPage`. Documentation routes are served by the
+backend, listed with their metadata in the integration overview
+(`frontend_routes` entries with `kind: "doc"`) and surfaced in the sidebar and
+the `/integrations` overview, which can filter integrations by `pages`, `docs`
+or `routes`.
+
+### Integration labels
+
+Integrations are labelled `core` (part of the public `core-only` profile in
+`integrations.yaml`) or `full` (only available in a larger profile)
+automatically, and the `/integrations` overview can filter by label. An
+integration can add its own labels through the definition `Labels` field:
+
+```go
+Labels: []string{"media"},
+```
+
 ## Adding a custom integration
 
 1. **Create the integration repository.** Start a Go module whose package
@@ -156,11 +307,8 @@ collide are de-registered in favour of the integration page).
    contribution. Keep the integration self-contained: all integration state and
    models live in the integration package.
 
-3. **Declare it in the manifest.** Add an entry under `integrations:` (and to a
-   profile under `profiles:`) in `integrations.yaml`, or, for a private
-   integration, in the private manifest fragment
-   (`openchat/private-integrations.yaml` in the `ci` repository). Minimal
-   public entry:
+3. **Declare it in the manifest.** Add an entry under `integrations:` and to a
+   profile under `profiles:` in your `integrations.yaml`:
 
    ```yaml
    integrations:
@@ -184,9 +332,8 @@ collide are de-registered in favour of the integration page).
 5. **Materialize and build.**
 
    ```bash
-   .venv/bin/openchat-integrations sync    --profile full   # fetch the new repo
-   .venv/bin/openchat-integrations resolve --profile full   # go.work + imports
-   cd backend && ./full_build.sh            # or `go build ./...`
+   .venv/bin/openchat-integrations prepare --profile core-only  # fetch + resolve + frontend link
+   cd backend && go build ./...            # full_build.sh wraps prepare + build
    ```
 
 6. **Develop locally against a fork** without editing the manifest:
@@ -202,8 +349,81 @@ collide are de-registered in favour of the integration page).
 
 ## Licensing
 
-The core server and the public `frontend` are licensed `AGPL-3.0-or-later`;
+The core server and the public `frontend` are licensed `AGPL-3.0-or-later`; the
 brand assets under `frontend/assets/` are explicitly excluded (all rights
 reserved). Integrations live in their own repositories and carry their own
-license — private integrations are proprietary and are never part of the public
-source. See the repository `NOTICE`/`COPYRIGHT` files and `frontend/NOTICE`.
+license. See the repository `NOTICE`/`COPYRIGHT` files and `frontend/NOTICE`.
+
+## Private integration documentation pages
+
+Every **private** integration (the ones shipped through the private `default` /
+`full` profiles) publishes its own compact documentation page set. The pages,
+their assets and any configuration examples live **inside the integration
+repository** and are declared through the standard `FrontendDocs` mechanism, so
+nothing about a private integration ever reaches this public repository or the
+public core docs.
+
+Keep a page set small and stable — three pages are enough and age well:
+
+| Page | `Section` | `Order` | Contents |
+| --- | --- | --- | --- |
+| Overview | `Overview` | 1 | what the integration does, prerequisites, how access is granted |
+| Configuration | `Configuration` | 2 | runtime env vars / secrets and `open-chat.json` examples |
+| Operations | `Guides` | 3 | day-two tasks, troubleshooting, limits |
+
+### Page set layout
+
+Documentation pages are written exactly like the integration's other frontend
+pages (`frontend/pages/<route>/+Page.tsx`, Vike, `@open-chat-go/ui`), and are
+prerendered into the integration's own embedded assets:
+
+```
+frontend/pages/docs/overview/+Page.tsx
+frontend/pages/docs/configuration/+Page.tsx
+frontend/pages/docs/operations/+Page.tsx
+frontend_assets/docs/overview/index.html   # produced by `openchat-integrations export`
+frontend_assets/docs/configuration/index.html
+frontend_assets/docs/operations/index.html
+```
+
+Register them in the integration's `integration.frontend.json`:
+
+```json
+{
+  "pages": [
+    { "source": "integrations/<name>/docs/overview", "asset": "docs/overview/index.html" },
+    { "source": "integrations/<name>/docs/configuration", "asset": "docs/configuration/index.html" },
+    { "source": "integrations/<name>/docs/operations", "asset": "docs/operations/index.html" }
+  ]
+}
+```
+
+and in the Go definition (`FrontendDocs` requires `FrontendAssets`):
+
+```go
+FrontendDocs: []integrationinterface.FrontendDoc{
+    {Route: "/integrations/<name>/docs/overview", Title: "Overview", Description: "What the integration does and how to enable it.", AssetPath: "docs/overview/index.html", Section: "Overview", Order: 1},
+    {Route: "/integrations/<name>/docs/configuration", Title: "Configuration", Description: "Runtime env vars and open-chat.json examples.", AssetPath: "docs/configuration/index.html", Section: "Configuration", Order: 2},
+    {Route: "/integrations/<name>/docs/operations", Title: "Operations", Description: "Day-two tasks and troubleshooting.", AssetPath: "docs/operations/index.html", Section: "Guides", Order: 3},
+},
+```
+
+Routes must stay under `/integrations/<name>` (`Root: true` opts out, on purpose),
+`Title`/`Description`/`Section` are trimmed metadata, and `Order` drives the
+navigation order. The backend serves the pages, lists them in the integration
+overview as `frontend_routes` entries with `kind: "doc"`, and counts them in the
+`/integrations` overview (`frontend_doc_count`).
+
+### Configuration examples
+
+When the integration can be configured through Open-Chat's own configuration,
+its `Configuration` page should carry short, copy-pasteable `open-chat.json`
+examples (`integrations.<name>...`) alongside the matching runtime env vars.
+Document the shape of the values only:
+
+- never embed real secrets, tokens, hostnames or credentials — use
+  placeholders such as `<token>`, `https://git.example.com`;
+- keep examples minimal (one example per capability), and state the env var the
+  value maps to; and
+- mark admin-only pages with `AdminOnly` on the definition rather than hiding
+  the route, so the navigation stays honest.

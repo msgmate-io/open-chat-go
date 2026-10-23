@@ -3,6 +3,7 @@ package msgmate
 import (
 	"backend/database"
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -87,6 +88,7 @@ func TestProcessStreamingResponseReader_ExecutesDynamicRESTToolCall(t *testing.T
 	toolChan := make(chan ToolCall, 2)
 
 	result, err := processStreamingResponseReader(
+		context.Background(),
 		bufio.NewReader(strings.NewReader(sse)),
 		toolMap,
 		map[string]string{},

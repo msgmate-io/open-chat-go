@@ -5,18 +5,23 @@ package websocket
 import (
 	"context"
 	"github.com/coder/websocket"
-	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"backend/logging"
+	"backend/sharecensor"
 )
 
 type Subscriber struct {
-	msgs      chan []byte
-	UserUUID  string
-	ChatUUID  string
-	closeSlow func()
+	msgs     chan []byte
+	UserUUID string
+	ChatUUID string
+	// ContentMode is the share content level this subscriber is allowed to
+	// see. Anything that is not an explicit "unsecure" is censored.
+	ContentMode string
+	closeSlow   func()
 }
 
 type WebSocketHandler struct {
@@ -48,7 +53,7 @@ func NewWebSocketHandler() *WebSocketHandler {
 		// publishLimiter: rate.NewLimiter(rate.Limit(1), 1),
 		MessageHandler: &Messages{},
 		logf: func(f string, v ...interface{}) {
-			log.Printf(f, v...)
+			logging.Debugf(f, v...)
 		},
 		subscribers: make(map[*Subscriber]struct{}),
 		connections: make(map[*websocket.Conn]struct{}),
@@ -107,8 +112,15 @@ func (cs *WebSocketHandler) PublishInChatChannel(msg []byte, chatUUID string) {
 
 	for s := range cs.subscribers {
 		if s.ChatUUID == chatUUID {
+			payload := msg
+			if sharecensor.IsCensored(s.ContentMode) {
+				payload = sharecensor.CensorWebSocketPayload(msg)
+			} else {
+				// Even an "unsecure" share must never stream credentials.
+				payload = sharecensor.MaskSecretsJSON(msg)
+			}
 			select {
-			case s.msgs <- msg:
+			case s.msgs <- payload:
 			default:
 				go s.closeSlow()
 			}
@@ -202,13 +214,14 @@ func (cs *WebSocketHandler) SubscribeChannel(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.Request, chatUUID string) error {
+func (cs *WebSocketHandler) SubscribeChatChannel(w http.ResponseWriter, r *http.Request, chatUUID string, contentMode string) error {
 	var mu sync.Mutex
 	var c *websocket.Conn
 	var closed bool
 	s := &Subscriber{
-		ChatUUID: chatUUID,
-		msgs:     make(chan []byte, cs.subscriberMessageBuffer),
+		ChatUUID:    chatUUID,
+		ContentMode: sharecensor.NormalizeContentMode(contentMode),
+		msgs:        make(chan []byte, cs.subscriberMessageBuffer),
 		closeSlow: func() {
 			mu.Lock()
 			defer mu.Unlock()

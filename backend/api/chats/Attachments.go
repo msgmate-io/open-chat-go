@@ -3,10 +3,11 @@ package chats
 import (
 	"backend/database"
 	"errors"
-	"log"
 	"time"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // ErrAttachmentNotOwned is returned when an attachment references an uploaded
@@ -50,7 +51,7 @@ func EnrichAndShareAttachments(DB *gorm.DB, ownerID, receiverID uint, attachment
 		}
 		if err := ShareUploadedFileWithUser(DB, receiverID, &uploadedFile); err != nil {
 			// Sharing is best-effort: the message itself must still be created.
-			log.Printf("Error sharing file %s (ID: %d) with user %d: %v", attachment.FileID, uploadedFile.ID, receiverID, err)
+			logging.Errorf("Error sharing file %s (ID: %d) with user %d: %v", attachment.FileID, uploadedFile.ID, receiverID, err)
 		}
 		enriched = append(enriched, FileAttachment{
 			FileID:      attachment.FileID,

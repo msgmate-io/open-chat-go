@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Dialog,
@@ -20,10 +20,12 @@ import {
   addMobileServer,
   backupMobileServerData,
   clearMobileServerOpencodeConfig,
-  isMobileServerAuthenticatedWithProbe,
+  type MobileServerAuthProbeState,
   type MobileServerConfig,
   probeActiveMobileServerAuthenticated,
   readMobileAppConfig,
+  recordMobileServerAuthProbe,
+  resolveMobileServerAuthenticated,
   readMobileServerOpencodeConfig,
   readMobileServerLogs,
   removeMobileServer,
@@ -89,7 +91,13 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
   const [configPreviewTruncated, setConfigPreviewTruncated] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetFinalConfirmOpen, setResetFinalConfirmOpen] = useState(false);
-  const [probedActiveAuth, setProbedActiveAuth] = useState(false);
+  // Per-server last-known auth state from the live session probe. Keyed by
+  // server id so switching servers never blanks another server's badge.
+  const [probeState, setProbeState] = useState<MobileServerAuthProbeState>({});
+  const activeServerIdRef = useRef(activeServerId);
+  useEffect(() => {
+    activeServerIdRef.current = activeServerId;
+  }, [activeServerId]);
 
   const refresh = useCallback(() => {
     const config = readMobileAppConfig();
@@ -97,27 +105,34 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
     setActiveServerId(config.activeServerId);
   }, []);
 
-  // Confirm the active server's session against the backend. The native cookie
-  // jar read can miss right after login (or on a cold start), so the live probe
-  // is what reliably flips the selector to "Auth" once a real session exists -
-  // including after a Google login, which replies through the proxy.
-  const probeActiveAuth = useCallback(() => {
-    let cancelled = false;
+  // Confirm a server's session against the backend and record the result under
+  // that server's id. The native cookie jar read can miss right after login (or
+  // on a cold start), so the live probe is what reliably flips the selector to
+  // "Auth" once a real session exists — including after a Google login, which
+  // replies through the proxy. Results are recorded per server and the probe is
+  // re-run whenever the active server changes or the app regains focus.
+  const probeActiveAuth = useCallback((serverId?: string) => {
+    const targetId = serverId ?? activeServerIdRef.current;
+    if (!targetId) {
+      return;
+    }
     void probeActiveMobileServerAuthenticated().then((authenticated) => {
-      if (!cancelled) {
-        setProbedActiveAuth(authenticated);
+      // Ignore a response that was superseded by a server switch; the switch
+      // triggers its own probe for the newly active server.
+      if (activeServerIdRef.current !== targetId) {
+        return;
       }
+      setProbeState((prev) => recordMobileServerAuthProbe(prev, targetId, authenticated));
     });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  useEffect(() => probeActiveAuth(), [probeActiveAuth, activeServerId]);
+  useEffect(() => {
+    probeActiveAuth(activeServerId);
+  }, [probeActiveAuth, activeServerId]);
 
   // Re-read the native config whenever the app/page regains focus. The native
   // host derives `isAuthenticated` from the persisted session cookie, so this is
@@ -133,9 +148,7 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
     const refreshFromNative = () => {
       refresh();
       setIsSelectingConfig(false);
-      void probeActiveMobileServerAuthenticated().then((authenticated) => {
-        setProbedActiveAuth(authenticated);
-      });
+      probeActiveAuth(activeServerIdRef.current);
     };
 
     const onVisibilityChange = () => {
@@ -152,19 +165,21 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
       window.removeEventListener("focus", refreshFromNative);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [refresh]);
+  }, [refresh, probeActiveAuth]);
 
   const activeServer = useMemo(
     () => servers.find((server) => server.id === activeServerId) || servers[0],
     [activeServerId, servers],
   );
 
+  const isAuthenticated = useCallback(
+    (server: MobileServerConfig | undefined) => resolveMobileServerAuthenticated(server, probeState),
+    [probeState],
+  );
+
   const hasAuthenticated = useMemo(
-    () =>
-      servers.some((server) =>
-        isMobileServerAuthenticatedWithProbe(server, activeServerId, probedActiveAuth),
-      ),
-    [servers, activeServerId, probedActiveAuth],
+    () => servers.some((server) => isAuthenticated(server)),
+    [servers, isAuthenticated],
   );
 
   const openCreate = () => {
@@ -340,7 +355,7 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
                   {activeServer?.upstreamUrl}
                 </Text>
               </div>
-              {isMobileServerAuthenticatedWithProbe(activeServer, activeServerId, probedActiveAuth) ? (
+              {isAuthenticated(activeServer) ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">
                   <CheckCircle2 className="h-3 w-3" />
                   Auth
@@ -382,7 +397,7 @@ export function MobileServerSelector({ showOnlyWhenAuthenticated = false, onStat
                       {isActive && (
                         <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">Active</span>
                       )}
-                      {isMobileServerAuthenticatedWithProbe(server, activeServerId, probedActiveAuth) ? (
+                      {isAuthenticated(server) ? (
                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600">
                           <CheckCircle2 className="h-3 w-3" />
                           Auth

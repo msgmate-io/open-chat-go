@@ -52,12 +52,20 @@ type ApplyResult struct {
 // Validation failures are returned as *ApplyValidationError. Parse and other
 // hard failures are returned as plain errors.
 func ApplyRawConfigDocument(source string, yaml string) (ApplyResult, error) {
-	defs := ConfigDefinitions()
-
 	root, err := ParseConfigDocument(yaml)
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	return persistConfigRoot(source, root, ConfigDefinitions())
+}
+
+// persistConfigRoot validates a decoded config document and persists it to the
+// local config source, restoring values that were sent back using the redaction
+// sentinel. When a deployment-host kubernetes Secret is configured the same
+// document is mirrored there. A read-only local mount is tolerated as long as
+// the remote mirror succeeds. It is shared by the raw-document editor and the
+// single-value config-delta mutation so both converge on one persistence path.
+func persistConfigRoot(source string, root map[string]interface{}, defs []integrationinterface.Definition) (ApplyResult, error) {
 	if errs := ValidateConfigDocument(root, defs); len(errs) > 0 {
 		return ApplyResult{}, &ApplyValidationError{Errors: errs}
 	}

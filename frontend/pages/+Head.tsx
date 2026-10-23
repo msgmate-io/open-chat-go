@@ -5,6 +5,19 @@ import logoUrl from "../assets/logo.png";
 
 const themeBootstrapScript = `(() => {
   try {
+    // Resolve the native-runtime flag before the first paint/hydration so the
+    // app shell does not render the desktop layout for a frame and then flip to
+    // the mobile/native layout. Mirrors isMobileAppRuntime() in
+    // @open-chat-go/ui: Android WebView that exposes the OpenChat mobile bridge.
+    const userAgent = navigator.userAgent || "";
+    const isAndroidWebView = /Android/i.test(userAgent) && /\\bwv\\b/i.test(userAgent);
+    const isNative =
+      isAndroidWebView &&
+      typeof window.OpenChatMobileBridge !== "undefined" &&
+      typeof window.OpenChatMobileBridge.isMobileApp === "function" &&
+      Boolean(window.OpenChatMobileBridge.isMobileApp());
+    document.documentElement.setAttribute("data-openchat-runtime", isNative ? "mobile" : "web");
+
     const params = new URLSearchParams(window.location.search);
     const fromParams =
       params.get("embedTheme") ||

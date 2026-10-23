@@ -51,9 +51,9 @@ type mcpJSONRPCError struct {
 }
 
 type mcpJSONRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Result  interface{}     `json:"result,omitempty"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      json.RawMessage  `json:"id,omitempty"`
+	Result  interface{}      `json:"result,omitempty"`
 	Error   *mcpJSONRPCError `json:"error,omitempty"`
 }
 
@@ -91,6 +91,17 @@ func (h *MCPServerHandler) HandleMCP(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user == nil {
 		http.Error(w, "Unable to get database or user", http.StatusUnauthorized)
 		return
+	}
+
+	// The built-in Open-Chat MCP credential is audience-bound to this endpoint
+	// and is deliberately owner-scoped: even when the token owner is an admin
+	// (the CI admin bot), an agent runtime must only see the interactions its
+	// owner participates in, never the admin-wide "all chats" view. This keeps
+	// one agent workspace from inspecting the work of another.
+	if database.IsMCPInteractionToken(r.Context()) {
+		ownerScoped := *user
+		ownerScoped.IsAdmin = false
+		user = &ownerScoped
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

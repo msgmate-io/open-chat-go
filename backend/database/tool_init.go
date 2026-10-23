@@ -3,10 +3,38 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// TrustedToolRuntimeKey is the reserved tool-init key under which the backend
+// injects trusted caller context (eg the executing bot identity). It is never
+// sourced from user/persisted config.
+const TrustedToolRuntimeKey = "_runtime"
+
+// WithTrustedBotRuntime merges the executing bot identity into tool init data
+// under the reserved _runtime key. Owner-scoped tools use it to resolve the bot
+// owner without trusting persisted tool_init content. The input map is not
+// mutated; a shallow copy is returned.
+func WithTrustedBotRuntime(initData map[string]interface{}, botUser *User) map[string]interface{} {
+	base := map[string]interface{}{}
+	for k, v := range initData {
+		base[k] = v
+	}
+	runtimeRaw, _ := base[TrustedToolRuntimeKey].(map[string]interface{})
+	runtime := map[string]interface{}{}
+	for k, v := range runtimeRaw {
+		runtime[k] = v
+	}
+	if botUser != nil {
+		runtime["bot_user_id"] = botUser.ID
+		runtime["bot_user_uuid"] = strings.TrimSpace(botUser.UUID)
+	}
+	base[TrustedToolRuntimeKey] = runtime
+	return base
+}
 
 // ToolInitData represents tool initialization data for a specific chat interaction
 type ToolInitData struct {
