@@ -125,7 +125,7 @@ export function MessageRow({
   return (
     <div
       className={cn(
-        "flex w-full max-w-full gap-3 px-3 py-2 md:px-4",
+        "flex w-full max-w-full gap-2 px-2 py-2 sm:gap-3 sm:px-3 md:px-4",
         align === "end" && "justify-end",
         className
       )}
@@ -322,7 +322,7 @@ export function UserMessageShell({
       {align === "start" ? (
         <MessageAvatar variant={avatarVariant} label={avatarLabel} className="hidden md:flex" />
       ) : null}
-      <div className={cn("min-w-0 flex-1", align === "end" && "max-w-[85%]")}>
+      <div className={cn("min-w-0 flex-1", align === "end" && "max-w-[92%] sm:max-w-[85%]")}>
         {align === "start" ? <MessageSenderLabel meta={senderMeta}>{senderLabel}</MessageSenderLabel> : null}
         <MessageBubble variant={align === "end" ? "outgoing" : "user"}>
           <MessageContent>{children}</MessageContent>
@@ -342,6 +342,7 @@ export function BotMessageShell({
   footer,
   align = "start",
   showIdentity = true,
+  showAvatar = true,
 }: {
   senderLabel?: ReactNode;
   senderMeta?: ReactNode;
@@ -351,16 +352,17 @@ export function BotMessageShell({
   footer?: ReactNode;
   align?: "start" | "end";
   showIdentity?: boolean;
+  showAvatar?: boolean;
 }) {
   return (
     <MessageRow align={align}>
-      {align === "start" && showIdentity ? (
+      {align === "start" && showAvatar ? (
         <div className="hidden shrink-0 flex-col items-center gap-1 md:flex">
           <MessageAvatar variant="bot" src={avatarSrc} label={String(senderLabel)} />
           {avatarFooter ? <div className="flex w-full justify-center">{avatarFooter}</div> : null}
         </div>
       ) : null}
-      <div className={cn("min-w-0 flex-1", align === "end" && "max-w-[85%]")}>
+      <div className={cn("min-w-0 flex-1", align === "end" && "max-w-[92%] sm:max-w-[85%]")}>
         {align === "start" && showIdentity ? <MessageSenderLabel meta={senderMeta}>{senderLabel}</MessageSenderLabel> : null}
         <MessageBubble variant={align === "end" ? "outgoing" : "bot"}>
           <MessageContent>{children}</MessageContent>

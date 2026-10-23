@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Pin } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { OnlineIndicator } from "./OnlineIndicator";
@@ -117,31 +117,54 @@ const CHAT_STATE_DOT_LABELS: Record<ChatState, string> = {
   needs_confirmation: "User confirmation required",
 };
 
-function ChatStateDot({ state }: { state?: string }) {
-  if (!state || state === "idle") {
-    return null;
+export const ChatStateDot = memo(function ChatStateDot({
+  state,
+  tracked = false,
+  loading = false,
+}: {
+  state?: string
+  // `tracked` marks a chat that will carry a state indicator (an automated /
+  // bot chat). Its dot slot is always reserved – even while the state is still
+  // loading or resolves to idle – so the row does not shift sideways when the
+  // batch state request lands (ci#579).
+  tracked?: boolean
+  loading?: boolean
+}) {
+  if (!tracked) {
+    return null
   }
   const knownState = (Object.keys(CHAT_STATE_DOT_CLASSES) as ChatState[]).includes(state as ChatState)
     ? (state as ChatState)
     : "idle";
   const dotClasses = CHAT_STATE_DOT_CLASSES[knownState];
-  if (!dotClasses) {
-    return null;
+  // An unresolved state during the initial fetch renders a pulsing placeholder
+  // in the reserved slot; a resolved idle state leaves the slot empty.
+  const placeholder = loading && !dotClasses;
+  if (!dotClasses && !placeholder) {
+    return <span className="chat-state-dot size-2 shrink-0 rounded-full" aria-hidden="true" />;
   }
   return (
     <span
-      aria-label={CHAT_STATE_DOT_LABELS[knownState]}
-      title={CHAT_STATE_DOT_LABELS[knownState]}
-      className={cn("chat-state-dot size-2 shrink-0 rounded-full", dotClasses)}
+      aria-label={dotClasses ? CHAT_STATE_DOT_LABELS[knownState] : undefined}
+      title={dotClasses ? CHAT_STATE_DOT_LABELS[knownState] : undefined}
+      aria-hidden={dotClasses ? undefined : "true"}
+      data-chat-state-placeholder={placeholder ? "true" : undefined}
+      className={cn(
+        "chat-state-dot size-2 shrink-0 rounded-full",
+        dotClasses,
+        placeholder && "animate-pulse bg-muted-foreground/30",
+      )}
     />
   );
-}
+});
 
-export function ChatItemCompact({
+export const ChatItemCompact = memo(function ChatItemCompact({
   chat = null,
   isSelected = false,
   navigateTo = () => {},
   state,
+  stateTracked = false,
+  stateLoading = false,
   tags,
   onDeleted,
 }: {
@@ -154,6 +177,8 @@ export function ChatItemCompact({
   isSelected?: boolean;
   navigateTo: (to: string) => void;
   state?: string;
+  stateTracked?: boolean;
+  stateLoading?: boolean;
   tags?: string[];
   onDeleted?: (chatUUID: string) => void;
 }) {
@@ -180,7 +205,7 @@ export function ChatItemCompact({
           }}
         >
           <div className="relative flex items-center gap-2 px-2 py-1.5">
-            <ChatStateDot state={state} />
+            <ChatStateDot state={state} tracked={stateTracked} loading={stateLoading} />
             <div className="min-w-0 flex-1 pr-8">
               {title ? (
                 <>
@@ -234,4 +259,4 @@ export function ChatItemCompact({
       )}
     </ChatSettings>
   );
-}
+});

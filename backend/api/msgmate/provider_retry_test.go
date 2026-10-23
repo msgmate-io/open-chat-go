@@ -1,9 +1,12 @@
 package msgmate
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestProviderErrorInfoFromProviderRequestError(t *testing.T) {
@@ -36,7 +39,11 @@ func TestProviderErrorInfoOtherErrors(t *testing.T) {
 }
 
 func TestIsRetryableProviderRequestError(t *testing.T) {
+	// 402 is the key-limit / out-of-credit outage shape (ci#747 RC3): the
+	// provider is reachable and recovers on its own, so it must take the
+	// bounded retry/backoff path instead of dead-ending the turn.
 	retryable := []*ProviderRequestError{
+		{StatusCode: 402},
 		{StatusCode: 429}, {StatusCode: 500}, {StatusCode: 502},
 		{StatusCode: 503}, {StatusCode: 504}, {StatusCode: 408},
 	}
@@ -100,6 +107,138 @@ func TestProviderRetryBackoffDelay(t *testing.T) {
 	}
 }
 
+func TestClassifyGenerationFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantReason  string
+		wantSummary bool
+	}{
+		{
+			name:       "nil is internal",
+			err:        nil,
+			wantReason: FailureReasonInternal,
+		},
+		{
+			name:       "unclassified is internal",
+			err:        fmt.Errorf("unexpected decoder failure"),
+			wantReason: FailureReasonInternal,
+		},
+		{
+			name:       "context window",
+			err:        fmt.Errorf("error: maximum context length is 128000 tokens"),
+			wantReason: FailureReasonContextWindow,
+		},
+		{
+			// The model volunteered its own compaction bookkeeping instead of
+			// an answer (ci#562): neither a provider fault nor an internal
+			// error, so it gets its own reason and its own guidance.
+			name:       "leaked compaction transcript",
+			err:        errLeakedCompactionTranscript,
+			wantReason: FailureReasonLeakedCompaction,
+		},
+		{
+			name:       "wrapped leaked compaction transcript",
+			err:        fmt.Errorf("turn failed: %w", errLeakedCompactionTranscript),
+			wantReason: FailureReasonLeakedCompaction,
+		},
+		{
+			name:        "provider http failure",
+			err:         &ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"rate limited"}}`, Attempts: 2},
+			wantReason:  FailureReasonProviderError,
+			wantSummary: true,
+		},
+		{
+			name:       "legacy provider status string",
+			err:        fmt.Errorf("non-200 response: 503 gateway down"),
+			wantReason: FailureReasonProviderError,
+		},
+		{
+			name:       "transient network",
+			err:        fmt.Errorf("request failed: Post \"https://x\": connection reset by peer"),
+			wantReason: FailureReasonTransientNetwork,
+		},
+		{
+			name:       "plain transient marker",
+			err:        fmt.Errorf("broken pipe"),
+			wantReason: FailureReasonTransientNetwork,
+		},
+		{
+			name:       "unrecognised request failure is internal",
+			err:        fmt.Errorf("request failed: unsupported protocol"),
+			wantReason: FailureReasonInternal,
+		},
+		{
+			name:       "turn deadline is a timeout, not internal",
+			err:        context.DeadlineExceeded,
+			wantReason: FailureReasonTimeout,
+		},
+		{
+			name:       "wrapped turn deadline is a timeout",
+			err:        fmt.Errorf("wrapped: %w", context.DeadlineExceeded),
+			wantReason: FailureReasonTimeout,
+		},
+		{
+			name:       "user cancel is not classified as a timeout",
+			err:        context.Canceled,
+			wantReason: FailureReasonInternal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyGenerationFailure(tt.err)
+			if got.Reason != tt.wantReason {
+				t.Fatalf("Reason = %q, want %q", got.Reason, tt.wantReason)
+			}
+			if tt.wantSummary && got.ProviderSummary == "" {
+				t.Fatalf("expected a provider summary for %v", tt.err)
+			}
+			if got.Reason == FailureReasonProviderError && got.ProviderAttempts < 1 {
+				t.Fatalf("provider failures must report at least one attempt, got %d", got.ProviderAttempts)
+			}
+		})
+	}
+}
+
+func TestTruncateFailureDetail(t *testing.T) {
+	long := ""
+	for i := 0; i < 400; i++ {
+		long += "x"
+	}
+	got := TruncateFailureDetail(long)
+	if len(got) >= len(long) || got == long {
+		t.Fatalf("expected truncation, got %d chars", len(got))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+	if got := TruncateFailureDetail("  spaced  "); got != "spaced" {
+		t.Fatalf("expected trimmed detail, got %q", got)
+	}
+}
+
+// TestTruncateFailureDetailStaysValidUTF8 covers ci#680 on the user-facing
+// failure path: provider errors quote request content (the place an oversized
+// tool dump ends up), so a byte-offset cut must not leave a torn rune in the
+// message shown to the user.
+func TestTruncateFailureDetailStaysValidUTF8(t *testing.T) {
+	for _, fill := range []string{"é", "→", "🧑"} {
+		detail := strings.Repeat(fill, 400)
+		got := TruncateFailureDetail(detail)
+		if !utf8.ValidString(got) {
+			t.Fatalf("detail must stay valid UTF-8, got %q", got)
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Fatalf("expected the truncation marker, got %q", got)
+		}
+	}
+	// A short non-ASCII detail must survive untouched.
+	if got := TruncateFailureDetail("ok é →"); got != "ok é →" {
+		t.Fatalf("short detail must be kept as-is, got %q", got)
+	}
+}
+
 func TestEffectiveProviderRetryAttempts(t *testing.T) {
 	if got := effectiveProviderRetryAttempts(ProviderRetryOptions{Enabled: false, MaxAttempts: 5}); got != 1 {
 		t.Fatalf("disabled retry must be single attempt, got %d", got)
@@ -112,6 +251,50 @@ func TestEffectiveProviderRetryAttempts(t *testing.T) {
 	}
 	if got := effectiveProviderRetryAttempts(ProviderRetryOptions{Enabled: true, MaxAttempts: 0}); got != 1 {
 		t.Fatalf("got %d, want 1", got)
+	}
+}
+
+func TestProviderRetryOptionsFromConfigDefaultsToEnabled(t *testing.T) {
+	opts := providerRetryOptionsFromConfig(map[string]interface{}{})
+	if !opts.Enabled {
+		t.Fatal("provider_retry must default to enabled so one blip cannot dead-end an interaction")
+	}
+	if opts.MaxAttempts != 3 {
+		t.Fatalf("MaxAttempts = %d, want 3", opts.MaxAttempts)
+	}
+	if opts.BaseBackoff != 2*time.Second {
+		t.Fatalf("BaseBackoff = %s, want 2s", opts.BaseBackoff)
+	}
+	if opts.MaxBackoff != 30*time.Second {
+		t.Fatalf("MaxBackoff = %s, want 30s", opts.MaxBackoff)
+	}
+	if got := effectiveProviderRetryAttempts(opts); got != 3 {
+		t.Fatalf("effective attempts = %d, want 3", got)
+	}
+}
+
+func TestProviderRetryOptionsFromConfigHonorsExplicitDisable(t *testing.T) {
+	opts := providerRetryOptionsFromConfig(map[string]interface{}{"provider_retry": false})
+	if opts.Enabled {
+		t.Fatal("explicit provider_retry: false must keep the single-attempt behavior")
+	}
+	if got := effectiveProviderRetryAttempts(opts); got != 1 {
+		t.Fatalf("effective attempts = %d, want 1", got)
+	}
+}
+
+func TestProviderRetryOptionsFromConfigOverrides(t *testing.T) {
+	opts := providerRetryOptionsFromConfig(map[string]interface{}{
+		"provider_retry":                true,
+		"provider_retry_max":            5,
+		"provider_retry_backoff_ms":     500,
+		"provider_retry_backoff_max_ms": 4000,
+	})
+	if !opts.Enabled || opts.MaxAttempts != 5 {
+		t.Fatalf("unexpected options: %+v", opts)
+	}
+	if opts.BaseBackoff != 500*time.Millisecond || opts.MaxBackoff != 4*time.Second {
+		t.Fatalf("unexpected backoff: base=%s max=%s", opts.BaseBackoff, opts.MaxBackoff)
 	}
 }
 

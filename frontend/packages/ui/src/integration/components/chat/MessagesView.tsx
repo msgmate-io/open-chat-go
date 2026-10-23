@@ -1,19 +1,26 @@
 import useSWR, { mutate } from "swr"
-import { MessageItem } from "./MessageItem"
+import { MessageItem, BotMessageGroup } from "./MessageItem"
 import React, { useEffect, useState, useRef, forwardRef, useCallback, type ReactNode } from 'react';
 import { CollapseIndicator } from "../CollapseIndicator";
 import { usePartialMessageStore } from "./PartialMessages";
 import { useSidePanelCollapse } from "./ChatBase";
-import { BotDisplay, Button, DropdownMenuItem, LoadingSpinner, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
+import { BotDisplay, Button, DropdownMenuItem, MessageInputWithFiles, Text, TextTypes } from "@open-chat-go/ui";
 import { InteractionChatInfo } from "./InteractionChatInfo";
-import { resolveChatUIExtension, type ChatUIContext, type ChatUISendPayload } from "./chat-ui/index";
+import { resolveChatUIExtensionForChat, type ChatUIContext, type ChatUISendPayload } from "./chat-ui/index";
 import { buildChatRunCommand } from "../../lib/open-chat-run";
+import { buildMessageGroups } from "../../lib/message-groups";
 import { MessageInputOptionsMenuItems } from "./MessageInputOptionsButton";
-import { APIRequestError, fetcher } from "../../lib/utils";
+import { APIRequestError, fetcher, cn } from "../../lib/utils";
 import { revalidateChatData } from "../../lib/chat-cache";
+import {
+    buildSendMessageBody,
+    type BotReplyDeliveryMode,
+} from "../../../lib/delivery-mode";
 import { useBreakpoint } from "../utils";
 import { navigate } from "vike/client/router";
 import { Mic } from "lucide-react";
+import { PullToRefresh } from "../PullToRefresh";
+import { Skeleton } from "../../../components/skeleton";
 
 const ScrollButton = React.memo(({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement> }) => {
     const [shouldShow, setShouldShow] = useState(false);
@@ -82,6 +89,7 @@ export function MessagesScroll({
     messages,
     chat,
     mutateMessages,
+    onRefresh,
 }: {
     messages: any,
     chat: any,
@@ -90,6 +98,7 @@ export function MessagesScroll({
     hideInput: boolean;
     footerSlot?: ReactNode;
     mutateMessages: any;
+    onRefresh?: () => void | Promise<unknown>;
 }) {
     const [text, setText] = useState("");
     const { partialMessages, removePartialMessage, addPartialMessage } = usePartialMessageStore()
@@ -138,7 +147,7 @@ export function MessagesScroll({
         };
     }, [chatUUID, addPartialMessage]);
 
-    const { data: integrations } = useSWR<{ rows?: Array<{ name: string }> }>(
+    const { data: integrations, mutate: mutateIntegrations } = useSWR<{ rows?: Array<{ name: string }> }>(
         shouldLoadIntegrations ? "/api/v1/integrations/list" : null,
         fetcher,
     );
@@ -162,6 +171,16 @@ export function MessagesScroll({
         shouldAutoScrollRef.current = distance < AUTO_SCROLL_THRESHOLD;
     }, []);
 
+    // Native pull-to-refresh: reload the page's own fetches (message list and the
+    // integration catalog) on top of the parent's chat/user/status reload.
+    const handlePullRefresh = useCallback(async () => {
+        await Promise.all([
+            onRefresh?.(),
+            mutateMessages(),
+            mutateIntegrations(),
+        ]);
+    }, [onRefresh, mutateMessages, mutateIntegrations]);
+
     // Re-pin to the bottom whenever a different chat is opened.
     useEffect(() => {
         shouldAutoScrollRef.current = true;
@@ -177,32 +196,32 @@ export function MessagesScroll({
 
     const onSendMessage = async (
         payload?: ChatUISendPayload | Array<{ file_id: string; display_name?: string }>,
+        deliveryMode?: BotReplyDeliveryMode,
     ) => {
+        // ci#656: normalise into an explicit shape (the union is narrowed here,
+        // once) and let the shared helper decide which fields go on the wire.
+        // The explicit `deliveryMode` argument wins; a chat UI extension may
+        // still carry one inside its `ChatUISendPayload`.
         const normalized = Array.isArray(payload)
-            ? { text, attachments: payload }
+            ? { text, attachments: payload, toolInit: undefined, deliveryMode: undefined }
             : {
                   text: payload?.text ?? text,
-                  tool_init: payload?.tool_init,
+                  toolInit: payload?.tool_init,
                   attachments: payload?.attachments,
+                  deliveryMode: payload?.delivery_mode,
               };
-        const messageText = (normalized.text || "").trim();
-        const attachments = normalized.attachments;
-        if (!messageText && (!attachments || attachments.length === 0)) return;
+
+        const messageData = buildSendMessageBody({
+            text: normalized.text?.trim(),
+            attachments: normalized.attachments,
+            toolInit: normalized.toolInit,
+            deliveryMode: deliveryMode ?? normalized.deliveryMode,
+        });
+
+        if (!messageData.text && !messageData.attachments) return;
 
         setIsSendingMessage(true);
         try {
-            const messageData: any = {
-                text: messageText
-            };
-
-            if (attachments && attachments.length > 0) {
-                messageData.attachments = attachments;
-            }
-
-            if (normalized.tool_init && Object.keys(normalized.tool_init).length > 0) {
-                messageData.tool_init = normalized.tool_init;
-            }
-
             const response = await fetch(`/api/v1/chats/${chatUUID}/messages/send`, {
                 method: 'POST',
                 headers: {
@@ -278,16 +297,16 @@ export function MessagesScroll({
         navigateTo: (to) => navigate(to),
     };
     // chat_backend selects the chat UI extension; legacy chats stored the chat
-    // backend name in backend, so fall back to it.
-    const uiExtension = resolveChatUIExtension(chat?.config?.chat_backend ?? chat?.config?.backend);
+    // backend name in backend, so fall back to it. An extension may also match
+    // by predicate for chats that never set a chat_backend key.
+    const uiExtension = resolveChatUIExtensionForChat({
+        chatBackend: chat?.config?.chat_backend ?? chat?.config?.backend,
+        chat,
+    });
 
     const renderMessages = () => {
         if (!messages || !chat || !user) {
-            return (
-                <div className="flex flex-grow w-full h-full items-center content-center justify-center">
-                    <LoadingSpinner />
-                </div>
-            );
+            return <MessagesSkeleton />;
         }
 
         if ((messages.rows?.length || 0) === 0) {
@@ -307,34 +326,47 @@ export function MessagesScroll({
 
         // Create a reversed copy of the messages array
         const reversedMessages = [...messages.rows].reverse();
-        
-        let lastUserMessageUUID: string | undefined;
 
-        return reversedMessages.map((message: any) => {
-            const isAutomatedSender = Boolean(message?.sender_is_automated);
-            const isEventMessage = String(message?.data_type || "") === "event";
+        const toItemMessage = (message: any) => ({
+            uuid: message.uuid,
+            text: message.text || '',
+            send_at: message.send_at || '',
+            thoughts: message.reasoning || [],
+            meta_data: message?.meta_data,
+            tool_calls: message?.tool_calls || []
+        });
 
-            let rerunSourceMessageUUID: string | undefined;
-            if (isAutomatedSender) {
-                rerunSourceMessageUUID = lastUserMessageUUID;
-            } else if (!isEventMessage) {
-                lastUserMessageUUID = message.uuid;
+        // Integrations whose bot emits many short turns (the msgmate coder
+        // pauses after each confirmed tool call) opt into merging consecutive
+        // turns into one bubble. Confirmable-action lifecycle events are
+        // transparent for grouping when the extension renders them inline,
+        // since the core hides those bubbles entirely.
+        const nodes = buildMessageGroups(reversedMessages, {
+            groupConsecutive: Boolean(uiExtension?.groupConsecutiveMessages),
+            suppressConfirmableEvents: Boolean(uiExtension?.inlineConfirmableActions),
+        });
+        return nodes.map((node) => {
+            if (node.kind === "group") {
+                return (
+                    <BotMessageGroup
+                        key={node.key}
+                        messages={node.messages.map(toItemMessage)}
+                        chat={chat}
+                        chatUUID={chatUUID || undefined}
+                        rerunSourceMessageUUID={node.rerunSourceMessageUUID}
+                        interactionState={(chat as any)?.status?.state}
+                    />
+                );
             }
 
+            const message = node.message;
             return (
                 <MessageItem
-                    key={`msg_${message.uuid}`}
-                    message={{
-                        uuid: message.uuid,
-                        text: message.text || '',
-                        send_at: message.send_at || '',
-                        thoughts: message.reasoning || [],
-                        meta_data: message?.meta_data,
-                        tool_calls: message?.tool_calls || []
-                    }}
+                    key={node.key}
+                    message={toItemMessage(message)}
                     chat={chat}
                     chatUUID={chatUUID || undefined}
-                    rerunSourceMessageUUID={rerunSourceMessageUUID}
+                    rerunSourceMessageUUID={node.rerunSourceMessageUUID}
                     selfIsSender={user?.uuid === message.sender_uuid}
                     isBotChat={true}
                     interactionState={(chat as any)?.status?.state}
@@ -344,28 +376,33 @@ export function MessagesScroll({
     };
     return (
         <div className="chat-messages-column">
-            {uiExtension?.ChatDetails ? (
-                <uiExtension.ChatDetails
-                    ctx={chatUIContext}
-                    showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
-                    leftPannelCollapsed={leftPannelCollapsed}
-                    onToggleSidebar={onSidebarButtonClick}
-                />
-            ) : (
-                <InteractionChatInfo
-                    chat={chat}
-                    user={user}
-                    showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
-                    leftPannelCollapsed={leftPannelCollapsed}
-                    onToggleSidebar={onSidebarButtonClick}
-                />
-            )}
-            <div
-                ref={scrollRef}
-                onScroll={handleMessagesScroll}
-                className="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
-                style={{
-                    paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
+            <div className="chat-details-region">
+                {uiExtension?.ChatDetails ? (
+                    <uiExtension.ChatDetails
+                        ctx={chatUIContext}
+                        showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
+                        leftPannelCollapsed={leftPannelCollapsed}
+                        onToggleSidebar={onSidebarButtonClick}
+                    />
+                ) : (
+                    <InteractionChatInfo
+                        chat={chat}
+                        user={user}
+                        showMobileHeaderControls={Boolean(isSm && chat?.chat_type === "interaction")}
+                        leftPannelCollapsed={leftPannelCollapsed}
+                        onToggleSidebar={onSidebarButtonClick}
+                    />
+                )}
+            </div>
+            <PullToRefresh
+                onRefresh={handlePullRefresh}
+                scrollRef={scrollRef}
+                scrollClassName="scrollbar-hidden flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-2 pb-3 pt-12 md:px-4 md:pb-4"
+                scrollProps={{
+                    onScroll: handleMessagesScroll,
+                    style: {
+                        paddingBottom: "calc(0.75rem + var(--openchat-safe-bottom, 0px))",
+                    },
                 }}
             >
                 {renderMessages()}
@@ -409,7 +446,7 @@ export function MessagesScroll({
                         interactionState={(chat as any)?.status?.state}
                     />
                 )}
-            </div>
+            </PullToRefresh>
             <ScrollButton scrollRef={scrollRef} />
             {!hideInput &&
                 (() => {
@@ -566,6 +603,27 @@ function AdminImpersonateButton({
 
 const MAX_LOAD_RETRIES = 4;
 
+// Placeholder bubbles shown while the chat/user/message fetches are in flight.
+// The alternating side matches the real message layout so the composer and
+// scroll position do not jump once the messages arrive.
+const MessagesSkeleton = () => (
+    <div className="flex w-full flex-col gap-3" aria-hidden="true">
+        {Array.from({ length: 6 }).map((_, index) => {
+            const isUser = index % 2 === 1;
+            return (
+                <div key={index} className={cn("flex w-full px-1", isUser ? "justify-end" : "justify-start")}>
+                    <Skeleton
+                        className={cn(
+                            "rounded-2xl",
+                            isUser ? "h-14 w-3/5" : "h-20 w-4/5",
+                        )}
+                    />
+                </div>
+            );
+        })}
+    </div>
+);
+
 export function MessagesView({ 
         chatUUID = null, 
         hideInput = false,
@@ -623,6 +681,19 @@ export function MessagesView({
         }
         wasInteractionActiveRef.current = isActive;
     }, [interactionStatus, chatUUID]);
+
+    // Native pull-to-refresh: revalidate every fetch this page renders - the
+    // chat, its messages, the current user, the interaction status and the
+    // chat-derived sidebar caches.
+    const handlePullRefresh = useCallback(async () => {
+        await Promise.all([
+            reloadChat(),
+            mutateMessages(),
+            reloadUser(),
+            mutateInteractionStatus(),
+            revalidateChatData(chatUUID),
+        ]);
+    }, [reloadChat, mutateMessages, reloadUser, mutateInteractionStatus, chatUUID]);
 
     const hasLoadError = Boolean(chatError || messagesError || userError);
     const isOfflineCacheMiss = [chatError, messagesError, userError].some((error) => {
@@ -729,6 +800,7 @@ export function MessagesView({
                     messages={messages}
                     chat={chatWithStatus}
                     mutateMessages={mutateMessages}
+                    onRefresh={handlePullRefresh}
                 />
         </div>
     );

@@ -1,6 +1,7 @@
 package msgmate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,8 +18,9 @@ import (
 const maxProviderRetryAttempts = 8
 
 // ProviderRetryOptions configures automatic retries of pre-stream provider
-// request failures. Enabled defaults to false so chats without the flag keep
-// the legacy single-attempt behavior.
+// request failures. Retries are enabled by default (at least one retry) so a
+// single transient provider blip cannot dead-end an interaction; a chat can
+// still opt out explicitly with provider_retry: false.
 type ProviderRetryOptions struct {
 	Enabled     bool
 	MaxAttempts int           // total attempts including the first one
@@ -83,6 +85,12 @@ func providerErrorInfo(err error) (code int, body string, attempts int, ok bool)
 func isRetryableProviderStatus(code int) bool {
 	switch code {
 	case http.StatusRequestTimeout,
+		// ci#747 RC3: a key-limit / out-of-credit provider response (402) is
+		// how the provider signalled the outage that parked the agents. It is
+		// recovered automatically once the account is topped up again, so it
+		// takes the same bounded retry/backoff as 429 and 5xx instead of
+		// dead-ending the turn.
+		http.StatusPaymentRequired,
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,
 		http.StatusBadGateway,
@@ -195,9 +203,11 @@ func extractProviderErrorDetail(code int, body string) (string, string) {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		// Not JSON: show a truncated version of the raw body.
+		// Not JSON: show a truncated version of the raw body. The cut stops on a
+		// UTF-8 rune boundary (ci#680): providers echo request content in error
+		// bodies, so a mid-rune cut would surface invalid UTF-8 to the user.
 		if len(trimmed) > 300 {
-			trimmed = trimmed[:300] + "…"
+			trimmed = headOfString(trimmed, 300) + "…"
 		}
 		return summary, trimmed
 	}
@@ -227,7 +237,9 @@ func extractProviderErrorDetail(code int, body string) (string, string) {
 		}
 	}
 	if len(providerMessage) > 300 {
-		providerMessage = providerMessage[:300] + "…"
+		// headOfString: same rune-boundary rule as above - provider messages
+		// quote the request content.
+		providerMessage = headOfString(providerMessage, 300) + "…"
 	}
 	if providerMessage != "" {
 		summary = fmt.Sprintf("%s (%s)", summary, providerMessage)
@@ -252,16 +264,125 @@ func describeProviderFailure(err error) (string, int) {
 	return summary, attempts
 }
 
+// Failure reason values recorded in message metadata ("failure_reason") and
+// reused to pick user-facing guidance. They distinguish a genuine provider-side
+// failure (or a recognised transient network problem) from an unclassified
+// internal error, so the chat never speculates about credits or outages.
+const (
+	FailureReasonContextWindow    = "context_window_exceeded"
+	FailureReasonProviderError    = "provider_error"
+	FailureReasonTransientNetwork = "transient_network_error"
+	FailureReasonTimeout          = "turn_timeout"
+	FailureReasonInternal         = "internal_error"
+	// FailureReasonLeakedCompaction marks a turn whose assistant output was only
+	// a leaked context-compaction transcript (ci#562): the model volunteered its
+	// own bookkeeping instead of an answer, twice in a row, so the turn is
+	// stopped with guidance instead of being persisted with no text.
+	FailureReasonLeakedCompaction = "leaked_compaction_transcript"
+	// FailureReasonRepetitionLoop marks a round whose stream collapsed into an
+	// unbounded repetition loop and was cut off early (ci#670). It is recorded
+	// on the provider request for metrics; the turn itself finishes normally
+	// with a short answer carrying the "stopped: repeated output detected" note.
+	FailureReasonRepetitionLoop = "repetition_loop"
+)
+
+// GenerationFailureClassification is the outcome of classifying a failed
+// generation. ProviderSummary and ProviderAttempts are only meaningful for
+// FailureReasonProviderError.
+type GenerationFailureClassification struct {
+	Reason           string
+	ProviderSummary  string
+	ProviderAttempts int
+}
+
+// ClassifyGenerationFailure maps a generation error onto a stable failure
+// reason. Only errors that are genuinely provider-side (a provider HTTP
+// response) or a recognised transient network problem may later be described as
+// a provider issue; everything else is reported as internal so the user is not
+// told credits/outage are the cause.
+func ClassifyGenerationFailure(err error) GenerationFailureClassification {
+	if err == nil {
+		return GenerationFailureClassification{Reason: FailureReasonInternal}
+	}
+	// A turn deadline (the bot reply task's asynq timeout) is not a provider
+	// fault and not a user stop: report it as its own reason so the chat never
+	// shows a bogus "I paused this response" for a turn that simply ran out of
+	// time (ci#642). The context.Canceled case is handled by the caller as a
+	// genuine stop, so it is deliberately not classified here.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return GenerationFailureClassification{Reason: FailureReasonTimeout}
+	}
+	if isContextWindowExceededError(err) {
+		return GenerationFailureClassification{Reason: FailureReasonContextWindow}
+	}
+	// A turn whose assistant output was only a leaked context-compaction
+	// transcript has its own reason: it is neither a provider fault nor an
+	// internal error, and the guidance tells the user the work done so far is
+	// kept and how to continue (ci#562).
+	if errors.Is(err, errLeakedCompactionTranscript) {
+		return GenerationFailureClassification{Reason: FailureReasonLeakedCompaction}
+	}
+	summary, attempts := describeProviderFailure(err)
+	if attempts < 1 {
+		attempts = 1
+	}
+	if summary != "" {
+		return GenerationFailureClassification{
+			Reason:           FailureReasonProviderError,
+			ProviderSummary:  summary,
+			ProviderAttempts: attempts,
+		}
+	}
+	if isTransientNetworkError(err) {
+		return GenerationFailureClassification{
+			Reason:           FailureReasonTransientNetwork,
+			ProviderAttempts: attempts,
+		}
+	}
+	return GenerationFailureClassification{Reason: FailureReasonInternal, ProviderAttempts: attempts}
+}
+
+// isTransientNetworkError reports whether err matches a connection-level
+// failure that is recognised as transient (worth explaining as a connectivity
+// problem rather than an internal fault).
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msgLower := strings.ToLower(err.Error())
+	for _, marker := range transientNetworkErrorMarkers {
+		if strings.Contains(msgLower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// TruncateFailureDetail trims a raw error string for safe inclusion in a
+// user-facing message.
+func TruncateFailureDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if len(detail) > 300 {
+		// headOfString keeps the cut on a UTF-8 rune boundary: provider errors
+		// echo request content (which is where a large tool dump ends up), and
+		// a torn rune would put invalid UTF-8 into the user-facing message
+		// instead of trimming it (ci#680).
+		detail = headOfString(detail, 300) + "…"
+	}
+	return detail
+}
+
 // providerRetryOptionsFromConfig reads the optional provider retry flags from
-// a chat config map. All flags are optional; when provider_retry is unset or
-// false the returned options keep the legacy single-attempt behavior.
+// a chat config map. All flags are optional. provider_retry defaults to true so
+// every interaction gets at least one retry after a transient pre-stream
+// provider failure; a chat opts out explicitly with provider_retry: false.
 //
-//	provider_retry:            bool,   default false
+//	provider_retry:            bool,   default true
 //	provider_retry_max:        int     (total attempts, default 3)
 //	provider_retry_backoff_ms: int     (base back-off delay, default 2000)
 //	provider_retry_backoff_max_ms: int (back-off cap, default 30000)
 func providerRetryOptionsFromConfig(configMap map[string]interface{}) ProviderRetryOptions {
-	enabled := mapGetOrDefault[bool](configMap, "provider_retry", false)
+	enabled := mapGetOrDefault[bool](configMap, "provider_retry", true)
 	if !enabled {
 		return ProviderRetryOptions{Enabled: false, MaxAttempts: 1}
 	}

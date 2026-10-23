@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -12,6 +11,8 @@ import (
 	"backend/workqueue"
 
 	"github.com/hibiken/asynq"
+
+	"backend/logging"
 )
 
 // integrationScheduleFunction is the well-known Definition.Functions key an
@@ -39,8 +40,16 @@ type integrationScheduleSpec struct {
 // schedules (via the scheduled_tasks function) and registers them with a single
 // asynq scheduler. Options are resolved by the integration itself; the host
 // only executes the resulting jobs through the generic integration:schedule
-// task. asynq's scheduler performs leader election across instances, so running
-// it in several workers/replicas does not duplicate the enqueues.
+// task.
+//
+// Note: asynq v0.26 does NOT perform leader election across instances. Every
+// scheduler process registers its own cron entries and only writes a heartbeat
+// snapshot to the "asynq:schedulers" key; duplicate ticks are merely
+// best-effort suppressed by the stable asynq.TaskID ("<integration>:<spec>")
+// plus the enqueue-time "EXISTS task-key -> 0" guard. That task key is deleted
+// once the task completes (retention 0), so a later duplicate tick can enqueue
+// a second job. Exactly one process must therefore run the scheduler; control
+// that with --run-scheduler / WORKER_SCHEDULER.
 //
 // A nil scheduler is returned (with a nil error) when no integration declares an
 // enabled schedule.
@@ -67,7 +76,7 @@ func StartIntegrationSchedulers(connOpt asynq.RedisConnOpt) (*asynq.Scheduler, e
 			spec.Function = strings.TrimSpace(spec.Function)
 			spec.Spec = strings.TrimSpace(spec.Spec)
 			if spec.ID == "" || spec.Spec == "" {
-				log.Printf("Integration %q declared a schedule with an empty id/spec; skipping", def.Name)
+				logging.Infof("Integration %q declared a schedule with an empty id/spec; skipping", def.Name)
 				continue
 			}
 			if spec.Function == "" {
@@ -92,7 +101,7 @@ func StartIntegrationSchedulers(connOpt asynq.RedisConnOpt) (*asynq.Scheduler, e
 				scheduler.Shutdown()
 				return nil, fmt.Errorf("register integration schedule %s: %w", taskID, err)
 			}
-			log.Printf("Registered integration schedule %s (spec %s, function %s)", taskID, spec.Spec, spec.Function)
+			logging.Infof("Registered integration schedule %s (spec %s, function %s)", taskID, spec.Spec, spec.Function)
 			registered++
 		}
 	}
@@ -102,7 +111,7 @@ func StartIntegrationSchedulers(connOpt asynq.RedisConnOpt) (*asynq.Scheduler, e
 	if err := scheduler.Start(); err != nil {
 		return nil, fmt.Errorf("start integration scheduler: %w", err)
 	}
-	log.Printf("Started integration scheduler with %d schedule(s)", registered)
+	logging.Infof("Started integration scheduler with %d schedule(s)", registered)
 	return scheduler, nil
 }
 

@@ -400,6 +400,14 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var runtime database.BotRuntimeConfig
 		err := tx.Where("owner_user_id = ? AND name = ?", owner.ID, cfg.Bot.Name).First(&runtime).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// A bot user can have only one runtime config (unique bot_user_id).
+			// If the config renames the bot or changes its primary owner, the
+			// owner/name lookup misses the existing row; resolve it by bot user
+			// instead of inserting a duplicate and failing startup (observed when
+			// applying a config delta to an existing native lead bot).
+			err = tx.Where("bot_user_id = ?", botUser.ID).First(&runtime).Error
+		}
 		if err != nil {
 			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
@@ -409,7 +417,7 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 				OwnerUserId:         owner.ID,
 				Name:                cfg.Bot.Name,
 				Description:         cfg.Bot.Description,
-				DefaultSharedConfig: configData,
+				DefaultSharedConfig: database.JSONRaw(configData),
 				IsPublic:            isPublic,
 				IsActive:            isActive,
 			}

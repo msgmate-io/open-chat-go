@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 // TODO: allow different message types
@@ -28,6 +30,13 @@ type SendMessage struct {
 	// (default) and "event" (system/widget messages such as provider retry
 	// indicators). Unknown values fall back to "text".
 	DataType *string `json:"data_type,omitempty"`
+	// DeliveryMode selects how the message is delivered when the chat is
+	// already running a bot turn (ci#656): "queued" (default) answers it after
+	// the live turn completes, "interrupt" stops the live turn and starts the
+	// new one immediately. Interrupt mode is what the "Send now" affordance
+	// sends; the work the stopped turn already persisted is preserved. An
+	// unknown value is rejected instead of silently guessing a mode.
+	DeliveryMode string `json:"delivery_mode,omitempty"`
 }
 
 type SendMessageWithReasoning struct {
@@ -151,9 +160,18 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
-	if chatUuid == "" {
+	chatUuid, err := parseChatUUID(r)
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		return
+	}
+
+	// ci#656: the client chooses how a message sent into a chat that is already
+	// running a turn is delivered. An unknown mode is a client bug, so reject it
+	// instead of silently falling back and losing the sender's intent.
+	deliveryMode, modeOK := workqueue.ParseBotReplyDeliveryMode(data.DeliveryMode)
+	if !modeOK {
+		http.Error(w, "Invalid delivery_mode", http.StatusBadRequest)
 		return
 	}
 
@@ -313,13 +331,59 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, enqueueErr := workqueue.EnqueueBotReply(queueClient, queueInspector, workqueue.BotReplyPayload{
+		// ci#656: a message sent into a chat with a live bot reply no longer
+		// disappears. In the default "queued" mode EnqueueBotReply leaves the
+		// live turn running and queues the reply behind it, which keeps the work
+		// already done and answers every message. In "interrupt" mode the
+		// explicit "Send now" action stops the live turn and starts the new one
+		// immediately; the stopped turn's persisted work (files, commits) is
+		// preserved and the parked proposals it left behind are voided so the
+		// interrupt is authoritative.
+		if deliveryMode == workqueue.BotReplyDeliveryInterrupt {
+			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
+				logging.Errorf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+			} else if cancelled > 0 {
+				logging.Debugf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
+			}
+			if stopErr := StopAutoContinueForChat(DB, chat.ID, "interrupted_by_user"); stopErr != nil {
+				logging.Errorf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
+			}
+		}
+
+		// ci#656: the decision is taken before the enqueue so the transcript can
+		// be told that this message's reply waits behind the live turn. Without
+		// it the message is delivered but invisible as pending, because the
+		// server never writes the marker the transcript reads.
+		decision := workqueue.DecideBotReplyEnqueue(deliveryMode, workqueue.BotReplyIsActive(queueInspector, chatUuid))
+
+		if _, enqueueErr := workqueue.EnqueueBotReplyWithDelivery(queueClient, queueInspector, workqueue.BotReplyPayload{
 			ChatUUID:    chatUuid,
 			MessageUUID: message.UUID,
 			BotUserID:   receiver.ID,
-		}); enqueueErr != nil {
+		}, deliveryMode); enqueueErr != nil {
 			http.Error(w, "Failed to schedule bot response", http.StatusInternalServerError)
 			return
+		}
+
+		// ci#656: keep the persisted markers in step with the queue. An
+		// interrupt or a replace cancels every queued reply of the chat, so the
+		// messages those replies belonged to will never be consumed and must
+		// stop rendering as pending; only a reply that was actually queued
+		// behind the live turn carries the marker.
+		if decision == workqueue.BotReplyDecisionQueueBehind {
+			// Persist the marker on the message that was just created and carry
+			// it into the response metadata, so the sender's optimistic row and
+			// a later transcript load agree.
+			if marked, markErr := database.SetMessageQueued(DB, &message); markErr != nil {
+				logging.Errorf("ci#656: failed to mark message %s as queued for chat %s: %v", message.UUID, chatUuid, markErr)
+			} else if marked {
+				logging.Debugf("ci#656: message %s queued behind the live turn of chat %s", message.UUID, chatUuid)
+			}
+		} else {
+			// An interrupt or a replace cancels every queued reply of the
+			// chat, so the messages those replies belonged to will never be
+			// consumed and must stop rendering as pending.
+			ClearQueuedMarkersForChat(DB, chat.ID, chatUuid)
 		}
 	} else {
 		// For human receivers, continue to publish websocket updates immediately.
@@ -329,7 +393,34 @@ func (h *ChatsHandler) MessageSend(w http.ResponseWriter, r *http.Request) {
 	// Emit the interaction-completed notification once an automated agent's
 	// final reply is persisted. Best-effort and detached so notification
 	// delivery (network I/O) never delays message persistence.
-	go maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+	//
+	// The in-product auto-continuation loop (ci#537) runs first: when it
+	// schedules the next turn the interaction is not actually complete yet, so
+	// the completion notification must not fire. The queue handles are
+	// resolved here (not inside the goroutine) so the detached work never
+	// touches the request after the handler returned.
+	autoContinueClient, _ := util.GetAsynqClient(r)
+	autoContinueInspector, _ := util.GetAsynqInspector(r)
+	chatsDetachedDBWork.Go(func() {
+		if maybeAutoContinueInteraction(context.Background(), DB, autoContinueClient, autoContinueInspector, chat, *user, receiver, message) {
+			return
+		}
+		// Post the finished reply back to the tracker for a chat whose native
+		// backend has no post-interaction hook of its own (ci#649). Runs only for
+		// an automated participant's reply, and only when the interaction is
+		// genuinely complete (the auto-continue check above returned false).
+		if user.IsAutomated {
+			MaybeRunPostInteractionActions(DB, autoContinueClient, autoContinueInspector, chat, data.Text)
+			// Auto-consolidation (ci#653: the native coder rolls its own ready
+			// PRs up by default). Same reason as above: it runs for a native
+			// backend that has no chat-backend hook of its own (opencode runs
+			// its own consolidation), and only once the turn is genuinely
+			// complete. The executor is a no-op unless the chat's shared config
+			// enables it and a GitHub client is configured.
+			MaybeRunAutoConsolidation(DB, chat)
+		}
+		maybeDispatchInteractionCompletedNotification(context.Background(), DB, chat, *user, receiver, message)
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -499,8 +590,8 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
-	if chatUuid == "" {
+	chatUuid, err := parseChatUUID(r)
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -546,9 +637,30 @@ func (h *ChatsHandler) SignalSendMessage(w http.ResponseWriter, r *http.Request)
 			queueInspector, inspectorErr := util.GetAsynqInspector(r)
 			if inspectorErr == nil {
 				workqueue.CancelBotReplyTask(queueInspector, chatUuid)
+				// ci#656: the cancellation also drops the replies that were
+				// queued behind the live turn, so the messages those replies
+				// belonged to will never be consumed and must stop rendering
+				// as pending.
+				ClearQueuedMarkersForChat(DB, chat.ID, chatUuid)
 			} else if !handled {
 				http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
 				return
+			}
+
+			// A native bot pauses on its first confirmable tool call, which
+			// already completed the queue task, so the cancellation above is a
+			// no-op. Void any parked proposal as well so stopping the response is
+			// authoritative and the action can no longer be executed.
+			if cancelled, cancelErr := cancelPendingConfirmableActionsForChat(DB, chat.ID, user.UUID); cancelErr != nil {
+				logging.Errorf("interrupt: failed to cancel pending confirmable actions for chat %s: %v", chatUuid, cancelErr)
+			} else if cancelled > 0 {
+				logging.Debugf("interrupt: cancelled %d pending confirmable action(s) for chat %s", cancelled, chatUuid)
+			}
+
+			// An interrupt also ends a self-driving interaction: a scheduled
+			// auto-continuation must not resume a chat the user stopped.
+			if stopErr := StopAutoContinueForChat(DB, chat.ID, "interrupted_by_user"); stopErr != nil {
+				logging.Errorf("interrupt: failed to stop the auto-continuation loop for chat %s: %v", chatUuid, stopErr)
 			}
 		} else {
 			ch.MessageHandler.SendMessage(

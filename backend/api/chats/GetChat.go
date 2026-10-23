@@ -5,11 +5,12 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
 
 func requestBaseURL(r *http.Request) string {
@@ -56,8 +57,8 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUuid := r.PathValue("chat_uuid") // TODO - validate chat UUID!
-	if chatUuid == "" {
+	chatUuid, err := parseChatUUID(r)
+	if err != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -102,7 +103,7 @@ func (h *ChatsHandler) GetChat(w http.ResponseWriter, r *http.Request) {
 			listedChat.SharedChatURL = baseURL + "/interaction/" + share.ChatShareUUID
 		}
 	} else if !errors.Is(shareErr, gorm.ErrRecordNotFound) {
-		log.Printf("warning: failed to load chat share for chat %s: %v", chatUuid, shareErr)
+		logging.Errorf("warning: failed to load chat share for chat %s: %v", chatUuid, shareErr)
 	}
 
 	json.NewEncoder(w).Encode(listedChat)

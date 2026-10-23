@@ -7,6 +7,7 @@ package chatstate
 import (
 	"strings"
 	"sync"
+	"time"
 )
 
 // State is the high-level chat state reported by the chat states APIs.
@@ -117,4 +118,53 @@ func LookupBackendInterruptHandler(backend string) (BackendInterruptFunc, bool) 
 	defer backendInterruptMu.RUnlock()
 	fn, ok := backendInterruptRegistry[backend]
 	return fn, ok
+}
+
+// Supersession markers (ci#642): when a newer message arrives for a chat that
+// already has a live bot reply, the in-flight turn is cancelled. That
+// cancellation must NOT render as a user pause ("I paused this response") - the
+// newer message supersedes it. The chat layer marks the supersession before it
+// cancels, and the generation handler consumes the marker so it can tell a
+// superseded turn from a genuine user stop. It is deliberately a small neutral
+// signal in this package so both the chat send path and the generation handler
+// can use it without an import cycle.
+
+// supersessionTTL bounds how long a supersession marker stays valid: a stale
+// marker left behind by an already-finished turn must never suppress a genuinely
+// later user stop.
+const supersessionTTL = 2 * time.Minute
+
+var supersededChats sync.Map // chatUUID -> time.Time (marked at)
+
+// MarkChatSuperseded records that a newer message arrived for a chat whose
+// in-flight turn should therefore not be surfaced as a user pause.
+func MarkChatSuperseded(chatUUID string) {
+	if strings.TrimSpace(chatUUID) == "" {
+		return
+	}
+	supersededChats.Store(chatUUID, time.Now())
+}
+
+// ConsumeChatSuperseded reports whether the chat's in-flight turn was superseded
+// by a newer message within the TTL window, clearing the marker. The marker is
+// consumed by whichever turn observes the cancellation.
+func ConsumeChatSuperseded(chatUUID string) bool {
+	if strings.TrimSpace(chatUUID) == "" {
+		return false
+	}
+	raw, ok := supersededChats.LoadAndDelete(chatUUID)
+	if !ok {
+		return false
+	}
+	at, ok := raw.(time.Time)
+	return ok && time.Since(at) <= supersessionTTL
+}
+
+// ClearChatSuperseded drops any pending supersession marker for a chat (a
+// completed turn cleans up a marker it did not consume).
+func ClearChatSuperseded(chatUUID string) {
+	if strings.TrimSpace(chatUUID) == "" {
+		return
+	}
+	supersededChats.Delete(chatUUID)
 }

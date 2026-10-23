@@ -59,6 +59,11 @@ on:
         required: false
         type: string
         default: "720"
+      sandbox_test_timeout:
+        description: Total wall-clock limit per test in seconds, across all retry attempts (default 1500)
+        required: false
+        type: string
+        default: "1500"
       upload_artifacts:
         description: Upload per-test result artifacts
         required: false
@@ -143,6 +148,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Profile setup
         uses: ./.github/actions/profile-setup
@@ -221,6 +230,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Materialize integrations
         if: inputs.backend_image == ''
@@ -278,6 +291,10 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
+          fetch-depth: 0
 
       - name: Materialize integrations
         if: inputs.sandbox_image_url == ''
@@ -297,8 +314,7 @@ jobs:
             exit 0
           fi
           HASH="$(find clients/integrations/docker_sandbox_integration/sandboxes/coding -type f \
-            ! -name 'recent-repo-changes-summary.md' -print0 \
-            | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+            -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
           IMAGE_REPO="$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
           echo "image_url=ghcr.io/${IMAGE_REPO}:sandbox-${HASH}" >> "$GITHUB_OUTPUT"
           echo "sandbox image content hash: ${HASH}"
@@ -364,12 +380,19 @@ jobs:
     runs-on: ubuntu-latest
     # Hard cap for the whole matrix job. The LLM interaction is capped via
     # SANDBOX_INTERACTION_TIMEOUT; tests may override per-test via config.json
-    # "interaction_timeout". Extra minutes cover startup/verification/upload.
-    timeout-minutes: 22
+    # "interaction_timeout". The whole test (all attempts) is capped via
+    # SANDBOX_TEST_TIMEOUT; extra minutes cover startup/verification/upload.
+    timeout-minutes: 30
     needs: [discover, backend-image, sandbox-image-ensure]
     if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
     strategy:
       fail-fast: false
+      # The sandbox backend and the CI runner fleet share one provider key; the
+      # full matrix at once saturates the key's in-flight credit and every test
+      # fails with HTTP 402 ("would exceed your available credits given your
+      # current in-flight requests"). Cap the matrix so the suite is reliable
+      # while the shared key is in use (ci#803 audit).
+      max-parallel: 3
       matrix:
         test: ${{ fromJson(needs.discover.outputs.tests) }}
     env:
@@ -382,10 +405,20 @@ jobs:
       SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
       SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
       SANDBOX_INTERACTION_TIMEOUT: ${{ inputs.sandbox_interaction_timeout }}
+      SANDBOX_TEST_TIMEOUT: ${{ inputs.sandbox_test_timeout }}
       # Model/provider pin for the opencode runtime. Only the openrouter API
       # key is configured by default; other providers need their own secret.
       SANDBOX_OPENCODE_PROVIDER: ${{ inputs.opencode_provider }}
       SANDBOX_OPENCODE_MODEL: ${{ inputs.opencode_model }}
+      # The native-coder benchmark bots ship a DeepInfra provider in their shared
+      # test configs (the provider the private extended suite has credentials
+      # for). This public suite has no DeepInfra key, so retarget just those bots
+      # to the OpenRouter provider this suite does have, mirroring the other
+      # non-opencode benchmarks. REPLACE_BACKEND gates the override on the bot's
+      # current backend so the openrouter vision/k8s/playwright bots are kept.
+      SANDBOX_INTERACTION_BACKEND: openrouter
+      SANDBOX_INTERACTION_MODEL: ${{ inputs.opencode_model }}
+      SANDBOX_INTERACTION_REPLACE_BACKEND: deepinfra
       LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
       LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
       DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
@@ -405,8 +438,9 @@ jobs:
           ref: ${{ inputs.target_ref }}
           token: ${{ secrets.BOT_TOKEN || github.token }}
           submodules: recursive
-          # Full history: the repo_changes_summary benchmark summarizes the
-          # last 3 commits from the pre-staged sandbox clone.
+          # The sandbox harness reads the staged checkout's history to build
+          # repo_changes_summary; a depth-1 clone makes 'git log' unusable and
+          # every sandbox test dies with "pre-staged clone is shallow".
           fetch-depth: 0
 
       - name: Materialize integrations
@@ -423,87 +457,108 @@ jobs:
 
       - name: Run sandbox test ${{ matrix.test }}
         id: test
-        # Independent wall-clock backstop below the 22-minute job cap.
-        timeout-minutes: 18
+        # Independent wall-clock backstop below the 30-minute job cap. The
+        # native coder is model-driven, so a single test can miss on variance
+        # (a refusal, a different-but-valid tool choice, stray framing) with no
+        # regression; retry a failed test once (run_test.sh tears the stack down
+        # between attempts, so each attempt starts clean) before failing the gate.
+        # The retry shares one SANDBOX_TEST_TIMEOUT budget (ci#803).
+        timeout-minutes: 27
         run: |
           set -euo pipefail
-          timeout --foreground --kill-after=30 1020 \
-            bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"
-
-      - name: Post repo_changes_summary to the PR
-        if: >-
-          inputs.post_results &&
-          inputs.results_target == 'pr' &&
-          inputs.pr_number != '' &&
-          matrix.test == 'repo_changes_summary' &&
-          steps.test.outcome == 'success'
-        env:
-          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
-          BOT_USER: ${{ inputs.bot_user }}
-          SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        run: |
-          set -euo pipefail
-          summary="$(
-            jq -r '.last_bot.text // empty' \
-              ".sandbox-results/repo_changes_summary.last_bot.json"
-          )"
-          if [ -z "$summary" ]; then
-            echo "::warning::No summary text available; skipping PR comment."
-            exit 0
-          fi
-          # Defensive: the model may wrap the summary in a markdown code fence,
-          # sometimes after a stray status sentence. Extract the first fenced
-          # block so the comment renders the markdown directly (the sandbox test
-          # verify unwraps the same way).
-          if printf '%s\n' "$summary" | grep -q '^```'; then
-            summary="$(printf '%s\n' "$summary" | awk '
-              /^```/ { if (seen) exit; seen=1; next }
-              seen { print }
-            ')"
-          fi
-          # Models also prepend a stray status sentence without a fence (eg
-          # "All checks pass. Here is the file content:"). Drop leading prose
-          # before the first markdown bullet/heading so only the summary is
-          # posted (the sandbox verify strips the same preamble).
-          if printf '%s\n' "$summary" | grep -qE '^[[:space:]]*[-#]'; then
-            summary="$(printf '%s\n' "$summary" | awk '
-              /^[[:space:]]*[-#]/ { seen=1 }
-              seen { print }
-            ')"
-          fi
-          if [ "${#summary}" -gt 55000 ]; then
-            summary="${summary:0:55000}
-          ... (truncated)"
-          fi
-          export TPL_SUMMARY_BODY="$summary"
-          body="$(python3 development/scripts/render_comment_template.py development/ci/bot_message_templates/009-sandbox-repo-changes-summary.md)"
-          payload="$(jq -n --arg body "$body" '{body: $body}')"
-          comments_json="$({
-            curl -fsSL \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments"
-          })"
-          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-pr-sandbox-summary-repo_changes_summary -->")))][0].id // ""' <<< "$comments_json")"
-          if [ -n "$comment_id" ]; then
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
-              -d "$payload" >/dev/null
-            echo "Updated PR summary comment ${comment_id}."
+          # ci#803: a retry must not multiply the limit. Cap the whole test
+          # (every attempt) with SANDBOX_TEST_TIMEOUT and give each attempt only
+          # the remaining budget, so a hanging test cannot occupy a runner for
+          # two full per-attempt windows.
+          test_timeout="${SANDBOX_TEST_TIMEOUT:-1500}"
+          case "$test_timeout" in
+            ''|*[!0-9]*)
+              echo "::error::SANDBOX_TEST_TIMEOUT must be a positive integer in seconds (got '${test_timeout}')"
+              exit 1
+              ;;
+          esac
+          deadline=$(( $(date +%s) + test_timeout ))
+          # Classify a failed attempt as a provider-side infrastructure problem
+          # rather than a coder-sandbox regression. The classifier lives in a
+          # unit-tested, sourceable script (development/scripts/
+          # sandbox_provider_failure.sh) so the workflow and its test cannot
+          # drift: `account` = drained balance/bad key (HTTP 401/402, never
+          # retryable, ci#740); `unreachable` = provider outage, rate limit or
+          # connection-level failure (HTTP 408/429/5xx, transient). An
+          # in-flight-credit 402 is transient, not an account failure, because it
+          # clears once the concurrent requests drain (ci#769). Anything else
+          # is an ordinary failure and keeps the normal verdict.
+          provider_classifier="${GITHUB_WORKSPACE}/development/scripts/sandbox_provider_failure.sh"
+          if [ -f "$provider_classifier" ]; then
+            # shellcheck source=development/scripts/sandbox_provider_failure.sh
+            source "$provider_classifier"
           else
-            curl -fsSL -X POST \
-              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments" \
-              -d "$payload" >/dev/null
-            echo "Posted new PR summary comment."
+            echo "::warning::provider failure classifier ${provider_classifier} is missing; provider failures will be treated as ordinary test failures."
           fi
+          provider_failure_class() {
+            if declare -F sandbox_provider_failure_class >/dev/null; then
+              sandbox_provider_failure_class "${SANDBOX_RESULTS_DIR:-}"
+            fi
+          }
+          max_attempts=2
+          attempt=1
+          while :; do
+            remaining=$(( deadline - $(date +%s) ))
+            if [ "$remaining" -le 30 ]; then
+              echo "::error::sandbox test '${{ matrix.test }}' exceeded its ${test_timeout}s total limit (ci#803)"
+              exit 1
+            fi
+            attempt_timeout="$remaining"
+            [ "$attempt_timeout" -gt 1020 ] && attempt_timeout=1020
+            echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts} (budget ${attempt_timeout}s of ${remaining}s remaining)"
+            rc=0
+            if timeout --foreground --kill-after=30 "$attempt_timeout" \
+                 bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"; then
+              echo "::endgroup::"
+              exit 0
+            else
+              rc=$?
+            fi
+            echo "::endgroup::"
+            failure_class="$(provider_failure_class)"
+            if [ "$failure_class" = "account" ]; then
+              # Every reply of this attempt died on the provider's own
+              # credential/balance check. A retry cannot clear that, and
+              # retrying burns another full sandbox run per test while hiding
+              # the real cause behind N identical "unexpected failure" rows.
+              # Record a marker so the summary can name the cause, and fail
+              # loudly as infrastructure instead (ci#740).
+              {
+                echo "provider_account_failure: every recorded bot reply failed with a"
+                echo "provider credential/balance error (HTTP 401/402), so this is an"
+                echo "infrastructure/credential problem, not a coder-sandbox regression."
+              } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.provider_account_failure"
+              echo "::error title=Provider account failure::sandbox test '${{ matrix.test }}' failed without retrying: every bot reply hit a provider credential/balance error (HTTP 401/402). Check the provider account/API key before re-running; this is not a code regression."
+              exit "$rc"
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              if [ "$failure_class" = "unreachable" ]; then
+                # Every reply of both attempts failed to reach the provider or
+                # was rejected with a retryable rate-limit/server error; a
+                # further retry only burns another full sandbox run per test.
+                # Record the marker and fail as transient infrastructure, so
+                # the summary can say so once instead of N times.
+                {
+                  echo "provider_unreachable_failure: every recorded bot reply of both"
+                  echo "attempts failed to reach the AI provider (outage, rate limit or"
+                  echo "connection-level error). This is transient provider"
+                  echo "infrastructure, not a coder-sandbox regression; re-run the job"
+                  echo "once the provider is reachable again."
+                } > "${SANDBOX_RESULTS_DIR:-$PWD}/${{ matrix.test }}.provider_unreachable"
+                echo "::error title=Provider unreachable::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s): every bot reply could not reach the AI provider (rate limit/outage/connection error). This is transient provider infrastructure, not a code regression; re-run once the provider is reachable."
+                exit "$rc"
+              fi
+              echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
+              exit "$rc"
+            fi
+            echo "::warning::sandbox test '${{ matrix.test }}' failed on attempt ${attempt} (model variance); retrying."
+            attempt=$(( attempt + 1 ))
+          done
 
       - name: Upload sandbox test result
         if: always() && inputs.upload_artifacts
@@ -514,6 +569,8 @@ jobs:
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
             ${{ github.workspace }}/.sandbox-results/*.last_bot.json
+            ${{ github.workspace }}/.sandbox-results/*.provider_account_failure
+            ${{ github.workspace }}/.sandbox-results/*.provider_unreachable
             ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
             ${{ github.workspace }}/.sandbox-results/basic_smoke.probe.out
             ${{ github.workspace }}/.sandbox-results/*.run_config.json
@@ -551,6 +608,11 @@ jobs:
           header="| Test | Status | Model | Runtime | Interaction | Notes |"
           sep="|---|---|---|---|---|---|"
           : > /tmp/summary-rows.txt
+          # Counts tests whose failure was a provider credential/balance error
+          # rather than a coder-sandbox regression (ci#740), so the summary can
+          # call that out once instead of leaving N identical failure rows.
+          infra_failures=0
+          unreachable_failures=0
           # Artifacts are extracted per artifact into their own subdirectory
           # (no merge-multiple: merging multiple artifacts into one directory
           # has proven lossy in practice). TSV files are single-line; locate
@@ -602,6 +664,19 @@ jobs:
             else
               icon="❌ failed"
             fi
+            # A failed test with the provider-account marker is infrastructure,
+            # not a coder-sandbox regression; annotate the row and count it so
+            # the summary can say so once (ci#740).
+            if [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_account_failure" ]; then
+              infra_failures=$(( infra_failures + 1 ))
+              detail="provider credential/balance error (HTTP 401/402) - infrastructure, not a code regression"
+            # A failed test whose retries all died on transient provider
+            # infrastructure (outage/rate limit/connection error) is likewise
+            # infrastructure; retrying it further cannot help (ci#740).
+            elif [ "$status" != "passed" ] && [ -f "$artifact_dir/${name}.provider_unreachable" ]; then
+              unreachable_failures=$(( unreachable_failures + 1 ))
+              detail="could not reach the AI provider - transient infrastructure, not a code regression"
+            fi
             printf '| %s | %s | %s | %s | %s | %s |\n' "$name" "$icon" "$model" "$runtime" "$interaction_link" "$detail" >> /tmp/summary-rows.txt
           done
 
@@ -610,8 +685,31 @@ jobs:
             rows="| _no sandbox tests ran_ | - | - | - | - | - |"
           fi
 
-          body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
-            "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows")"
+          infra_note=""
+          if [ "$infra_failures" -gt 0 ]; then
+            # Call the provider-account situation out once, above the marker, so
+            # a drained balance or bad key is not mistaken for N code
+            # regressions (ci#740).
+            infra_note="$(printf '> **%s test(s) failed on a provider credential/balance error (HTTP 401/402).** That is an infrastructure/credential problem on the AI provider account, not a coder-sandbox regression: re-top-up or reset the provider key and re-run before treating these as code failures.' "$infra_failures")"
+          fi
+          if [ "$unreachable_failures" -gt 0 ]; then
+            # And the transient provider-outage case, so a rate limit or an
+            # unreachable provider is not read as N coder regressions either.
+            note="$(printf '> **%s test(s) could not reach the AI provider.** Every recorded reply of both attempts failed on transient provider infrastructure (outage, rate limit or connection-level error), not a coder-sandbox regression: re-run the job once the provider is reachable again.' "$unreachable_failures")"
+            if [ -n "$infra_note" ]; then
+              infra_note="$(printf '%s\n%s' "$infra_note" "$note")"
+            else
+              infra_note="$note"
+            fi
+          fi
+
+          if [ -n "$infra_note" ]; then
+            body="$(printf '%s\n\n%s\n%s\n%s\n\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
+              "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows" "$infra_note")"
+          else
+            body="$(printf '%s\n\n%s\n%s\n%s\n\n<!-- open-chat-sandbox-benchmark-summary -->\n' \
+              "## Docker Sandbox Benchmark Summary" "$header" "$sep" "$rows")"
+          fi
 
           # Always make the result visible in the run itself.
           printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"

@@ -17,7 +17,7 @@ import (
 func setupBadgeRoutingDB(t *testing.T) (*gorm.DB, string) {
 	t.Helper()
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	owner := createAutomatedUser(t, DB, "owner@example.com", false)
 	botUser := createAutomatedUser(t, DB, "bot@example.com", false)
@@ -92,9 +92,34 @@ func TestInteractionBadgeRoutesServeFromAPIAliasAndPublicPath(t *testing.T) {
 	}
 }
 
+// ci#739: the native-coder crash watchdog and the ci2 profile's health_http
+// probe poll the liveness path with a bare unauthenticated `curl -w '%{http_code}'`
+// (backend/nativecoder/recoverydeployment.go:CI2HealthPath). Before this route
+// existed the request fell through to the authenticated /api/v1/ mux and
+// answered 403, which a "not 200 means crashed" watchdog reads as an outage on a
+// perfectly healthy host. The route must therefore answer 200 *without*
+// credentials and without touching the database.
+func TestLivenessProbeIsPubliclyReachable(t *testing.T) {
+	config := setupServerTestDB(t)
+	DB := database.SetupTestDatabase(t, *config)
+
+	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/metrics/health", nil))
+
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 from the unauthenticated liveness probe, got %d: %s", recorder.Code, body)
+	}
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Fatalf("expected a status:ok payload, got: %s", body)
+	}
+}
+
 func TestInteractionBadgeAliasUnknownShareRendersNotFoundSVG(t *testing.T) {
 	config := setupServerTestDB(t)
-	DB := database.SetupDatabase(*config)
+	DB := database.SetupTestDatabase(t, *config)
 
 	router, _ := BackendRouting(DB, nil, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), false, "", "", false)
 

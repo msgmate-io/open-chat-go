@@ -22,7 +22,9 @@ func setupBadgeTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	DB := database.SetupDatabase(cfg)
+	closeChatsTestDB(t, DB)
+	return DB
 }
 
 func createInteractionChatForBadge(t *testing.T, DB *gorm.DB, owner, bot *database.User) (*database.Chat, *database.SharedChatInstance) {
@@ -327,5 +329,164 @@ func TestResolveBadgeHostFallsBackToRequestHost(t *testing.T) {
 
 	if host := resolveBadgeHost(req); host != "badge.example.com" {
 		t.Fatalf("expected badge.example.com, got %q", host)
+	}
+}
+
+func namedBotUserForChatsTest(t *testing.T, DB *gorm.DB, email, displayName string) *database.User {
+	t.Helper()
+	bot := createBotUserForChatsTest(t, DB, email)
+	bot.Name = displayName
+	if err := DB.Save(bot).Error; err != nil {
+		t.Fatalf("failed to set bot display name: %v", err)
+	}
+	return bot
+}
+
+func TestBadgeRendersFollowUpRowFromRuntimeSelector(t *testing.T) {
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	selectorBot := createBotUserForChatsTest(t, DB, "selector@example.com")
+	implBot := namedBotUserForChatsTest(t, DB, "impl@example.com", "Implementation Agent")
+
+	parent, share := createInteractionChatForBadge(t, DB, owner, selectorBot)
+	followUp, followShare := createInteractionChatForBadge(t, DB, owner, implBot)
+
+	meta := map[string]interface{}{
+		"finished": true,
+		"runtime_selectors": []interface{}{
+			map[string]interface{}{
+				"id":                      "sel-1",
+				"status":                  RuntimeSelectorConfirmed,
+				"started_chat_uuid":       followUp.UUID,
+				"started_interaction_url": "/interaction/" + followShare.ChatShareUUID,
+			},
+		},
+	}
+	finishBadgeInteraction(t, DB, parent, selectorBot, meta)
+
+	recorder := runBadgeRequest(t, DB, share.ChatShareUUID)
+	body := recorder.Body.String()
+	if recorder.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, body)
+	}
+	for _, want := range []string{
+		">follow-up</text>",
+		">Implementation Agent</text>",
+		`href="/interaction/` + followShare.ChatShareUUID + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in follow-up badge, got: %s", want, body)
+		}
+	}
+	// Two stacked rows: 20 + 3 + 20.
+	if !strings.Contains(body, `height="43"`) {
+		t.Fatalf("expected a two-row badge height, got: %s", body)
+	}
+}
+
+func TestBadgeRendersFollowUpRowFromSharedConfig(t *testing.T) {
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	parentBot := createBotUserForChatsTest(t, DB, "parent@example.com")
+	followBot := namedBotUserForChatsTest(t, DB, "follow@example.com", "Follow Agent")
+
+	parent, share := createInteractionChatForBadge(t, DB, owner, parentBot)
+	followUp, followShare := createInteractionChatForBadge(t, DB, owner, followBot)
+
+	configJSON, _ := json.Marshal(map[string]interface{}{
+		"follow_up": map[string]interface{}{
+			"chat_uuid": followUp.UUID,
+			"agent":     "Picked Agent",
+		},
+	})
+	shared := database.SharedChatConfig{ChatId: parent.ID, ConfigData: configJSON}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	if err := DB.Model(parent).Update("shared_config_id", shared.ID).Error; err != nil {
+		t.Fatalf("failed to link shared config: %v", err)
+	}
+
+	finishBadgeInteraction(t, DB, parent, parentBot, map[string]interface{}{"finished": true})
+
+	recorder := runBadgeRequest(t, DB, share.ChatShareUUID)
+	body := recorder.Body.String()
+	if recorder.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", recorder.Code, body)
+	}
+	if !strings.Contains(body, ">Picked Agent</text>") {
+		t.Fatalf("expected the configured follow-up agent in the badge, got: %s", body)
+	}
+	// The share uuid is resolved from the follow-up chat, so the follow-up row
+	// links to its public interaction.
+	if !strings.Contains(body, `href="/interaction/`+followShare.ChatShareUUID+`"`) {
+		t.Fatalf("expected the derived follow-up interaction link, got: %s", body)
+	}
+}
+
+func TestBadgeSimpleVariantOmitsFollowUpRow(t *testing.T) {
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	parentBot := createBotUserForChatsTest(t, DB, "parent@example.com")
+	followBot := namedBotUserForChatsTest(t, DB, "follow@example.com", "Follow Agent")
+
+	parent, share := createInteractionChatForBadge(t, DB, owner, parentBot)
+	followUp, _ := createInteractionChatForBadge(t, DB, owner, followBot)
+
+	configJSON, _ := json.Marshal(map[string]interface{}{
+		"follow_up": map[string]interface{}{"chat_uuid": followUp.UUID},
+	})
+	shared := database.SharedChatConfig{ChatId: parent.ID, ConfigData: configJSON}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	if err := DB.Model(parent).Update("shared_config_id", shared.ID).Error; err != nil {
+		t.Fatalf("failed to link shared config: %v", err)
+	}
+	finishBadgeInteraction(t, DB, parent, parentBot, map[string]interface{}{"finished": true})
+
+	recorder := runBadgeRequestWith(t, DB, share.ChatShareUUID, "variant=simple", "badge.example.com")
+	body := recorder.Body.String()
+	if strings.Contains(body, ">follow-up</text>") {
+		t.Fatalf("expected the simple badge to omit the follow-up row, got: %s", body)
+	}
+}
+
+func TestResolveFollowUpReferencePrefersConfigOverSelector(t *testing.T) {
+	DB := setupBadgeTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner@example.com", false)
+	parentBot := createBotUserForChatsTest(t, DB, "parent@example.com")
+	configFollow := createBotUserForChatsTest(t, DB, "config-follow@example.com")
+	selectorFollow := createBotUserForChatsTest(t, DB, "selector-follow@example.com")
+
+	parent, _ := createInteractionChatForBadge(t, DB, owner, parentBot)
+	configChat, _ := createInteractionChatForBadge(t, DB, owner, configFollow)
+	selectorChat, _ := createInteractionChatForBadge(t, DB, owner, selectorFollow)
+
+	configJSON, _ := json.Marshal(map[string]interface{}{
+		"follow_up": map[string]interface{}{"chat_uuid": configChat.UUID, "agent": "Configured"},
+	})
+	shared := database.SharedChatConfig{ChatId: parent.ID, ConfigData: configJSON}
+	if err := DB.Create(&shared).Error; err != nil {
+		t.Fatalf("failed to create shared config: %v", err)
+	}
+	if err := DB.Model(parent).Update("shared_config_id", shared.ID).Error; err != nil {
+		t.Fatalf("failed to link shared config: %v", err)
+	}
+	parent.SharedConfigId = &shared.ID
+	meta := map[string]interface{}{
+		"finished": true,
+		"runtime_selectors": []interface{}{
+			map[string]interface{}{"id": "sel-1", "status": RuntimeSelectorConfirmed, "started_chat_uuid": selectorChat.UUID},
+		},
+	}
+	finishBadgeInteraction(t, DB, parent, parentBot, meta)
+
+	ref, ok := resolveFollowUpReference(DB, *parent)
+	if !ok {
+		t.Fatal("expected a follow-up reference")
+	}
+	if ref.ChatUUID != configChat.UUID || ref.Agent != "Configured" {
+		t.Fatalf("expected the shared-config follow-up to win, got %+v", ref)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -17,7 +16,24 @@ import (
 	"github.com/hibiken/asynq"
 	client "github.com/msgmate-io/go-client-integration/goclient"
 	"gorm.io/gorm"
+
+	"backend/logging"
 )
+
+// botReplyTurnBudget resolves how long the current turn may still run: the
+// remaining task deadline when asynq set one, otherwise the configured bot reply
+// turn timeout. It is the basis of the bot session lifetime so the two can never
+// drift apart again (ci#729).
+func botReplyTurnBudget(ctx context.Context) time.Duration {
+	if ctx != nil {
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline); remaining > 0 {
+				return remaining
+			}
+		}
+	}
+	return workqueue.BotReplyTimeout()
+}
 
 // @doc:open-chat-hal-agent-logic
 // Open-Chat HAL agent logic runs as the `bot:reply` async task. It validates
@@ -51,28 +67,40 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 		return fmt.Errorf("%w: source message not found", asynq.SkipRetry)
 	}
 
+	// ci#656: this task is the consumer of the message, so the reply is no
+	// longer queued behind a live turn. Drop the marker the transcript renders
+	// as pending before the metadata is forwarded, so a consumed message never
+	// reaches the agent looking queued - on the success path and on every
+	// failure/retry path alike, because the drain happens before the turn.
+	if _, clearErr := database.ClearMessageQueued(deps.DB, &incomingMessage); clearErr != nil {
+		logging.Errorf("ci#656: failed to clear the queued marker on message %s: %v", incomingMessage.UUID, clearErr)
+	}
+
 	var senderUser database.User
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
 	}
 
+	// The session must outlive the whole turn, not just a fixed 15 minutes:
+	// derive its lifetime from the turn budget and keep renewing it while the
+	// turn runs (ci#729).
 	token := uuid.NewString()
+	sessionTTL := database.SessionTTL(botReplyTurnBudget(ctx))
 	session := database.Session{
 		UserId: botUser.ID,
 		Token:  token,
-		Expiry: time.Now().Add(15 * time.Minute),
+		Expiry: time.Now().Add(sessionTTL),
 	}
 	if err := deps.DB.Create(&session).Error; err != nil {
 		return fmt.Errorf("%w: failed to create bot session", asynq.SkipRetry)
 	}
 	defer deps.DB.Where("token = ?", token).Delete(&database.Session{})
+	stopSessionRefresh := database.StartSessionRefresh(deps.DB, token, sessionTTL)
+	defer stopSessionRefresh()
 
-	host := deps.BackendHost
-	if host == "" {
-		host = "http://127.0.0.1:1984" // TODO ensure just fallback always present
-	}
-
-	ocClient := client.NewClient(host)
+	// The fallback lives in workqueue alongside the worker flag's default so the
+	// two can never drift apart (it is only reachable when BackendHost is empty).
+	ocClient := client.NewClient(workqueue.BackendHostOrDefault(deps.BackendHost))
 	ocClient.SetSessionId(token)
 	ocClient.User = client.User{UUID: botUser.UUID}
 
@@ -82,10 +110,9 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	botContext := &msgmate.BotContext{
-		Client:       ocClient,
-		BotUser:      botUser,
-		WSHandler:    wsHandler,
-		ChatCanceler: msgmate.NewChatCanceler(),
+		Client:    ocClient,
+		BotUser:   botUser,
+		WSHandler: wsHandler,
 	}
 
 	message := wsapi.NewMessage{Type: "new_message"}
@@ -138,8 +165,8 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	}
 	if err != nil {
 		responseAlreadySent := errors.Is(err, msgmate.ErrResponseAlreadySent)
-		if errors.Is(err, context.Canceled) {
-			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(err)}
+		if isBotReplyCancellation(err, ctx) {
+			failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(context.Canceled)}
 			_ = writeResult(task, failure)
 			persistTaskResult(deps.DB, task, failure)
 			return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
@@ -147,13 +174,13 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 
 		failureMessage := botReplyFailureMessage(err)
 		if !responseAlreadySent {
-			if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage); sendErr != nil {
+			if sendErr := sendBotFailureMessage(ocClient, payload.ChatUUID, failureMessage, err); sendErr != nil {
 				failureMessage = fmt.Sprintf("%s (fallback send failed: %v)", failureMessage, sendErr)
 			}
 		}
 		if responseAlreadySent {
 			if disposeErr := disposeToolInitAfterBotReply(deps.DB, payload.ChatUUID); disposeErr != nil {
-				log.Printf("tool_init disposal failed after already-sent response for chat %s: %v", payload.ChatUUID, disposeErr)
+				logging.Errorf("tool_init disposal failed after already-sent response for chat %s: %v", payload.ChatUUID, disposeErr)
 			}
 			failureMessage = fmt.Sprintf("%s (response already sent)", failureMessage)
 		}
@@ -164,12 +191,41 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	}
 
 	if disposeErr := disposeToolInitAfterBotReply(deps.DB, payload.ChatUUID); disposeErr != nil {
-		log.Printf("tool_init disposal failed for chat %s: %v", payload.ChatUUID, disposeErr)
+		logging.Errorf("tool_init disposal failed for chat %s: %v", payload.ChatUUID, disposeErr)
+	}
+
+	// A stop that lands after the generation finished but before the task
+	// settled must not be recorded as a success: returning SkipRetry keeps a
+	// cancelled task from being retried (and re-running the generation). Only a
+	// genuine user stop counts here - a task deadline that fired as the reply
+	// completed is not a stop, and the reply is already persisted (ci#642).
+	if errors.Is(ctx.Err(), context.Canceled) {
+		failure := ToolExecutionResult{Success: false, Error: botReplyFailureMessage(context.Canceled)}
+		_ = writeResult(task, failure)
+		persistTaskResult(deps.DB, task, failure)
+		return fmt.Errorf("bot reply interrupted: %w", asynq.SkipRetry)
 	}
 
 	success := ToolExecutionResult{Success: true, Result: "bot reply generated"}
 	persistTaskResult(deps.DB, task, success)
 	return writeResult(task, success)
+}
+
+// isBotReplyCancellation reports whether a bot reply error is a user/queue
+// cancellation rather than a generation failure. It checks both the wrapped
+// error and the task context so a provider request aborted by the stop signal
+// is never mistaken for a retryable failure that would re-run the generation.
+// A context.Canceled stop is a cancellation; a task deadline
+// (context.DeadlineExceeded) is NOT - it is a timeout that takes the failure
+// path so it never renders as a user pause (ci#642).
+func isBotReplyCancellation(err error, ctx context.Context) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return true
+	}
+	return false
 }
 
 func shouldDisposeToolInitForChat(chat database.Chat) bool {
@@ -225,23 +281,60 @@ func botReplyFailureMessage(err error) string {
 		return "I paused this reply. Send another message when you want me to continue."
 	}
 
-	errLower := strings.ToLower(err.Error())
-	if strings.Contains(errLower, "connection refused") ||
-		strings.Contains(errLower, "no such host") ||
-		strings.Contains(errLower, "timeout") ||
-		strings.Contains(errLower, "api key") ||
-		strings.Contains(errLower, "unauthorized") ||
-		strings.Contains(errLower, "forbidden") {
+	switch classification := msgmate.ClassifyGenerationFailure(err); classification.Reason {
+	case msgmate.FailureReasonProviderError:
+		return fmt.Sprintf("I could not generate a reply: my AI provider request failed (%s). Please try again in a moment or switch to another model.", classification.ProviderSummary)
+	case msgmate.FailureReasonTransientNetwork:
+		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
+	case msgmate.FailureReasonContextWindow:
+		return "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+	case msgmate.FailureReasonTimeout:
+		return "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here."
+	}
+
+	if isProviderReachabilityError(err) {
 		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
 	}
 
-	return "I ran into an error while generating a reply. Please try again in a moment."
+	return fmt.Sprintf("I hit an internal error while generating this reply: %s", msgmate.TruncateFailureDetail(err.Error()))
 }
 
-func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string) error {
+// isProviderReachabilityError recognises provider configuration / connectivity
+// problems that produce a network-level error rather than a provider HTTP
+// response, so they can be described as reachability issues instead of an
+// internal fault.
+func isProviderReachabilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errLower := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection refused",
+		"no such host",
+		"timeout",
+		"api key",
+		"unauthorized",
+		"forbidden",
+	} {
+		if strings.Contains(errLower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sendBotFailureMessage(ocClient *client.Client, chatUUID, text string, err error) error {
 	metadata := map[string]interface{}{
 		"finished": true,
 		"error":    true,
+	}
+	if err != nil {
+		classification := msgmate.ClassifyGenerationFailure(err)
+		metadata["failure_reason"] = classification.Reason
+		metadata["error_detail"] = err.Error()
+		if classification.ProviderSummary != "" {
+			metadata["provider_error"] = classification.ProviderSummary
+		}
 	}
 
 	return ocClient.SendChatMessage(chatUUID, client.SendMessage{

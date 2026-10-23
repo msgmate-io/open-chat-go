@@ -21,7 +21,7 @@ func setupBotsTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	return database.SetupTestDatabase(t, cfg)
 }
 
 func createUserForBotsTest(t *testing.T, DB *gorm.DB, name string, isAdmin bool) *database.User {

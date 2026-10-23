@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
 } from "../dropdown-menu"
+import { usePinnedIntegrationPages } from "../../integration/lib/use-pinned-integration-pages"
 
 const fetcher = (...args: [RequestInfo, RequestInit?]) =>
   fetch(...args).then((res) => res.json())
@@ -30,6 +31,7 @@ export function ProfileCard({
     fetcher,
   )
   const displayName = user?.name?.trim() || user?.email || "My Account"
+  const { pages: pinnedPages } = usePinnedIntegrationPages()
   const hasAdminIntegration = Boolean(
     integrations?.rows?.some((integration) => integration?.name === "admin"),
   )
@@ -63,6 +65,27 @@ export function ProfileCard({
             Integrations
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          {/* Pages the user pinned in the integration sidebar (ci#610): one
+              click instead of walking /integrations -> integration -> page. */}
+          {pinnedPages.length > 0 ? (
+            <>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="px-2 py-1.5 text-xs text-muted-foreground">
+                  Pinned pages
+                </DropdownMenuLabel>
+                {pinnedPages.map((page) => (
+                  <DropdownMenuItem
+                    key={page.path}
+                    onClick={() => navigateTo(page.path)}
+                    title={page.path}
+                  >
+                    {page.title}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
           {user?.is_admin && hasAdminIntegration ? (
             <>
               <DropdownMenuGroup>

@@ -3,6 +3,7 @@ package chats
 import (
 	"backend/api/websocket"
 	"backend/database"
+	"backend/nativecoder"
 	"backend/server/util"
 	"bytes"
 	"context"
@@ -22,7 +23,35 @@ func setupChatsTestDB(t *testing.T) *gorm.DB {
 		Debug:    false,
 		ResetDB:  true,
 	}
-	return database.SetupDatabase(cfg)
+	DB := database.SetupDatabase(cfg)
+	closeChatsTestDB(t, DB)
+	return DB
+}
+
+// closeChatsTestDB closes the connection pool behind a test database when the
+// test finishes. t.TempDir registers its RemoveAll cleanup *before* this one is
+// registered and cleanups run LIFO, so the pool is already closed by the time
+// the temporary directory is removed.
+//
+// Without it the pool outlives the test: SQLite runs in WAL mode (see
+// sqliteDSNPragmas), so a pooled connection can recreate the -wal/-shm sidecars
+// while RemoveAll is walking the directory. That races into
+// "TempDir RemoveAll cleanup: unlinkat ...: directory not empty" and, once the
+// main database file is gone underneath a still-open connection, into
+// "disk I/O error (522)" (observed flaking in CI on
+// TestApproveInteractionConfirmationAppliesOverrides).
+func closeChatsTestDB(t *testing.T, DB *gorm.DB) {
+	t.Helper()
+	if DB == nil {
+		return
+	}
+	t.Cleanup(func() {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return
+		}
+		_ = sqlDB.Close()
+	})
 }
 
 func createUserForChatsTest(t *testing.T, DB *gorm.DB, name string, isAdmin bool) *database.User {
@@ -447,5 +476,101 @@ func TestCreateChatKeepsChatBackendWithoutModelBindingOverride(t *testing.T) {
 	}
 	if _, ok := config["endpoint"]; ok {
 		t.Fatalf("expected no endpoint injected for chat_backend routing, got %v", config["endpoint"])
+	}
+}
+
+// TestCreateChatSnapshotsToolCallBudget is the ci#709 regression on the chat
+// side: a created chat carries a per-chat tool-call budget snapshot, so the
+// budget it was started with is kept across a re-attach / re-provision and is
+// reported as structured state (the resolved caps and their source) instead of
+// only ever appearing inside an abort error string.
+func TestCreateChatSnapshotsToolCallBudget(t *testing.T) {
+	DB := setupChatsTestDB(t)
+	owner := createUserForChatsTest(t, DB, "owner-budget@example.com", false)
+	botUser := createUserForChatsTest(t, DB, "bot-budget@example.com", false)
+
+	botUser.IsAutomated = true
+	if err := DB.Save(botUser).Error; err != nil {
+		t.Fatalf("failed to mark bot user automated: %v", err)
+	}
+
+	// The bot's caps at creation time: 400 total / 25 failed.
+	defaultConfig := map[string]interface{}{
+		"model":                "qwen3-4b-instruct-2507_vllm",
+		"backend":              "litellm",
+		"tool_call_max_total":  400,
+		"tool_call_max_failed": 25,
+	}
+	defaultConfigJSON, _ := json.Marshal(defaultConfig)
+	runtime := database.BotRuntimeConfig{
+		BotUserId:           botUser.ID,
+		OwnerUserId:         owner.ID,
+		Name:                "bot-runtime-budget",
+		Description:         "runtime",
+		DefaultSharedConfig: defaultConfigJSON,
+		IsActive:            true,
+	}
+	if err := DB.Create(&runtime).Error; err != nil {
+		t.Fatalf("failed to create bot runtime config: %v", err)
+	}
+
+	bodyPayload := map[string]interface{}{
+		"contact_token": botUser.ContactToken,
+		"chat_type":     "conversation",
+	}
+	body, _ := json.Marshal(bodyPayload)
+	req := httptest.NewRequest("POST", "/api/v1/chats/create", bytes.NewReader(body))
+	ctx := context.WithValue(req.Context(), "db", DB)
+	ctx = context.WithValue(ctx, "user", owner)
+	ctx = context.WithValue(ctx, "websocket", websocket.NewWebSocketHandler())
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	h := &ChatsHandler{}
+	h.Create(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to decode create chat response: %v", err)
+	}
+	config, ok := response["config"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected config object in response")
+	}
+
+	snapshot, ok := nativecoder.ToolCallBudgetSnapshot(config)
+	if !ok {
+		t.Fatalf("expected a per-chat tool-call budget snapshot, got %#v", config[nativecoder.ToolCallBudgetConfigKey])
+	}
+	// The snapshot keeps the caps the chat was created with...
+	if snapshot.MaxTotal != 400 || snapshot.MaxFailed != 25 {
+		t.Fatalf("expected the bot's caps at creation time in the snapshot, got %+v", snapshot)
+	}
+
+	// ...while the *effective* caps are the fleet-wide floor of the resolved
+	// sources (ci#709): a chat snapshotted with a smaller budget than the
+	// compiled-in default is lifted to that default, and a larger declared cap
+	// would win. Resolve both sides against the constants so raising the floor
+	// (500/20 as of #931) keeps this regression honest.
+	wantTotal, wantFailed := 400, 25
+	if nativecoder.DefaultToolCallMaxTotal > wantTotal {
+		wantTotal = nativecoder.DefaultToolCallMaxTotal
+	}
+	if nativecoder.DefaultToolCallMaxFailed > wantFailed {
+		wantFailed = nativecoder.DefaultToolCallMaxFailed
+	}
+	resolved := nativecoder.ResolveToolCallBudget(config, nil)
+	if resolved.MaxTotal != wantTotal || resolved.MaxFailed != wantFailed {
+		t.Fatalf("expected the effective budget %d/%d, got %+v", wantTotal, wantFailed, resolved)
+	}
+	if resolved.SnapshotMaxTotal != 400 || resolved.SnapshotMaxFailed != 25 {
+		t.Fatalf("expected the snapshot to stay reported even when the floor is higher, got %+v", resolved)
+	}
+	meta := resolved.Metadata()
+	if meta["snapshot_max_total"] != 400 || meta["snapshot_max_failed"] != 25 {
+		t.Fatalf("expected the snapshot in the structured metadata, got %#v", meta)
 	}
 }

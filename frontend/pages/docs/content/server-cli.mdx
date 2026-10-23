@@ -19,6 +19,7 @@ open-chat server   [flags]   # API + optional embedded worker + frontend
 open-chat worker   [flags]   # background worker only
 open-chat run      [flags]   # one-shot interaction, prints the bot reply
 open-chat client   <cmd>     # authenticated API calls for scripts
+open-chat tui      [flags]   # launch the in-process terminal UI (tui integration)
 ```
 
 Run `open-chat <command> --help` to print the authoritative flag list for the
@@ -97,27 +98,37 @@ so existing installations can enforce 2FA without manual enrollment. See
 [Authentication → Pre-configuring 2FA for bootstrap users](/docs#authentication)
 for details and secret-handling guidance.
 
-### SSH bootstrap
-
-The SSH integration can be provisioned declaratively. Each flag accepts a JSON
-object/array or a file path and can be repeated.
-
-| Flag | Env var |
-| --- | --- |
-| `--add-ssh-keys-from-config` | `ADD_SSH_KEYS_FROM_CONFIG` |
-| `--add-ssh-servers-from-config` | `ADD_SSH_SERVERS_FROM_CONFIG` |
-| `--add-ssh-key-grants-from-config` | `ADD_SSH_KEY_GRANTS_FROM_CONFIG` |
-| `--add-ssh-server-grants-from-config` | `ADD_SSH_SERVER_GRANTS_FROM_CONFIG` |
-| `--add-ssh-default-owner` | `ADD_SSH_DEFAULT_OWNER` |
-
 ### Worker flags
 
 | Flag | Env var | Default | Purpose |
 | --- | --- | --- | --- |
 | `--start-worker`, `--sw` | `START_WORKER` | `true` | Run the embedded worker in the server process. |
 | `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Worker goroutine count. |
+| `--skip-migrations` | `DB_SKIP_MIGRATIONS` | `false` | Skip the automatic schema migration pass (set on secondary processes so they do not race the primary's DDL). |
+| `--run-scheduler` | `WORKER_SCHEDULER` | `true` | Run the integration scheduler in this process. Exactly one process must own it. |
 
 Set `START_WORKER=false` when you run `open-chat worker` as a separate process.
+
+#### Multi-worker recipe
+
+To scale reply processing across several worker pods while keeping the API
+single-writer for schema migrations and periodic schedules:
+
+- On the API process: `START_WORKER=false` (the API only serves requests) and
+  leave `--run-scheduler` (`WORKER_SCHEDULER`) at its default so exactly one
+  process owns the integration scheduler. If you disable the embedded worker,
+  run the scheduler on the API (`--run-scheduler=true`) or on exactly one
+  worker — never on all of them.
+- On each worker process: `OPEN_CHAT_HOST` pointing at the API's URL
+  (e.g. `http://open-chat-server:1984`), `REDIS_MODE=external` (all workers must
+  share one Redis; `auto` can silently start a per-pod embedded Redis), and
+  `DB_SKIP_MIGRATIONS=true` (only the API migrates the schema).
+- Run the integration scheduler in **exactly one** process: `--run-scheduler`
+  (`WORKER_SCHEDULER`) is `true` by default, so set it to `false` on every
+  worker except the one that should own the schedules.
+
+asynq v0.26 does **not** leader-elect the scheduler across instances, so running
+it in every worker can enqueue periodic jobs more than once.
 
 ### Browser token flags
 
@@ -160,6 +171,8 @@ open-chat worker \
 | `--debug`, `-d` | `DEBUG` | `true` | Enable debug mode. |
 | `--asynq-concurrency` | `ASYNQ_CONCURRENCY` | `10` | Concurrent worker goroutines. |
 | `--backend-host` | `OPEN_CHAT_HOST` | `http://127.0.0.1:1984` | Backend base URL used by async bot tasks. |
+| `--skip-migrations` | `DB_SKIP_MIGRATIONS` | `false` | Skip the automatic schema migration pass (set on secondary workers). |
+| `--run-scheduler` | `WORKER_SCHEDULER` | `true` | Run the integration scheduler in this process (exactly one process must own it). |
 
 The worker also accepts all Redis flags listed above.
 
@@ -206,6 +219,37 @@ open-chat client hash-password --password "$NEW_PASSWORD"
 Shared flags: `--host` (`OPEN_CHAT_HOST`, default `http://localhost:1984`),
 `--api-token` (`OPEN_CHAT_API_TOKEN`) and `--json`. Registered integrations add
 their own `open-chat client ...` subcommands.
+
+## `open-chat tui`
+
+Launches the terminal UI when the `tui` integration is part of the build. All
+arguments after the command name are forwarded to the TUI, so its own flags
+(for example `--where` and `--version`) work through `open-chat tui`. See
+[Terminal UI](/docs#tui) for usage and configuration.
+
+## Linking text files into the config
+
+Long config values — markdown prompts, kubeconfigs, SSH keys — do not have to be
+inlined. Set the value to a `$file.<path>` marker and the server reads that text
+file while loading the config, so the artifact can live as a real file next to
+`open-chat.json`:
+
+```json
+{
+  "env": {
+    "SYSTEM_PROMPT": "$file.prompts/system.md"
+  }
+}
+```
+
+The same works in YAML configs. Paths are resolved relative to the directory of
+the config file (the working directory for an inline `--config` document), and
+the file must stay inside that directory: absolute paths and `../` escapes are
+rejected. The marker must be the entire value, and a missing, unreadable, binary
+or out-of-tree file fails the boot with a message naming it, so a broken link is
+never silently handed to the runtime. Substitution happens before the `env`
+section is written into the process environment, so the usual precedence rules
+are unchanged.
 
 ## `open-chat.json` example
 

@@ -5,9 +5,9 @@ import (
 	"backend/server/util"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type updateChatPinRequest struct {
@@ -35,6 +35,27 @@ func loadChatPins(db *gorm.DB, userID uint, chatIDs []uint) map[uint]bool {
 	return pinned
 }
 
+// setChatPin pins or unpins a chat for a user.
+//
+// ChatPin embeds the soft-deletable Model, but its unique index covers only
+// (chat_id, user_id). So an unpin leaves a soft-deleted row that both blocks a
+// later insert (unique violation) and is invisible to loadChatPins, which made
+// "pin → unpin → pin" silently leave the chat unpinned (ci#361). Pin therefore
+// resurrects any existing row on conflict, and unpin hard-deletes so no stale
+// row is left behind.
+func setChatPin(db *gorm.DB, chatID, userID uint, pinned bool) error {
+	if pinned {
+		pin := database.ChatPin{ChatId: chatID, UserId: userID}
+		return db.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "chat_id"}, {Name: "user_id"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"deleted_at": nil}),
+		}).Create(&pin).Error
+	}
+	return db.Unscoped().
+		Where("chat_id = ? AND user_id = ?", chatID, userID).
+		Delete(&database.ChatPin{}).Error
+}
+
 // UpdatePin pins or unpins a chat for the authenticated user.
 //
 //	@Summary      Pin or unpin a chat
@@ -55,8 +76,8 @@ func (h *ChatsHandler) UpdatePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatUUID := strings.TrimSpace(r.PathValue("chat_uuid"))
-	if chatUUID == "" {
+	chatUUID, chatUUIDErr := parseChatUUID(r)
+	if chatUUIDErr != nil {
 		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
 		return
 	}
@@ -74,17 +95,13 @@ func (h *ChatsHandler) UpdatePin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if payload.Pinned {
-		pin := database.ChatPin{ChatId: chat.ID, UserId: user.ID}
-		if err := DB.Where("chat_id = ? AND user_id = ?", chat.ID, user.ID).FirstOrCreate(&pin).Error; err != nil {
+	if err := setChatPin(DB, chat.ID, user.ID, payload.Pinned); err != nil {
+		if payload.Pinned {
 			http.Error(w, "Unable to pin chat", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		if err := DB.Where("chat_id = ? AND user_id = ?", chat.ID, user.ID).Delete(&database.ChatPin{}).Error; err != nil {
+		} else {
 			http.Error(w, "Unable to unpin chat", http.StatusInternalServerError)
-			return
 		}
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

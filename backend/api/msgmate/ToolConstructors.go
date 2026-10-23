@@ -15,6 +15,14 @@ func init() {
 		callbackFunction.Execute(initData, input)
 		return nil
 	}
+	// ci#680: back the `coder_context` tool with the core's per-chat context
+	// usage report (the tools package cannot import the msgmate package it is
+	// embedded in).
+	tooldefs.ContextUsageLookup = contextUsageLookup
+	// ci#724: back the `coder_schedule` tool with the core's in-turn scheduler,
+	// so a lead agent can start a later turn on its own chat without a GitHub
+	// workflow or a CronJob.
+	tooldefs.CoderScheduleRunnerProvider = coderScheduleToolRunner
 }
 
 func NewWeatherTool() Tool {
@@ -53,6 +61,30 @@ func NewCreateConfirmableActionSuggestionTool() Tool {
 	return NewToolFromDefinition(tooldefs.CreateConfirmableActionSuggestionToolDef)
 }
 
+func NewWebFetchTool() Tool {
+	return NewToolFromDefinition(tooldefs.WebFetchToolDef)
+}
+
+func NewWebSearchTool() Tool {
+	return NewToolFromDefinition(tooldefs.WebSearchToolDef)
+}
+
+// NewCoderContextTool is the ci#680 context/token usage report tool.
+func NewCoderContextTool() Tool {
+	return NewToolFromDefinition(tooldefs.CoderContextToolDef)
+}
+
+// NewAllTasksCompletedTool is the ci#809 explicit end-of-task declaration tool.
+func NewAllTasksCompletedTool() Tool {
+	return NewToolFromDefinition(tooldefs.AllTasksCompletedToolDef)
+}
+
+// NewCoderScheduleTool is the ci#724 self-scheduling tool: it lets a lead agent
+// queue a later turn of its own chat instead of relying on an external CronJob.
+func NewCoderScheduleTool() Tool {
+	return NewToolFromDefinition(tooldefs.CoderScheduleToolDef)
+}
+
 func NewToolInitTestToolPassThrough() Tool {
 	return NewToolFromDefinition(tooldefs.ToolInitTestToolPassThroughDef)
 }
@@ -68,4 +100,6 @@ func registerBuiltinTools() {
 	registerToolConstructor("n8n_trigger_workflow_webhook", nil, NewN8NTriggerWorkflowWebhookTool)
 	registerToolConstructor("create_confirmable_action_suggestion", nil, NewCreateConfirmableActionSuggestionTool)
 	registerToolConstructor("tool_init_test_tool_pass_through", nil, NewToolInitTestToolPassThrough)
+	registerToolConstructor("web_fetch", nil, NewWebFetchTool)
+	registerToolConstructor("web_search", nil, NewWebSearchTool)
 }

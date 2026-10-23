@@ -33,25 +33,99 @@ prompt. The client approves or rejects it and, on approval, executes it with:
 POST /api/v1/chats/{chat_uuid}/messages/{message_uuid}/confirm-actions/{action_id}/execute
 ```
 
+## Turn timeline and tool-call widgets
+
+A tool-using agent produces an interleaved stream: it reasons, calls a tool,
+reads the result, narrates what it will do next, calls the next tool, and so on.
+The core records that stream so the transcript reads the way the agent actually
+worked instead of as a bare stack of opaque call rows:
+
+- `meta_data.timeline` holds the ordered **narration blocks** of the turn. A
+  `{"kind": "thought"}` entry is the model's reasoning (a streamed thinking
+  block or an inline reasoning tag); a `{"kind": "text"}` entry is the
+  assistant's user-visible commentary between the calls, which the message body
+  alone does not keep (its text only covers what came after the final call).
+- Every tool call carries `started_at` (unix ms) and `duration_ms`, and
+  `timeline_index` — how many narration blocks had already been emitted when
+  the call was dispatched, which places it in the sequence above.
+
+The chat UI interleaves both back into *thought → commentary → the call it
+produced → next block*, and renders each tool call with a live timer while it
+runs and its recorded duration once it completes. Messages without a timeline
+(or whose calls carry no `timeline_index`) keep the older layout, so nothing
+regresses for a backend that does not report it.
+
+While a turn is still running its narration is rendered as the ordinary message
+body and the client hides the timeline's copy of it, so nothing is shown twice;
+once the turn finished the recorded narration is rendered inline in the
+sequence. A finished turn that dispatched tool calls without emitting any
+reasoning or commentary says so explicitly, instead of leaving the reader to
+wonder why the transcript is a wall of tool calls.
+
 ## Interaction tags
 
 Chats and interactions carry free-form **tags** used for filtering in the chat
-list (`GET /api/v1/chats/list?tags=...&exclude_tags=...`). Automation- and
-git-triggered chats are hidden by default via the `automation` and `trigger`
-tags.
+list (`GET /api/v1/chats/list?tags=...&exclude_tags=...`). Internally generated
+automation chats are hidden by default via the `automation` tag. Git-triggered
+coding interactions are **not** tagged `trigger` anymore (ci#746): they carry the
+same `git` / `repo:<slug>` / `via:<event>` tags as any other coder interaction,
+so they are visible in the default list.
 
-OpenCode coding interactions add a compact, self-describing tag pair so the
+Automated coding interactions add a compact, self-describing tag pair so the
 workspace and the trigger can be filtered independently:
 
 | Tag | Meaning |
 | --- | --- |
-| `opencode` | the interaction runs through the OpenCode backend |
 | `repo:<slug>` | the workspace repository, e.g. `repo:open-chat-go` |
+| `branch:<name>` | the branch the workspace checks out, e.g. `branch:feat/x` (case-sensitive; a `refs/heads/` prefix is stripped) |
 | `via:<trigger>` | how it was triggered: `via:assign`, `via:mention`, `via:review`, `via:comment`, `via:plan`, `via:chat` |
 
 The `repo:` and `via:` prefixes keep the two dimensions in distinct namespaces,
 so `tags=repo:open-chat-go` lists every interaction working on that repository
-and `tags=via:assign` every assignment-driven one.
+and `tags=via:assign` every assignment-driven one. For a native coder
+interaction with a per-chat sandbox, `repo:` and `branch:` also drive the
+checkout: an explicit tag pins what the disposable sandbox clones and checks out
+(unless the caller pinned it in `tool_init`), so a re-run for a pull request
+resumes that PR's branch instead of the default.
+
+## Auto-continuation (self-driving interactions)
+
+An interaction can keep working **by itself** after every finished turn instead
+of stopping and waiting for you to say "continue". The loop lives in the
+product, so any client benefits from it without an external watcher:
+
+- After each cleanly finished automated turn the core schedules the next turn
+  itself (the continuation prompt is persisted as your message, the bot reply is
+  queued after a short quiet period).
+- The loop ends deterministically when the agent emits a **stop marker** — the
+  completion sentinel (`<<TASK_COMPLETE>>` by default) or the human sentinel
+  (`<<NEED_HUMAN>>`) — or when its budget is exhausted.
+- It never continues a failed turn, a turn that still waits on you (a pending
+  confirmation or question), or a chat with a turn already in flight. Stopping
+  the interaction (the interrupt signal, or stopping it through the agent
+  management API) also stops the loop.
+
+Opt-in and tuning are per interaction, in the chat's shared config:
+
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `auto_continue` | opt in (`true` enables the loop) | `false` |
+| `auto_continue_max` | hard cap of continuations per interaction | `30` |
+| `auto_continue_delay_seconds` | quiet period before the wake-up (max `3600`) | `10` |
+| `auto_continue_prompt` | the continuation instruction | built-in prompt naming the markers |
+| `auto_continue_completion_marker` | completion sentinel | `<<TASK_COMPLETE>>` |
+| `auto_continue_human_marker` | human sentinel | `<<NEED_HUMAN>>` |
+
+A coding agent dispatched in-product (`POST /api/v1/agents/dispatch` with
+`auto_continue: true`) enables the loop through the recorded `agent_dispatch`
+metadata, including its custom `completion_marker` / `human_marker`, so a
+dispatched agent self-drives without the external dispatcher.
+
+The live state is visible to clients and to watching agents: `GET
+/api/v1/chats/{chat_uuid}/status` (and the agent interaction views) report
+`auto_continue`, `auto_continue_turns`, `auto_continue_max` and, once the loop
+stopped, `auto_continue_stop_reason` (`completed`, `needs_human`,
+`budget_exhausted`, `interrupted_by_user`, `stopped_by_agent_manager`).
 
 ## Shared interactions
 
@@ -69,6 +143,7 @@ URLs:
 - `GET /api/interaction/{chat_share_uuid}`
 - `GET /api/interaction/{chat_share_uuid}/messages`
 - `GET /api/interaction/{chat_share_uuid}/status`
+- `GET /api/interaction/{chat_share_uuid}/access`
 - `GET /api/interaction/{chat_share_uuid}/badge.svg`
 
 The badge is also served at `GET /interaction/{chat_share_uuid}/badge.svg`

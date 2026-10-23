@@ -1,0 +1,441 @@
+name: Auto-approve consolidation PRs
+
+# ci#538: let a green `chore/consolidate-*` PR merge autonomously.
+#
+# A consolidation PR is the single batch-verification PR against `main` and is
+# always authored by the automation identity (`cur1ousdude`), which cannot
+# approve its own PR.
+#
+# ci#833 (dev trunk): consolidation PRs (`chore/consolidate-*`) now target the
+# `dev` integration trunk with `test,e2e` only and must never deploy; the
+# `main <- dev` promotion PR (head `dev`, base `main`, labels
+# `test,e2e,deploy,sandbox-test`) is the release hop whose merge deploys
+# ci.msgmate.io. This workflow therefore accepts exactly two PR shapes:
+#   * `chore/consolidate-*` -> `dev`  (integration, no deployment), and
+#   * `dev`                 -> `main` (promotion, the only deploying hop),
+# plus the historical `chore/consolidate-*` -> `main` shape. Both `dev`
+# ("Dev (Integration) Merge Protection", required check only) and `main` block
+# the merge until the required `Run PR CI Tests and Deployments` check is green;
+# the verified-green precondition below is unchanged. This workflow posts the one required approving review on
+# behalf of a *distinct* reviewer identity once the required PR CI run has
+# finished successfully, and then merges the PR.
+#
+# Scope is deliberately narrow: only `chore/consolidate-*` PRs in this
+# repository, only when the PR is open, not a draft, targeting `main`, and only
+# after the required PR CI run concluded success.
+#
+# ci#538 merge half (this revision): approving alone was not enough, because the
+# `main` ruleset ("Main (Staging) Merge Protection", 1 required approving review,
+# no bypass actors) also blocks the merge itself and `workflow_run` only fires
+# from the default branch, so every green consolidation PR still waited for a
+# human click. The job therefore also *merges*, but only after it has verified
+# from the API that every check on the PR finished green and that the required
+# `Run PR CI Tests and Deployments` check concluded `success`. When the approval
+# could be posted, the merge is a normal merge (the ruleset's own gates still
+# apply). When no usable reviewer identity is configured, the merge is retried
+# with `--admin`, i.e. the ruleset is bypassed by the credential that is allowed
+# to bypass it — the green verification above (not branch protection) is then
+# the gate, so the PR is never merged with failing or pending checks.
+#
+# ci#538 follow-up hardening (kept):
+#   * a configured-but-unusable `CONSOLIDATE_APPROVER_TOKEN` is reported as the
+#     admin configuration bug it is (`gh api user` preflight; the API error text
+#     is no longer mistaken for a PR number);
+#   * PR references are validated as numbers before they are used;
+#   * the review step is idempotent: a PR that already carries an approving
+#     review from the acting identity is left alone and counts as success,
+#     instead of a duplicate-review failure (GitHub answers `422` when the same
+#     reviewer submits a second review, which happened on every re-run of a
+#     green PR);
+#   * the merge step is idempotent: an already merged PR counts as success, and a
+#     PR that is merely `BEHIND` gets its branch updated (which re-triggers CI
+#     and this workflow) instead of failing.
+#
+# Required admin step (one of, see DEVELOPMENT.md):
+#   * Preferred: create a dedicated reviewer identity (GitHub App or a
+#     fine-grained PAT with `pull_requests: write`) and store its token as the
+#     repository secret `CONSOLIDATE_APPROVER_TOKEN`. This keeps the reviewer
+#     distinct from the PR author and lets the merge proceed without a ruleset
+#     bypass. Give the same identity bypass permission on the `main` ruleset (or
+#     an admin role) if it should also drive the `--admin` fallback.
+#   * Or: enable repository setting *Actions > General > "Allow GitHub Actions to
+#     create and approve pull requests"* so the fallback `github.token`
+#     (identity `github-actions[bot]`) may approve.
+#   * Or: add a ruleset bypass actor for the consolidation automation, so the
+#     `--admin` fallback works with `github.token`.
+# If none is configured, the run warns, approves/merges with whatever permission
+# it has (the `--admin` attempt then fails and the PR stays open), and a human
+# still has to approve and merge.
+
+on:
+  workflow_run:
+    workflows:
+      - "Run PR CI Tests and Deployments"
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to approve and merge (manual escape hatch)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: auto-approve-consolidation-${{ github.event.workflow_run.head_branch || github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    name: Approve and merge green consolidation PR
+    runs-on: ubuntu-latest
+    # ci#833: the candidate PRs are resolved from the triggering commit (see the
+    # resolver step) and re-validated in the merge step, so the run-level gate is
+    # `same-repository pull_request run that concluded successfully`. It covers
+    # `chore/consolidate-*` -> `dev`/`main` and the `dev` -> `main` promotion PR.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    steps:
+      - name: Resolve candidate PRs
+        id: prs
+        env:
+          GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER_INPUT: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # The dispatch input reaches this shell; never interpolate it into
+            # the script (ci#538 review). Require a plain number and pass it
+            # through the environment instead.
+            case "$PR_NUMBER_INPUT" in
+              ''|*[!0-9]*)
+                echo "::error::pr_number must be a positive integer."
+                exit 1
+                ;;
+            esac
+            echo "prs=${PR_NUMBER_INPUT}" >> "$GITHUB_OUTPUT"
+            echo "Resolved manual PR #${PR_NUMBER_INPUT}."
+            exit 0
+          fi
+
+          head_sha="${{ github.event.workflow_run.head_sha }}"
+          # PRs whose head is this commit, restricted to the two sanctioned
+          # shapes in this repository (ci#833):
+          #   * chore/consolidate-* -> dev   (integration consolidation, no deploy)
+          #   * chore/consolidate-* -> main  (historical shape, still supported)
+          #   * dev                 -> main  (release promotion, deploys ci.msgmate.io)
+          #
+          # ci#538: pull the payload into a variable and run jq separately instead
+          # of `gh api --jq`. On an API failure (eg a bad token) `--jq` used to
+          # write the *error* JSON to stdout, which then became the "PR number"
+          # list. Capture the exit status and fail loudly instead.
+          # ci#830: the `GET /repos/{repo}/commits/{sha}/pulls` endpoint
+          # intermittently answers HTTP 200 with an empty or truncated body for
+          # this repository (reproduced 2 of 3 calls: ~1.2 kB of headers, no
+          # JSON). That surfaced here as "unexpected end of JSON input" followed
+          # by a misleading "API/credentials" failure, which blocked an
+          # otherwise green consolidation PR and starved `auto-approve`. Retry
+          # the call a bounded number of times, then fall back to listing the
+          # open consolidation PRs and matching the triggering head commit.
+          pulls_json=""
+          for attempt in 1 2 3; do
+            candidate="$(gh api --paginate \
+                 "repos/${{ github.repository }}/commits/${head_sha}/pulls" \
+                 2>/dev/null)" || candidate=""
+            # An empty array is a legitimate answer (the head commit is not a
+            # PR head yet); a truncated/empty body, an error object or `null`
+            # means the call was flaky. `gh api --paginate` emits one JSON
+            # document per page, so slurp the documents and flatten them with
+            # `add`: a single-page answer is unchanged, a multi-page answer
+            # (`[...][...]`, which is not one valid JSON document) becomes one
+            # array, and anything that is not a non-empty list of arrays is
+            # rejected and retried.
+            if normalized="$(printf '%s' "$candidate" |
+                 jq -ces 'if length > 0 and all(type == "array") then add else empty end' \
+                 2>/dev/null)"; then
+              pulls_json="$normalized"
+              break
+            fi
+            echo "::warning::Listing the PRs for ${head_sha} (attempt ${attempt}/3) returned no usable payload (ci#830)."
+            sleep "$((attempt * 5))"
+          done
+
+          if [ -z "$pulls_json" ]; then
+            echo "::warning::Falling back to the pull listing to resolve the PR for ${head_sha}."
+            fallback_json="$(gh pr list --repo "${{ github.repository }}" \
+              --state open --base main --limit 100 \
+              --json number,headRefName,headRefOid 2>/dev/null || true)"
+            pulls_json="$(jq -c --arg sha "$head_sha" --arg repo "${{ github.repository }}" \
+              '[ .[]?
+                 | select(.headRefOid == $sha)
+                 | select(.headRefName | startswith("chore/consolidate-"))
+                 | { number: .number,
+                     base: { ref: "main" },
+                     head: { ref: .headRefName, repo: { full_name: $repo } } } ]' \
+              <<< "${fallback_json:-[]}" 2>/dev/null || true)"
+            if [ -z "$pulls_json" ]; then
+              echo "::error::Failed to list the PRs for ${head_sha} (API/credentials)."
+              exit 1
+            fi
+          fi
+          if ! numbers_raw="$(
+            printf '%s' "$pulls_json" \
+              | jq -r '.[] | select(.head.repo.full_name == "${{ github.repository }}")
+                            | select(
+                                ((.base.ref == "main" or .base.ref == "dev")
+                                 and (.head.ref | startswith("chore/consolidate-")))
+                                or (.base.ref == "main" and .head.ref == "dev")
+                              )
+                            | .number'
+          )"; then
+            echo "::error::Could not parse the PR listing for ${head_sha}."
+            exit 1
+          fi
+
+          numbers=()
+          while IFS= read -r number; do
+            [ -z "$number" ] && continue
+            case "$number" in
+              ''|*[!0-9]*)
+                echo "::error::Unexpected non-numeric PR reference: ${number}"
+                exit 1
+                ;;
+            esac
+            numbers+=("$number")
+          done <<< "$numbers_raw"
+
+          if [ "${#numbers[@]}" -eq 0 ]; then
+            echo "No consolidation PR found for ${head_sha}; nothing to approve."
+            echo "prs=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          joined="$(IFS=,; echo "${numbers[*]}")"
+          echo "prs=${joined}" >> "$GITHUB_OUTPUT"
+          echo "Consolidation PRs for ${head_sha}: ${joined}"
+
+      - name: Approve and merge
+        if: ${{ steps.prs.outputs.prs != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN || github.token }}
+          HAS_APPROVER_TOKEN: ${{ secrets.CONSOLIDATE_APPROVER_TOKEN != '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          PRS: ${{ steps.prs.outputs.prs }}
+          RUN_URL: ${{ github.event.workflow_run.html_url || 'manual dispatch' }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          REPO="$REPOSITORY"
+
+          if [ "$HAS_APPROVER_TOKEN" != "true" ] && \
+             [ "$EVENT_NAME" = "workflow_run" ]; then
+            echo "::warning::No CONSOLIDATE_APPROVER_TOKEN configured; falling back to github.token. This only works when Actions are allowed to approve PRs or the ruleset has a bypass actor for it."
+          fi
+
+          # ci#538: preflight the credentials. Without this, a wrong/expired
+          # CONSOLIDATE_APPROVER_TOKEN only surfaces later as a confusing
+          # `gh pr view`/review failure (and, historically, as a bogus PR
+          # reference), which reads like a workflow bug rather than the admin
+          # configuration problem it is.
+          #
+          # The fallback path (`github.token`) is allowed to stay unknown: some
+          # installation tokens cannot resolve `/user`, and the review call
+          # itself is the authoritative check for them.
+          if ! reviewer="$(gh api user --jq '.login' 2>/dev/null)"; then
+            reviewer=""
+          fi
+          if [ -z "$reviewer" ] && [ "$HAS_APPROVER_TOKEN" = "true" ]; then
+            echo "::error::CONSOLIDATE_APPROVER_TOKEN is set but rejected by the API (HTTP 401). Re-issue the reviewer identity token: no approval can be posted until then."
+            exit 1
+          fi
+          echo "Acting as '${reviewer:-unknown}'."
+
+          failures=0
+
+          # ci#538: merge only what is provably green. The checks are read from
+          # the API (not from the triggering run) so a re-run of this workflow
+          # cannot merge a PR whose checks later failed.
+          failing_or_pending() {
+            jq -r '
+              [ .statusCheckRollup[]?
+                | select(
+                    ((.status // "") | test("^(QUEUED|IN_PROGRESS|PENDING|WAITING|REQUESTED)$"))
+                    or ((.conclusion // "") | test("^(FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE)$"))
+                    or ((.state // "") | test("^(FAILURE|ERROR|PENDING)$"))
+                  )
+                | (.name // .context // "unknown") ] | join(", ")'
+          }
+          required_ci_green() {
+            jq -r '
+              [ .statusCheckRollup[]?
+                | select((.name // .context // "") == "Run PR CI Tests and Deployments")
+                | select((.conclusion // .state // "") == "SUCCESS") ] | length'
+          }
+
+          attempt_merge() {
+            local admin_flag="$1"
+            local try
+            for try in 1 2 3; do
+              # shellcheck disable=SC2086
+              if gh pr merge "$number" --repo "$REPO" --merge $admin_flag; then
+                return 0
+              fi
+              echo "Merge attempt ${try} failed; re-checking state."
+              sleep 10
+              state="$(gh pr view "$number" --repo "$REPO" --json state --jq '.state' 2>/dev/null || echo '')"
+              [ "$state" = "MERGED" ] && return 0
+            done
+            return 1
+          }
+
+          IFS=',' read -ra numbers <<< "$PRS"
+          for number in "${numbers[@]}"; do
+            case "$number" in
+              ''|*[!0-9]*)
+                echo "::error::Unexpected non-numeric PR reference: ${number}"
+                failures=$((failures + 1))
+                continue
+                ;;
+            esac
+            echo "::group::PR #${number}"
+
+            pr_json="$(gh pr view "$number" --repo "$REPO" \
+              --json state,isDraft,baseRefName,headRefName,author,mergeable,mergeStateStatus,reviewDecision,reviews,statusCheckRollup \
+              2>/dev/null || true)"
+            if [ -z "$pr_json" ]; then
+              echo "::error::Could not read PR #${number}."
+              failures=$((failures + 1))
+              echo "::endgroup::"
+              continue
+            fi
+
+            state="$(jq -r '.state' <<< "$pr_json")"
+            if [ "$state" = "MERGED" ]; then
+              echo "PR #${number} is already merged; nothing to do."
+              echo "::endgroup::"
+              continue
+            fi
+            if [ "$state" != "OPEN" ]; then
+              echo "::warning::PR #${number} is ${state}; skipping."
+              echo "::endgroup::"
+              continue
+            fi
+            if [ "$(jq -r '.isDraft' <<< "$pr_json")" = "true" ]; then
+              echo "::warning::PR #${number} is a draft; skipping."
+              echo "::endgroup::"
+              continue
+            fi
+            # Defence in depth: the resolver already restricted the candidates,
+            # but the merge decision must not depend on that alone.
+            base_ref="$(jq -r '.baseRefName' <<< "$pr_json")"
+            head_ref="$(jq -r '.headRefName' <<< "$pr_json")"
+            allowed_shape=false
+            if [[ "$head_ref" == chore/consolidate-* ]] && \
+               { [ "$base_ref" = "main" ] || [ "$base_ref" = "dev" ]; }; then
+              allowed_shape=true
+              # ci#833: a consolidation PR against dev is the integration hop and
+              # must never carry a deployment label; the promotion PR deploys.
+              if [ "$base_ref" = "dev" ]; then
+                stray_labels="$(gh pr view "$number" --repo "$REPO" --json labels \
+                  --jq '[.labels[].name | select(. == "deploy" or . == "sandbox-test")] | join(", ")' \
+                  2>/dev/null || echo '')"
+                if [ -n "$stray_labels" ]; then
+                  echo "::warning::PR #${number} targets dev but carries deployment label(s) ${stray_labels}; not merging a dev consolidation that would deploy."
+                  echo "::endgroup::"
+                  continue
+                fi
+              fi
+            elif [ "$base_ref" = "main" ] && [ "$head_ref" = "dev" ]; then
+              # ci#833: the release promotion hop; this merge deploys ci.msgmate.io.
+              allowed_shape=true
+            fi
+            if [ "$allowed_shape" != "true" ]; then
+              echo "::warning::PR #${number} (${head_ref} -> ${base_ref}) is not an accepted consolidation/promotion shape; skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
+            author="$(jq -r '.author.login // ""' <<< "$pr_json")"
+
+            bad_checks="$(failing_or_pending <<< "$pr_json")"
+            if [ -n "$bad_checks" ]; then
+              echo "::warning::PR #${number} is not green (${bad_checks}); not merging."
+              echo "::endgroup::"
+              continue
+            fi
+            if [ "$(required_ci_green <<< "$pr_json")" -lt 1 ]; then
+              echo "::warning::PR #${number} has no successful 'Run PR CI Tests and Deployments' check; not merging."
+              echo "::endgroup::"
+              continue
+            fi
+
+            merge_state="$(jq -r '.mergeStateStatus // ""' <<< "$pr_json")"
+            if [ "$merge_state" = "BEHIND" ]; then
+              # Strict required status checks demand an up-to-date branch. Update
+              # it and let the resulting CI run re-enter this workflow.
+              echo "PR #${number} is behind main; updating the branch and stopping here."
+              if gh api --method PUT "repos/${REPO}/pulls/${number}/update-branch" >/dev/null; then
+                echo "Branch of PR #${number} updated."
+              else
+                echo "::error::Could not update the branch of PR #${number}."
+                failures=$((failures + 1))
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+            if [ "$merge_state" = "DIRTY" ]; then
+              echo "::error::PR #${number} has conflicts with main; a human must resolve them."
+              failures=$((failures + 1))
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Review step (idempotent, non-fatal): a self-authored PR cannot be
+            # approved by its author, and a missing/duplicate review is not an
+            # error as long as the merge succeeded afterwards.
+            approved="false"
+            if [ -n "$reviewer" ] && [ "$reviewer" = "$author" ]; then
+              echo "PR #${number} is authored by '${reviewer}'; cannot self-approve, relying on the ruleset bypass for the merge."
+            else
+              existing_approvers="$(jq -r '.reviews[]? | select(.state == "APPROVED") | .author.login' <<< "$pr_json" 2>/dev/null || true)"
+              if [ -n "$reviewer" ] && grep -qxF "$reviewer" <<< "$existing_approvers"; then
+                echo "PR #${number} is already approved by '${reviewer}'."
+                approved="true"
+              elif gh pr review "$number" --repo "$REPO" --approve \
+                     --body "Auto-approved: the required PR CI run (${RUN_URL}) succeeded and this is a consolidation PR (ci#538)." 2>/dev/null; then
+                echo "Approved PR #${number} as '${reviewer:-unknown}'."
+                approved="true"
+              else
+                echo "::warning::Could not post an approving review on PR #${number} (missing reviewer identity or permission); trying the ruleset bypass for the merge."
+              fi
+            fi
+
+            if [ "$approved" = "true" ] && attempt_merge ""; then
+              echo "Merged PR #${number}."
+            elif attempt_merge "--admin"; then
+              echo "Merged PR #${number} with --admin (ruleset bypass); green checks were verified above."
+            else
+              echo "::error::Could not merge PR #${number} (no usable approval and no ruleset bypass for the acting identity)."
+              failures=$((failures + 1))
+              echo "::endgroup::"
+              continue
+            fi
+
+            gh pr comment "$number" --repo "$REPO" \
+              --body "Autonomously merged by the consolidation workflow (ci#538): required CI green, checks verified via the API. CI run: ${RUN_URL}" \
+              >/dev/null 2>&1 || echo "::warning::Merged PR #${number} but could not post the audit comment."
+            echo "::endgroup::"
+          done
+          if [ "$failures" -ne 0 ]; then
+            echo "::error::${failures} PR(s) could not be auto-approved/merged."
+            exit 1
+          fi

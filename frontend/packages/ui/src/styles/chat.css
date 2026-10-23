@@ -77,6 +77,16 @@
     @apply relative flex h-full min-h-0 w-full max-w-[900px] flex-col;
   }
 
+  /* On native/mobile the chat-details region (interaction header plus an
+     integration's own card, which can include a shell terminal) can grow taller
+     than the viewport and push the message list and composer off-screen. Bound
+     the region and let it scroll so everything stays reachable. */
+  html[data-openchat-runtime="mobile"] .chat-details-region {
+    max-height: 45vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .message-composer {
     @apply flex w-full max-w-[900px] flex-col gap-2 rounded-3xl border border-border/80 bg-card p-2 text-card-foreground shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.04] md:p-3;
   }
@@ -116,20 +126,52 @@
     @apply flex flex-wrap gap-2;
   }
 
+  /* Drag-and-drop affordance: covers the composer while files are dragged over
+     it. Matches the composer's radius so the dashed border reads as a dropzone. */
+  .message-composer-dropzone {
+    @apply pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 rounded-3xl border-2 border-dashed border-primary bg-background/85 text-sm font-medium text-primary backdrop-blur-sm;
+  }
+
+  /* Secondary line of the dropzone: the accepted types and the per-file cap,
+     so the rules are visible at the moment of the drop rather than only after
+     a rejection. */
+  .message-composer-dropzone-hint {
+    @apply text-xs font-normal text-muted-foreground;
+  }
+
+  /* Inline rejection surface for dropped/picked files. Stays in the composer
+     (above the staged attachments) so a multi-file drop can attach the valid
+     files and still explain the ones it skipped. */
+  .message-composer-errors {
+    @apply flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive;
+  }
+
+  .message-composer-error-list {
+    @apply min-w-0 flex-1 list-disc space-y-0.5 pl-4;
+  }
+
+  .message-composer-error-item {
+    @apply break-words;
+  }
+
+  /* On small/native screens the row gutters and bubble padding shrink so the
+     transcript keeps as much horizontal room as possible; desktop keeps the
+     roomier spacing. `min-w-0`/`max-w-full` plus the markdown wrapping rules
+     below keep long unbroken tokens from forcing horizontal overflow. */
   .message-bubble-user {
-    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-secondary text-secondary-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 overflow-hidden rounded-2xl px-3 py-2.5 shadow-sm ring-1 ring-black/[0.03] bg-secondary text-secondary-foreground sm:px-4 sm:py-3 dark:ring-white/[0.04];
   }
 
   .message-bubble-bot {
-    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-card text-card-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 overflow-hidden rounded-2xl px-3 py-2.5 shadow-sm ring-1 ring-black/[0.03] bg-card text-card-foreground sm:px-4 sm:py-3 dark:ring-white/[0.04];
   }
 
   .message-bubble-outgoing {
-    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-border/70 bg-surface-elevated text-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 overflow-hidden rounded-2xl px-3 py-2.5 shadow-sm ring-1 ring-border/70 bg-surface-elevated text-foreground sm:px-4 sm:py-3 dark:ring-white/[0.04];
   }
 
   .message-bubble-pending {
-    @apply max-w-full min-w-0 rounded-2xl px-4 py-3 shadow-sm ring-1 ring-black/[0.03] bg-muted/70 text-foreground dark:ring-white/[0.04];
+    @apply max-w-full min-w-0 overflow-hidden rounded-2xl px-3 py-2.5 shadow-sm ring-1 ring-black/[0.03] bg-muted/70 text-foreground sm:px-4 sm:py-3 dark:ring-white/[0.04];
   }
 
   .message-bubble-user .chat-markdown,
@@ -165,6 +207,18 @@
 
   .chat-markdown :where(blockquote) {
     @apply my-3 border-l-2 border-border pl-3 text-muted-foreground italic;
+  }
+
+  .chat-markdown-table {
+    @apply w-full min-w-max border-collapse text-sm;
+  }
+
+  .chat-markdown-table :where(th, td) {
+    @apply border border-border px-2 py-1 text-left align-top;
+  }
+
+  .chat-markdown-table :where(thead th) {
+    @apply bg-muted/50 font-semibold;
   }
 
   .scrollbar-hidden {
