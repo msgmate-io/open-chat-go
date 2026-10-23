@@ -238,7 +238,10 @@ approves **and merges** it once it is provably green:
   fallback) still runs instead of the job dying red on a flaky API. Both paths
   exhausted is only fatal when the fallback body is unusable; a valid empty
   listing is a no-op. Pinned by
-  `development/scripts/test_auto_approve_flaky_pulls.py` in the Pin Freshness
+  `development/scripts/test_auto_approve_flaky_pulls.py` and
+  `development/scripts/test_auto_approve_stale_check_instances.py` (ci#847: the
+  newest-per-context normalization of the rollup, so a superseded CANCELLED run
+  cannot veto its green replacement) in the Pin Freshness
   Gate job.
 
 The preferred configuration is a dedicated reviewer identity (GitHub App or a
