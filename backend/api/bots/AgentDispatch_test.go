@@ -641,7 +641,7 @@ func createBotRuntimeForTest(t *testing.T, DB *gorm.DB, owner *database.User, na
 		BotUserId:           botUser.ID,
 		OwnerUserId:         owner.ID,
 		Name:                name,
-		DefaultSharedConfig: json.RawMessage(`{"model":"qwen3-4b-instruct-2507_vllm","backend":"litellm","endpoint":"https://litellm.t1m.me/v1","system_prompt":"test"}`),
+		DefaultSharedConfig: database.JSONRaw(`{"model":"qwen3-4b-instruct-2507_vllm","backend":"litellm","endpoint":"https://litellm.t1m.me/v1","system_prompt":"test"}`),
 		IsActive:            true,
 	}
 	if err := DB.Create(&runtime).Error; err != nil {
