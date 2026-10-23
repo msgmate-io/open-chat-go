@@ -1,7 +1,5 @@
 package database
 
-import "encoding/json"
-
 // BotRuntimeConfig stores owner-scoped bot metadata and default interaction config.
 type BotRuntimeConfig struct {
 	Model
@@ -12,7 +10,7 @@ type BotRuntimeConfig struct {
 	Owners              []BotRuntimeOwner `json:"owners,omitempty" gorm:"foreignKey:BotRuntimeConfigId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Name                string            `json:"name" gorm:"not null;uniqueIndex:idx_bot_owner_name"`
 	Description         string            `json:"description"`
-	DefaultSharedConfig json.RawMessage   `json:"default_shared_config" gorm:"type:jsonb"`
+	DefaultSharedConfig JSONRaw           `json:"default_shared_config" gorm:"type:jsonb"`
 	IsPublic            bool              `json:"is_public" gorm:"default:false"`
 	IsActive            bool              `json:"is_active" gorm:"default:true"`
 }
