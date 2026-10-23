@@ -56,9 +56,10 @@ type SelfMessageRuntime struct {
 	now       func() time.Time
 	guard     *SelfMessageGuard
 
-	mu    sync.Mutex
-	ids   map[string]string
-	chats map[string]string
+	mu        sync.Mutex
+	ids       map[string]string
+	chats     map[string]string
+	schedules map[string]SelfMessageSchedule
 
 	stop chan struct{}
 	once sync.Once
@@ -117,6 +118,7 @@ func newSelfMessageRuntime(db *gorm.DB, client *asynq.Client, inspector *asynq.I
 		guard:     NewSelfMessageGuard(),
 		ids:       map[string]string{},
 		chats:     map[string]string{},
+		schedules: map[string]SelfMessageSchedule{},
 		stop:      make(chan struct{}),
 	}
 }
@@ -209,11 +211,19 @@ func (r *SelfMessageRuntime) registerEntry(entry SelfMessageScheduleEntry) error
 		Cron:      entry.Cron,
 		Timezone:  entry.Timezone,
 	}
+	// ci#845: the schedule inherits the ticket+lane of its chat when the chat
+	// carries the dispatcher's `issue:`/`lane:` tags. Nothing is derived from
+	// the chat id or the schedule key: an untagged chat stays un-keyed.
+	if ticket, lane, keyed := CoordinationTicketAndLane("", "", []string(chat.Tags)); keyed {
+		schedule.Ticket = ticket
+		schedule.Lane = lane
+	}
 	key := schedule.Key()
 
 	r.mu.Lock()
 	_, registered := r.ids[key]
 	previousChat := r.chats[key]
+	previousSchedule := r.schedules[key]
 	r.mu.Unlock()
 	// Idempotent reconcile: re-registering unchanged every tick would cancel and
 	// re-enqueue the same schedule on every tick.
@@ -240,7 +250,18 @@ func (r *SelfMessageRuntime) registerEntry(entry SelfMessageScheduleEntry) error
 	r.mu.Lock()
 	r.ids[key] = scheduleID
 	r.chats[key] = chat.UUID
+	r.schedules[key] = schedule
 	r.mu.Unlock()
+	if registered {
+		// ci#845: a schedule that is replaced by one naming a different
+		// ticket+lane must not keep the old lane busy (eg the chat was retagged
+		// or rotated onto a new unit of work).
+		oldKey := CoordinationDedupeKey(previousSchedule.Ticket, previousSchedule.Lane)
+		newKey := CoordinationDedupeKey(schedule.Ticket, schedule.Lane)
+		if oldKey != "" && oldKey != newKey {
+			DefaultCoordinationOwnerGuard().Release(previousSchedule.Ticket, previousSchedule.Lane)
+		}
+	}
 	logging.Infof("ci#744: self-message schedule of %s (%s, chat %s) active: cron %q", schedule.BotName, key, chat.UUID, schedule.Cron)
 	return nil
 }
@@ -262,6 +283,7 @@ func (r *SelfMessageRuntime) Tick() error {
 	r.mu.Unlock()
 
 	now := r.now()
+	coordinationGuard := DefaultCoordinationOwnerGuard()
 	for key, scheduleID := range active {
 		nextRun, ok := r.scheduler.NextRun(key)
 		if !ok || nextRun.After(now) {
@@ -275,9 +297,33 @@ func (r *SelfMessageRuntime) Tick() error {
 			logging.Infof("ci#744: self-message of %s deferred: %s", key, reason)
 			continue
 		}
+		// ci#845: a scheduled turn is a dispatch of its ticket+lane too, so it
+		// shares the owner key of the other dispatcher paths. It is owner-keyed
+		// only when it names a ticket or a lane (through the chat's
+		// `issue:`/`lane:` tags): an unnamed schedule must not invent an owner,
+		// and it never starts a second interaction for a live one.
+		ownerKeyed := schedule.Ticket != "" || schedule.Lane != ""
+		if ownerKeyed {
+			coordination := coordinationGuard.Decide(CoordinationDispatchRequest{
+				Ticket: schedule.Ticket,
+				Lane:   schedule.Lane,
+				Source: CoordinationSourceSelfMessageSchedule,
+			})
+			if coordination.Refused() {
+				logging.Infof("ci#845: self-message of %s deferred (ticket %q, lane %q): %s", key, schedule.Ticket, schedule.Lane, coordination.Reason)
+				continue
+			}
+			if !coordination.StartsNewInteraction() {
+				logging.Infof("ci#845: self-message of %s re-attaches to the live owner %q of %s instead of a second interaction (%s): %s", key, coordination.InteractionUUID, coordination.OwnerKey, coordination.Source, coordination.Reason)
+				continue
+			}
+		}
 		_, won, err := r.scheduler.Fire(key, scheduleID)
 		if err != nil {
 			r.guard.RecordError(key, err)
+			if ownerKeyed {
+				coordinationGuard.Release(schedule.Ticket, schedule.Lane)
+			}
 			logging.Errorf("ci#744: self-message fire of %s failed: %v", key, err)
 			continue
 		}
@@ -286,15 +332,28 @@ func (r *SelfMessageRuntime) Tick() error {
 			continue
 		}
 		r.guard.RecordFire(key, nextRun)
+		// The owner key stays held by this schedule: Decide above either
+		// registered it for the first time or recognised this schedule as the
+		// existing owner, so the next run of the same ticket+lane is accepted as
+		// the same owner while a workflow dispatch of the same ticket+lane
+		// re-attaches instead of starting a duplicate interaction. The owner is
+		// given back only when the schedule is forgotten.
 	}
 	return reconcileErr
 }
 
 func (r *SelfMessageRuntime) forget(key string) {
 	r.mu.Lock()
+	schedule, hasSchedule := r.schedules[key]
 	delete(r.ids, key)
 	delete(r.chats, key)
+	delete(r.schedules, key)
 	r.mu.Unlock()
+	if hasSchedule {
+		// ci#845: a forgotten schedule no longer owns its ticket+lane, so the
+		// lane is free for the dispatcher again.
+		DefaultCoordinationOwnerGuard().Release(schedule.Ticket, schedule.Lane)
+	}
 	r.guard.Drop(key)
 }
 

@@ -2,6 +2,7 @@ package bots
 
 import (
 	"backend/api/chats"
+	"backend/api/msgmate"
 	"backend/chatstate"
 	"backend/database"
 	"backend/nativecoder"
@@ -97,7 +98,14 @@ type AgentDispatchRequest struct {
 	DedupeKey string `json:"dedupe_key,omitempty"`
 	// Force starts a new interaction even when DedupeKey matches a live one,
 	// for the rare case a duplicate is explicitly wanted.
-	Force               bool                   `json:"force,omitempty"`
+	Force bool `json:"force,omitempty"`
+	// Ticket and Lane name the unit of work this dispatch owns (ci#845). A
+	// dispatch that names a ticket+lane holds that owner key: a second dispatch
+	// of the same ticket+lane re-attaches to the live interaction instead of
+	// starting another agent, and a dispatch with a lane but no ticket is
+	// refused. An unnamed dispatch keeps the plain behaviour.
+	Ticket              string                 `json:"ticket,omitempty"`
+	Lane                string                 `json:"lane,omitempty"`
 	Workspace           string                 `json:"workspace,omitempty"`
 	Sandbox             string                 `json:"sandbox,omitempty"`
 	ConfigOverrides     map[string]interface{} `json:"config_overrides,omitempty"`
@@ -241,6 +249,96 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ci#845: enforce the ticket+lane owner key on the live dispatch path. One
+	// ticket+lane may only ever have one owner, so a second dispatch either
+	// re-attaches to the live interaction or is refused; nothing is created for
+	// an owner that is already live.
+	coordinationTicket, coordinationLane, coordinationKeyed := msgmate.CoordinationTicketAndLane(req.Ticket, req.Lane, []string(dispatchTags))
+	coordinationKey := ""
+	var coordinationGuard *msgmate.CoordinationOwnerGuard
+	var coordinationDecision msgmate.CoordinationDispatchDecision
+	if coordinationKeyed {
+		coordinationKey = msgmate.CoordinationDedupeKey(coordinationTicket, coordinationLane)
+		if coordinationKey == "" {
+			respondAgentJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"success": false,
+				"error":   "a dispatch that names a lane must also name its ticket",
+				"reason":  msgmate.CoordinationReasonEmptyTicket,
+			})
+			return
+		}
+		// Persist the owner key as a durable tag as well, so a later dispatch
+		// finds the owner even when the in-process table was restarted.
+		if dedupeKey == "" {
+			dedupeKey = dedupeKeyTag(coordinationKey)
+			dispatchTags = database.NormalizeChatTags(append([]string(dispatchTags), dedupeKey))
+		}
+		if !req.Force {
+			if existing, ok := liveInteractionForDedupeKey(DB, queueInspector, sessionUser, actingUser, dedupeKey); ok {
+				view := agentInteractionView(DB, queueInspector, actingUser, existing)
+				respondAgentJSON(w, http.StatusOK, map[string]interface{}{
+					"success":                true,
+					"deduplicated":           true,
+					"dedupe_key":             dedupeKey,
+					"owner_key":              coordinationKey,
+					"coordination_reason":    msgmate.CoordinationReasonReattached,
+					"chat_uuid":              view.ChatUUID,
+					"bot":                    view.Bot,
+					"bot_uuid":               view.BotUUID,
+					"acting_user_uuid":       view.ActingUserUUID,
+					"acting_user_username":   view.ActingUserUsername,
+					"tags":                   view.Tags,
+					"state":                  view.State,
+					"is_active":              view.IsActive,
+					"auto_continue":          view.AutoContinue,
+					"shared_interaction_url": "",
+				})
+				return
+			}
+		}
+		coordinationGuard = msgmate.DefaultCoordinationOwnerGuard()
+		coordinationDecision = coordinationGuard.Decide(msgmate.CoordinationDispatchRequest{
+			Ticket: coordinationTicket,
+			Lane:   coordinationLane,
+			Source: msgmate.CoordinationSourceWorkflowDispatch,
+			Force:  req.Force,
+		})
+		if coordinationDecision.Refused() {
+			respondAgentJSON(w, http.StatusConflict, map[string]interface{}{
+				"success":   false,
+				"error":     "this ticket+lane already has a live owner",
+				"reason":    coordinationDecision.Reason,
+				"owner_key": coordinationKey,
+				"chat_uuid": coordinationDecision.InteractionUUID,
+			})
+			return
+		}
+		if coordinationDecision.Reattached() {
+			payload := map[string]interface{}{
+				"success":             true,
+				"deduplicated":        true,
+				"dedupe_key":          dedupeKey,
+				"owner_key":           coordinationKey,
+				"coordination_reason": coordinationDecision.Reason,
+				"chat_uuid":           coordinationDecision.InteractionUUID,
+			}
+			if existing, ok := liveInteractionForDedupeKey(DB, queueInspector, sessionUser, actingUser, dedupeKey); ok {
+				view := agentInteractionView(DB, queueInspector, actingUser, existing)
+				payload["chat_uuid"] = view.ChatUUID
+				payload["bot"] = view.Bot
+				payload["bot_uuid"] = view.BotUUID
+				payload["acting_user_uuid"] = view.ActingUserUUID
+				payload["acting_user_username"] = view.ActingUserUsername
+				payload["tags"] = view.Tags
+				payload["state"] = view.State
+				payload["is_active"] = view.IsActive
+				payload["auto_continue"] = view.AutoContinue
+			}
+			respondAgentJSON(w, http.StatusOK, payload)
+			return
+		}
+	}
+
 	overrides := req.ConfigOverrides
 	if overrides == nil {
 		overrides = map[string]interface{}{}
@@ -269,8 +367,21 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 
 	response, err := createBotInteraction(DB, queueClient, queueInspector, actingUser, runtime, createReq, requestBaseURL(r))
 	if err != nil {
+		if coordinationGuard != nil {
+			// ci#845: a dispatch that failed to create its interaction must not
+			// wedge the ticket+lane for later dispatches.
+			coordinationGuard.Release(coordinationTicket, coordinationLane)
+		}
 		writeCreateInteractionError(w, err)
 		return
+	}
+	if coordinationGuard != nil {
+		coordinationGuard.Register(msgmate.CoordinationDispatchRequest{
+			Ticket:          coordinationTicket,
+			Lane:            coordinationLane,
+			Source:          msgmate.CoordinationSourceWorkflowDispatch,
+			InteractionUUID: response.ChatUUID,
+		}, response.ChatUUID)
 	}
 
 	view := AgentInteractionView{
@@ -291,6 +402,8 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 		"success":                true,
 		"deduplicated":           false,
 		"dedupe_key":             dedupeKey,
+		"owner_key":              coordinationKey,
+		"coordination_reason":    coordinationDecision.Reason,
 		"requires_confirmation":  response.RequiresConfirmation,
 		"chat_uuid":              response.ChatUUID,
 		"bot":                    view.Bot,

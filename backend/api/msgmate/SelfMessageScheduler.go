@@ -55,6 +55,12 @@ type SelfMessageSchedule struct {
 	Jitter time.Duration `json:"jitter,omitempty"`
 	// MaxRuns retires the schedule after that many delivered runs (0 = unlimited).
 	MaxRuns int `json:"max_runs,omitempty"`
+	// Ticket and Lane are the ci#845 owner key of the schedule's work: they are
+	// taken from the `issue:`/`lane:` tags of the schedule's chat, never invented
+	// from the schedule key or the chat id. A schedule that names neither is not
+	// owner-keyed and keeps its legacy behaviour.
+	Ticket string `json:"ticket,omitempty"`
+	Lane   string `json:"lane,omitempty"`
 }
 
 // Key identifies the single-active slot a schedule belongs to: one slot per bot.
