@@ -38,3 +38,28 @@ integration repository, or by asking a coder agent to quote a page through
 `coder_docs`. Do not add those sections back to this file.
 
 No secrets, tokens or user data are recorded here by design.
+
+## Lane ownership and reconcile (ci#747 RC7 / QW4)
+
+One lane of one ticket has exactly one owning interaction. The owner key is
+derived by `backend/coordination` (`OwnerKey`/`OwnerKeyTag`), which is the single
+definition the dispatcher stamps and the reconcile step reads:
+
+- the key is `owner:<ticket>:<lane>`, lowercased and whitespace-normalised, so
+  `ci#747`, `CI#747` and `ci#747 ` are the same owner and cannot create a second
+  interaction;
+- an omitted lane is the `default` lane; different lanes of one ticket are
+  deliberately separate owners;
+- a dispatch that names no ticket has no owner key and is never de-duplicated -
+  it is reported as unidentified instead of silently adopting an unrelated lane.
+
+`coordination.Reconcile` runs the reconcile part of every run: it maps
+interactions onto owner keys, keeps the live interaction as owner of a contested
+lane (deterministic tie-break, so the report cannot flap between runs) and
+reports every duplicate lane and every unidentified interaction. A non-clean
+report is the signal to re-dispatch the owned ticket through the GitHub workflow
+rather than to create another interaction.
+
+Minimum identity scope: an owner may always list, continue and stop the
+interactions it dispatched; de-duplicating a lane it does not own is done through
+the workflow re-dispatch route, so no direct chat ownership is required.
