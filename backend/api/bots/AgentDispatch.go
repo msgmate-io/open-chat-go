@@ -3,6 +3,7 @@ package bots
 import (
 	"backend/api/chats"
 	"backend/chatstate"
+	"backend/coordination"
 	"backend/database"
 	"backend/nativecoder"
 	"backend/server/util"
@@ -364,11 +365,31 @@ func (h *BotsHandler) AgentList(w http.ResponseWriter, r *http.Request) {
 		views = append(views, view)
 	}
 
+	// The listing is also the lead's reconcile view (ci#747 RC7/QW4): it reports
+	// the (ticket, lane) owner of every lane and every lane that more than one
+	// live interaction holds, so a duplicate is visible in the same call the lead
+	// already makes to find its work - instead of being inferred by hand.
+	reconcileInput := make([]coordination.TaggedInteraction, 0, len(views))
+	for _, view := range views {
+		reconcileInput = append(reconcileInput, coordination.TaggedInteraction{
+			InteractionUUID: view.ChatUUID,
+			Tags:            view.Tags,
+			Active:          view.IsActive,
+		})
+	}
+	reconcile := coordination.Reconcile(reconcileInput)
+
 	respondAgentJSON(w, http.StatusOK, map[string]interface{}{
 		"page":  page,
 		"limit": limit,
 		"total": len(views),
 		"rows":  views,
+		"coordination": map[string]interface{}{
+			"clean":        reconcile.Clean(),
+			"owners":       reconcile.Owners,
+			"duplicates":   reconcile.Duplicates,
+			"unidentified": reconcile.Unidentified,
+		},
 	})
 }
 
