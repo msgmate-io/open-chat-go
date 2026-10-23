@@ -45,20 +45,25 @@ One lane of one ticket has exactly one owning interaction. The owner key is
 derived by `backend/coordination` (`OwnerKey`/`OwnerKeyTag`), which is the single
 definition the dispatcher stamps and the reconcile step reads:
 
-- the key is `owner:<ticket>:<lane>`, lowercased and whitespace-normalised, so
-  `ci#747`, `CI#747` and `ci#747 ` are the same owner and cannot create a second
-  interaction;
+- the key is `owner:<ticket>:<lane>`, lowercased and whitespace-normalised, and
+  the ticket is canonicalised, so `ci#747`, `CI#747`, `ci#747 `, `issue:747`,
+  `gh#747` and `#747` are the same owner and cannot create a second interaction;
 - an omitted lane is the `default` lane; different lanes of one ticket are
   deliberately separate owners;
+- declaring a lane is the opt-in that makes ownership a hard gate. A dispatch
+  without a lane tag keeps the historical behaviour (only an explicit `DedupeKey`
+  de-duplicates), so the lead can still run several un-laned workers for one
+  ticket; `force: true` is the recovery route when the existing owner is stalled;
 - a dispatch that names no ticket has no owner key and is never de-duplicated -
   it is reported as unidentified instead of silently adopting an unrelated lane.
 
-`coordination.Reconcile` runs the reconcile part of every run: it maps
-interactions onto owner keys, keeps the live interaction as owner of a contested
-lane (deterministic tie-break, so the report cannot flap between runs) and
-reports every duplicate lane and every unidentified interaction. A non-clean
-report is the signal to re-dispatch the owned ticket through the GitHub workflow
-rather than to create another interaction.
+`coordination.Reconcile` runs the reconcile part of every run: it maps the
+interactions that opt into lane ownership onto owner keys, keeps the live
+interaction as owner of a contested lane (deterministic tie-break, so the report
+cannot flap between runs) and reports every duplicate lane and every
+unidentified interaction. Un-laned work is neither an owner nor a duplicate. A
+non-clean report is the signal to re-dispatch the owned ticket through the GitHub
+workflow rather than to create another interaction.
 
 Minimum identity scope: an owner may always list, continue and stop the
 interactions it dispatched; de-duplicating a lane it does not own is done through
