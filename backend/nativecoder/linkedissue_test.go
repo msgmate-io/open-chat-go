@@ -144,3 +144,81 @@ func TestMergeLinkedIssues(t *testing.T) {
 		t.Fatalf("mergeLinkedIssues() = %v, want %v", got, want)
 	}
 }
+
+// ci#862: a consolidation PR (branch `chore/consolidate*`) aggregates
+// already-merged leaf work whose tracker issues the auto-consolidation runner
+// closes itself, so its body may carry no standalone closing line. The gate
+// nevertheless demanded one (it only relaxed the one-'Closes' count rule),
+// which made PR #1086 red on the workflow taken from its own branch. The
+// exemption must run right after the branch-name classification and before any
+// body parsing, and the anchored pattern plus the strict rule for ordinary
+// feature/bugfix PRs must survive.
+func TestWorkflowLinkedIssueGateExemptsConsolidationPRs(t *testing.T) {
+	raw, err := os.ReadFile("../../.github/workflows/run-pr-ci-tests-and-deployments.yaml")
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	const stepName = "- name: Require a linked open-chat-go-ci leaf issue"
+	workflow := string(raw)
+	stepStart := strings.Index(workflow, stepName)
+	if stepStart < 0 {
+		t.Fatal("linked-issue gate step not found in the workflow")
+	}
+	rest := workflow[stepStart:]
+	if next := strings.Index(rest[len(stepName):], "\n      - name: "); next >= 0 {
+		rest = rest[:len(stepName)+next]
+	}
+
+	classification := "chore/consolidate*) consolidation=true ;;"
+	exemption := "if [ \"$consolidation\" = true ]; then"
+	exemptionBody := "echo \"Consolidation PR: linked-issue gate exempt.\""
+	countRule := "if [ \"$consolidation\" != true ] && [ \"${#issues[@]}\" -ne 1 ]; then"
+	anchoredPattern := "grep -oiE '^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$'"
+
+	for _, want := range []string{
+		classification,
+		exemption,
+		exemptionBody,
+		// The pre-existing exemptions and the strict rule are untouched.
+		"echo \"Production promotion PR: linked-issue gate exempt.\"",
+		"echo \"Dev promotion PR: linked-issue gate exempt.\"",
+		countRule,
+		anchoredPattern,
+	} {
+		if !strings.Contains(rest, want) {
+			t.Errorf("gate step no longer contains %q", want)
+		}
+	}
+
+	caseIdx := strings.Index(rest, classification)
+	exemptIdx := strings.Index(rest, exemption)
+	parseIdx := strings.Index(rest, "mapfile -t issues")
+	if caseIdx < 0 || exemptIdx < 0 || parseIdx < 0 {
+		t.Fatalf("could not locate gate phases (case=%d exempt=%d parse=%d)", caseIdx, exemptIdx, parseIdx)
+	}
+	if !(caseIdx < exemptIdx && exemptIdx < parseIdx) {
+		t.Errorf("consolidation exemption must sit between the branch classification (%d) and the body parsing (%d); found it at %d", caseIdx, parseIdx, exemptIdx)
+	}
+
+	// The exemption fires before the PR body is parsed, so a consolidation PR
+	// never reaches the standalone-'Closes' requirement below.
+	if parseIdx <= exemptIdx {
+		t.Fatalf("the body parsing (%d) must come after the consolidation exemption (%d)", parseIdx, exemptIdx)
+	}
+	// `$consolidation` may only be read by the exemption and by the relaxed
+	// count rule for ordinary PRs; the body parsing, the "needs a standalone
+	// 'Closes' line" error and the per-issue API checks stay unconditional.
+	afterParse := rest[parseIdx:]
+	if got := strings.Count(afterParse, "$consolidation"); got != 1 {
+		t.Errorf("the post-parse part of the gate reads $consolidation %d times, want exactly the count rule once", got)
+	}
+	if !strings.Contains(afterParse, countRule) {
+		t.Error("the one-standalone-'Closes' count rule for feature/bugfix PRs changed")
+	}
+	if !strings.Contains(afterParse, "::error::PR body needs a standalone 'Closes msgmate-io/open-chat-go-ci#N' line.") {
+		t.Error("the standalone-'Closes' requirement for feature/bugfix PRs is no longer enforced")
+	}
+	if !strings.Contains(afterParse, "is an umbrella issue; link a leaf child issue.") {
+		t.Error("the per-issue leaf checks after the standalone-'Closes' rule changed")
+	}
+}
