@@ -96,7 +96,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pagination := database.Pagination{Page: 1, Limit: 40}
+	pagination := database.Pagination{Page: 1, Limit: 40, Sort: messageListSort}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, err := strconv.Atoi(pageParam); err == nil && page > 0 {
 			pagination.Page = page
@@ -105,7 +105,7 @@ func (h *ChatsHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
 		if limit, err := strconv.Atoi(limitParam); err == nil && limit > 0 {
-			pagination.Limit = limit
+			pagination.Limit = clampMessageListLimit(limit)
 		}
 	}
 

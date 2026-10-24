@@ -408,7 +408,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 		return
 	}
 
-	pagination := database.Pagination{Page: 1, Limit: 40}
+	pagination := database.Pagination{Page: 1, Limit: 40, Sort: messageListSort}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, parseErr := strconv.Atoi(pageParam); parseErr == nil && page > 0 {
 			pagination.Page = page
@@ -416,7 +416,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 	}
 	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
 		if limit, parseErr := strconv.Atoi(limitParam); parseErr == nil && limit > 0 {
-			pagination.Limit = limit
+			pagination.Limit = clampMessageListLimit(limit)
 		}
 	}
 
