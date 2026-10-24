@@ -80,6 +80,20 @@ func setupIndexTestDB(t *testing.T, createAccountStates bool) *gorm.DB {
 	return DB
 }
 
+// The migration is DDL-only and targets tables that are registered later in the
+// startup list (streaming_messages, chat_pins) as well as integration tables that
+// RegisterExternalModels appends at runtime, so it must stay last - running it
+// earlier would silently skip those tables and leave the read paths unindexed.
+func TestChatMessageIndexMigrationRunsLast(t *testing.T) {
+	if len(Migrations) == 0 {
+		t.Fatal("the migration list is empty")
+	}
+	last := Migrations[len(Migrations)-1]
+	if _, ok := last.(ChatMessageIndexMigration); !ok {
+		t.Fatalf("ChatMessageIndexMigration must be last in the startup migration list, found %T", last)
+	}
+}
+
 func TestChatMessageIndexMigrationCreatesReadIndexes(t *testing.T) {
 	DB := setupIndexTestDB(t, true)
 
