@@ -93,16 +93,18 @@ Closes msgmate-io/open-chat-go-ci#123
 ```
 
 The `PR Test Merge Requirement` rejects a feature/bugfix PR without exactly one
-open, non-umbrella linked issue, and it rejects a consolidation PR without at
-least one closing link. A large issue is split into child leaf issues before the
-work starts; phase PRs for the same issue are not used. Umbrella and tracker
-issues carry the `umbrella` label and are closed manually once every child is
-done.
+open, non-umbrella linked issue. A large issue is split into child leaf issues
+before the work starts; phase PRs for the same issue are not used. Umbrella and
+tracker issues carry the `umbrella` label and are closed manually once every
+child is done.
 
 GitHub cannot auto-close an issue in another repository, so the consolidation
 runner closes every linked leaf issue after the batch merges (a direct merge
 closes them in the same step). The only exemptions are production promotion PRs
-(base `production`), `no-issue` maintenance PRs and `dependencies` updates.
+(base `production`), the `dev` -> `main` promotion, consolidation PRs
+(`chore/consolidate*`, exempt from the whole linked-issue requirement since
+ci#862: they aggregate already-merged leaf work and may carry no closing line at
+all), `no-issue` maintenance PRs and `dependencies` updates.
 
 Provider-side sandbox failures are classified, not guessed: the sandbox benchmark
 workflow sources `development/scripts/sandbox_provider_failure.sh` to tell a
