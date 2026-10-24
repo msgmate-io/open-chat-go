@@ -294,6 +294,9 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ActionTaskDismissal{}},
 	TableMigration{&WorkspaceLease{}},
 	GrantDefaultPermissionsMigration{},
+	// IndexMigration runs last so every table it indexes exists, and is
+	// idempotent (CREATE INDEX IF NOT EXISTS) for repeated boots (ci#850).
+	IndexMigration{},
 }
 
 func RegisterExternalModels(models ...interface{}) {
