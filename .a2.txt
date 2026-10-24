@@ -1,0 +1,15 @@
+22:type NetworkPlanStatus struct {
+82:func leversFromEnv() map[string]string {
+96:func baseNetworkPlanStatus(policy NetworkPolicy, now time.Time) NetworkPlanStatus {
+121:func planNotes(policy NetworkPolicy) []string {
+147:func (a *PortAllocator) StatusAt(now time.Time) NetworkPlanStatus {
+154:func (a *PortAllocator) Status() NetworkPlanStatus { return a.StatusAt(time.Now()) }
+156:func (a *PortAllocator) statusLocked(now time.Time) NetworkPlanStatus {
+178:func plansByBlockIndex(assigned map[string]WorkspaceNetworkPlan) []WorkspaceNetworkPlan {
+187:func portGeometry(policy NetworkPolicy, slots int) string {
+198:func publishedBlockPtr(policy NetworkPolicy, slots int) *PoolPortBlock {
+206:func exhaustionNote(policy NetworkPolicy, slots int) string {
+217:func NetworkPlanStatusFromEnv(now time.Time) NetworkPlanStatus {
+246:func DefaultAllocator() (*PortAllocator, error) {
+259:func SetDefaultAllocator(alloc *PortAllocator) {
+271:func ResolveNetworkPlanStatus(now time.Time) NetworkPlanStatus {

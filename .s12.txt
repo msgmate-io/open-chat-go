@@ -1,0 +1,10 @@
+=SandboxPoolNetwork.go=
+21:	GeneratedAt string `json:"generated_at"`
+24:	Plan sandboxpool.NetworkPlanStatus `json:"plan"`
+35:func GetSandboxPoolNetworkStatus(w http.ResponseWriter, r *http.Request) {
+42:		Plan:        sandboxpool.ResolveNetworkPlanStatus(time.Now()),
+=routes=
+backend/server/routing.go:511:	v1PrivateApis.HandleFunc("GET /admin/provider-admission", admin.GetProviderAdmissionStatus)
+backend/server/routing.go:516:	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-egress", admin.GetSandboxPoolEgressStatus)
+backend/server/routing.go:520:	v1PrivateApis.HandleFunc("GET /admin/sandbox-pool-network", admin.GetSandboxPoolNetworkStatus)
+backend/server/routing.go:521:	v1PrivateApis.HandleFunc("POST /admin/sandbox-pool-egress/report", admin.IngestSandboxPoolEgressReport)

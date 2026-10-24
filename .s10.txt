@@ -1,0 +1,48 @@
+=A netisolation errors=
+backend/sandboxpool/cgroup.go:104:	ErrWorkspaceCgroupUnavailable = errors.New("sandbox pool cgroup: per-workspace cgroup guard is not available on this pool")
+backend/sandboxpool/cgroup.go:107:	ErrInvalidCgroupPolicy = errors.New("sandbox pool cgroup: invalid per-workspace cgroup policy")
+backend/sandboxpool/cgroup.go:520:		status.PolicyError = err.Error()
+backend/sandboxpool/cgroup.go:531:		status.PolicyError = fmt.Sprintf("%v: %s", ErrWorkspaceCgroupUnavailable, strings.Join(host.Blockers, "; "))
+backend/sandboxpool/egress.go:113:	ErrPoolEgressUnhealthy = errors.New("sandbox pool egress gate: pool is not egress-ready")
+backend/sandboxpool/egress.go:115:	ErrPoolEgressInvalidReport = errors.New("sandbox pool egress gate: invalid probe report")
+backend/sandboxpool/egress.go:119:var errNoAddresses = errors.New("resolver returned no addresses")
+backend/sandboxpool/egress.go:488:				result.Error = err.Error()
+backend/sandboxpool/egress.go:491:				result.Error = err.Error()
+backend/sandboxpool/egress.go:502:				result.Error = err.Error()
+backend/sandboxpool/egress.go:544:		g.lastError = ""
+backend/sandboxpool/egress.go:549:	g.lastError = report.Summary()
+backend/sandboxpool/netisolation.go:160:	ErrPoolNetworkCapacity = errors.New("sandbox pool network: no free port block for another workspace")
+backend/sandboxpool/netisolation.go:163:	ErrSharedNetnsDenied = errors.New("sandbox pool network: shared network namespace is not allowed for this repo/scope")
+backend/sandboxpool/netisolation.go:166:	ErrWorkspaceIsolationUnavailable = errors.New("sandbox pool network: per-workspace network namespace is not available on this pool")
+backend/sandboxpool/netisolation.go:168:	ErrInvalidNetworkPolicy = errors.New("sandbox pool network: invalid network policy")
+backend/sandboxpool/netisolation.go:170:	ErrInvalidWorkspaceUUID = errors.New("sandbox pool network: invalid workspace uuid")
+backend/sandboxpool/netplanstatus.go:222:		status.PolicyError = err.Error()
+backend/sandboxpool/netplanstatus.go:250:		defaultAllocator, defaultAllocatorErr = NewPortAllocator(NetworkPolicyFromEnv())
+backend/sandboxpool/netplanstatus.go:263:	defaultAllocatorErr = nil
+backend/sandboxpool/netplanstatus.go:282:	if err != nil && status.PolicyError == "" {
+backend/sandboxpool/netplanstatus.go:283:		status.PolicyError = err.Error()
+backend/sandboxpool/portaudit.go:417:		a.lastError = ""
+backend/sandboxpool/portaudit.go:419:		a.lastError = audit.Reason
+=B publish/portblock funcs=
+37:const (
+53:type PoolPortBlock struct {
+55:	Mode string `json:"mode"`
+57:	Base int `json:"base"`
+59:	Last int `json:"last"`
+61:	BlockSize int `json:"block_size"`
+63:	Slots int `json:"slots"`
+65:	LoopbackPrefix string `json:"loopback_prefix,omitempty"`
+67:	LoopbackAliases bool `json:"loopback_aliases"`
+71:func (b PoolPortBlock) Valid() bool {
+76:func (b PoolPortBlock) Size() int {
+84:func (b PoolPortBlock) Contains(port int) bool {
+89:func (b PoolPortBlock) String() string {
+99:func (b PoolPortBlock) LoopbackFor(slot int) string {
+112:func (b PoolPortBlock) Env() map[string]string {
+127:func (b PoolPortBlock) HealthCheck(poolHost string) string {
+143:func (b PoolPortBlock) PublishLines() []string {
+164:func (b PoolPortBlock) envList() string {
+178:func policySlots(policy NetworkPolicy) int {
+188:func resolvePoolPortBlock(policy NetworkPolicy, slots int) (PoolPortBlock, bool) {
+214:func ResolvePoolPortBlock(policy NetworkPolicy) (PoolPortBlock, bool) {
+224:func (a *PortAllocator) PublishedPortBlock() (PoolPortBlock, bool) {

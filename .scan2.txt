@@ -1,0 +1,131 @@
+== status ==
+?? .scan.txt
+?? .scan2.txt
+== scripts ==
+augment_swagger_with_tool_typed_endpoints.py
+build_ai_process_tests_snapshot.py
+build_static_frontend.sh
+build_tools.sh
+bump_backend_version.sh
+check_coder_sandbox_readiness.sh
+check_frozen_workspace.py
+check_integration_decoupling.py
+check_pin_freshness.py
+ci_failure_relay.py
+coder_docker.sh
+commit_and_push_subrepos.sh
+fix_dev_permissions.sh
+integration_module_ci.sh
+integration_sync_entrypoint.py
+pr_ci_superseded_reconcile.py
+redis_chart_readiness_contract.py
+redis_compose_readiness_contract.py
+redis_readiness_contract.py
+refresh_docs_snapshots.py
+render_comment_template.py
+resolve_live_pr_labels.sh
+run_ai_process_tests_mock.sh
+sandbox-memory-inventory.sh
+sandbox-pool-egress-gate.sh
+sandbox-pool-network-preflight.sh
+sandbox-workspace-netns.sh
+sandbox_provider_failure.sh
+test_auto_approve_flaky_pulls.py
+test_auto_approve_stale_check_instances.py
+test_ci_failure_relay.py
+test_client.py
+test_deploy_waiter_run_status.py
+test_pr_ci_ai_mock_gate.py
+test_pr_ci_dev_base_deploy_guard.py
+test_pr_ci_progress_comment_target.py
+test_pr_ci_superseded_reconcile.py
+test_redis_chart_readiness_contract.py
+test_redis_compose_readiness_contract.py
+test_redis_readiness_contract.py
+== netns symbols ==
+46:const (
+58:const (
+72:const (
+77:const (
+107:var DefaultNetnsEgressHosts = []string{
+114:var (
+129:func IsNetnsPlacementFailure(err error) bool {
+138:type RepoScope struct {
+152:func (s RepoScope) SensitiveReasons() []string {
+168:func (s RepoScope) Sensitive() bool { return len(s.SensitiveReasons()) > 0 }
+171:type PlacementRequest struct {
+189:type Placement struct {
+209:func PlacementEnvOverrides(req *PlacementRequest) {
+221:func envFlag(name string) bool {
+236:func DecidePlacement(req PlacementRequest) (Placement, error) {
+285:func repoLabel(repo string) string {
+296:type SlirpSidecar struct {
+310:func DefaultSlirpSidecar() SlirpSidecar {
+327:func (s SlirpSidecar) Validate() error {
+361:func (s SlirpSidecar) Argv(pid int) []string {
+371:type NetnsPlan struct {
+403:func NetnsName(workspaceUUID string) (string, error) {
+415:func NewNetnsPlan(identity WorkspaceIdentity) (NetnsPlan, error) {
+449:func (p NetnsPlan) Validate() error {
+500:func JoinsNetns(argv []string, namespace string) bool {
+519:func WrapShellForNetns(spec *ShellSpec, plan NetnsPlan) error {
+546:const (
+554:func (p NetnsPlan) String() string {
+== netns file list ==
+k8s.go
+netns.go
+netns_test.go
+reprovision.go
+reprovision_test.go
+session.go
+session_test.go
+token.go
+token_test.go
+== admin handler ==
+package admin
+
+import (
+	"backend/sandboxpool"
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+// This file surfaces the resolved sandbox-pool network plan on the admin
+// surface, next to the provider admission and the ci#613 pool egress views
+// (follow-up of the ci#546 shared-sandbox networking design, tracked in ci#792).
+// An operator otherwise has to read the pod environment to answer "which port
+// block does this workspace own, is the pool exhausted, which lever moved the
+// mode" - and a workspace whose dev server is unreachable looks like a plain
+// timeout. The view is read-only and carries no credential material: ports,
+// loopback aliases, env lever names/values and notes only.
+
+// sandboxPoolNetworkResponse is the operator view of the pool network plan.
+type sandboxPoolNetworkResponse struct {
+	GeneratedAt string `json:"generated_at"`
+	// Plan is the resolved policy/allocator state: mode, port block geometry,
+	// loopback aliases, the live per-workspace blocks and the exhaustion state.
+	Plan sandboxpool.NetworkPlanStatus `json:"plan"`
+}
+
+// @doc:sandbox-pool-network-status
+// GetSandboxPoolNetworkStatus reports the resolved pool network plan (ci#792,
+// follow-up of the ci#546 shared-sandbox networking design): the isolation mode,
+// the port block geometry (base+size*slots), whether per-workspace loopback
+// aliases are on, the block/alias each live workspace currently owns, the
+// workspace ceiling and whether the pool has run out of blocks. It is read-only
+// (it never allocates or releases a block), admin only, and never credential
+// material.
+func GetSandboxPoolNetworkStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireAdmin(w, r) {
+		return
+	}
+
+	payload := sandboxPoolNetworkResponse{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Plan:        sandboxpool.ResolveNetworkPlanStatus(time.Now()),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(payload)
+}

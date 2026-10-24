@@ -1,0 +1,12 @@
+== collisions sandboxpool ==
+backend/sandboxpool/netisolation.go:63:// smaller wins at the call site. Per-workspace cgroups stay the pool's business.
+backend/sandboxpool/netisolation.go:82:// per-workspace cgroup guard; provision per-workspace netns; and surface a
+== collisions sandboxsession ==
+== errors block ==
+160:	ErrPoolNetworkCapacity = errors.New("sandbox pool network: no free port block for another workspace")
+163:	ErrSharedNetnsDenied = errors.New("sandbox pool network: shared network namespace is not allowed for this repo/scope")
+166:	ErrWorkspaceIsolationUnavailable = errors.New("sandbox pool network: per-workspace network namespace is not available on this pool")
+168:	ErrInvalidNetworkPolicy = errors.New("sandbox pool network: invalid network policy")
+170:	ErrInvalidWorkspaceUUID = errors.New("sandbox pool network: invalid workspace uuid")
+== go version ==
+sh: go: not found

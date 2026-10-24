@@ -1,0 +1,25 @@
+=A ids=
+backend/sandboxpool/cgroup.go:550:		fmt.Sprintf("the guard is additive to the ci#546 workspace bound: MaxWorkspaces (%d) bounds the count and this slice bounds the resources of each of those workspaces", DefaultNetworkMaxWorkspaces),
+backend/sandboxpool/netisolation.go:21://	  NetnsAvailable == true; a pool that cannot offer it fails closed instead
+backend/sandboxpool/netisolation.go:105:	// Mandatory for sensitive scopes; requires NetnsAvailable.
+backend/sandboxpool/netisolation.go:139:	// DefaultNetworkMaxWorkspaces bounds N agents per pod (ci#546 resource
+backend/sandboxpool/netisolation.go:141:	DefaultNetworkMaxWorkspaces = 8
+backend/sandboxpool/netisolation.go:174:func IsPoolNetworkFailure(err error) bool {
+backend/sandboxpool/netisolation.go:183:type NetworkPolicy struct {
+backend/sandboxpool/netisolation.go:196:	// NetnsAvailable reports whether the pool can create per-workspace netns.
+backend/sandboxpool/netisolation.go:197:	NetnsAvailable bool
+backend/sandboxpool/netisolation.go:212:		MaxWorkspaces:   DefaultNetworkMaxWorkspaces,
+backend/sandboxpool/netisolation.go:315:	if p.Mode == NetworkModeNetns && !p.NetnsAvailable {
+backend/sandboxpool/netisolation.go:353:type WorkspaceNetworkPlan struct {
+backend/sandboxpool/netisolation.go:406:type PortAllocator struct {
+backend/sandboxpool/netisolation.go:478:	if a.policy.Mode == NetworkModeNetns && !a.policy.NetnsAvailable {
+backend/sandboxpool/netisolation.go:628:			intList(a.policy.ReservedPorts), a.policy.NetnsAvailable),
+backend/sandboxpool/netisolation.go:675:func NormalizeWorkspaceUUID(raw string) (string, error) {
+backend/sandboxpool/netisolation.go:711:func uuidHash(uuid string) uint64 {
+backend/sandboxpool/netplanstatus.go:38:	// NetnsAvailable reports whether the pool can create per-workspace netns.
+backend/sandboxpool/netplanstatus.go:39:	NetnsAvailable bool `json:"netns_available"`
+backend/sandboxpool/netplanstatus.go:107:		NetnsAvailable:     policy.NetnsAvailable,
+backend/sandboxpool/netplanstatus.go:134:	if !policy.NetnsAvailable && policy.Mode == NetworkModeNetns {
+backend/sandboxpool/netplanstatus.go:147:func (a *PortAllocator) StatusAt(now time.Time) NetworkPlanStatus {
+backend/sandboxpool/netplanstatus.go:154:func (a *PortAllocator) Status() NetworkPlanStatus { return a.StatusAt(time.Now()) }
+backend/sandboxpool/netplanstatus.go:246:func DefaultAllocator() (*PortAllocator, error) {

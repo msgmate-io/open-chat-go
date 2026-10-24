@@ -1,0 +1,28 @@
+46:const (
+58:const (
+72:const (
+77:const (
+107:var DefaultNetnsEgressHosts = []string{
+114:var (
+129:func IsNetnsPlacementFailure(err error) bool {
+138:type RepoScope struct {
+152:func (s RepoScope) SensitiveReasons() []string {
+168:func (s RepoScope) Sensitive() bool { return len(s.SensitiveReasons()) > 0 }
+171:type PlacementRequest struct {
+189:type Placement struct {
+209:func PlacementEnvOverrides(req *PlacementRequest) {
+221:func envFlag(name string) bool {
+236:func DecidePlacement(req PlacementRequest) (Placement, error) {
+285:func repoLabel(repo string) string {
+296:type SlirpSidecar struct {
+310:func DefaultSlirpSidecar() SlirpSidecar {
+327:func (s SlirpSidecar) Validate() error {
+361:func (s SlirpSidecar) Argv(pid int) []string {
+371:type NetnsPlan struct {
+403:func NetnsName(workspaceUUID string) (string, error) {
+415:func NewNetnsPlan(identity WorkspaceIdentity) (NetnsPlan, error) {
+449:func (p NetnsPlan) Validate() error {
+500:func JoinsNetns(argv []string, namespace string) bool {
+519:func WrapShellForNetns(spec *ShellSpec, plan NetnsPlan) error {
+546:const (
+554:func (p NetnsPlan) String() string {

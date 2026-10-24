@@ -1,0 +1,75 @@
+=LS=
+cgroup.go
+egress.go
+egress_test.go
+netisolation.go
+netisolation_test.go
+netplanstatus.go
+netplanstatus_test.go
+portaudit.go
+portaudit_test.go
+portblock.go
+portblock_test.go
+=NETISO_SYM=
+100:const (
+111:const (
+132:const (
+155:var DefaultReservedPorts = []int{22}
+158:var (
+174:func IsPoolNetworkFailure(err error) bool {
+183:type NetworkPolicy struct {
+206:func DefaultNetworkPolicy() NetworkPolicy {
+222:func NetworkPolicyFromEnv() NetworkPolicy {
+250:const DefaultNetworkModeEnvKey = EnvNetworkMode
+252:func isFalsey(raw string) bool {
+260:func envPositiveInt(key string) (int, bool) {
+272:func splitList(raw string) []string {
+285:func (p NetworkPolicy) Validate() error {
+324:func (p NetworkPolicy) RequiresIsolation(repo, scope string) bool {
+353:type WorkspaceNetworkPlan struct {
+374:func (p WorkspaceNetworkPlan) Describe() string {
+381:func (p WorkspaceNetworkPlan) ReportLines() []string {
+393:func sortedEnvNames(env map[string]string) string {
+406:type PortAllocator struct {
+418:func NewPortAllocator(policy NetworkPolicy) (*PortAllocator, error) {
+436:func (a *PortAllocator) Policy() NetworkPolicy { return a.policy }
+439:func (a *PortAllocator) Slots() int { return a.slots }
+442:func (a *PortAllocator) ActiveWorkspaces() []string {
+457:func (a *PortAllocator) Allocate(workspaceUUID, repo, scope string) (WorkspaceNetworkPlan, error) {
+467:func (a *PortAllocator) allocateLocked(uuid, repo, scope string) (WorkspaceNetworkPlan, error) {
+502:func (a *PortAllocator) freeBlockIndex(uuid string) (int, bool) {
+517:func (p NetworkPolicy) blockOverlapsReserved(index int) bool {
+533:func (a *PortAllocator) planForIndex(uuid string, index int) (WorkspaceNetworkPlan, error) {
+585:func (a *PortAllocator) Release(workspaceUUID string) bool {
+602:func (a *PortAllocator) Plan(workspaceUUID string) (WorkspaceNetworkPlan, bool) {
+615:func (a *PortAllocator) ReportLines() []string {
+645:func NetworkFailureModes(policy NetworkPolicy) []string {
+663:func WorkspaceServiceAddress(poolHost string, plan WorkspaceNetworkPlan) string {
+675:func NormalizeWorkspaceUUID(raw string) (string, error) {
+694:func aliasPrefix(prefix string, index int) (string, error) {
+711:func uuidHash(uuid string) uint64 {
+716:func intList(values []int) string {
+=PORTBLOCK_SYM=
+backend/sandboxpool/portblock.go
+backend/sandboxpool/portblock_test.go
+backend/sandboxpool/portblock.go:53:type PoolPortBlock struct {
+backend/sandboxpool/portblock.go:71:func (b PoolPortBlock) Valid() bool {
+backend/sandboxpool/portblock.go:76:func (b PoolPortBlock) Size() int {
+backend/sandboxpool/portblock.go:84:func (b PoolPortBlock) Contains(port int) bool {
+backend/sandboxpool/portblock.go:89:func (b PoolPortBlock) String() string {
+backend/sandboxpool/portblock.go:99:func (b PoolPortBlock) LoopbackFor(slot int) string {
+backend/sandboxpool/portblock.go:112:func (b PoolPortBlock) Env() map[string]string {
+backend/sandboxpool/portblock.go:127:func (b PoolPortBlock) HealthCheck(poolHost string) string {
+backend/sandboxpool/portblock.go:143:func (b PoolPortBlock) PublishLines() []string {
+backend/sandboxpool/portblock.go:164:func (b PoolPortBlock) envList() string {
+backend/sandboxpool/portblock.go:178:func policySlots(policy NetworkPolicy) int {
+backend/sandboxpool/portblock.go:188:func resolvePoolPortBlock(policy NetworkPolicy, slots int) (PoolPortBlock, bool) {
+backend/sandboxpool/portblock.go:214:func ResolvePoolPortBlock(policy NetworkPolicy) (PoolPortBlock, bool) {
+backend/sandboxpool/portblock.go:224:func (a *PortAllocator) PublishedPortBlock() (PoolPortBlock, bool) {
+backend/sandboxpool/portblock_test.go:12:func testPublishedPolicy() NetworkPolicy {
+backend/sandboxpool/portblock_test.go:24:func TestResolvePoolPortBlockDefaultPolicy(t *testing.T) {
+backend/sandboxpool/portblock_test.go:47:func TestResolvePoolPortBlockCustomGeometry(t *testing.T) {
+backend/sandboxpool/portblock_test.go:70:func TestResolvePoolPortBlockBoundaryAndOverflow(t *testing.T) {
+backend/sandboxpool/portblock_test.go:102:func TestPoolPortBlockEnvAndPublishLines(t *testing.T) {
+backend/sandboxpool/portblock_test.go:163:func TestPublishedPortBlockMatchesAdminPlan(t *testing.T) {
+backend/sandboxpool/portblock_test.go:204:func TestNetworkPlanStatusFromEnvPublishesBlock(t *testing.T) {

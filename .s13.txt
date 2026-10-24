@@ -1,0 +1,58 @@
+=A ci792 markers=
+backend/sandboxpool/cgroup.go:3:// ci#792 item 3 - per-workspace cgroup guard for the bounded shared mode.
+backend/sandboxpool/cgroup.go:339:	out.WriteString("# ci#792 item 3 - per-workspace cgroup v2 guard; no credential material\n")
+backend/sandboxpool/netisolation.go:80:// Follow-ups (one batched ticket, ci#792): publish the allocated block through
+backend/sandboxpool/netplanstatus.go:11:// This file is follow-up #2 of the ci#792 batch of the ci#546 shared-sandbox
+backend/sandboxpool/netplanstatus.go:50:	// Exhausted is the ci#792 port-block exhaustion condition: no free block is
+backend/sandboxpool/netplanstatus.go:145:// the ci#792 exhaustion condition. Safe for concurrent use; now is injected so the
+backend/sandboxpool/portblock.go:3:// ci#792 item 1 (ci#846) - publish the resolved pool port block on the transport.
+backend/sandboxpool/portblock.go:141:// block mapping. It is the "publish" half of ci#792 item 1 and carries no secret:
+backend/api/admin/SandboxPoolNetwork.go:12:// (follow-up of the ci#546 shared-sandbox networking design, tracked in ci#792).
+backend/api/admin/SandboxPoolNetwork.go:28:// GetSandboxPoolNetworkStatus reports the resolved pool network plan (ci#792,
+backend/server/routing.go:517:	// Resolved pool network plan (ci#792, follow-up of the ci#546 shared-sandbox
+=B netns files=
+backend/sandboxnetwork:
+policy.go
+policy_test.go
+
+backend/sandboxsession:
+k8s.go
+netns.go
+netns_test.go
+reprovision.go
+reprovision_test.go
+session.go
+session_test.go
+token.go
+token_test.go
+=C exhaust=
+backend/sandboxpool/netisolation_test.go:127:	if _, err := allocator.Allocate("chat-e", "msgmate-io/open-chat-go", "user"); !errors.Is(err, ErrPoolNetworkCapacity) {
+backend/sandboxpool/netisolation_test.go:128:		t.Fatalf("expected ErrPoolNetworkCapacity, got %v", err)
+backend/sandboxpool/netisolation_test.go:221:	if !IsPoolNetworkFailure(ErrPoolNetworkCapacity) || IsPoolNetworkFailure(errors.New("other")) {
+backend/sandboxpool/netplanstatus_test.go:75:	if status.Exhausted {
+backend/sandboxpool/netplanstatus_test.go:97:	if !status.Exhausted || status.FreeSlots != 0 {
+backend/sandboxpool/netplanstatus_test.go:98:		t.Fatalf("exhausted/free = %v/%d", status.Exhausted, status.FreeSlots)
+backend/sandboxpool/netplanstatus_test.go:100:	if !strings.Contains(strings.Join(status.Notes, " "), "ErrPoolNetworkCapacity") {
+backend/sandboxpool/netisolation.go:159:	// ErrPoolNetworkCapacity means no free port block is left for a new workspace.
+backend/sandboxpool/netisolation.go:160:	ErrPoolNetworkCapacity = errors.New("sandbox pool network: no free port block for another workspace")
+backend/sandboxpool/netisolation.go:175:	return errors.Is(err, ErrPoolNetworkCapacity) ||
+backend/sandboxpool/netisolation.go:487:			ErrPoolNetworkCapacity, uuid, len(a.assigned), a.slots,
+backend/sandboxpool/netisolation.go:647:		fmt.Sprintf("block exhaustion: more than %d live workspaces per pool -> lease refused (%s)", policy.MaxWorkspaces, ErrPoolNetworkCapacity),
+backend/sandboxpool/netplanstatus.go:50:	// Exhausted is the ci#792 port-block exhaustion condition: no free block is
+backend/sandboxpool/netplanstatus.go:51:	// left, so the next lease in shared mode fails with ErrPoolNetworkCapacity.
+backend/sandboxpool/netplanstatus.go:52:	Exhausted bool `json:"exhausted"`
+backend/sandboxpool/netplanstatus.go:165:	status.Exhausted = status.FreeSlots == 0
+backend/sandboxpool/netplanstatus.go:170:	if status.Exhausted {
+backend/sandboxpool/netplanstatus.go:210:	return "all " + strconv.Itoa(slots) + " blocks are in use: the next shared-mode lease fails with ErrPoolNetworkCapacity; free a lease, raise " + EnvNetworkMaxWorkspaces + ", or start another pool pod"
+backend/api/chats/AutoContinue.go:105:	// autoContinueExhaustedReason is recorded when the loop stops on its budget.
+backend/api/chats/AutoContinue.go:106:	autoContinueExhaustedReason = "budget_exhausted"
+backend/api/chats/AutoContinue.go:107:	// autoContinueIncompleteExhaustedReason is recorded when the incomplete-turn
+backend/api/chats/AutoContinue.go:109:	autoContinueIncompleteExhaustedReason = "incomplete_retries_exhausted"
+backend/api/chats/AutoContinue.go:375:		decision.StopReason = autoContinueExhaustedReason
+backend/api/chats/AutoContinue.go:388:			decision.StopReason = autoContinueIncompleteExhaustedReason
+backend/api/chats/AutoContinueIncomplete_test.go:124:	if exhausted.StopReason != autoContinueIncompleteExhaustedReason {
+backend/api/chats/AutoContinueIncomplete_test.go:125:		t.Fatalf("StopReason = %q, want %q", exhausted.StopReason, autoContinueIncompleteExhaustedReason)
+backend/api/chats/AutoContinueIncomplete_test.go:372:// TestDecideAutoContinueRetriesCapExhaustedTurn is the ci#747 (RC2) regression:
+backend/api/chats/AutoContinueIncomplete_test.go:377:func TestDecideAutoContinueRetriesCapExhaustedTurn(t *testing.T) {
+backend/api/chats/AutoContinueIncomplete_test.go:414:		if exhausted.StopReason != autoContinueIncompleteExhaustedReason {
+backend/api/chats/AutoContinueIncomplete_test.go:415:			t.Fatalf("turn_ended=%q stop reason = %q, want %q", reason, exhausted.StopReason, autoContinueIncompleteExhaustedReason)
