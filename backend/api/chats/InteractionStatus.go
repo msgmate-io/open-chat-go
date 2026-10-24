@@ -188,6 +188,11 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	// once here and carried through every early return below.
 	response.QueuedReplies = workqueue.BotReplyQueuedCount(inspector, chat.UUID)
 
+	// ci#850: read the transcript tail once and reuse it for both questions the
+	// resolver asks of it - "is the newest message a pending user action?" and
+	// "what is the newest message?" - instead of two separate round-trips.
+	recent, recentErr := recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
+
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
 	// permission prompt or an ask-only relay question) the interaction is not
@@ -195,9 +200,9 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	// keeps the blue "needs confirmation" state visible while an ask-only
 	// question is paused, instead of the running backend short-circuit hiding
 	// it. Runs before the backend/queue checks below on purpose.
-	if hasPendingConfirmationInRecentMessages(DB, chat.ID) {
-		if latest, err := latestMessageForChat(DB, chat.ID); err == nil {
-			response.LatestMessageUUID = latest.UUID
+	if recentErr == nil && messagesHavePendingConfirmation(recent) {
+		if len(recent) > 0 {
+			response.LatestMessageUUID = recent[0].UUID
 		}
 		response.State = string(chatstate.StateNeedsConfirmation)
 		response.IsActive = false
@@ -226,7 +231,15 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		return response, nil
 	}
 
-	latest, err := latestMessageForChat(DB, chat.ID)
+	var latest database.Message
+	var err error
+	if recentErr == nil && len(recent) > 0 {
+		// Reuse the tail read above: it is newest-first, so its head is the
+		// latest message and needs no second query (ci#850).
+		latest = recent[0]
+	} else {
+		latest, err = latestMessageForChat(DB, chat.ID)
+	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return response, nil
@@ -311,16 +324,34 @@ func latestMessageForChat(DB *gorm.DB, chatID uint) (database.Message, error) {
 	return message, err
 }
 
-func hasPendingConfirmationInRecentMessages(DB *gorm.DB, chatID uint) bool {
+// recentMessagesForChat reads the newest `limit` messages of a chat, newest
+// first. It is the single transcript-tail read shared by the interaction-status
+// and pending-confirmation resolvers (ci#850): the ordering matches
+// latestMessageForChat, so the head of the slice is the latest message.
+func recentMessagesForChat(DB *gorm.DB, chatID uint, limit int) ([]database.Message, error) {
 	var messages []database.Message
 	err := DB.Where("chat_id = ?", chatID).
 		Where("deleted_at IS NULL").
 		Order("created_at DESC").
-		Limit(confirmationScanLimit).
+		Order("id DESC").
+		Limit(limit).
 		Find(&messages).Error
+	return messages, err
+}
+
+func hasPendingConfirmationInRecentMessages(DB *gorm.DB, chatID uint) bool {
+	messages, err := recentMessagesForChat(DB, chatID, confirmationScanLimit)
 	if err != nil {
 		return false
 	}
+	return messagesHavePendingConfirmation(messages)
+}
+
+// messagesHavePendingConfirmation reports whether any of the given (newest-first)
+// messages still carries a pending user action. It is the slice-level form of
+// hasPendingConfirmationInRecentMessages, so a caller that already read the
+// transcript tail does not have to answer the question with a second query.
+func messagesHavePendingConfirmation(messages []database.Message) bool {
 	for _, message := range messages {
 		if messageHasPendingConfirmation(message) {
 			return true
