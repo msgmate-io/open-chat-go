@@ -71,6 +71,7 @@ func TestResolveProviderEndpointPassthrough(t *testing.T) {
 }
 
 func TestResolveProviderEndpointOpenRouterDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_API_HOST", "")
 	got, err := resolveProviderEndpoint("openrouter", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -91,12 +92,41 @@ func TestResolveProviderEndpointIonosDefault(t *testing.T) {
 }
 
 func TestResolveProviderEndpointOpenRouterCustomWins(t *testing.T) {
+	t.Setenv("OPENROUTER_API_HOST", "")
 	got, err := resolveProviderEndpoint("openrouter", "https://custom.example/v1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "https://custom.example/v1" {
 		t.Fatalf("expected custom endpoint to win, got %q", got)
+	}
+}
+
+// TestResolveProviderEndpointOpenRouterEnvOverride verifies a deployment may
+// override the OpenRouter base URL (e.g. to route to the EU-only cloud) without
+// editing every bot config: OPENROUTER_API_HOST wins over a configured endpoint.
+func TestResolveProviderEndpointOpenRouterEnvOverride(t *testing.T) {
+	t.Setenv("OPENROUTER_API_HOST", "https://eu.openrouter.ai/api/v1")
+	got, err := resolveProviderEndpoint("openrouter", "https://openrouter.ai/api/v1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://eu.openrouter.ai/api/v1" {
+		t.Fatalf("expected env host override, got %q", got)
+	}
+}
+
+// TestResolveChatProviderEndpointOpenRouterEUOverride verifies the EU base URL
+// survives normalization (no trailing slash) so callers append
+// "/chat/completions" correctly.
+func TestResolveChatProviderEndpointOpenRouterEUOverride(t *testing.T) {
+	t.Setenv("OPENROUTER_API_HOST", "https://eu.openrouter.ai/api/v1/")
+	got, err := resolveChatProviderEndpoint("openrouter", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "https://eu.openrouter.ai/api/v1" {
+		t.Fatalf("expected EU endpoint without trailing slash, got %q", got)
 	}
 }
 
