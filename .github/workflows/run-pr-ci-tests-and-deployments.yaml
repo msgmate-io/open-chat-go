@@ -2245,10 +2245,18 @@ jobs:
 
       - name: Require a linked open-chat-go-ci leaf issue
         # ci#813: every feature/bugfix PR implements exactly one leaf issue in
-        # the private tracker; consolidation PRs must list every leaf issue they
-        # close. GitHub cannot auto-close a cross-repository issue, so this gate
-        # and the post-merge closure in the auto-consolidation runner own the
-        # invariant. Keep this regex in sync with nativecoder.LinkedIssueNumbers.
+        # the private tracker. GitHub cannot auto-close a cross-repository issue,
+        # so this gate and the post-merge closure in the auto-consolidation
+        # runner own the invariant. Keep this regex in sync with
+        # nativecoder.LinkedIssueNumbers.
+        #
+        # ci#862: a consolidation PR (chore/consolidate*) is exempt from the
+        # whole linked-issue requirement, not just from the one-standalone-
+        # 'Closes' count rule. It aggregates already-merged leaf work whose
+        # issues the auto-consolidation runner closes itself, so its body may
+        # carry zero standalone closing lines - the branch's own workflow (this
+        # file, taken from that branch) still demanded one and made #1086 red.
+        # Ordinary feature/bugfix PRs keep the strict standalone-'Closes' rule.
         env:
           LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
         run: |
@@ -2274,6 +2282,12 @@ jobs:
           case "${{ github.event.pull_request.head.ref }}" in
             chore/consolidate*) consolidation=true ;;
           esac
+          # ci#862: exempt the whole requirement for consolidation PRs instead
+          # of only relaxing the one-standalone-'Closes' count rule below.
+          if [ "$consolidation" = true ]; then
+            echo "Consolidation PR: linked-issue gate exempt."
+            exit 0
+          fi
           if [ "$consolidation" != true ]; then
             if grep -qx 'dependencies' "${RUNNER_TEMP}/pr-labels.txt"; then
               echo "Dependency PR: linked-issue gate exempt."
