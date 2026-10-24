@@ -340,6 +340,54 @@ informational `no_labels_guidance` job and the `pin-drift-allowed` escape hatch
 still inspect the payload); `LiveLabelGatingTests` in
 `development/scripts/test_pr_ci_superseded_reconcile.py` pins that.
 
+#### Chat/message read indexes (ci#850)
+
+The chat and message list endpoints were the slowest reads on ci.msgmate.io
+(1.9–7 s) and contributed to `database is locked` errors. The schema half of
+that ticket is `ChatMessageIndexMigration`
+(`backend/database/chat_message_index_migration.go`), which runs **last** in the
+startup migration list (`backend/database/tables.go`) so every table it targets
+— including `streaming_messages`, `chat_pins` and integration tables registered
+through `RegisterExternalModels` — already exists:
+
+| Index | Table | Columns | Covers |
+| --- | --- | --- | --- |
+| `idx_messages_chat_id_id` | `messages` | `chat_id, id DESC` | message list page of one chat, ordered by `id DESC` |
+| `idx_chats_user1_id_id` | `chats` | `user1_id, id DESC` | chat list OR-branch 1 + `ORDER BY id DESC` |
+| `idx_chats_user2_id_id` | `chats` | `user2_id, id DESC` | chat list OR-branch 2 + `ORDER BY id DESC` |
+| `idx_chat_pins_user_id_chat_id` | `chat_pins` | `user_id, chat_id` | chat-list pin lookup by user (the unique index is `(chat_id, user_id)`, so it cannot serve a `user_id` prefix) |
+| `idx_streaming_messages_chat_id_updated_at` | `streaming_messages` | `chat_id, updated_at DESC` | streaming snapshot (`ORDER BY updated_at DESC LIMIT 1`) |
+| `idx_account_states_user_id` | `account_states` | `user_id` | email-verification / suspension lookups (table owned by the account_management integration) |
+
+Properties the migration guarantees, and why:
+
+- **DDL-only and idempotent.** It issues `CREATE INDEX IF NOT EXISTS`, so the
+  pass is a no-op on every pod start after the first; two pods sharing the volume
+  during a rollout cannot collide on a duplicate index.
+- **Missing table ⇒ skip, not fail.** A table that is not in this build
+  (`account_states` comes from an integration) is skipped, because an error in
+  the startup migration pass keeps the process from coming up (see the ci#679
+  bootstrap section below).
+- **Postgres-compatible.** `CREATE INDEX IF NOT EXISTS` is valid on both
+  dialects, and nothing in the migration is SQLite-specific.
+
+Verification:
+
+```sh
+# the migration must be idempotent and must not need the integration table
+go test ./backend/database/ -run 'ChatMessageIndex|StreamingSnapshot|ChatPinsUserLookup'
+
+# which indexes the database actually has
+sqlite3 openchat.db "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%' ORDER BY name;"
+```
+
+The query-plan assertions in `chat_message_index_migration_test.go` deliberately
+only pin the shapes the index removes for good (streaming snapshot, pin lookup).
+SQLite picks between a `chat_id`-leading single-column index and the composite
+one from its row-count statistics, so for the OR-predicated chat list the sort
+only disappears with the `UNION ALL` rewrite that belongs to the query-change
+step of the same ticket — asserting it here would be flaky.
+
 #### Startup bootstrap survives an overlapping pod's SQLite write lock (ci#679)
 
 The SQLite database lives on a single ReadWriteOnce volume, so two backend

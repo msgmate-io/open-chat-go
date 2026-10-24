@@ -294,6 +294,10 @@ var Migrations []Migration = []Migration{
 	TableMigration{&ActionTaskDismissal{}},
 	TableMigration{&WorkspaceLease{}},
 	GrantDefaultPermissionsMigration{},
+	// Runs last so every table the read-path indexes target exists by now,
+	// including ones created later in this list (streaming_messages, chat_pins)
+	// and integration tables registered through RegisterExternalModels.
+	ChatMessageIndexMigration{},
 }
 
 func RegisterExternalModels(models ...interface{}) {
