@@ -1,8 +1,0 @@
-== imports sandboxsession in sandboxpool ==
-== imports sandboxpool in sandboxsession ==
-== capacity in tests ==
-backend/sandboxpool/netisolation_test.go:127:	if _, err := allocator.Allocate("chat-e", "msgmate-io/open-chat-go", "user"); !errors.Is(err, ErrPoolNetworkCapacity) {
-backend/sandboxpool/netisolation_test.go:128:		t.Fatalf("expected ErrPoolNetworkCapacity, got %v", err)
-backend/sandboxpool/netisolation_test.go:221:	if !IsPoolNetworkFailure(ErrPoolNetworkCapacity) || IsPoolNetworkFailure(errors.New("other")) {
-backend/sandboxpool/netplanstatus_test.go:100:	if !strings.Contains(strings.Join(status.Notes, " "), "ErrPoolNetworkCapacity") {
-== other consumers of capacity err ==
