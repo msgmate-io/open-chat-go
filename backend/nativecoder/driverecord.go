@@ -11,7 +11,7 @@ import "fmt"
 
 // BashRetirementDrivePhase is one row of the ci#514 phase table.
 type BashRetirementDrivePhase struct {
-	// ID is the phase identifier (phase_0_measure ... phase_5_close).
+	// ID is the phase identifier (phase_0_measure ... phase_6_github_wait).
 	ID string `json:"id"`
 	// Retires is the usage category this phase retires ("" for the evidence
 	// phase 0), matching a BashCategory* constant in bashretirement.go.
