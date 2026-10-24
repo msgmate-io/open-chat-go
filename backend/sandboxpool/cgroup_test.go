@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func cgroupTestHost(controllers ...string) CgroupHostSupport {
@@ -123,8 +124,10 @@ func TestResolveWorkspaceCgroupFailsClosed(t *testing.T) {
 	})
 
 	t.Run("invalid workspace", func(t *testing.T) {
-		if _, err := ResolveWorkspaceCgroup("not-a-uuid", cgroupEnabledPolicy(), cgroupFullHost()); !errors.Is(err, ErrInvalidWorkspaceUUID) {
-			t.Fatalf("expected ErrInvalidWorkspaceUUID, got %v", err)
+		for _, bad := range []string{"", "  ", "has space", "line\nfeed"} {
+			if _, err := ResolveWorkspaceCgroup(bad, cgroupEnabledPolicy(), cgroupFullHost()); !errors.Is(err, ErrInvalidWorkspaceUUID) {
+				t.Fatalf("%q: expected ErrInvalidWorkspaceUUID, got %v", bad, err)
+			}
 		}
 	})
 }
@@ -275,7 +278,7 @@ func TestCgroupIOMaxLine(t *testing.T) {
 }
 
 func TestAllocatorWorkspaceCgroupsFollowsTheLeases(t *testing.T) {
-	alloc := newTestAllocator(t, DefaultNetworkPolicy())
+	alloc := testAllocator(t, DefaultNetworkPolicy())
 	if _, err := alloc.Allocate(cgroupTestNewWorkspace(), "msgmate-io/open-chat-go", "dev"); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
