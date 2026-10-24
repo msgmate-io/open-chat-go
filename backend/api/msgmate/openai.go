@@ -113,6 +113,16 @@ const (
 	contextRetryMaxMessageChars   = 4000
 )
 
+// reasoningChunkPrefix marks an in-band chunk on the single string chunk
+// channel that carries provider reasoning (OpenRouter `delta.reasoning`, or the
+// common `reasoning_content` alias) rather than user-visible assistant content.
+// Framing it in-band lets the reasoning ride the one existing channel into the
+// thinking/timeline pipeline without changing the streaming signatures that many
+// callers and tests depend on (ci#852). The NUL-delimited sentinel cannot occur
+// in model content, and the consumer strips it before anything is rendered or
+// persisted.
+const reasoningChunkPrefix = "\x00\x01reasoning\x01\x00"
+
 type ToolCallsResult struct {
 	ToolCalls []ToolCall
 }
@@ -1888,6 +1898,14 @@ func processStreamingResponseReader(
 				Delta struct {
 					Content   string        `json:"content"`
 					ToolCalls []interface{} `json:"tool_calls"`
+					// Provider reasoning deltas (ci#852): OpenRouter and the
+					// OpenAI-compatible reasoning models stream the chain of
+					// thought on a separate `reasoning` field (with the common
+					// `reasoning_content` alias) instead of embedding it in
+					// `content`. Dropping it left the timeline empty and made
+					// the coder look like it never reasoned between tool calls.
+					Reasoning        string `json:"reasoning"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *TokenUsage `json:"usage"`
@@ -1906,6 +1924,16 @@ func processStreamingResponseReader(
 			continue
 		}
 		delta := chunk.Choices[0].Delta
+
+		// Provider reasoning deltas (ci#852) are forwarded in-band, tagged with
+		// the reasoning sentinel, so the thinking pipeline can render them as
+		// the timeline's thought blocks. They are never written into
+		// aiResponseBuilder, so they never become the persisted assistant text.
+		if reasoningText := delta.Reasoning; reasoningText != "" {
+			chunkChan <- reasoningChunkPrefix + reasoningText
+		} else if reasoningText := delta.ReasoningContent; reasoningText != "" {
+			chunkChan <- reasoningChunkPrefix + reasoningText
+		}
 
 		if delta.Content != "" {
 			aiResponseBuilder.WriteString(delta.Content)
