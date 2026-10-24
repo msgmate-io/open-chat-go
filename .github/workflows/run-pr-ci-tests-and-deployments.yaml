@@ -2274,6 +2274,15 @@ jobs:
           case "${{ github.event.pull_request.head.ref }}" in
             chore/consolidate*) consolidation=true ;;
           esac
+          if [ "$consolidation" = true ]; then
+            # A consolidation PR folds many slices, and their leaf/umbrella
+            # issues may already have been closed by the slice PRs, so it can
+            # never carry exactly one standalone 'Closes' line. Exempt it from
+            # the linked-issue requirement entirely (ci#862): the auto-closer
+            # still honours whatever `Closes` lines the body does carry.
+            echo "Consolidation PR: linked-issue gate exempt."
+            exit 0
+          fi
           if [ "$consolidation" != true ]; then
             if grep -qx 'dependencies' "${RUNNER_TEMP}/pr-labels.txt"; then
               echo "Dependency PR: linked-issue gate exempt."
