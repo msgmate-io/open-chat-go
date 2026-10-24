@@ -32,9 +32,12 @@ func seedIndexMigrationRows(t *testing.T, db *gorm.DB) {
 			"SELECT datetime('now'), datetime('now'), (x % 8) + 1, 1, 1, 'text', " +
 			"CASE WHEN x % 7 = 0 THEN datetime('now') ELSE NULL END " +
 			"FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 4000) SELECT x FROM c)",
+		// The membership seed spreads chats over distinct users: a user owning a
+		// large fraction of the table makes SQLite prefer a full scan over the
+		// multi-index OR it uses for a selective membership filter.
 		"INSERT INTO chats (created_at, updated_at, user1_id, user2_id, chat_type, latest_message_id) " +
 			"SELECT datetime('now'), datetime('now'), x, x + 100000, 'conversation', x " +
-			"FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 800) SELECT x FROM c)",
+			"FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 20000) SELECT x FROM c)",
 		"INSERT INTO streaming_messages (created_at, updated_at, chat_id, sender_id, receiver_id, session_id, seq) " +
 			"SELECT datetime('now'), datetime('now'), (x % 8) + 1, 1, 1, 'sess-' || (x % 3), x % 5 " +
 			"FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000) SELECT x FROM c)",
