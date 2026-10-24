@@ -65,6 +65,12 @@ unidentified interaction. Un-laned work is neither an owner nor a duplicate. A
 non-clean report is the signal to re-dispatch the owned ticket through the GitHub
 workflow rather than to create another interaction.
 
+The same owner key gates cron self-messages (ci#845): a chat that declares a lane
+carries its owner key on its self-message schedule, and the scheduler defers a due
+self-message while another interaction of that lane is live (active turn, pending
+confirmation or queued `bot:reply` work). An un-laned chat keeps its historical
+behaviour.
+
 Minimum identity scope: an owner may always list, continue and stop the
 interactions it dispatched; de-duplicating a lane it does not own is done through
 the workflow re-dispatch route, so no direct chat ownership is required.
