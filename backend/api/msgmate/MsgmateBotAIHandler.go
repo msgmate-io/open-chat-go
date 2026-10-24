@@ -1025,7 +1025,12 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 	var reasoningEntries []string
 	var thinkingSteps []map[string]string
 	var isThinking bool
-	const thinkStartTag = "<think>"
+	// providerReasoningOpen records that the currently-open thought block was
+	// opened by a provider reasoning delta rather than by an inline ` thinking`
+	// tag, so it can be finalized when visible content or a tool call follows
+	// (ci#852).
+	var providerReasoningOpen bool
+	const thinkStartTag = " thinking"
 	const thinkEndTag = "</think>"
 	var currentBuffer strings.Builder
 	// The turn timeline (ci#569) records the assistant's reasoning blocks in
@@ -1375,7 +1380,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		if tokenUsage != nil {
 			metadata["token_usage"] = tokenUsage
 		}
-		if reasoning {
+		// Provider reasoning (ci#852) can populate thinking_steps even when the
+		// `reasoning` config is unset, so the block is emitted whenever there is
+		// anything to report, not only for the legacy inline-tag path.
+		if reasoning || len(thinkingSteps) > 0 {
 			metadata["thinking_time"] = thinkingTime.Round(time.Millisecond).String()
 			if len(thinkingSteps) > 0 {
 				metadata["thinking_steps"] = thinkingSteps
@@ -1561,7 +1569,50 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 		persistStreamSnapshot()
 	}
 
+	// processProviderReasoningChunk renders a provider reasoning delta (ci#852)
+	// as the currently-open thought block. Unlike inline model ` thinking` tags
+	// this is deliberately not gated on the `reasoning` config: a provider that
+	// streams a dedicated reasoning field is explicitly returning context the
+	// user should be able to watch, and it can never be mistaken for visible
+	// text because it arrives only on the sentinel-tagged path.
+	processProviderReasoningChunk := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+		if !isThinking {
+			isThinking = true
+			providerReasoningOpen = true
+			thinkingStart = time.Now()
+		}
+		sendThinkingChunk(chunk)
+	}
+
+	// closeProviderReasoning finalizes a thought block opened by provider
+	// reasoning deltas, so the block is recorded on the timeline (and in
+	// thinking_steps) before whatever visible content or tool call follows it.
+	closeProviderReasoning := func() {
+		if !providerReasoningOpen {
+			return
+		}
+		providerReasoningOpen = false
+		isThinking = false
+		stepDuration := time.Since(thinkingStart)
+		if stepDuration < 0 {
+			stepDuration = 0
+		}
+		thinkingTime += stepDuration
+		finalizeThinkingStep(stepDuration)
+		thinkingStart = time.Time{}
+	}
+
 	processChunk := func(chunk string) {
+		if strings.HasPrefix(chunk, reasoningChunkPrefix) {
+			processProviderReasoningChunk(strings.TrimPrefix(chunk, reasoningChunkPrefix))
+			return
+		}
+		// Any visible content closes a provider-reasoning block that was still
+		// open, so the following chunk is never mis-parsed as thinking.
+		closeProviderReasoning()
 		if !reasoning {
 			sendRespondingChunk(chunk)
 			return
@@ -1662,6 +1713,9 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			if !ok {
 				toolCalls = nil
 			} else {
+				// A provider-reasoning thought that is still open belongs before
+				// this call in the timeline (ci#852).
+				closeProviderReasoning()
 				// Every call captures the narration the model emitted before it.
 				// The message body keeps only the text that came after the
 				// *final* call, so a turn that ran several tools would otherwise
@@ -1857,6 +1911,10 @@ func (aih *AIHandlerImpl) processStreamingResponse(ctx context.Context, message 
 			break
 		}
 	}
+
+	// Flush a provider-reasoning block that was still streaming when the model
+	// stopped, so its thought reaches the timeline/turn metadata (ci#852).
+	closeProviderReasoning()
 
 	if reasoning {
 		remaining := currentBuffer.String()
