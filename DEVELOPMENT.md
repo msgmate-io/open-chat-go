@@ -570,6 +570,46 @@ a growth risk.
   cancelled context aborts before writing, the interval knob's parsing, and the
   background loop actually deletes a stale row and stops when told.
 
+#### Message history is pruned, not archived forever (ci#850 retention)
+
+Message rows are the bulk of the SQLite volume (see the ci#850 notes above): a
+long-lived chat kept every message it ever exchanged - text, reasoning and the
+full tool-call payload - forever, because nothing in any read path ever deletes a
+message and the UI only pages back through recent history. This prune is the
+retention/archival half of the ci#850 work (the busy timeout + WAL maintenance and
+the hot-path indexes are the other half).
+
+- `database.StartMessageRetentionSweeper` (`backend/database/message_retention.go`)
+  prunes from the server process: once at startup, then every interval until the
+  stop function (deferred in `runServer`) is called - the stop is blocking and
+  idempotent, so no prune can outlive the server (the ci#811 teardown contract).
+- `database.DeleteExpiredMessages` deletes messages older than the retention
+  window (default 90 days) while always keeping the newest
+  `HotMessageFloorPerChat` (200) messages of **every** chat, however old the chat
+  is. The floor is what keeps an old-but-active chat's recent context - and
+  `chats.latest_message_id` - alive.
+- The delete is **unscoped** on purpose: `Message` embeds `Model`, so a plain
+  `Delete` would only stamp `deleted_at` and leave the row's bytes behind - exactly
+  the growth this exists to stop. Soft-deleted messages are invisible to every read
+  path anyway.
+- Each transaction deletes at most `MessagePruneBatchSize` (500) rows and the loop
+  stops on a short batch, so a large backlog is reclaimed incrementally instead of
+  in one long write holding the SQLite write lock. It runs through `RetryOnBusy`,
+  since a prune can overlap a bot turn's writes, and a pass that actually removed
+  rows ends with a truncating `CheckpointWAL` so the space returns to the
+  filesystem instead of only to the freelist.
+- Tuning: `OPEN_CHAT_MESSAGE_RETENTION_WINDOW` (a Go duration, default `90d`),
+  `OPEN_CHAT_MESSAGE_RETENTION_INTERVAL` (default `6h`) and
+  `OPEN_CHAT_MESSAGE_PRUNE_BATCH_SIZE` (default `500`). `off` / `disabled` /
+  `never` / `0` disables the window or the interval; an unparsable value logs and
+  falls back to the default instead of silently changing behaviour.
+- `backend/database/message_retention_test.go` pins it: the per-chat hot floor
+  (old messages pruned, the newest N survive, a recent message is never a
+  candidate), the batching, the disabled and nil-db no-ops, a cancelled context
+  aborting before writing, the knob parsing, and the background loop actually
+  pruning and stopping when told.
+
+
 #### A message sent into a running chat is queued, never dropped (ci#656)
 
 A message sent while the chat was already running a bot turn used to disappear:
