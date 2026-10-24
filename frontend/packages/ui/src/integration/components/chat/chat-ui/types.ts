@@ -245,9 +245,19 @@ export interface ChatUIExtension {
    * markdown body, so an integration can render tool calls inline, in order, as
    * they stream in. The thoughts blocks are still rendered by the core, and the
    * confirmable-action widgets too unless the extension sets
-   * `inlineConfirmableActions`.
+   * `inlineThoughts` / `inlineConfirmableActions`.
    */
   MessageBody?: ChatUIMessageBody;
+  /**
+   * When true, the extension's `MessageBody` owns the message's reasoning /
+   * narration blocks (typically rendering them inline with its tool calls, in
+   * the order the model emitted them, via `buildTurnBlocks`). The core then
+   * suppresses its own grouped thoughts block — both the live "Thinking…" block
+   * and the finished thoughts block — so a reasoning turn is not rendered twice
+   * once the backend records `meta_data.timeline` (ci#852). Has no effect
+   * without `MessageBody`.
+   */
+  inlineThoughts?: boolean;
   /**
    * When true, the extension's `MessageBody` owns the message's confirmable
    * actions (typically rendering the confirm/execute widget inline with its
