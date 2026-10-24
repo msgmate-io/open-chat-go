@@ -2261,6 +2261,15 @@ jobs:
             echo "Production promotion PR: linked-issue gate exempt."
             exit 0
           fi
+          # The dev -> main promotion PR is maintained automatically and carries
+          # every leaf issue merged to dev, not one: it can never satisfy the
+          # one-standalone-'Closes' rule, and demanding a manual `no-issue` label
+          # on every promotion blocked the normal dev->main hop. Exempt it like
+          # the production promotion and consolidation PRs.
+          if [ "${{ github.event.pull_request.base.ref }}" = "main" ] && [ "${{ github.event.pull_request.head.ref }}" = "dev" ]; then
+            echo "Dev promotion PR: linked-issue gate exempt."
+            exit 0
+          fi
           consolidation=false
           case "${{ github.event.pull_request.head.ref }}" in
             chore/consolidate*) consolidation=true ;;
