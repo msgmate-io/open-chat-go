@@ -107,6 +107,16 @@ var (
 	ErrInvalidCgroupPolicy = errors.New("sandbox pool cgroup: invalid per-workspace cgroup policy")
 )
 
+// IsWorkspaceCgroupFailure reports whether err is a refusal of the
+// per-workspace cgroup guard, as opposed to the port-block exhaustion of the
+// network policy (ErrPoolNetworkCapacity): the two are different conditions
+// and a caller must not collapse them into one generic allocation error. The
+// workspace count is still legal in the resource-bound case.
+func IsWorkspaceCgroupFailure(err error) bool {
+	return errors.Is(err, ErrWorkspaceCgroupUnavailable) ||
+		errors.Is(err, ErrInvalidCgroupPolicy)
+}
+
 // CgroupHostSupport is the host half of the guard: whether the pool pod runs on
 // a unified (v2) hierarchy with the controllers the slices need. Supported() is
 // the fail-closed gate.

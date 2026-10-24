@@ -2,6 +2,7 @@ package sandboxpool
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -363,3 +364,44 @@ func TestResolveWorkspaceCgroupStatus(t *testing.T) {
 }
 
 func testNow() time.Time { return time.Unix(1700000000, 0).UTC() }
+
+// The resource-bound refusal and the port-block exhaustion are different
+// conditions (ci#853 acceptance: they must not collapse into one generic
+// allocation error): the workspace count is still legal when the guard refuses.
+func TestWorkspaceCgroupRefusalIsDistinctFromPoolExhaustion(t *testing.T) {
+	host := CgroupHostSupport{Root: "/sys/fs/cgroup", Blockers: []string{"no cgroup v2 delegation"}}
+	_, guardErr := ResolveWorkspaceCgroup(cgroupTestNewWorkspace(), cgroupEnabledPolicy(), host)
+	if guardErr == nil {
+		t.Fatal("a host without delegation must refuse the workspace")
+	}
+	if !IsWorkspaceCgroupFailure(guardErr) {
+		t.Fatalf("the guard refusal must be recognised: %v", guardErr)
+	}
+	if IsPoolNetworkFailure(guardErr) {
+		t.Fatalf("a resource-bound refusal must not read as port-block exhaustion: %v", guardErr)
+	}
+	if IsWorkspaceCgroupFailure(ErrPoolNetworkCapacity) || IsWorkspaceCgroupFailure(nil) ||
+		IsWorkspaceCgroupFailure(errors.New("other")) {
+		t.Fatal("only a guard refusal may satisfy IsWorkspaceCgroupFailure")
+	}
+	if !IsWorkspaceCgroupFailure(fmt.Errorf("lease: %w", guardErr)) {
+		t.Fatal("a wrapped refusal must still be recognised")
+	}
+}
+
+// The admin surface reports the guard next to the network plan; the refusal
+// reason of a guarded pool must be visible there without creating anything.
+func TestWorkspaceCgroupStatusReportsRefusalReason(t *testing.T) {
+	t.Setenv(EnvWorkspaceCgroupGuard, "1")
+	t.Setenv(EnvWorkspaceCgroupRoot, "/nonexistent/cgroup")
+	status := ResolveWorkspaceCgroupStatus(testNow())
+	if status.Enabled != true || status.PolicyError == "" {
+		t.Fatalf("an unusable host must be a visible policy error: %+v", status)
+	}
+	if len(status.Workspaces) != 0 {
+		t.Fatalf("a refused pool must hand out no slice: %+v", status.Workspaces)
+	}
+	if !strings.Contains(status.PolicyError, ErrWorkspaceCgroupUnavailable.Error()) {
+		t.Fatalf("the reported refusal must carry the guard signal: %s", status.PolicyError)
+	}
+}
