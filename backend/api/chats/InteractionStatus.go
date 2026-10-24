@@ -226,6 +226,11 @@ func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue ch
 	// "what is the newest message?" - instead of two separate round-trips.
 	recent, recentErr := recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
 
+	// ci#850: read the transcript tail once and reuse it for both questions the
+	// resolver asks of it - "is the newest message a pending user action?" and
+	// "what is the newest message?" - instead of two separate round-trips.
+	recent, recentErr := recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
+
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
 	// permission prompt or an ask-only relay question) the interaction is not
