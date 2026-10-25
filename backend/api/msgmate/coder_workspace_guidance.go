@@ -33,6 +33,10 @@ func coderWorkspaceSystemPrompt(systemPrompt string, config map[string]interface
 	// so the model reaches for a typed, auditable call first. It is idempotent
 	// and only composed for a native coder agent.
 	guidance = nativecoder.GitHubTypedFirstAppend(guidance)
+	// ci#514 phase 3: the prompt half of retiring coder_bash for git work. The
+	// block names the typed coder_git_* reads/writes so no dev-agent prompt
+	// instructs a raw `git` command any more; it is idempotent.
+	guidance = nativecoder.GitTypedFirstAppend(guidance)
 	if guidance == "" {
 		return systemPrompt
 	}
@@ -40,9 +44,9 @@ func coderWorkspaceSystemPrompt(systemPrompt string, config map[string]interface
 	if strings.Contains(trimmed, workspaceRootPromptMarker) {
 		// The workspace-root half is already composed (a config that pre-baked
 		// the guidance): never emit it twice, the prompt is paid for on every
-		// turn. The typed-first half is appended on its own here, because a
-		// pre-baked prompt must not be the one case that stays typed-blind.
-		return nativecoder.GitHubTypedFirstAppend(systemPrompt)
+		// turn. The typed-first halves are appended on their own here, because
+		// a pre-baked prompt must not be the one case that stays typed-blind.
+		return nativecoder.GitTypedFirstAppend(nativecoder.GitHubTypedFirstAppend(systemPrompt))
 	}
 	if trimmed == "" {
 		return guidance
