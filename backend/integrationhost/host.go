@@ -57,6 +57,9 @@ func (host) Tools() integrationinterface.Tools   { return toolsAdapter{} }
 func (host) ConfigWrite() integrationinterface.ConfigWriter { return configWriter{} }
 func (host) Users() integrationinterface.UsersService       { return usersAdapter{} }
 
+// HostVersion 5: the generic tool loop an integration-owned agent drives.
+func (host) Agent() integrationinterface.Agent { return agentAdapter{} }
+
 // config adapts the resolved runtime configuration (backend/runtimecfg) to the
 // stable Config surface.
 type config struct{}

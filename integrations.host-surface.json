@@ -15,7 +15,7 @@
       "http.ServeMux": 2
     }
   },
-  "host_version": 4,
+  "host_version": 5,
   "requirements": [
     "github.com/msgmate-io/go-tool-interface v0.0.0",
     "github.com/urfave/cli/v3 v3.11.0",
