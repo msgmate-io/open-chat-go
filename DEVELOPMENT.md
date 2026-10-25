@@ -259,6 +259,32 @@ triggers `resolve-merged-deployment` with `merge_target=main`, which dispatches
 the ci.msgmate.io deployment (`msgmate-io-ci`) and opens the `main` →
 `production` promotion PR in turn.
 
+##### A deployment dispatch cannot claim the CI host (ci#890)
+
+`ci.msgmate.io` was observed serving a VERSION that existed only on unmerged
+branches — `main` sat one release behind the host — while the run history showed
+a *PR-preview* deployment (`msgmate-io-pr-deployment`) for an already **closed**
+pull request running *after* the `main`-merge deploys. A preview deploys with the
+PR-scoped overrides it was dispatched with, so a preview carrying no (or a stale)
+override falls back to the deployment-wide identity of
+`values.msgmate-io-pr-deployment.yaml` and re-asserts whatever identity the CI
+deployment already had.
+
+`development/scripts/pr_ci_pr_deploy_target_guard.py` is the last gate before the
+dispatch: a pure predicate over the very outputs the payload is built from
+(`deployment_name`, `NAMESPACE_OVERRIDE`, `DEPLOY_HOST_OVERRIDE`,
+`HELM_RELEASE_OVERRIDE`, `PR_NUMBER`, plus the live `PR_STATE` the step resolves
+from the API) that refuses, fail-closed, (a) a `msgmate-io-pr-deployment`
+dispatch without PR-scoped overrides (a blank override is refused *because* the
+CI-side deploy only honours a non-empty one), (b) any dispatch naming the CI
+namespace `msgmate-io-ci` or the host `ci.msgmate.io`, (c) a preview for a
+closed/merged PR and (d) a non-preview deployment carrying PR-scoped overrides
+(so a preview host/namespace cannot leak into a merged deployment). Failing here
+means the deploy is never dispatched, so the host it would have claimed is
+untouched. Its regression test,
+`development/scripts/test_pr_ci_pr_deploy_target_guard.py` (stdlib-only, like its
+siblings), runs in the Pin Freshness Gate.
+
 #### A cancelled (superseded) CI run is not a failed gate (ci#659)
 
 The workflow's concurrency group is keyed by PR number *and* head SHA with
