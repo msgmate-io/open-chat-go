@@ -807,8 +807,12 @@ python3 -m venv .venv
   submodules, extra checkouts), `ValidateDevSetupMatrix` lists defects and
   `DevSetupMatrixGaps` names the repositories that still start half-set-up and
   need a `coder_dev_setup` declaration. `RenderDevSetupMatrixMarkdown` renders the
-  operator table; the unit test keeps the public profile catalogue, the per-repo
-  default table and the sandbox palette from drifting apart.
+  operator table; the unit tests keep the public profile catalogue, the per-repo
+  default table and the sandbox palette from drifting apart — every repository
+  the palette maps a ci.msgmate.io trigger to must carry a per-repo entry of its
+  own (`backend/nativecoder/devsetup_perrepo_test.go`), so a client, integration
+  or toolchain repository never inherits the monorepo's batteries-included
+  `full-development` set-up by accident.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
