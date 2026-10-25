@@ -6,10 +6,40 @@ import (
 	"gorm.io/gorm"
 )
 
+// actingScopeUser resolves the user whose chats a session may read.
+//
+// ci#865: an interaction created through POST /bots/{identifier}/interactions
+// is stored owner-scoped — the participant is the *acting user* (the owner of
+// the bot runtime, see createBotInteraction), while the read/follow routes
+// scoped by the raw session principal. For an automated (bot) session that is
+// the bot user itself, so the session that had just created a dispatched
+// interaction could not read or follow it back and the dispatched run never
+// started (also behind the silent_idle_freeze failures on ci#848).
+//
+// Mirroring the bots API's resolveActingUser, an automated session is therefore
+// resolved to the owner of its active runtime config. Non-automated sessions and
+// bots without an active runtime config keep their own scope, so authorisation
+// for unrelated users is unchanged.
+func actingScopeUser(db *gorm.DB, user *database.User) *database.User {
+	if db == nil || user == nil || !user.IsAutomated {
+		return user
+	}
+	var runtime database.BotRuntimeConfig
+	err := db.Preload("OwnerUser").
+		Where("bot_user_id = ? AND is_active = ?", user.ID, true).
+		First(&runtime).Error
+	if err != nil || runtime.OwnerUser.ID == 0 {
+		return user
+	}
+	owner := runtime.OwnerUser
+	return &owner
+}
+
 // scopedChatQuery restricts a chats query to the chats the user participates
 // in. Admins may inspect any chat so they can view and manage other users'
 // interactions in "see all" mode.
 func scopedChatQuery(db *gorm.DB, user *database.User) *gorm.DB {
+	user = actingScopeUser(db, user)
 	if user != nil && user.IsAdmin {
 		return db
 	}
@@ -19,6 +49,7 @@ func scopedChatQuery(db *gorm.DB, user *database.User) *gorm.DB {
 // scopedMessageQuery restricts a messages query to the messages the user
 // exchanged. Admins may inspect any message in "see all" mode.
 func scopedMessageQuery(db *gorm.DB, user *database.User) *gorm.DB {
+	user = actingScopeUser(db, user)
 	if user != nil && user.IsAdmin {
 		return db
 	}
