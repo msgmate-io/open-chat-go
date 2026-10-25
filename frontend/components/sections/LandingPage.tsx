@@ -431,7 +431,7 @@ export function LandingHero({
                     variant="ghost"
                     size="sm"
                     className="pointer-events-auto relative h-7 select-none gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 text-xs font-normal text-foreground shadow-sm backdrop-blur-sm hover:bg-accent hover:text-accent-foreground"
-                    onClick={() => navigateTo("/product_overview")}
+                    onClick={() => navigateTo("/overview")}
                 >
                     <Sparkles className="size-3.5" aria-hidden="true" />
                     <span className="hidden sm:inline">What can Open-Chat do?</span>
