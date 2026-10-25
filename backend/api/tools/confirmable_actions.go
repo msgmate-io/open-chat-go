@@ -314,7 +314,7 @@ func (h *ToolsHandler) RejectConfirmableAction(w http.ResponseWriter, r *http.Re
 
 	rejectionMessageUUID := ""
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
+		if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", database.JSONRaw(updatedMetaBytes)).Error; err != nil {
 			return err
 		}
 		if err := markSourceMessageToolCallRejected(tx, sourceMessage, actionID, toolResultText); err != nil {
@@ -633,7 +633,7 @@ func (h *ToolsHandler) ExecuteConfirmableAction(w http.ResponseWriter, r *http.R
 	// of returning a 500 that leaves the user unable to confirm an action.
 	err = database.RetryOnBusy(r.Context(), "confirmable-action-persist", func() error {
 		return DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", updatedMetaBytes).Error; err != nil {
+			if err := tx.Model(&database.Message{}).Where("id = ?", sourceMessage.ID).Update("meta_data", database.JSONRaw(updatedMetaBytes)).Error; err != nil {
 				return err
 			}
 			toolCallStatus := "failed"
