@@ -23,6 +23,9 @@ on:
       # ci#423 step 4: the dependency-surface measurement and its baseline.
       - backend/scripts/integration_dep_surface.py
       - development/scripts/tests/test_integration_dep_surface.sh
+      - development/scripts/check_host_surface.py
+      - development/scripts/tests/test_host_surface.sh
+      - integrations.host-surface.json
       - integrations.dep-surface.json
   workflow_dispatch:
     inputs:
@@ -103,6 +106,9 @@ jobs:
         run: |
           python3 -m py_compile backend/scripts/integration_dep_surface.py
           bash development/scripts/tests/test_integration_dep_surface.sh
+          python3 -m py_compile development/scripts/check_host_surface.py
+          bash development/scripts/tests/test_host_surface.sh
+          python3 development/scripts/check_host_surface.py --baseline integrations.host-surface.json
 
       # The committed baseline is the record of which integrations are already
       # decoupled; validate it without a Go toolchain so a malformed or
