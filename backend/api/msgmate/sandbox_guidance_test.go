@@ -2,6 +2,7 @@ package msgmate
 
 import (
 	"backend/nativecoder"
+	"context"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,7 @@ func TestAppendExecutedToolCallsFramesSandboxProvisioningFailures(t *testing.T) 
 		},
 	}
 
-	_, messages, _ := appendExecutedToolCalls(nil, calls, map[string]bool{}, ResolveToolResultLimits(nil))
+	_, messages, _ := appendExecutedToolCalls(context.Background(), nil, calls, map[string]bool{}, ResolveToolResultLimits(nil))
 	if len(messages) != 4 {
 		t.Fatalf("expected assistant+tool message per call, got %d", len(messages))
 	}
@@ -59,7 +60,7 @@ func TestAppendExecutedToolCallsLeavesRealTestFailuresAlone(t *testing.T) {
 		},
 	}
 
-	_, messages, _ := appendExecutedToolCalls(nil, calls, map[string]bool{}, ResolveToolResultLimits(nil))
+	_, messages, _ := appendExecutedToolCalls(context.Background(), nil, calls, map[string]bool{}, ResolveToolResultLimits(nil))
 	if len(messages) != 2 {
 		t.Fatalf("expected assistant+tool message, got %d", len(messages))
 	}
