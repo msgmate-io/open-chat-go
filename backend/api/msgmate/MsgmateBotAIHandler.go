@@ -585,15 +585,28 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	dynamicTools := mapGetOrDefault[map[string]interface{}](configMap, "dynamic_tools", map[string]interface{}{})
 	mcpTools := mapGetOrDefault[map[string]interface{}](configMap, "mcp_tools", map[string]interface{}{})
 	systemPrompt := mapGetOrDefault[string](configMap, "system_prompt", "You are a helpful assistant.")
-	// ci#819 part A (prompt half): a native coder is told the workspace root up
-	// front, so it stops rediscovering it with a `cd` prefix on every
-	// `coder_bash` call. Non-coder configs are untouched.
-	systemPrompt = coderWorkspaceSystemPrompt(systemPrompt, configMap)
+	// An integration-owned agent turn (HostVersion 5 Agent runtime) supplies its
+	// own system prompt and tool set; the core keeps ownership of the loop.
+	agentSpec, hasAgentSpec := agentTurnSpecFromContext(ctx)
+	if hasAgentSpec && strings.TrimSpace(agentSpec.SystemPrompt) != "" {
+		systemPrompt = agentSpec.SystemPrompt
+	} else {
+		// ci#819 part A (prompt half): a native coder is told the workspace root
+		// up front, so it stops rediscovering it with a `cd` prefix on every
+		// `coder_bash` call. Non-coder configs are untouched.
+		systemPrompt = coderWorkspaceSystemPrompt(systemPrompt, configMap)
+	}
+	if hasAgentSpec && len(agentSpec.Tools) > 0 {
+		tools = append([]string(nil), agentSpec.Tools...)
+	}
 	// context_summary is a compacted summary of earlier turns persisted by the
 	// native coder agent (msgmate_coder/coder_compact, ci#394). It is injected
 	// as a leading system message so the dropped history survives in context.
 	contextSummary := mapGetOrDefault[string](configMap, "context_summary", "")
 	tags := mapGetOrDefault[[]string](configMap, "tags", []string{})
+	if hasAgentSpec {
+		toolInit = mergeAgentToolInit(ctx, toolInit, agentSpec, tags, configMap)
+	}
 	samplingParams := samplingParamsFromConfig(configMap)
 	providerRetryOptions := providerRetryOptionsFromConfig(configMap)
 	trackUsage := mapGetOrDefault[bool](configMap, "track_usage", false)
