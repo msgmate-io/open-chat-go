@@ -229,6 +229,36 @@ func TestResolveDevSetupExplicit(t *testing.T) {
 	if _, ok := ResolveDevSetup(map[string]interface{}{DevSetupConfigKey: "rm -rf /"}); ok {
 		t.Fatal("values outside the profile charset must be rejected")
 	}
+
+	// The operator-provided escape hatch: a `setup_commands` list is parsed into
+	// SetupCommands and replaces the generated profile/submodule body verbatim
+	// (plus the marker). A non-empty list must win over the declared profile.
+	spec, ok = ResolveDevSetup(map[string]interface{}{
+		DevSetupConfigKey: map[string]interface{}{
+			"profile":        "full-android",
+			"submodules":     true,
+			"setup_commands": []interface{}{"command -v clang || sudo apt-get install -y clang", "make bootstrap"},
+		},
+	})
+	if !ok {
+		t.Fatal("map form with setup_commands must resolve a plan")
+	}
+	if len(spec.SetupCommands) != 2 {
+		t.Fatalf("setup_commands must carry the operator lines, got %#v", spec.SetupCommands)
+	}
+	script = DevSetupScript(spec)
+	if !strings.HasPrefix(script, "set -e") {
+		t.Fatal("script must remain fail-fast")
+	}
+	if !strings.Contains(script, "make bootstrap") {
+		t.Fatalf("script must render the setup_commands verbatim, got %q", script)
+	}
+	if strings.Contains(script, "prepare --profile") {
+		t.Fatalf("setup_commands must replace the generated profile body, got %q", script)
+	}
+	if !strings.Contains(script, "[ci#756 dev-setup]") {
+		t.Fatalf("script must carry the ci#756 marker, got %q", script)
+	}
 }
 
 // TestDevSetupEmptyConfiguredScriptDoesNotDisablePlan pins that a deliberate or
