@@ -66,9 +66,15 @@ export {
 export {
   buildTurnBlocks,
   parseTurnTimeline,
+  // ci#876: an extension body that renders the turn's reasoning itself needs the
+  // canonical resolver too. A message hydrated mid-stream from the streaming
+  // snapshot carries the reasoning but no `meta_data.timeline`, and re-deriving
+  // the steps/think-tag fallback in the integration would drift from the core.
+  resolveTurnThoughts,
   type TurnBlock,
   type TurnThoughtBlock,
   type TurnToolCallBlock,
+  type TurnThoughtsInput,
 } from "./components/chat/turnTimeline";
 export { ProviderRetryEventWidget, resolveProviderRetryEvent, type ProviderRetryEvent } from "./components/chat/ProviderRetryEventWidget";
 export {

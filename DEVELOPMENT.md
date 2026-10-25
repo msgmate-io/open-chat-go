@@ -801,6 +801,14 @@ python3 -m venv .venv
   repository prefix wins and a repository outside the table keeps the declared
   default, so one bot config can serve several repositories with different
   development set-ups instead of forcing every interaction onto the same one.
+- `backend/nativecoder/devsetupmatrix.go` is the audit surface of that per-repo
+  default: `DevSetupMatrixPlan` resolves what a ci.msgmate.io coding interaction
+  on each configured repository actually gets (sandbox palette variant, profile,
+  submodules, extra checkouts), `ValidateDevSetupMatrix` lists defects and
+  `DevSetupMatrixGaps` names the repositories that still start half-set-up and
+  need a `coder_dev_setup` declaration. `RenderDevSetupMatrixMarkdown` renders the
+  operator table; the unit test keeps the public profile catalogue, the per-repo
+  default table and the sandbox palette from drifting apart.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
