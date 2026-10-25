@@ -32,12 +32,16 @@ func (j *JSONRaw) Scan(src any) error {
 	}
 }
 
-// Value implements driver.Valuer so writes are always persisted as BLOB/bytes.
+// Value implements driver.Valuer. It returns the JSON as a string rather than a
+// []byte: on PostgreSQL the parameter is then typed as text and the jsonb column
+// parses it, whereas a []byte is encoded as bytea and rejected with
+// "invalid input syntax for type json" (SQLSTATE 22P02, ci#878). SQLite stores
+// the same text under its TEXT affinity. Scan already accepts both.
 func (j JSONRaw) Value() (driver.Value, error) {
 	if j == nil {
 		return nil, nil
 	}
-	return []byte(j), nil
+	return string(j), nil
 }
 
 // MarshalJSON keeps the stored JSON raw instead of base64-encoding the
