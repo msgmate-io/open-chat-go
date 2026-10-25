@@ -957,6 +957,28 @@ behaviour on SQLite and PostgreSQL. Two rules follow from that:
   as text on PostgreSQL and BLOB on SQLite).
 
 
+### Switching branches after a dev build (ci#756)
+
+`docker compose up` runs tooling that regenerates two **tracked** files:
+
+- `integrations.lock.json` — the (non-frozen) `prepare`/`sync` re-pins it to the
+  commits currently checked out under `clients/integrations`, which drift ahead
+  of the committed lock;
+- `backend/server/swagger.json` — embedded with `go:embed` and refreshed by every
+  backend rebuild.
+
+Left modified, they make `git switch`/`git checkout` refuse with "local changes
+would be overwritten". The dev tooling now restores both automatically: the
+integration-sync entrypoint restores the lockfile after `prepare`/`sync`, and
+the backend rebuild restores the swagger snapshot after compiling (the built
+binary still embeds the freshly generated documentation). If an older checkout
+already left them dirty, run the host-side helper once:
+
+```bash
+development/scripts/restore_generated_artifacts.sh
+```
+
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra
