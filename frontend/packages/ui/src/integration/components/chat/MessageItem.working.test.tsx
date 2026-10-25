@@ -129,9 +129,10 @@ describe("BotMessageItem running affordances", () => {
     expect(html).toContain("The assertion is stale, I will fix it.");
     expect(html).toContain("1.2s");
     expect(html).toContain("820ms");
-    // The reasoning block that preceded the call is rendered before it.
-    expect(html.indexOf("I should inspect the failing test.")).toBeLessThan(
-      html.indexOf("npm test"),
+    // The tool call renders first; the reasoning block sits below it so it
+    // stays in view as more calls stream in.
+    expect(html.indexOf("npm test")).toBeLessThan(
+      html.indexOf("I should inspect the failing test."),
     );
   });
 
@@ -292,15 +293,16 @@ describe("BotMessageItem running affordances", () => {
     expect(html).toContain('data-testid="turn-narration"');
     expect(html).toContain("Let me drop the stale import first.");
     expect(html).toContain("Now I will re-run the suite.");
-    // Reasoning sits first, then its narration, then the call it produced.
+    // Tool calls and their narration render first; the reasoning/thinking block
+    // sits at the bottom so it stays in view as more calls stream in.
     const thought = html.indexOf("The build log points at the stale import.");
     const firstNarration = html.indexOf("Let me drop the stale import first.");
     const firstCall = html.indexOf("src/app.ts");
     const secondNarration = html.indexOf("Now I will re-run the suite.");
     expect(thought).toBeGreaterThan(-1);
-    expect(thought).toBeLessThan(firstNarration);
     expect(firstNarration).toBeLessThan(firstCall);
     expect(firstCall).toBeLessThan(secondNarration);
+    expect(secondNarration).toBeLessThan(thought);
     // Durations still render per call, and the header counts them correctly.
     expect(html).toContain("120ms");
     expect(html).toContain("8.2s");
