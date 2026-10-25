@@ -49,6 +49,19 @@ func GetGlobalDB() *gorm.DB {
 	return globalDB
 }
 
+// gormConfig is the shared GORM config for every backend. Foreign-key
+// constraints are not created (ci#878): SQLite, the original backend, does not
+// enforce FKs by default and the data carries dangling references (e.g.
+// bot_user_id=0 meaning "none"), so an enforced PostgreSQL schema rejects
+// inserts the app has always made. Matching SQLite's behaviour keeps the two
+// backends interchangeable.
+func gormConfig() *gorm.Config {
+	return &gorm.Config{
+		Logger:                                   gormLoggerFor(false),
+		DisableForeignKeyConstraintWhenMigrating: true,
+	}
+}
+
 func SetupDatabase(config DBConfig) *gorm.DB {
 	var db *gorm.DB
 	var err error
@@ -57,7 +70,7 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 	case "sqlite":
 		db, err = openSQLite(config.FilePath)
 	case "postgres":
-		db, err = gorm.Open(postgres.Open(config.FilePath), &gorm.Config{Logger: gormLoggerFor(false)})
+		db, err = gorm.Open(postgres.Open(config.FilePath), gormConfig())
 	default:
 		panic(fmt.Sprintf("Unsupported database backend: %s", config.Backend))
 	}
