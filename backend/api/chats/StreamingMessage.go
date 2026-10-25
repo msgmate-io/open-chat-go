@@ -40,20 +40,20 @@ type StreamingMessageResponse struct {
 func (h *ChatsHandler) GetStreamingMessage(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	chatUuid, chatUuidErr := parseChatUUID(r)
 	if chatUuidErr != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
 	var chat database.Chat
 	if err := scopedChatQuery(DB, user).Where("uuid = ?", chatUuid).
 		First(&chat).Error; err != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
