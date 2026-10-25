@@ -128,9 +128,11 @@ func TestDevSetupMatrixPlanAndValidateKeepsConfiguredReposConsistent(t *testing.
 	if problems := ValidateDevSetupMatrix(plans); len(problems) > 0 {
 		t.Fatalf("the resolved matrix must be consistent, got %#v", problems)
 	}
+	// ci#756: after the per-repo table covers every ci.msgmate.io palette
+	// trigger, the only remaining gap is the deliberately unknown repository.
 	gaps := DevSetupMatrixGaps(plans)
-	if len(gaps) != 2 || !strings.Contains(strings.Join(gaps, "\n"), "tbscode/not-a-dev-repo") {
-		t.Fatalf("expected the two repositories outside the per-repo table as gaps, got %#v", gaps)
+	if len(gaps) != 1 || !strings.Contains(strings.Join(gaps, "\n"), "tbscode/not-a-dev-repo") {
+		t.Fatalf("expected only the repository outside every dev-setup table as a gap, got %#v", gaps)
 	}
 	rendered := RenderDevSetupMatrixMarkdown(plans)
 	for _, repo := range []string{"msgmate-io/open-chat-go-ci", "msgmate-io/open-chat-go-helm-chart"} {
