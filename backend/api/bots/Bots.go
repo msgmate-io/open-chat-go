@@ -1390,7 +1390,7 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := DB.Model(&runtime).Update("default_shared_config", configJSON).Error; err != nil {
+	if err := DB.Model(&runtime).Update("default_shared_config", database.JSONRaw(configJSON)).Error; err != nil {
 		http.Error(w, "Failed to save bot config", http.StatusInternalServerError)
 		return
 	}

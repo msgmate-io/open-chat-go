@@ -309,7 +309,7 @@ func markPostActionsRan(db *gorm.DB, chatID uint) {
 		_ = db.Create(&database.ChatSettings{ChatId: chatID, ConfigData: encoded}).Error
 		return
 	}
-	_ = db.Model(&settings).Update("config_data", encoded).Error
+	_ = db.Model(&settings).Update("config_data", database.JSONRaw(encoded)).Error
 }
 
 // runPlanAutoImplement executes a plan_auto_implement action: it posts the
