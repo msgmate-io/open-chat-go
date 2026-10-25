@@ -68,8 +68,11 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 
 	switch config.Backend {
 	case "sqlite":
+		jsonRawValueAsText = false
 		db, err = openSQLite(config.FilePath)
 	case "postgres":
+		// jsonb columns need a text parameter; see JSONRaw.Value (ci#878).
+		jsonRawValueAsText = true
 		db, err = gorm.Open(postgres.Open(config.FilePath), gormConfig())
 	default:
 		panic(fmt.Sprintf("Unsupported database backend: %s", config.Backend))
