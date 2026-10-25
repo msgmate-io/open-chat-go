@@ -5,6 +5,7 @@ import (
 	"backend/api/msgmate"
 	"backend/database"
 	"backend/integrations"
+	"backend/logging"
 	"backend/nativecoder"
 	"backend/server/util"
 	"backend/workqueue"
@@ -1743,6 +1744,11 @@ func writeCreateInteractionError(w http.ResponseWriter, err error) {
 	case errors.Is(err, chats.ErrAttachmentNotOwned):
 		http.Error(w, "Access denied to file attachment", http.StatusForbidden)
 	default:
+		// ci#865: the generic 500 body carries no detail, so the Live Runtime
+		// Canary only reported "create-interaction failed after retries" with an
+		// empty body. Log the underlying error server-side so the next canary
+		// run names the actual cause.
+		logging.Errorf("create interaction failed: %v", err)
 		http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
 	}
 }
