@@ -33,6 +33,12 @@ func Install() {
 
 type host struct{}
 
+// Compile-time contract assertion (ci#423 step 3): the adapter must implement
+// every surface of the versioned Host interface, so adding a capability to
+// integrationinterface without a matching adapter method fails the build here
+// instead of panicking in a running integration.
+var _ integrationinterface.Host = host{}
+
 func (host) Version() int                          { return integrationinterface.HostVersion }
 func (host) Config() integrationinterface.Config   { return config{} }
 func (host) Logger() integrationinterface.Logger   { return stdLogger{} }
