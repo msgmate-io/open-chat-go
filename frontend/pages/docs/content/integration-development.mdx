@@ -93,6 +93,16 @@ reached through the versioned Host interface in
 `backend/integrationhost`. The Host surface deliberately exposes *capabilities*,
 never `fs.FS`, `http.ServeMux` or `*gorm.DB`.
 
+The core installs the adapter on **every** boot path that loads the compiled
+integrations (`backend/cmd/server.go` and `backend/cmd/worker.go` call
+`integrationhost.Install()` right after `integrations.EnsureLoaded()`), and
+`backend/integrationhost` asserts `var _ integrationinterface.Host = host{}` at
+compile time, so a shape change in the interface module fails the core build
+instead of an integration at runtime. `RequireHost()` is therefore safe to call
+from request handlers, queue tasks and bootstrap hooks in either process; a boot
+path that loads integrations without installing the adapter is caught by
+`TestBootPathsInstallIntegrationHost` in `backend/cmd`.
+
 Migration recipe for one integration:
 
 1. Read the module's coupling report:
