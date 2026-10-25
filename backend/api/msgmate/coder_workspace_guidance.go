@@ -38,9 +38,11 @@ func coderWorkspaceSystemPrompt(systemPrompt string, config map[string]interface
 	}
 	trimmed := strings.TrimSpace(systemPrompt)
 	if strings.Contains(trimmed, workspaceRootPromptMarker) {
-		// Already composed (a config that pre-baked the guidance): never emit it
-		// twice, the prompt is paid for on every turn.
-		return systemPrompt
+		// The workspace-root half is already composed (a config that pre-baked
+		// the guidance): never emit it twice, the prompt is paid for on every
+		// turn. The typed-first half is appended on its own here, because a
+		// pre-baked prompt must not be the one case that stays typed-blind.
+		return nativecoder.GitHubTypedFirstAppend(systemPrompt)
 	}
 	if trimmed == "" {
 		return guidance
