@@ -28,6 +28,11 @@ func coderWorkspaceSystemPrompt(systemPrompt string, config map[string]interface
 	// Name the root the session layer will actually apply: a sandbox that
 	// declares coder_workspace_root must not be told the default path.
 	guidance := strings.TrimSpace(nativecoder.WorkspaceRootGuidanceFor(nativecoder.WorkspaceRootFromConfig(config)))
+	// ci#514 phase 1: the prompt half of retiring coder_bash for GitHub work.
+	// The block names the typed GitHub tool for every recurring `gh` workflow,
+	// so the model reaches for a typed, auditable call first. It is idempotent
+	// and only composed for a native coder agent.
+	guidance = nativecoder.GitHubTypedFirstAppend(guidance)
 	if guidance == "" {
 		return systemPrompt
 	}

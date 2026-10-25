@@ -55,7 +55,7 @@ func TestBuildReportMeasuresBothPhases(t *testing.T) {
 		{Tool: "coder_bash", Arguments: `{"command":"go build ./..."}`},
 	}
 
-	report := buildReport(samples)
+	report := buildReport(samples, "")
 	if report.ClassifiedCalls != 3 {
 		t.Fatalf("coverage classified %d calls, want 3", report.ClassifiedCalls)
 	}
@@ -83,7 +83,7 @@ func TestBuildReportCarriesPhaseGates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readSamples: %v", err)
 	}
-	report := buildReport(samples)
+	report := buildReport(samples, "")
 	if len(report.Phases) == 0 {
 		t.Fatal("the report must carry the plan's phase gates")
 	}
@@ -107,7 +107,7 @@ func TestBuildReportCarriesPhaseGates(t *testing.T) {
 func TestReportJSONKeepsCoverageFlatAndNestsPhase1(t *testing.T) {
 	encoded, err := json.Marshal(buildReport([]nativecoder.BashCallSample{
 		{Tool: "coder_bash", Arguments: `{"command":"gh issue list --state open"}`},
-	}))
+	}, ""))
 	if err != nil {
 		t.Fatalf("marshal report: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestReportJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readSamples: %v", err)
 	}
-	encoded, err := json.Marshal(buildReport(samples))
+	encoded, err := json.Marshal(buildReport(samples, ""))
 	if err != nil {
 		t.Fatalf("marshal report: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestRenderTextReportsGitHubPhase(t *testing.T) {
 	text := renderText(buildReport([]nativecoder.BashCallSample{
 		{Tool: "coder_bash", Arguments: `{"command":"gh pr diff 8"}`},
 		{Tool: "coder_bash", Arguments: `{"command":"gh auth token"}`},
-	}))
+	}, ""))
 	// Both calls are GitHub commands (a diff and a credential read); the
 	// credential one is residual, so the phase cannot close here.
 	for _, want := range []string{
@@ -193,7 +193,7 @@ func TestRenderTextIncludesPhaseGates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readSamples: %v", err)
 	}
-	text := renderText(buildReport(samples))
+	text := renderText(buildReport(samples, ""))
 	for _, want := range []string{"phase exit gates:", "phase_1_github", "ready to close the retirement:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text report missing %q:\n%s", want, text)
@@ -208,7 +208,7 @@ func TestReadSamplesCountsMalformedLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readSamples must tolerate malformed lines: %v", err)
 	}
-	report := buildReport(samples)
+	report := buildReport(samples, "")
 	if report.ErroredCalls == 0 {
 		t.Fatal("a malformed line must be counted as an errored call")
 	}
