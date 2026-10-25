@@ -1464,13 +1464,13 @@ func (h *BotsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "unable_to_get_database_or_user", "Unable to get database or user")
 		return
 	}
 	queueClient, clientErr := util.GetAsynqClient(r)
 	queueInspector, inspectorErr := util.GetAsynqInspector(r)
 	if clientErr != nil || inspectorErr != nil {
-		http.Error(w, "Unable to access async queue", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "unable_to_access_async_queue", "Unable to access async queue")
 		return
 	}
 
@@ -1479,26 +1479,26 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 	// the interaction is created for that acting user.
 	actingUser, actingErr := resolveActingUser(DB, user)
 	if actingErr != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "unable_to_resolve_acting_user", "Unable to resolve acting user")
 		return
 	}
 	runtime, err := resolveReadableBot(DB, actingUser, identifier)
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
-			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "ambiguous_bot_identifier", "ambiguous bot identifier")
 			return
 		}
-		http.Error(w, "Bot not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "bot_not_found", "Bot not found")
 		return
 	}
 
 	var req CreateBotInteractionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	if strings.TrimSpace(req.Message) == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "message_is_required", "message is required")
 		return
 	}
 
@@ -1736,20 +1736,20 @@ func writeCreateInteractionError(w http.ResponseWriter, err error) {
 	var configErr *interactionConfigError
 	switch {
 	case errors.Is(err, errInteractionMessageRequired):
-		http.Error(w, "message is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "message_is_required", "message is required")
 	case errors.As(err, &configErr):
-		http.Error(w, configErr.message, http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_interaction_config", configErr.message)
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		http.Error(w, "Invalid file attachment", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_file_attachment", "Invalid file attachment")
 	case errors.Is(err, chats.ErrAttachmentNotOwned):
-		http.Error(w, "Access denied to file attachment", http.StatusForbidden)
+		writeBotAPIError(w, http.StatusForbidden, "access_denied_to_file_attachment", "Access denied to file attachment")
 	default:
 		// ci#865: the generic 500 body carries no detail, so the Live Runtime
 		// Canary only reported "create-interaction failed after retries" with an
 		// empty body. Log the underlying error server-side so the next canary
 		// run names the actual cause.
 		logging.Errorf("create interaction failed: %v", err)
-		http.Error(w, "Failed to create interaction", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_create_interaction", "Failed to create interaction")
 	}
 }
 
