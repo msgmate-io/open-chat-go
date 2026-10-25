@@ -37,7 +37,16 @@ var unsafeQueryMode = regexp.MustCompile(`(?i)(default_query_exec_mode=)(exec|si
 func ensureJSONSafeQueryMode(dsn string) string {
 	if unsafeQueryMode.MatchString(dsn) {
 		logging.Warnf("PostgreSQL DSN requested an unsafe query mode for JSON columns; using cache_describe so []byte jsonb writes work (ci#878)")
-		return unsafeQueryMode.ReplaceAllString(dsn, "${1}cache_describe${3}")
+		dsn = unsafeQueryMode.ReplaceAllString(dsn, "${1}cache_describe${3}")
+		// `exec`/`simple_protocol` never reuse server-side prepared statements.
+		// cache_describe does, so keep them disabled when the operator did not
+		// say otherwise: a prepared statement cached before AutoMigrate alters a
+		// table fails afterwards with "cached plan must not change result type"
+		// (SQLSTATE 0A000).
+		if !dsnHasParam(dsn, "statement_cache_capacity") {
+			dsn = appendDSNParam(dsn, "statement_cache_capacity", "0")
+		}
+		return dsn
 	}
 
 	if statementCacheDisabled(dsn) && !dsnHasParam(dsn, "default_query_exec_mode") {
