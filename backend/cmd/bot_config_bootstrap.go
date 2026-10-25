@@ -428,7 +428,7 @@ func applyBotBootstrapConfig(DB *gorm.DB, sourcePath string, cfg botBootstrapCon
 			updates := map[string]interface{}{
 				"bot_user_id":           botUser.ID,
 				"description":           cfg.Bot.Description,
-				"default_shared_config": string(configData),
+				"default_shared_config": database.JSONRaw(configData),
 				"is_public":             isPublic,
 				"is_active":             isActive,
 			}

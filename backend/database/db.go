@@ -73,7 +73,9 @@ func SetupDatabase(config DBConfig) *gorm.DB {
 	case "postgres":
 		// jsonb columns need a text parameter; see JSONRaw.Value (ci#878).
 		jsonRawValueAsText = true
-		db, err = gorm.Open(postgres.Open(config.FilePath), gormConfig())
+		// Guard against a DSN query mode that turns []byte JSON writes into
+		// bytea (SQLSTATE 22P02); see ensureJSONSafeQueryMode (ci#878).
+		db, err = gorm.Open(postgres.Open(ensureJSONSafeQueryMode(config.FilePath)), gormConfig())
 	default:
 		panic(fmt.Sprintf("Unsupported database backend: %s", config.Backend))
 	}
