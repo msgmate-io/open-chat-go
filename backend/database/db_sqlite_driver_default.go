@@ -38,5 +38,5 @@ func sqliteDSN(filePath string) string {
 }
 
 func openSQLite(filePath string) (*gorm.DB, error) {
-	return gorm.Open(sqlite.Open(sqliteDSN(filePath)), &gorm.Config{Logger: gormLoggerFor(false)})
+	return gorm.Open(sqlite.Open(sqliteDSN(filePath)), gormConfig())
 }

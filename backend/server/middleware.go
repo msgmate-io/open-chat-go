@@ -345,11 +345,11 @@ func enforceEmailVerificationForAPI(DB *gorm.DB, r *http.Request, userID uint) e
 func enforceAccountNotSuspended(DB *gorm.DB, userID uint, w http.ResponseWriter) bool {
 	suspended, err := database.IsUserSuspended(DB, userID)
 	if err != nil {
-		http.Error(w, "Unable to load account state", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "account_state_unavailable", "Unable to load account state")
 		return false
 	}
 	if suspended {
-		http.Error(w, "account suspended", http.StatusForbidden)
+		writeAPIError(w, http.StatusForbidden, "account_suspended", "account suspended")
 		return false
 	}
 	return true
@@ -422,7 +422,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		DB, ok := r.Context().Value("db").(*gorm.DB)
 		if !ok {
-			http.Error(w, "Unable to get database", http.StatusBadRequest)
+			writeAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database")
 			return
 		}
 
@@ -431,7 +431,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
-				http.Error(w, "email verification required", http.StatusForbidden)
+				writeAPIError(w, http.StatusForbidden, "email_verification_required", "email verification required")
 				return
 			}
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
@@ -442,36 +442,36 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		tokens := sessionTokensFromRequest(r)
 		if len(tokens) == 0 {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "forbidden", "Forbidden")
 			return
 		}
 
 		session, found, err := resolveValidSessionFromRequest(DB, r)
 		if err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "forbidden", "Forbidden")
 			logging.Debugf("%v", err)
 			return
 		}
 		if !found {
 			clearSessionCookie(w, r)
-			http.Error(w, "Invalid token", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "invalid_token", "Invalid token")
 			return
 		}
 
 		var user database.User
 		if err := DB.First(&user, "id = ?", session.UserId).Error; err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "forbidden", "Forbidden")
 			return
 		}
 		if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
-			http.Error(w, "Unable to load user state", http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, "account_state_unavailable", "Unable to load user state")
 			return
 		}
 		if !enforceAccountNotSuspended(DB, user.ID, w) {
 			return
 		}
 		if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
-			http.Error(w, "email verification required", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "email_verification_required", "email verification required")
 			return
 		}
 
