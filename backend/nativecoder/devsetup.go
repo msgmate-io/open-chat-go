@@ -64,6 +64,32 @@ var DefaultDevSetupProfiles = []DevSetupRepoProfile{
 	{RepoPrefix: "msgmate-io/open-chat-go-helm-chart", Profile: "full-ci"},
 	{RepoPrefix: "msgmate-io/open-chat-go-llm-coding-context", Profile: "full-ci"},
 	{RepoPrefix: "msgmate-io/open-chat-go-build-tools", Profile: "core-only"},
+	// ci#756: every repository the sandbox palette maps a ci.msgmate.io
+	// git-repo trigger to needs a per-repo default as well, otherwise a bot or
+	// trigger pointed at one of them starts half-set-up (bare checkout, no
+	// submodules, no build tooling) and the model installs tooling ad hoc
+	// instead of receiving a prepared checkout before its first turn. The
+	// profile follows the use-case of the repository, see the comments below.
+	// The frontend repository builds backend and frontend together (`full`:
+	// full integrations manifest, no Android client).
+	{RepoPrefix: "msgmate-io/open-chat-go-frontend", Profile: "full"},
+	// The Android host app needs the mobile bindings and the CI tooling that
+	// carries the client build scripts.
+	{RepoPrefix: "msgmate-io/open-chat-go-mobile-client", Profile: "full-android"},
+	// Go integration/tool repositories only need the private integrations
+	// manifest; Helm/mobile/LLM checkouts would be dead weight.
+	{RepoPrefix: "msgmate-io/open-chat-go-mcp-integration", Profile: "default"},
+	{RepoPrefix: "msgmate-io/open-chat-go-rest-api-tool", Profile: "default"},
+	{RepoPrefix: "msgmate-io/open-chat-go-go-client", Profile: "default"},
+	// The Odoo stack and the VNC desktop client are verified through their own
+	// sandbox variants; their checkouts need the private CI tooling and the
+	// deployment manifests, not the Android client.
+	{RepoPrefix: "msgmate-io/open-chat-go-odoo-integration", Profile: "full-ci"},
+	{RepoPrefix: "msgmate-io/open-chat-go-vnc-client", Profile: "full-ci"},
+	// The nix toolchain repository is public and needs no private checkout at
+	// all; it only has to get the core set-up instead of being treated as an
+	// unknown repository (tbscode/tims-nix#10).
+	{RepoPrefix: "tbscode/tims-nix", Profile: "core-only"},
 	{RepoPrefix: "msgmate-io/open-chat-go", Profile: DevSetupProfileDefault},
 }
 
@@ -142,6 +168,34 @@ func devSetupProfileOverrides(raw interface{}) []DevSetupRepoProfile {
 		}
 	}
 	return out
+}
+
+// DevSetupRepoEntryFor returns the per-repo default entry that matches repo
+// most specifically, mirroring the precedence of DevSetupSpecForRepo. It lets
+// the audit tell an explicit per-repo declaration apart from the broad monorepo
+// fallback: a ci.msgmate.io git-repo trigger for a repository whose development
+// process differs from the monorepo (a client, an integration, a toolchain
+// repository) must carry its own entry instead of inheriting the monorepo's
+// batteries-included profile.
+func DevSetupRepoEntryFor(repo string) (DevSetupRepoProfile, bool) {
+	normalized := NormalizeRepo(repo)
+	if normalized == "" {
+		return DevSetupRepoProfile{}, false
+	}
+	best := DevSetupRepoProfile{}
+	bestLen := -1
+	for _, entry := range DefaultDevSetupProfiles {
+		if !strings.HasPrefix(normalized, entry.RepoPrefix) {
+			continue
+		}
+		if len(entry.RepoPrefix) > bestLen {
+			bestLen, best = len(entry.RepoPrefix), entry
+		}
+	}
+	if bestLen < 0 {
+		return DevSetupRepoProfile{}, false
+	}
+	return best, true
 }
 
 // DevSetupSpecForRepo returns the built-in plan for a repository, or
