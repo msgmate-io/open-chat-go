@@ -492,6 +492,11 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
+	// Product landing pages integration (ci#858): per-page config reads for the
+	// nav/render contract plus the admin-only update used by the settings panel.
+	v1PrivateApis.HandleFunc("GET /integrations/"+apiintegrations.ProductLandingPageIntegrationID+"/pages", integrationsHandler.ListProductLandingPageConfigs)
+	v1PrivateApis.HandleFunc("GET /integrations/"+apiintegrations.ProductLandingPageIntegrationID+"/pages/{page_slug}", integrationsHandler.GetProductLandingPageConfig)
+	v1PrivateApis.HandleFunc("PUT /admin/integrations/"+apiintegrations.ProductLandingPageIntegrationID+"/pages/{page_slug}", integrationsHandler.UpdateProductLandingPageConfig)
 	v1PrivateApis.HandleFunc("GET /admin/integrations/access/users", integrationsHandler.ListAccessUsers)
 	v1PrivateApis.HandleFunc("GET /admin/integrations/access/{user_uuid}", integrationsHandler.GetAccessByUser)
 	v1PrivateApis.HandleFunc("POST /admin/integrations/access/{user_uuid}/{integration_name}", integrationsHandler.GrantAccess)

@@ -264,6 +264,7 @@ var Tabels []interface{} = []interface{}{
 	&AccessToken{},
 	&IntegrationAccess{},
 	&ActionTaskDismissal{},
+	&ProductLandingPageConfig{},
 	&WorkspaceLease{},
 }
 
@@ -292,6 +293,8 @@ var Migrations []Migration = []Migration{
 	TableMigration{&AccessToken{}},
 	TableMigration{&IntegrationAccess{}},
 	TableMigration{&ActionTaskDismissal{}},
+	TableMigration{&ProductLandingPageConfig{}},
+	SeedProductLandingPageConfigsMigration{},
 	TableMigration{&WorkspaceLease{}},
 	GrantDefaultPermissionsMigration{},
 	// IndexMigration runs last so every table it indexes exists, and is
