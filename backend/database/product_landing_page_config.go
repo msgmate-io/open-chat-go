@@ -45,7 +45,7 @@ const (
 
 	// ProductLandingPageOverviewSlug is the entry hub page: disabled pages
 	// redirect to it, so it is always served.
-	ProductLandingPageOverviewSlug = "product_overview"
+	ProductLandingPageOverviewSlug = "overview"
 
 	// MaxProductLandingPageStaticDataBytes caps one page's static_data blob.
 	// The value is generous for copy plus FAQ/benchmark tables while keeping a
@@ -73,7 +73,7 @@ var ErrUnknownProductLandingPageSlug = errors.New("unknown product landing page 
 var ProductLandingPageDefaults = []ProductLandingPageConfig{
 	{
 		IntegrationId: ProductLandingPageIntegrationID,
-		PageSlug:      "product_overview",
+		PageSlug:      "overview",
 		Enabled:       true,
 		Title:         "Product overview",
 		NavLabel:      "Overview",
@@ -89,7 +89,7 @@ var ProductLandingPageDefaults = []ProductLandingPageConfig{
 	},
 	{
 		IntegrationId: ProductLandingPageIntegrationID,
-		PageSlug:      "in_product_ai_framework",
+		PageSlug:      "framework",
 		Enabled:       true,
 		Title:         "In-product AI framework",
 		NavLabel:      "AI framework",
