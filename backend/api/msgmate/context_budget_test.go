@@ -196,7 +196,7 @@ func TestAppendExecutedToolCallsTruncatesLargeResultsExplicitly(t *testing.T) {
 		{id: "call-small", name: "coder_read", arguments: `{"path":"a.go"}`, result: "small", status: ToolCallStatusSucceeded},
 	}
 
-	appended, messages, truncated := appendExecutedToolCalls(nil, calls, map[string]bool{}, limits)
+	appended, messages, truncated := appendExecutedToolCalls(context.Background(), nil, calls, map[string]bool{}, limits)
 	if len(appended) != 2 || len(messages) != 4 {
 		t.Fatalf("expected both calls appended with their result, got %d calls / %d messages", len(appended), len(messages))
 	}
