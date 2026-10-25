@@ -3,6 +3,7 @@ package cmd
 import (
 	"backend/api/msgmate"
 	"backend/database"
+	"backend/integrationhost"
 	"backend/integrations"
 	"backend/queue"
 	"backend/workqueue"
@@ -68,6 +69,11 @@ func WorkerCli() *cli.Command {
 		}, GetRedisFlags()...),
 		Action: func(ctx context.Context, c *cli.Command) error {
 			integrations.EnsureLoaded()
+			// ci#423: publish the host/services adapter in the worker too, so
+			// integration jobs executed by a dedicated worker process resolve the
+			// same stable Host surface as the API server instead of the
+			// process-local default (nil) host.
+			integrationhost.Install()
 			database.RegisterExternalModels(integrations.AdditionalModels()...)
 			for _, migration := range integrations.AdditionalMigrations() {
 				database.RegisterExternalMigrations(database.FunctionMigration{
