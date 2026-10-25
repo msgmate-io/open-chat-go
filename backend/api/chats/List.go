@@ -206,8 +206,9 @@ func (h *ChatsHandler) List(w http.ResponseWriter, r *http.Request) {
 	// capped the top-up at one page of pins and older pins still disappeared,
 	// ci#512).
 	newFilteredQuery := func() *gorm.DB {
-		q := DB.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
-		if user.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
+		scopeUser := resolveChatActingUser(DB, user)
+		q := DB.Where("user1_id = ? OR user2_id = ?", scopeUser.ID, scopeUser.ID)
+		if scopeUser.IsAdmin && strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all") {
 			q = DB
 		}
 

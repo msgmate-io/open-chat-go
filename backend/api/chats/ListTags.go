@@ -28,8 +28,9 @@ func (h *ChatsHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 
 	rows := []database.Chat{}
 	query := DB.Model(&database.Chat{}).Select("tags")
-	if !user.IsAdmin {
-		query = query.Where("user1_id = ? OR user2_id = ?", user.ID, user.ID)
+	scopeUser := resolveChatActingUser(DB, user)
+	if !scopeUser.IsAdmin {
+		query = query.Where("user1_id = ? OR user2_id = ?", scopeUser.ID, scopeUser.ID)
 	}
 	if err := query.Find(&rows).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

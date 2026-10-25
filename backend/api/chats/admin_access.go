@@ -6,10 +6,41 @@ import (
 	"gorm.io/gorm"
 )
 
+// resolveChatActingUser maps a session principal to the user a chat read acts
+// for. A human session acts for itself; an automated (bot) session acts for the
+// primary owner of its active bot runtime config, falling back to the bot itself
+// when no owner is recorded.
+//
+// The canonical copy of this resolution lives in `backend/api/bots` (ci#824); it
+// is duplicated here rather than shared because `bots` already imports this
+// package, so importing it back would be an import cycle. It is a no-op for
+// humans, so no scope is widened for them, and checks that must stay on the raw
+// principal (ownership, admin, browser-token guards) keep using the session user.
+func resolveChatActingUser(db *gorm.DB, sessionUser *database.User) *database.User {
+	if sessionUser == nil || !sessionUser.IsAutomated {
+		return sessionUser
+	}
+	var runtime database.BotRuntimeConfig
+	err := db.Preload("OwnerUser").
+		Where("bot_user_id = ? AND is_active = ?", sessionUser.ID, true).
+		First(&runtime).Error
+	if err == nil && runtime.OwnerUser.ID != 0 {
+		owner := runtime.OwnerUser
+		return &owner
+	}
+	return sessionUser
+}
+
 // scopedChatQuery restricts a chats query to the chats the user participates
 // in. Admins may inspect any chat so they can view and manage other users'
 // interactions in "see all" mode.
+//
+// An automated session is scoped to its owner (ci#865): a bot owns no
+// user1_id/user2_id row of its own, so scoping by the raw principal rejected the
+// very chat its own create-interaction call had just created with "Invalid chat
+// UUID".
 func scopedChatQuery(db *gorm.DB, user *database.User) *gorm.DB {
+	user = resolveChatActingUser(db, user)
 	if user != nil && user.IsAdmin {
 		return db
 	}
@@ -17,8 +48,11 @@ func scopedChatQuery(db *gorm.DB, user *database.User) *gorm.DB {
 }
 
 // scopedMessageQuery restricts a messages query to the messages the user
-// exchanged. Admins may inspect any message in "see all" mode.
+// exchanged. Admins may inspect any message in "see all" mode; an automated
+// session is scoped to its owner for the same reason as scopedChatQuery
+// (ci#865).
 func scopedMessageQuery(db *gorm.DB, user *database.User) *gorm.DB {
+	user = resolveChatActingUser(db, user)
 	if user != nil && user.IsAdmin {
 		return db
 	}
