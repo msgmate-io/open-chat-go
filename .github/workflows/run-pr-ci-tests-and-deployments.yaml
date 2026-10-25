@@ -2762,6 +2762,15 @@ jobs:
           python3 -m unittest development/scripts/test_redis_compose_readiness_contract.py -v
           python3 development/scripts/redis_compose_readiness_contract.py
 
+      # ci#756: the dev integration-sync entrypoint restores the tracked
+      # integrations.lock.json after `prepare`/`sync`, so a non-frozen re-pin of
+      # the local checkouts does not leave the file dirty and block `git switch`
+      # in the developer's checkout.
+      - name: Integration sync entrypoint unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_integration_sync_entrypoint.py -v
+
       # ci#722 (continued): the live patch above is undone by the next
       # `helm upgrade`, because the private Helm chart still renders the redis
       # container with the kubelet probe defaults and no CPU request. Render that
