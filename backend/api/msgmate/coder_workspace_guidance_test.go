@@ -89,7 +89,56 @@ func TestCoderWorkspaceSystemPromptEmptyPrompt(t *testing.T) {
 
 	got := coderWorkspaceSystemPrompt("   ", config)
 
-	if got != nativecoder.WorkspaceRootGuidance() {
-		t.Fatalf("got %q, want the guidance alone", got)
+	if got != nativecoder.GitHubTypedFirstAppend(nativecoder.WorkspaceRootGuidance()) {
+		t.Fatalf("got %q, want the composed guidance alone", got)
+	}
+	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
+		t.Fatalf("composed guidance must not be padded, got %q", got)
+	}
+}
+
+// TestCoderWorkspaceSystemPromptIsTypedFirstGitHub pins the ci#514 phase 1
+// prompt half: the prompt a native coder run really uses must prefer the typed
+// GitHub tools, which is the evidence the phase-1 criterion is measured from.
+// The assertion goes through the same measurement the criteria evaluator uses,
+// so this test fails if the wiring is dropped.
+func TestCoderWorkspaceSystemPromptIsTypedFirstGitHub(t *testing.T) {
+	config := map[string]interface{}{"tools": []interface{}{"coder_bash", "coder_read"}}
+
+	got := coderWorkspaceSystemPrompt("You are msgmate coder.", config)
+
+	if !strings.Contains(got, nativecoder.GitHubTypedFirstPromptMarker) {
+		t.Fatalf("typed-first GitHub block missing from %q", got)
+	}
+	measured := nativecoder.MeasureGitHubTypedFirstPrompt(got)
+	if !measured.Ready {
+		t.Fatalf("rendered coder prompt is not typed-first ready: missing %v", measured.Missing)
+	}
+	for _, tool := range []string{"github_pr_view", "github_pr_create", "github_issue_comment"} {
+		if !strings.Contains(got, tool) {
+			t.Errorf("prompt must name the typed tool %q, got %q", tool, got)
+		}
+	}
+}
+
+// TestCoderWorkspaceSystemPromptPreBakedRootStillTypedFirst covers a config that
+// already carries the workspace-root guidance: the root half must not be emitted
+// twice, but the typed-first half must still be composed, because a pre-baked
+// prompt is exactly the case that would otherwise stay typed-blind. The result
+// must also stay stable across repeated composition.
+func TestCoderWorkspaceSystemPromptPreBakedRootStillTypedFirst(t *testing.T) {
+	config := map[string]interface{}{"tools": []interface{}{"coder_bash"}}
+	prebaked := "You are msgmate coder.\n\n" + nativecoder.WorkspaceRootGuidance()
+
+	got := coderWorkspaceSystemPrompt(prebaked, config)
+
+	if strings.Count(got, workspaceRootPromptMarker) != 1 {
+		t.Fatalf("workspace-root guidance emitted more than once: %q", got)
+	}
+	if !nativecoder.MeasureGitHubTypedFirstPrompt(got).Ready {
+		t.Fatalf("pre-baked prompt did not become typed-first: %q", got)
+	}
+	if again := coderWorkspaceSystemPrompt(got, config); again != got {
+		t.Fatalf("composition is not stable: %q -> %q", got, again)
 	}
 }

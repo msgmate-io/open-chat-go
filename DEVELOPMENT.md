@@ -918,6 +918,67 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
 
 
+### Running the development stack on PostgreSQL (ci#878)
+
+The development stack runs on SQLite by default. A PostgreSQL service is shipped
+in `docker-compose.yaml` behind the `postgres` profile, so it stays off unless
+you ask for it; `docker-compose.postgres.yaml` supplies the matching backend
+environment. Enabling it is one command:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.postgres.yaml \
+  --profile postgres up
+```
+
+To make it the default for your shell (still SQLite when you unset it):
+
+```bash
+export COMPOSE_FILE=docker-compose.yaml:docker-compose.postgres.yaml
+export COMPOSE_PROFILES=postgres
+docker compose up
+```
+
+The service listens on host port `5433` (to avoid clashing with a host
+PostgreSQL on `5432`) and persists to the `postgres_data` volume; reset it with
+`docker compose ... down -v`. Default credentials are `openchat:openchat` and are
+overridable with `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The backend
+connection defaults to
+`postgres://openchat:openchat@postgres:5432/openchat?sslmode=disable`; override
+it with `DB_PATH` (and `DB_BACKEND=postgres`) if you point at an external server.
+
+Both backends are kept interchangeable: the code must produce identical
+behaviour on SQLite and PostgreSQL. Two rules follow from that:
+
+* JSON columns keep working when written as `json.RawMessage`/`[]byte`. On
+  PostgreSQL an `exec`/`simple_protocol` pgx query mode encodes those parameters
+  as `bytea` and every `jsonb` write fails with SQLSTATE 22P02, so
+  `database.ensureJSONSafeQueryMode` repairs such a DSN on startup. Prefer the
+  `database.JSONRaw` type for JSON columns the core writes directly (it encodes
+  as text on PostgreSQL and BLOB on SQLite).
+
+
+### Switching branches after a dev build (ci#756)
+
+`docker compose up` runs tooling that regenerates two **tracked** files:
+
+- `integrations.lock.json` — the (non-frozen) `prepare`/`sync` re-pins it to the
+  commits currently checked out under `clients/integrations`, which drift ahead
+  of the committed lock;
+- `backend/server/swagger.json` — embedded with `go:embed` and refreshed by every
+  backend rebuild.
+
+Left modified, they make `git switch`/`git checkout` refuse with "local changes
+would be overwritten". The dev tooling now restores both automatically: the
+integration-sync entrypoint restores the lockfile after `prepare`/`sync`, and
+the backend rebuild restores the swagger snapshot after compiling (the built
+binary still embeds the freshly generated documentation). If an older checkout
+already left them dirty, run the host-side helper once:
+
+```bash
+development/scripts/restore_generated_artifacts.sh
+```
+
+
 ### Custom integration profiles
 
 Profiles let a checkout compile and serve exactly the integrations (and extra

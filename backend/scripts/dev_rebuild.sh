@@ -69,6 +69,16 @@ fi
 
 log "using GOWORK=${GOWORK} GOFLAGS=${GOFLAGS:-<unset>}"
 
+# ci#756: the tracked server/swagger.json is regenerated and copied over on every
+# build, which leaves it dirty and blocks `git switch` in a dev checkout. Keep a
+# copy so the worktree snapshot is restored after the build (the compiled binary
+# still embeds the freshly generated swagger).
+SWAGGER_SNAPSHOT=""
+if [[ -f ./server/swagger.json ]]; then
+  SWAGGER_SNAPSHOT="$(mktemp)"
+  cp -a ./server/swagger.json "$SWAGGER_SNAPSHOT"
+fi
+
 run_step "module download" go mod download
 run_step "swagger generation" generate_swagger
 
@@ -81,4 +91,11 @@ fi
 
 mkdir -p ./.devbin
 run_step "backend build" go build -o ./.devbin/backend .
+
+# ci#756: restore the tracked snapshot (see above) so the build does not leave
+# server/swagger.json modified in the developer's worktree.
+if [[ -n "$SWAGGER_SNAPSHOT" && -f "$SWAGGER_SNAPSHOT" ]]; then
+  cp -a "$SWAGGER_SNAPSHOT" ./server/swagger.json
+  rm -f "$SWAGGER_SNAPSHOT"
+fi
 log "done"
