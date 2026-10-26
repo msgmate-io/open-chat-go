@@ -839,6 +839,17 @@ python3 -m venv .venv
   own (`backend/nativecoder/devsetup_perrepo_test.go`), so a client, integration
   or toolchain repository never inherits the monorepo's batteries-included
   `full-development` set-up by accident.
+- The map form of `coder_dev_setup` accepts a `setup_commands` escape hatch for
+  repositories whose set-up cannot be expressed as an integration profile: a
+  non-empty `setup_commands: [ ... ]` list is rendered verbatim as the script
+  body (`set -e` fail-fast and the `[ci#756 dev-setup]` marker stay, the
+  generated profile/submodule/bootstrap body is skipped entirely — `profile`,
+  `submodules`, `repos` and `commands` are ignored while it is set). The
+  operator keeps full control of the command text, so nothing is auto-generated
+  and nothing is guessed; the environment persistence lines
+  (`SandboxEnvSetupLines`, ci#739) still apply so the toolchain PATH survives
+  into the agent's later tool-call shells. This ships in
+  `backend/nativecoder/devsetup.go` (`ResolveDevSetup`, `DevSetupScript`).
 - `backend/nativecoder/devsetupfleet.go` is the per-bot / per-use-case audit of
   that set-up: `CoderDevSetupFleet` lists which coder bot runs which use-case
   against which repository, `DevSetupFleetPlans` resolves the plan each bot
