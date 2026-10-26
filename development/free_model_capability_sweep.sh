@@ -260,7 +260,14 @@ aggregate() {
 }
 
 # ---------------------------------------------------------------------------
+# Main entry. Guarded so the file can be safely sourced (e.g. by unit tests
+# exercising aggregate() without dispatching anything).
+# ---------------------------------------------------------------------------
 [ "$COLLECT_ONLY" -eq 1 ] && { DISPATCH=0; }
+
+# When sourced for testing, the caller provides OUTPUT_DIR/STAMP/run_models and
+# executes only the functions it needs; skip the top-level flow entirely.
+[ "${FREE_MODEL_SWEEP_FUNCTIONS_ONLY:-0}" -eq 1 ] && return 0 2>/dev/null || true
 
 log "ci#893 free-model sweep: models=${#run_models[@]} tags='${TAGS}' ref=$TARGET_REF"
 log "output dir: $OUTPUT_DIR (stamp $STAMP)"
@@ -271,7 +278,6 @@ if [ "$DISPATCH" -eq 1 ]; then
     i=$((i + 1))
     dispatch_one "$model"
     [ $(( i % PARALLEL )) -eq 0 ] || [ "$i" -eq "${#run_models[@]}" ] || continue
-    for m2 in "${run_models[@]:0:$i}"; do :; done
     # With serial dispatch we wait for each model before dispatching the next.
     if [ "$PARALLEL" -le 1 ]; then
       wait_one "$model"
