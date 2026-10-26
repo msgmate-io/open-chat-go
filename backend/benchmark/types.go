@@ -9,10 +9,10 @@
 //   - Result aggregation and table rendering are pure functions over local
 //     fixtures/TSVs; they never touch the network.
 //   - The expensive full-matrix sweep is NOT a unit test. It is launched only
-//     by the explicitly-triggered CLI subcommand `dispatch` in
-//     ./cmd/benchmark, which hands off to the existing private workflow
-//     .github/workflows/private-sandbox-tests.yaml (see
-//     development/ci893-free-model-capability-harness.md).
+//     by the explicitly-triggered `--dispatch` mode of
+//     development/free_model_capability_sweep.sh, which hands off to the
+//     private workflow `private-sandbox-tests.yaml` in
+//     msgmate-io/open-chat-go-ci (ci#893).
 package benchmark
 
 import (
