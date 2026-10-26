@@ -22,6 +22,10 @@ on:
       - development/scripts/tests/test_integration_decoupling.sh
       # ci#423 step 4: the dependency-surface measurement and its baseline.
       - backend/scripts/integration_dep_surface.py
+      # ci#423 step 4: the dependency-surface gate wrapper (baseline validation
+      # always, measurement only when a Go workspace is materialized).
+      - development/scripts/check_dep_surface_gate.sh
+      - development/scripts/tests/test_integration_dep_surface_gate.sh
       - development/scripts/tests/test_integration_dep_surface.sh
       - development/scripts/check_host_surface.py
       - development/scripts/tests/test_host_surface.sh
@@ -122,6 +126,18 @@ jobs:
         run: |
           python3 backend/scripts/integration_dep_surface.py \
               --check-baseline integrations.dep-surface.json
+
+      # ci#423 step 4: the PR gate itself. It is toolchain-free here (no GOWORK
+      # in this job, so it validates the baseline and states that it only did
+      # that) and its outcomes are pinned by the self-test next to it.
+      - name: dependency-surface gate self-test
+        run: |
+          bash -n development/scripts/check_dep_surface_gate.sh
+          bash development/scripts/tests/test_integration_dep_surface_gate.sh
+
+      - name: dependency-surface gate (baseline validation only, no toolchain)
+        run: |
+          bash development/scripts/check_dep_surface_gate.sh --no-measure
 
   smoke:
     name: smoke build an integration module

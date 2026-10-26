@@ -111,6 +111,14 @@ type DevSetupSpec struct {
 	// needs without forcing every interaction onto the same set-up. The
 	// longest matching prefix wins, exactly like DefaultDevSetupProfiles.
 	Profiles []DevSetupRepoProfile
+	// SetupCommands overrides the generated script content entirely: an explicit
+	// non-empty list of shell lines is appended verbatim as the set-up body.
+	// It is the interaction-configurable escape hatch for repositories whose
+	// set-up cannot be expressed as an integration profile — the operator keeps
+	// full control of the command text, so nothing is auto-generated and
+	// nothing is guessed. Profile, Submodules, ExtraRepos and Commands are
+	// ignored while SetupCommands is set.
+	SetupCommands []string
 }
 
 // forRepo returns the spec with the profile its per-repo table selects for
@@ -248,12 +256,13 @@ func ResolveDevSetup(config map[string]interface{}) (DevSetupSpec, bool) {
 			return DevSetupSpec{}, false
 		}
 		spec := DevSetupSpec{
-			Enabled:    true,
-			Profile:    normalizeDevSetupProfile(firstString(typed, "profile", "integration_profile")),
-			Submodules: devSetupBool(typed["submodules"], true),
-			ExtraRepos: normalizedRepos(stringSliceFromConfig(firstValue(typed, "repos", "repositories"))),
-			Commands:   trimmedLines(stringSliceFromConfig(typed["commands"])),
-			Profiles:   devSetupProfileOverrides(firstValue(typed, "profiles", "per_repo_profiles", "repo_profiles")),
+			Enabled:       true,
+			Profile:       normalizeDevSetupProfile(firstString(typed, "profile", "integration_profile")),
+			Submodules:    devSetupBool(typed["submodules"], true),
+			ExtraRepos:    normalizedRepos(stringSliceFromConfig(firstValue(typed, "repos", "repositories"))),
+			Commands:      trimmedLines(stringSliceFromConfig(typed["commands"])),
+			Profiles:      devSetupProfileOverrides(firstValue(typed, "profiles", "per_repo_profiles", "repo_profiles")),
+			SetupCommands: trimmedLines(stringSliceFromConfig(typed["setup_commands"])),
 		}
 		if spec.Profile == "" {
 			spec.Profile = DevSetupProfileDefault
@@ -279,6 +288,15 @@ func DevSetupScript(spec DevSetupSpec) string {
 	// different processes, so the toolchain PATH and the private-module opt-outs
 	// must be persisted, not merely exported here (see SandboxEnvSetupLines).
 	lines = append(lines, SandboxEnvSetupLines()...)
+	if len(spec.SetupCommands) > 0 {
+		// ci#756: an operator-provided `setup_commands` body replaces the
+		// generated profile/submodule bootstrap entirely — the operator keeps
+		// full control of the command text, so nothing is auto-generated and
+		// nothing is guessed. The environment persistence above still applies
+		// and the marker keeps the transcript readable.
+		lines = append(lines, spec.SetupCommands...)
+		return "set -e\n" + strings.Join(lines, "\n") + "\n"
+	}
 	if spec.Submodules {
 		lines = append(lines, `if [ -f .gitmodules ]; then git submodule update --init --recursive; fi`)
 	}
