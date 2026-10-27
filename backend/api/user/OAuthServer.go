@@ -290,8 +290,14 @@ func cleanupExpiredOAuthClientsLocked(now time.Time) {
 	}
 }
 
-func (c oauthClient) allowsRedirectURI(redirectURI string) bool {
-	for _, candidate := range c.RedirectURIs {
+// isValidRedirectURI reports whether redirectURI exactly matches one of the
+// redirect URIs pinned at client registration. Registration only accepts
+// absolute HTTP(S) URLs (loopback or HTTPS), so this exact-match allowlist is
+// the only redirect target the authorization server will ever emit. The name
+// follows the repo-wide isValidRedirectURL convention, which CodeQL also
+// recognizes as a redirect sanitizer (go/unvalidated-url-redirection).
+func isValidRedirectURI(client oauthClient, redirectURI string) bool {
+	for _, candidate := range client.RedirectURIs {
 		if candidate == redirectURI {
 			return true
 		}
@@ -299,40 +305,43 @@ func (c oauthClient) allowsRedirectURI(redirectURI string) bool {
 	return false
 }
 
-// isValidRedirectURIPinned reports whether raw is both a well-formed redirect
-// target for a public OAuth client and the exact value that client pinned at
-// registration (oauthClient.allowsRedirectURI). The name is deliberate: the
-// CodeQL open-redirect query recognises an `isValidRedirect*` guard as the
-// sanitizer for the value it is called with, so the check can sit directly
-// next to every http.Redirect sink instead of in a caller several branches
-// away. It is the only way these handlers redirect off-site.
-func isValidRedirectURIPinned(client oauthClient, raw string) bool {
-	return isOAuthRedirectURI(raw) && client.allowsRedirectURI(raw)
-}
-
-// redirectOAuthError appends an RFC 6749 error to the (validated) redirect URI
-// and returns a 302 to it.
-func redirectOAuthError(w http.ResponseWriter, r *http.Request, client oauthClient, redirectURI, state, code, description string) {
-	if !isValidRedirectURIPinned(client, redirectURI) {
-		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+// redirectOAuthToClient sends a 302 to the client's registered callback with
+// the given response parameters appended. Every redirect emitted by the
+// authorization endpoint goes through here and re-checks the exact-match
+// allowlist, so a call site can never turn the endpoint into an open redirect
+// even if it forgot to validate the parameter first.
+func redirectOAuthToClient(w http.ResponseWriter, r *http.Request, client oauthClient, redirectURI string, params url.Values) {
+	if redirectURI == "" || !isValidRedirectURI(client, redirectURI) {
+		http.Error(w, "redirect_uri is not registered for this client", http.StatusBadRequest)
 		return
 	}
 	parsed, err := url.Parse(redirectURI)
-	if err != nil {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
 	q := parsed.Query()
-	q.Set("error", code)
-	if strings.TrimSpace(description) != "" {
-		q.Set("error_description", description)
-	}
-	if strings.TrimSpace(state) != "" {
-		q.Set("state", state)
+	for key, values := range params {
+		for _, value := range values {
+			q.Set(key, value)
+		}
 	}
 	parsed.RawQuery = q.Encode()
-	// redirect_uri was re-checked against the client's pinned allowlist above.
 	http.Redirect(w, r, parsed.String(), http.StatusFound)
+}
+
+// redirectOAuthError appends an RFC 6749 error to the client's registered
+// redirect URI and returns a 302 to it.
+func redirectOAuthError(w http.ResponseWriter, r *http.Request, client oauthClient, redirectURI, state, code, description string) {
+	params := url.Values{}
+	params.Set("error", code)
+	if strings.TrimSpace(description) != "" {
+		params.Set("error_description", description)
+	}
+	if strings.TrimSpace(state) != "" {
+		params.Set("state", state)
+	}
+	redirectOAuthToClient(w, r, client, redirectURI, params)
 }
 
 // AuthorizeOAuth implements the authorization endpoint. It validates the
@@ -360,7 +369,7 @@ func (h *UserHandler) AuthorizeOAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown client_id", http.StatusBadRequest)
 		return
 	}
-	if redirectURI == "" || !isValidRedirectURIPinned(client, redirectURI) {
+	if redirectURI == "" || !isValidRedirectURI(client, redirectURI) {
 		http.Error(w, "redirect_uri is not registered for this client", http.StatusBadRequest)
 		return
 	}
@@ -410,25 +419,12 @@ func (h *UserHandler) AuthorizeOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	oauthAuthorizationCodes.mu.Unlock()
 
-	// Re-check the redirect_uri against the client's pinned allowlist right
-	// before using it: the query string (client_id/redirect_uri/…) is
-	// attacker-supplied, so validation must stay adjacent to the redirect.
-	if !isValidRedirectURIPinned(client, redirectURI) {
-		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
-		return
-	}
-	parsed, parseErr := url.Parse(redirectURI)
-	if parseErr != nil {
-		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
-		return
-	}
-	q := parsed.Query()
-	q.Set("code", code)
+	params := url.Values{}
+	params.Set("code", code)
 	if state != "" {
-		q.Set("state", state)
+		params.Set("state", state)
 	}
-	parsed.RawQuery = q.Encode()
-	http.Redirect(w, r, parsed.String(), http.StatusFound)
+	redirectOAuthToClient(w, r, client, redirectURI, params)
 }
 
 // normalizeOAuthScope validates a space-delimited scope string against the

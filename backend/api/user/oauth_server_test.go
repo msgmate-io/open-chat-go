@@ -155,10 +155,10 @@ func TestOAuthRegisterPinsRedirectURIs(t *testing.T) {
 	if !ok {
 		t.Fatalf("registered client %q not found", clientID)
 	}
-	if !client.allowsRedirectURI("http://localhost:7777/callback") {
+	if !isValidRedirectURI(client, "http://localhost:7777/callback") {
 		t.Errorf("pinned redirect_uri missing")
 	}
-	if client.allowsRedirectURI("http://localhost:7777/evil") {
+	if isValidRedirectURI(client, "http://localhost:7777/evil") {
 		t.Errorf("unexpected redirect_uri allowed")
 	}
 
@@ -272,6 +272,65 @@ func TestOAuthAuthorizeRejectsUnregisteredRedirectURI(t *testing.T) {
 	h.AuthorizeOAuth(rec, oauthRequest("GET", authorizeURL, nil, DB, sessionToken))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unregistered redirect_uri status = %d, want 400", rec.Code)
+	}
+}
+
+// TestOAuthAuthorizeErrorRedirectIsAllowlisted pins the invariant behind the
+// CodeQL-adjacent check in isValidRedirectURI: an RFC 6749 error is only
+// reported back as a 302 when the redirect_uri matches the client's pinned
+// allowlist, otherwise the endpoint answers 400 and never emits a Location
+// header pointing off-site.
+func TestOAuthAuthorizeErrorRedirectIsAllowlisted(t *testing.T) {
+	resetOAuthStoresForTest()
+	DB := setupOAuthTestDB(t)
+	_, sessionToken := createOAuthSessionUser(t, DB, "oauth-user")
+	h := &UserHandler{}
+
+	regBody, _ := json.Marshal(map[string]interface{}{"redirect_uris": []string{"http://localhost:8085/callback"}})
+	rec := httptest.NewRecorder()
+	h.RegisterOAuthClient(rec, oauthRequest("POST", "/register", regBody, nil, ""))
+	clientID := decodeOAuthJSON(t, rec)["client_id"].(string)
+
+	_, challenge := pkcePair("verifier-abcdefghijklmnopqrstuvwxyz-0123456789")
+	base := url.Values{
+		"client_id":             {clientID},
+		"response_type":         {"token"}, // unsupported: triggers an error redirect
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+	}
+
+	// Unregistered redirect_uri: must be a bare 400, no redirect to the attacker.
+	evil := url.Values{}
+	for key, values := range base {
+		evil[key] = values
+	}
+	evil.Set("redirect_uri", "http://evil.example/steal")
+	rec = httptest.NewRecorder()
+	h.AuthorizeOAuth(rec, oauthRequest("GET", "/authorize?"+evil.Encode(), nil, DB, sessionToken))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unregistered redirect_uri error path status = %d, want 400", rec.Code)
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("unregistered redirect_uri produced a redirect to %q", location)
+	}
+
+	// Registered redirect_uri: the error is reported to the client callback.
+	good := url.Values{}
+	for key, values := range base {
+		good[key] = values
+	}
+	good.Set("redirect_uri", "http://localhost:8085/callback")
+	rec = httptest.NewRecorder()
+	h.AuthorizeOAuth(rec, oauthRequest("GET", "/authorize?"+good.Encode(), nil, DB, sessionToken))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("registered redirect_uri error path status = %d, want 302", rec.Code)
+	}
+	location := rec.Header().Get("Location")
+	if !strings.HasPrefix(location, "http://localhost:8085/callback?") {
+		t.Fatalf("error redirect went to %q, want the registered callback", location)
+	}
+	if !strings.Contains(location, "error=unsupported_response_type") {
+		t.Fatalf("error redirect %q is missing error=unsupported_response_type", location)
 	}
 }
 
