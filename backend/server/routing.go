@@ -492,6 +492,11 @@ func BackendRouting(
 	v1PrivateApis.HandleFunc("GET /admin/users", admin.GetUsersWithDetails)
 	v1PrivateApis.HandleFunc("GET /integrations/list", integrationsHandler.List)
 	v1PrivateApis.HandleFunc("GET /integrations/{integration_name}/overview", integrationsHandler.Overview)
+	// Product landing pages integration (ci#858): per-page config reads for the
+	// nav/render contract plus the admin-only update used by the settings panel.
+	v1PrivateApis.HandleFunc("GET /integrations/"+apiintegrations.ProductLandingPageIntegrationID+"/pages", integrationsHandler.ListProductLandingPageConfigs)
+	v1PrivateApis.HandleFunc("GET /integrations/"+apiintegrations.ProductLandingPageIntegrationID+"/pages/{page_slug}", integrationsHandler.GetProductLandingPageConfig)
+	v1PrivateApis.HandleFunc("PUT /admin/integrations/"+apiintegrations.ProductLandingPageIntegrationID+"/pages/{page_slug}", integrationsHandler.UpdateProductLandingPageConfig)
 	v1PrivateApis.HandleFunc("GET /admin/integrations/access/users", integrationsHandler.ListAccessUsers)
 	v1PrivateApis.HandleFunc("GET /admin/integrations/access/{user_uuid}", integrationsHandler.GetAccessByUser)
 	v1PrivateApis.HandleFunc("POST /admin/integrations/access/{user_uuid}/{integration_name}", integrationsHandler.GrantAccess)
@@ -671,6 +676,18 @@ func BackendRouting(
 		mux.HandleFunc("/api/reference", reference.ScalarReference)
 		logging.Infof("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
 	}
+
+	// MCP OAuth surface (ci#895 discovery, ci#900 authorization server). These
+	// are public and registered outside the mobile-proxy branch so an MCP client
+	// can always probe discovery and complete the browser handshake against a
+	// hosted deployment.
+	mux.Handle("GET /.well-known/oauth-protected-resource", commonMiddlewares(Logging(http.HandlerFunc(userHandler.ProtectedResourceMetadata))))
+	mux.Handle("GET /.well-known/oauth-protected-resource/", commonMiddlewares(Logging(http.HandlerFunc(userHandler.ProtectedResourceMetadata))))
+	mux.Handle("GET /.well-known/oauth-authorization-server", commonMiddlewares(Logging(http.HandlerFunc(userHandler.AuthorizationServerMetadata))))
+	mux.Handle("GET /.well-known/oauth-authorization-server/", commonMiddlewares(Logging(http.HandlerFunc(userHandler.AuthorizationServerMetadata))))
+	mux.Handle("POST /register", commonMiddlewares(Logging(http.HandlerFunc(userHandler.RegisterOAuthClient))))
+	mux.Handle("GET /authorize", commonMiddlewares(Logging(http.HandlerFunc(userHandler.AuthorizeOAuth))))
+	mux.Handle("POST /token", commonMiddlewares(Logging(http.HandlerFunc(userHandler.ExchangeOAuthToken))))
 
 	// ci#739: the public liveness probe. It is registered *outside*
 	// AuthMiddleware (and outside the mobile-proxy branch, so a hosted

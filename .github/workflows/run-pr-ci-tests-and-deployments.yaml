@@ -1232,6 +1232,19 @@ jobs:
           # failing the shard (mirrors backend/full_build.sh).
           retry download_modules
 
+      # ci#423 step 4: the dependency-surface gate. The Go-test job has already
+      # materialized every integration module and exported GOWORK, so the measurement
+      # is free here -- and this is the only PR path that can print a *new* import
+      # edge (`module: backend/...`). It runs before the Go suite (so a regression
+      # fails fast) on one shard only and in `--fail-only-on-regressions` mode:
+      # during the migration an integration the baseline does not pin is reported
+      # as still-migrating, never failed.
+      - name: Dependency-surface gate
+        if: steps.context.outputs.should_test != '' && matrix.shard == 1
+        run: |
+          set -euo pipefail
+          bash development/scripts/check_dep_surface_gate.sh
+
       - name: Start Redis for Go tests
         if: steps.context.outputs.should_test != ''
         run: |
@@ -1897,7 +1910,7 @@ jobs:
       # the suite to matching tests (union of all such labels).
       tags: ${{ needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_tags }}
       opencode_provider: openrouter
-      opencode_model: deepseek/deepseek-v4-flash
+      opencode_model: deepseek/deepseek-v4-flash-0731
       sandbox_interaction_timeout: "720"
       upload_artifacts: true
       post_results: true
@@ -2245,10 +2258,18 @@ jobs:
 
       - name: Require a linked open-chat-go-ci leaf issue
         # ci#813: every feature/bugfix PR implements exactly one leaf issue in
-        # the private tracker; consolidation PRs must list every leaf issue they
-        # close. GitHub cannot auto-close a cross-repository issue, so this gate
-        # and the post-merge closure in the auto-consolidation runner own the
-        # invariant. Keep this regex in sync with nativecoder.LinkedIssueNumbers.
+        # the private tracker. GitHub cannot auto-close a cross-repository issue,
+        # so this gate and the post-merge closure in the auto-consolidation
+        # runner own the invariant. Keep this regex in sync with
+        # nativecoder.LinkedIssueNumbers.
+        #
+        # ci#862: a consolidation PR (chore/consolidate*) is exempt from the
+        # whole linked-issue requirement, not just from the one-standalone-
+        # 'Closes' count rule. It aggregates already-merged leaf work whose
+        # issues the auto-consolidation runner closes itself, so its body may
+        # carry zero standalone closing lines - the branch's own workflow (this
+        # file, taken from that branch) still demanded one and made #1086 red.
+        # Ordinary feature/bugfix PRs keep the strict standalone-'Closes' rule.
         env:
           LINK_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
         run: |
@@ -2261,10 +2282,25 @@ jobs:
             echo "Production promotion PR: linked-issue gate exempt."
             exit 0
           fi
+          # The dev -> main promotion PR is maintained automatically and carries
+          # every leaf issue merged to dev, not one: it can never satisfy the
+          # one-standalone-'Closes' rule, and demanding a manual `no-issue` label
+          # on every promotion blocked the normal dev->main hop. Exempt it like
+          # the production promotion and consolidation PRs.
+          if [ "${{ github.event.pull_request.base.ref }}" = "main" ] && [ "${{ github.event.pull_request.head.ref }}" = "dev" ]; then
+            echo "Dev promotion PR: linked-issue gate exempt."
+            exit 0
+          fi
           consolidation=false
           case "${{ github.event.pull_request.head.ref }}" in
             chore/consolidate*) consolidation=true ;;
           esac
+          # ci#862: exempt the whole requirement for consolidation PRs instead
+          # of only relaxing the one-standalone-'Closes' count rule below.
+          if [ "$consolidation" = true ]; then
+            echo "Consolidation PR: linked-issue gate exempt."
+            exit 0
+          fi
           if [ "$consolidation" != true ]; then
             if grep -qx 'dependencies' "${RUNNER_TEMP}/pr-labels.txt"; then
               echo "Dependency PR: linked-issue gate exempt."
@@ -2682,6 +2718,20 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest development/scripts/test_pr_ci_dev_base_deploy_guard.py -v
+      # ci#890: `ci.msgmate.io` was served a VERSION that existed only on
+      # unmerged branches (main sat one release behind it). A PR preview must
+      # never be able to claim, or leave behind, the shared CI deployment:
+      # dispatching a preview without PR-scoped overrides makes the CI-side
+      # deploy fall back to the deployment-wide identity in
+      # `values.msgmate-io-pr-deployment.yaml`, a preview for an already
+      # closed/merged PR keeps re-asserting a stale identity, and a non-PR
+      # deploy carrying PR-scoped overrides leaks a preview host/namespace into
+      # a shared deployment. The guard is a pure predicate over one dispatch
+      # payload; these tests pin every rule before the dispatch site can act.
+      - name: PR CI deploy target guard (ci#890) unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_pr_ci_pr_deploy_target_guard.py -v
 
       # ci#832: the three deploy waiters (the approved-dispatch waiter plus the
       # two merged-deploy siblings) polled a run's top-level status, which GitHub
@@ -2711,6 +2761,18 @@ jobs:
           set -euo pipefail
           python3 -m unittest development/scripts/test_auto_approve_flaky_pulls.py -v
 
+      # ci#847: the auto-approve merge gate decided from the *raw*
+      # `statusCheckRollup`, so a superseded run that GitHub reports as
+      # CANCELLED next to its green replacement vetoed an otherwise green
+      # consolidation PR forever (PR #1057, head 3a5d4291). The step now
+      # collapses the rollup onto the newest instance per (context, app) first.
+      # The guard extracts the shipped `JQ_NEWEST_CHECKS` definition verbatim
+      # and runs both gate programs against the real rollup shape.
+      - name: Auto-approve stale check-run instance unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_auto_approve_stale_check_instances.py -v
+
       # ci#722: the coder-sandbox readiness gate (ci#666) reported the redis
       # Deployment of the CI deployment with probe_timeout_too_low,
       # probe_budget_too_short, startup_probe_missing and
@@ -2726,6 +2788,15 @@ jobs:
           python3 -m unittest development/scripts/test_redis_readiness_contract.py -v
           python3 -m unittest development/scripts/test_redis_compose_readiness_contract.py -v
           python3 development/scripts/redis_compose_readiness_contract.py
+
+      # ci#756: the dev integration-sync entrypoint restores the tracked
+      # integrations.lock.json after `prepare`/`sync`, so a non-frozen re-pin of
+      # the local checkouts does not leave the file dirty and block `git switch`
+      # in the developer's checkout.
+      - name: Integration sync entrypoint unit tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest development/scripts/test_integration_sync_entrypoint.py -v
 
       # ci#722 (continued): the live patch above is undone by the next
       # `helm upgrade`, because the private Helm chart still renders the redis
@@ -2851,6 +2922,51 @@ jobs:
               fi
             done
           done
+
+      # ci#890: a PR preview must never be able to claim, or leave behind, the
+      # shared CI deployment (`msgmate-io-ci` / ci.msgmate.io). The 2026-10-25
+      # incident had ci.msgmate.io serving a VERSION that existed only on
+      # unmerged branches, while the run history showed a *PR-preview* deploy
+      # (`msgmate-io-pr-deployment`) for an already closed PR running *after* the
+      # main-merge deploys. This is the last gate before the dispatch: it checks
+      # the very outputs the payload below is built from and refuses (a) a
+      # preview without PR-scoped overrides - the CI-side deploy only honours a
+      # non-empty override, so a blank one falls back to the deployment-wide
+      # identity in `values.msgmate-io-pr-deployment.yaml` - (b) any dispatch
+      # naming the CI namespace/host, and (c) a preview for a closed/merged PR.
+      # Failing here means the deploy is never dispatched, so the host it would
+      # have claimed is unaffected. Unit tests:
+      # development/scripts/test_pr_ci_pr_deploy_target_guard.py.
+      - name: Verify deploy dispatch target (ci#890)
+        env:
+          CI_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.ci_repository }}
+          SRC_REPO: ${{ needs.run-pr-ci-tests-and-deployments.outputs.source_repository }}
+          DEPLOYMENT_NAME: ${{ needs.run-pr-ci-tests-and-deployments.outputs.deployment_name }}
+          NAMESPACE_OVERRIDE: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_namespace }}
+          DEPLOY_HOST_OVERRIDE: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_deploy_host }}
+          HELM_RELEASE_OVERRIDE: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_helm_release }}
+          PR_NUMBER: ${{ needs.run-pr-ci-tests-and-deployments.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # A PR-preview dispatch that is still queued/approved after its PR was
+          # closed or merged is exactly the case that left the preview behind on
+          # the shared host, so read the live PR state instead of trusting the
+          # event that started this run.
+          PR_STATE=""
+          if [ -n "${PR_NUMBER:-}" ]; then
+            PR_STATE="$(curl -fsSL \
+              -H "Authorization: Bearer ${CI_DISPATCH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SRC_REPO}/pulls/${PR_NUMBER}" \
+              | jq -r '.state // ""')" || PR_STATE=""
+            if [ -z "$PR_STATE" ]; then
+              echo "::warning::ci#890: could not resolve the live state of PR #${PR_NUMBER} in ${SRC_REPO}; checking the dispatch target without a PR state."
+            else
+              echo "ci#890: PR #${PR_NUMBER} live state is '${PR_STATE}'."
+            fi
+          fi
+          PR_STATE="$PR_STATE" python3 development/scripts/pr_ci_pr_deploy_target_guard.py
 
       - name: Dispatch deployment workflow in CI repository
         id: dispatch_ci_deploy
@@ -3485,7 +3601,7 @@ jobs:
           LITELLM_API_KEY: ${{ env.AI_TEST_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
           AI_TEST_BASELINE_BACKEND: openrouter
-          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4-flash
+          AI_TEST_BASELINE_MODEL: deepseek/deepseek-v4-flash-0731
           AI_PROCESS_TESTS_SKIP_INSTALL: "1"
           AI_PROCESS_TESTS_VERBOSE: "1"
           PYTHONUNBUFFERED: "1"

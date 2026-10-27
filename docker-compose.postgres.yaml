@@ -1,0 +1,21 @@
+# ci#878: convenience override that switches the development backend onto the
+# profile-gated `postgres` service declared in docker-compose.yaml. It exists so
+# enabling PostgreSQL is a single, self-contained command instead of a pile of
+# environment variables:
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.postgres.yaml \
+#     --profile postgres up
+#
+# To make it the default for your shell (still SQLite when you drop it):
+#
+#   export COMPOSE_FILE=docker-compose.yaml:docker-compose.postgres.yaml
+#   export COMPOSE_PROFILES=postgres
+#   docker compose up
+#
+# Use `docker compose ... down -v` to reset the PostgreSQL data volume
+# (`postgres_data`); the SQLite file is untouched either way.
+services:
+  backend:
+    environment:
+      DB_BACKEND: postgres
+      DB_PATH: postgres://${POSTGRES_USER:-openchat}:${POSTGRES_PASSWORD:-openchat}@postgres:5432/${POSTGRES_DB:-openchat}?sslmode=disable

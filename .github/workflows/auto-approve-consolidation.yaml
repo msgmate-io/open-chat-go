@@ -264,9 +264,36 @@ jobs:
           # ci#538: merge only what is provably green. The checks are read from
           # the API (not from the triggering run) so a re-run of this workflow
           # cannot merge a PR whose checks later failed.
-          failing_or_pending() {
-            jq -r '
+          #
+          # ci#847: GitHub keeps a *newest-per-context* semantics for branch
+          # protection: when a run is superseded (a re-run, or a push that
+          # cancels the in-flight run), the superseded instance is reported as
+          # CANCELLED next to the green replacement. Reading the raw rollup made
+          # this gate veto a fully green consolidation PR forever, because the
+          # dead CANCELLED instance was still in the list. Collapse the rollup
+          # onto the newest instance per (context, app) *before* deciding, the
+          # same way the Go required-check resolver does (see
+          # backend/nativecoder/requiredchecks.go). The newest instance is
+          # ordered by the later of completed_at/started_at (a skipped run can
+          # complete *before* it starts), then by the workflow-run id parsed out
+          # of details_url.
+          JQ_NEWEST_CHECKS='
+            def newest:
               [ .statusCheckRollup[]?
+                | . + { _name: (.name // .context // "unknown"),
+                        _app: ((.app.id // 0) | tostring),
+                        _rank: ((.detailsUrl // "")
+                                | if test("actions/runs/[0-9]+")
+                                  then (capture("actions/runs/(?<id>[0-9]+)").id | tonumber)
+                                  else 0 end),
+                        _ts: (([.completedAt, .startedAt, .createdAt, .updatedAt]
+                                | map(select(. != null and . != "")) | max) // "") } ]
+              | group_by([._name, ._app])
+              | map(max_by([._ts, ._rank]));'
+
+          failing_or_pending() {
+            jq -r "$JQ_NEWEST_CHECKS"'
+              [ newest[]
                 | select(
                     ((.status // "") | test("^(QUEUED|IN_PROGRESS|PENDING|WAITING|REQUESTED)$"))
                     or ((.conclusion // "") | test("^(FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE)$"))
@@ -275,8 +302,8 @@ jobs:
                 | (.name // .context // "unknown") ] | join(", ")'
           }
           required_ci_green() {
-            jq -r '
-              [ .statusCheckRollup[]?
+            jq -r "$JQ_NEWEST_CHECKS"'
+              [ newest[]
                 | select((.name // .context // "") == "Run PR CI Tests and Deployments")
                 | select((.conclusion // .state // "") == "SUCCESS") ] | length'
           }

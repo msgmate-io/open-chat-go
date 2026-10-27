@@ -162,3 +162,9 @@ styled-system-studio
 /pages/sign-up
 /pages/signup-request-send
 /pages/email-verification
+# product_landing_pages integration pages (ci#858).
+/pages/overview
+/pages/company_ai_integration
+/pages/framework
+/pages/evaluations_and_benchmarks
+/pages/faq_page

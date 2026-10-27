@@ -93,16 +93,18 @@ Closes msgmate-io/open-chat-go-ci#123
 ```
 
 The `PR Test Merge Requirement` rejects a feature/bugfix PR without exactly one
-open, non-umbrella linked issue, and it rejects a consolidation PR without at
-least one closing link. A large issue is split into child leaf issues before the
-work starts; phase PRs for the same issue are not used. Umbrella and tracker
-issues carry the `umbrella` label and are closed manually once every child is
-done.
+open, non-umbrella linked issue. A large issue is split into child leaf issues
+before the work starts; phase PRs for the same issue are not used. Umbrella and
+tracker issues carry the `umbrella` label and are closed manually once every
+child is done.
 
 GitHub cannot auto-close an issue in another repository, so the consolidation
 runner closes every linked leaf issue after the batch merges (a direct merge
 closes them in the same step). The only exemptions are production promotion PRs
-(base `production`), `no-issue` maintenance PRs and `dependencies` updates.
+(base `production`), the `dev` -> `main` promotion, consolidation PRs
+(`chore/consolidate*`, exempt from the whole linked-issue requirement since
+ci#862: they aggregate already-merged leaf work and may carry no closing line at
+all), `no-issue` maintenance PRs and `dependencies` updates.
 
 Provider-side sandbox failures are classified, not guessed: the sandbox benchmark
 workflow sources `development/scripts/sandbox_provider_failure.sh` to tell a
@@ -238,7 +240,10 @@ approves **and merges** it once it is provably green:
   fallback) still runs instead of the job dying red on a flaky API. Both paths
   exhausted is only fatal when the fallback body is unusable; a valid empty
   listing is a no-op. Pinned by
-  `development/scripts/test_auto_approve_flaky_pulls.py` in the Pin Freshness
+  `development/scripts/test_auto_approve_flaky_pulls.py` and
+  `development/scripts/test_auto_approve_stale_check_instances.py` (ci#847: the
+  newest-per-context normalization of the rollup, so a superseded CANCELLED run
+  cannot veto its green replacement) in the Pin Freshness
   Gate job.
 
 The preferred configuration is a dedicated reviewer identity (GitHub App or a
@@ -253,6 +258,32 @@ The promotion hop is the one that deploys: merging the `dev` → `main` PR
 triggers `resolve-merged-deployment` with `merge_target=main`, which dispatches
 the ci.msgmate.io deployment (`msgmate-io-ci`) and opens the `main` →
 `production` promotion PR in turn.
+
+##### A deployment dispatch cannot claim the CI host (ci#890)
+
+`ci.msgmate.io` was observed serving a VERSION that existed only on unmerged
+branches — `main` sat one release behind the host — while the run history showed
+a *PR-preview* deployment (`msgmate-io-pr-deployment`) for an already **closed**
+pull request running *after* the `main`-merge deploys. A preview deploys with the
+PR-scoped overrides it was dispatched with, so a preview carrying no (or a stale)
+override falls back to the deployment-wide identity of
+`values.msgmate-io-pr-deployment.yaml` and re-asserts whatever identity the CI
+deployment already had.
+
+`development/scripts/pr_ci_pr_deploy_target_guard.py` is the last gate before the
+dispatch: a pure predicate over the very outputs the payload is built from
+(`deployment_name`, `NAMESPACE_OVERRIDE`, `DEPLOY_HOST_OVERRIDE`,
+`HELM_RELEASE_OVERRIDE`, `PR_NUMBER`, plus the live `PR_STATE` the step resolves
+from the API) that refuses, fail-closed, (a) a `msgmate-io-pr-deployment`
+dispatch without PR-scoped overrides (a blank override is refused *because* the
+CI-side deploy only honours a non-empty one), (b) any dispatch naming the CI
+namespace `msgmate-io-ci` or the host `ci.msgmate.io`, (c) a preview for a
+closed/merged PR and (d) a non-preview deployment carrying PR-scoped overrides
+(so a preview host/namespace cannot leak into a merged deployment). Failing here
+means the deploy is never dispatched, so the host it would have claimed is
+untouched. Its regression test,
+`development/scripts/test_pr_ci_pr_deploy_target_guard.py` (stdlib-only, like its
+siblings), runs in the Pin Freshness Gate.
 
 #### A cancelled (superseded) CI run is not a failed gate (ci#659)
 
@@ -567,6 +598,46 @@ a growth risk.
   cancelled context aborts before writing, the interval knob's parsing, and the
   background loop actually deletes a stale row and stops when told.
 
+#### Message history is pruned, not archived forever (ci#850 retention)
+
+Message rows are the bulk of the SQLite volume (see the ci#850 notes above): a
+long-lived chat kept every message it ever exchanged - text, reasoning and the
+full tool-call payload - forever, because nothing in any read path ever deletes a
+message and the UI only pages back through recent history. This prune is the
+retention/archival half of the ci#850 work (the busy timeout + WAL maintenance and
+the hot-path indexes are the other half).
+
+- `database.StartMessageRetentionSweeper` (`backend/database/message_retention.go`)
+  prunes from the server process: once at startup, then every interval until the
+  stop function (deferred in `runServer`) is called - the stop is blocking and
+  idempotent, so no prune can outlive the server (the ci#811 teardown contract).
+- `database.DeleteExpiredMessages` deletes messages older than the retention
+  window (default 90 days) while always keeping the newest
+  `HotMessageFloorPerChat` (200) messages of **every** chat, however old the chat
+  is. The floor is what keeps an old-but-active chat's recent context - and
+  `chats.latest_message_id` - alive.
+- The delete is **unscoped** on purpose: `Message` embeds `Model`, so a plain
+  `Delete` would only stamp `deleted_at` and leave the row's bytes behind - exactly
+  the growth this exists to stop. Soft-deleted messages are invisible to every read
+  path anyway.
+- Each transaction deletes at most `MessagePruneBatchSize` (500) rows and the loop
+  stops on a short batch, so a large backlog is reclaimed incrementally instead of
+  in one long write holding the SQLite write lock. It runs through `RetryOnBusy`,
+  since a prune can overlap a bot turn's writes, and a pass that actually removed
+  rows ends with a truncating `CheckpointWAL` so the space returns to the
+  filesystem instead of only to the freelist.
+- Tuning: `OPEN_CHAT_MESSAGE_RETENTION_WINDOW` (a Go duration, default `90d`),
+  `OPEN_CHAT_MESSAGE_RETENTION_INTERVAL` (default `6h`) and
+  `OPEN_CHAT_MESSAGE_PRUNE_BATCH_SIZE` (default `500`). `off` / `disabled` /
+  `never` / `0` disables the window or the interval; an unparsable value logs and
+  falls back to the default instead of silently changing behaviour.
+- `backend/database/message_retention_test.go` pins it: the per-chat hot floor
+  (old messages pruned, the newest N survive, a recent message is never a
+  candidate), the batching, the disabled and nil-db no-ops, a cancelled context
+  aborting before writing, the knob parsing, and the background loop actually
+  pruning and stopping when told.
+
+
 #### A message sent into a running chat is queued, never dropped (ci#656)
 
 A message sent while the chat was already running a bot turn used to disappear:
@@ -756,6 +827,45 @@ python3 -m venv .venv
   repository prefix wins and a repository outside the table keeps the declared
   default, so one bot config can serve several repositories with different
   development set-ups instead of forcing every interaction onto the same one.
+- `backend/nativecoder/devsetupmatrix.go` is the audit surface of that per-repo
+  default: `DevSetupMatrixPlan` resolves what a ci.msgmate.io coding interaction
+  on each configured repository actually gets (sandbox palette variant, profile,
+  submodules, extra checkouts), `ValidateDevSetupMatrix` lists defects and
+  `DevSetupMatrixGaps` names the repositories that still start half-set-up and
+  need a `coder_dev_setup` declaration. `RenderDevSetupMatrixMarkdown` renders the
+  operator table; the unit tests keep the public profile catalogue, the per-repo
+  default table and the sandbox palette from drifting apart — every repository
+  the palette maps a ci.msgmate.io trigger to must carry a per-repo entry of its
+  own (`backend/nativecoder/devsetup_perrepo_test.go`), so a client, integration
+  or toolchain repository never inherits the monorepo's batteries-included
+  `full-development` set-up by accident.
+- The map form of `coder_dev_setup` accepts a `setup_commands` escape hatch for
+  repositories whose set-up cannot be expressed as an integration profile: a
+  non-empty `setup_commands: [ ... ]` list is rendered verbatim as the script
+  body (`set -e` fail-fast and the `[ci#756 dev-setup]` marker stay, the
+  generated profile/submodule/bootstrap body is skipped entirely — `profile`,
+  `submodules`, `repos` and `commands` are ignored while it is set). The
+  operator keeps full control of the command text, so nothing is auto-generated
+  and nothing is guessed; the environment persistence lines
+  (`SandboxEnvSetupLines`, ci#739) still apply so the toolchain PATH survives
+  into the agent's later tool-call shells. This ships in
+  `backend/nativecoder/devsetup.go` (`ResolveDevSetup`, `DevSetupScript`).
+- `backend/nativecoder/devsetupfleet.go` is the per-bot / per-use-case audit of
+  that set-up: `CoderDevSetupFleet` lists which coder bot runs which use-case
+  against which repository, `DevSetupFleetPlans` resolves the plan each bot
+  actually gets (explicit `coder_dev_setup` or per-repo default) and
+  `DevSetupFleetGaps` names the bots that would still start half-set-up (a
+  repository no plan covers, or a profile outside the shipped catalogue).
+  `RenderDevSetupConfigFragment` prints the non-secret `coder_dev_setup` block to
+  paste into a bot config or a ci config delta.
+- `go run ./backend/scripts/dev_setup_report` renders that audit
+  (`--fleet` table is the default, `--matrix` for the per-repo table, `--config`
+  for the config fragment, `--format=json` for machine consumption). `--check`
+  exits non-zero when any coder bot has a coverage gap, so a CI job or a config
+  publish can refuse to ship a half-configured fleet. The report is read-only:
+  it provisions no sandbox, makes no network call and prints only bot names,
+  repository slugs and profile names — never a token, kubeconfig or private
+  module path. Add a new coder bot there when you add it to the runtime.
 - `setup` materializes the profile's extra repositories and symlinks as
   declared in [`profile_setup.yaml`](../profile_setup.yaml). It runs
   automatically before any other command when the profile's setup marker is
@@ -863,6 +973,67 @@ INTEGRATION_PROFILE=full-android bash clients/gomobile/build_android.sh
 
 `sync --frozen` (used by CI/release) checks out the commits pinned in
 `integrations.lock.json`; `check` verifies the checkouts still match the lock.
+
+
+### Running the development stack on PostgreSQL (ci#878)
+
+The development stack runs on SQLite by default. A PostgreSQL service is shipped
+in `docker-compose.yaml` behind the `postgres` profile, so it stays off unless
+you ask for it; `docker-compose.postgres.yaml` supplies the matching backend
+environment. Enabling it is one command:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.postgres.yaml \
+  --profile postgres up
+```
+
+To make it the default for your shell (still SQLite when you unset it):
+
+```bash
+export COMPOSE_FILE=docker-compose.yaml:docker-compose.postgres.yaml
+export COMPOSE_PROFILES=postgres
+docker compose up
+```
+
+The service listens on host port `5433` (to avoid clashing with a host
+PostgreSQL on `5432`) and persists to the `postgres_data` volume; reset it with
+`docker compose ... down -v`. Default credentials are `openchat:openchat` and are
+overridable with `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The backend
+connection defaults to
+`postgres://openchat:openchat@postgres:5432/openchat?sslmode=disable`; override
+it with `DB_PATH` (and `DB_BACKEND=postgres`) if you point at an external server.
+
+Both backends are kept interchangeable: the code must produce identical
+behaviour on SQLite and PostgreSQL. Two rules follow from that:
+
+* JSON columns keep working when written as `json.RawMessage`/`[]byte`. On
+  PostgreSQL an `exec`/`simple_protocol` pgx query mode encodes those parameters
+  as `bytea` and every `jsonb` write fails with SQLSTATE 22P02, so
+  `database.ensureJSONSafeQueryMode` repairs such a DSN on startup. Prefer the
+  `database.JSONRaw` type for JSON columns the core writes directly (it encodes
+  as text on PostgreSQL and BLOB on SQLite).
+
+
+### Switching branches after a dev build (ci#756)
+
+`docker compose up` runs tooling that regenerates two **tracked** files:
+
+- `integrations.lock.json` — the (non-frozen) `prepare`/`sync` re-pins it to the
+  commits currently checked out under `clients/integrations`, which drift ahead
+  of the committed lock;
+- `backend/server/swagger.json` — embedded with `go:embed` and refreshed by every
+  backend rebuild.
+
+Left modified, they make `git switch`/`git checkout` refuse with "local changes
+would be overwritten". The dev tooling now restores both automatically: the
+integration-sync entrypoint restores the lockfile after `prepare`/`sync`, and
+the backend rebuild restores the swagger snapshot after compiling (the built
+binary still embeds the freshly generated documentation). If an older checkout
+already left them dirty, run the host-side helper once:
+
+```bash
+development/scripts/restore_generated_artifacts.sh
+```
 
 
 ### Custom integration profiles
@@ -1321,3 +1492,31 @@ per-integration prebuild precondition from the ci#345 design
 (`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
 for the remaining integrations lives in
 `frontend/pages/docs/content/integration-development.mdx`.
+
+### Re-baselining the dependency surface deliberately
+
+`integrations.dep-surface.json` is the committed record of the integrations that are
+already decoupled. `development/scripts/check_dep_surface_gate.sh` consumes it on every
+pull request:
+
+- it always validates the baseline without a Go toolchain (a malformed or
+  wrongly-pinned baseline fails, exit 2/1);
+- when a Go workspace is materialized (the Go-test job exports `GOWORK`) it additionally
+  measures the integration modules and prints the offending import edge
+  (`module: backend/...`) before failing -- and only for a *regression* against the
+  baseline, so integrations still being migrated are reported, not failed;
+- with no workspace (the toolchain-free integration-module CI job) it validates only and
+  says so, and it is a no-op when `integrations.dep-surface.json` is absent.
+
+The baseline is intentionally small: it records only integrations whose shipped
+packages no longer import `backend/...` at all. Extend it only in its own commit, for an
+integration that is actually fully decoupled, and never to silence a regression:
+
+```sh
+python3 backend/scripts/integration_dep_surface.py --write-baseline integrations.dep-surface.json
+python3 backend/scripts/integration_dep_surface.py --check-baseline integrations.dep-surface.json  # must be 0
+git add integrations.dep-surface.json && git commit -m "ci#423: pin <integration> dependency surface"
+```
+
+A coupled integration listed there (or a `backend/...` package it does not record) is a
+regression by definition; fix the import instead of re-baselining.

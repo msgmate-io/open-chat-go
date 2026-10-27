@@ -264,6 +264,7 @@ var Tabels []interface{} = []interface{}{
 	&AccessToken{},
 	&IntegrationAccess{},
 	&ActionTaskDismissal{},
+	&ProductLandingPageConfig{},
 	&WorkspaceLease{},
 }
 
@@ -292,8 +293,13 @@ var Migrations []Migration = []Migration{
 	TableMigration{&AccessToken{}},
 	TableMigration{&IntegrationAccess{}},
 	TableMigration{&ActionTaskDismissal{}},
+	TableMigration{&ProductLandingPageConfig{}},
+	SeedProductLandingPageConfigsMigration{},
 	TableMigration{&WorkspaceLease{}},
 	GrantDefaultPermissionsMigration{},
+	// IndexMigration runs last so every table it indexes exists, and is
+	// idempotent (CREATE INDEX IF NOT EXISTS) for repeated boots (ci#850).
+	IndexMigration{},
 }
 
 func RegisterExternalModels(models ...interface{}) {
