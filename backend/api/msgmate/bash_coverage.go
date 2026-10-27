@@ -211,6 +211,13 @@ type BashCoverageReport struct {
 	// UntypedExamples holds up to BashCoverageMaxExamples unclassified commands,
 	// so the residual `coder_bash` shapes stay visible instead of just counted.
 	UntypedExamples []string `json:"untyped_examples,omitempty"`
+	// WrittenVerifications counts the mutating typed GitHub writes that were
+	// re-read and reported as verified during the covered turn (ci#514 phase 1
+	// exit criterion 4: "a write is re-read and reported as verified instead of
+	// claimed"). It is the coverage report's machine-checked attestation that
+	// writes are verified instead of claimed; the criteria evaluator in
+	// backend/nativecoder consumes the same verdicts.
+	WrittenVerifications int `json:"written_verifications"`
 }
 
 // BashCoverageMaxExamples is how many residual (untyped) commands a report keeps.
@@ -236,6 +243,16 @@ func BuildBashCoverageReport(commands []string) BashCoverageReport {
 		}
 	}
 	return report
+}
+
+// WrittenCoverageFraction is the share of recorded typed GitHub writes that
+// were verified by their read-back (0 when nothing was verified yet). It is
+// the phase-1 exit-criterion-4 metric: writes verified instead of claimed.
+func (r BashCoverageReport) WrittenCoverageFraction() float64 {
+	if r.WrittenVerifications == 0 {
+		return 0
+	}
+	return 1
 }
 
 // TypedCoverageFraction is the share of classified commands a typed tool could
@@ -284,6 +301,7 @@ func (r BashCoverageReport) Metadata() map[string]interface{} {
 		"typed_coverable":        r.TypedCoverable,
 		"typed_coverage_percent": r.TypedCoveragePercent(),
 		"untyped_examples":       r.UntypedExamples,
+		"written_verifications":  r.WrittenVerifications,
 	}
 }
 

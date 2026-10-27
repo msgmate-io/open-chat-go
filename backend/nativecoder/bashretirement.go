@@ -656,6 +656,13 @@ type BashCoverageReport struct {
 	Buckets               []BashCoverageBucket `json:"buckets"`
 	RetiredCategories     []string             `json:"retired_categories"`
 	OutstandingCategories []string             `json:"outstanding_categories"`
+	// WrittenVerifications counts the mutating typed GitHub writes that were
+	// re-read and reported as verified during the sampled run (phase 1 exit
+	// criterion 4). It is the coverage report's machine-checked attestation
+	// that writes are verified instead of claimed; a sample with no recorded
+	// writes keeps it at zero and the criteria evaluator treats the empty
+	// verification evidence as unattested.
+	WrittenVerifications int `json:"written_verifications"`
 }
 
 // bashBinaryCategories maps a shell binary onto its usage category. It is a
