@@ -1570,10 +1570,10 @@ func createBotInteraction(
 		effectiveConfig = nativecoder.WithPreCallInit(effectiveConfig, toolNames, req.Tags, nativecoder.DefaultPreCallInitResolvers())
 	}
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
-		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid tools/tool_init: %v", err)}
+		return BotInteractionResponse{}, &interactionConfigError{message: configValidationMessage(toolInitStagePrefix, err)}
 	}
 	if err := validateAndAttachMCPIntegrationsForUser(DB, actingUser, effectiveConfig); err != nil {
-		return BotInteractionResponse{}, &interactionConfigError{message: fmt.Sprintf("invalid integrations: %v", err)}
+		return BotInteractionResponse{}, &interactionConfigError{message: configValidationMessage(integrationsStagePrefix, err)}
 	}
 	// ci#709: the *chat* records the tool-call budget it was created with, so
 	// the budget survives a re-attach / re-provision and is reported as
@@ -1729,6 +1729,58 @@ func createBotInteraction(
 type interactionConfigError struct{ message string }
 
 func (e *interactionConfigError) Error() string { return e.message }
+
+// Stage labels for the client-supplied config rejections a create-interaction
+// request can hit. They name the part of the config that failed, so the caller
+// does not have to guess from a bare validator message.
+const (
+	toolInitStagePrefix     = "invalid tools/tool_init"
+	integrationsStagePrefix = "invalid integrations"
+)
+
+// innerStageMarkers are the stage labels a validator may already carry itself.
+// validateAndAttachDynamicToolsForUser wraps its failure as
+// "default_shared_config invalid tools/tool_init: <detail>", and the
+// create-interaction envelope wrapped that once more, so the canary read
+//
+//	invalid tools/tool_init: default_shared_config invalid tools/tool_init: missing tool_init for required tool "coder_select_workspace"
+//
+// — the same failure named twice, truncated in CI logs. Each marker is paired
+// with the message to report instead: the inner wrap's field context
+// ("default_shared_config ...") is kept, the envelope's own label is applied
+// exactly once (open-chat-go-ci#865).
+var innerStageMarkers = []struct {
+	marker   string
+	reshaped string
+}{
+	{"default_shared_config " + toolInitStagePrefix, toolInitStagePrefix + " in default_shared_config"},
+}
+
+// configValidationMessage builds the client-facing message for a rejected
+// config stage, collapsing a stage label the validator already applied instead
+// of prefixing it a second time. An error that already leads with the stage
+// label is passed through untouched, so the helper is idempotent.
+func configValidationMessage(stagePrefix string, err error) string {
+	if err == nil {
+		return stagePrefix
+	}
+	detail := err.Error()
+	for _, inner := range innerStageMarkers {
+		idx := strings.Index(detail, inner.marker)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(detail[idx+len(inner.marker):], ":"))
+		detail = inner.reshaped
+		if rest != "" {
+			detail += ": " + rest
+		}
+	}
+	if strings.HasPrefix(detail, stagePrefix) {
+		return detail
+	}
+	return stagePrefix + ": " + detail
+}
 
 // writeCreateInteractionError maps a createBotInteraction error to the same HTTP
 // responses the original CreateInteraction handler produced.
