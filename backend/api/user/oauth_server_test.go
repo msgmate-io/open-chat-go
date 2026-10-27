@@ -241,7 +241,7 @@ func TestOAuthAuthorizeFlowAndTokenExchange(t *testing.T) {
 	if err := DB.Where("audience = ?", database.AudienceMCPOAuth).First(&stored).Error; err != nil {
 		t.Fatalf("minted token not persisted with mcp-oauth audience: %v", err)
 	}
-	if got, want := database.ParseTokenScopes(stored.Scope), database.ParseTokenScopes(database.JoinTokenScopes([]string{"interactions:list", "interactions:mcp"})); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := database.ParseTokenScopes(stored.Scopes), database.ParseTokenScopes(database.JoinTokenScopes([]string{"interactions:list", "interactions:mcp"})); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("stored scopes = %v, want %v", got, want)
 	}
 	if stored.ExpiresAt == nil || !stored.ExpiresAt.After(time.Now()) {
