@@ -183,11 +183,13 @@ func TestOAuthAuthorizeFlowAndTokenExchange(t *testing.T) {
 	clientID := decodeOAuthJSON(t, rec)["client_id"].(string)
 
 	verifier, challenge := pkcePair("verifier-abcdefghijklmnopqrstuvwxyz-0123456789")
+	requestedScope := "interactions:list interactions:mcp"
 	authorizeURL := "/authorize?" + url.Values{
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURI},
 		"response_type":         {"code"},
 		"state":                 {"xyz-state"},
+		"scope":                 {requestedScope},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
 	}.Encode()
@@ -229,10 +231,18 @@ func TestOAuthAuthorizeFlowAndTokenExchange(t *testing.T) {
 	if tokenResp["token_type"] != "Bearer" {
 		t.Errorf("token_type = %v", tokenResp["token_type"])
 	}
+	// The granted scope must be exactly the requested scope subset, echoed in
+	// space-delimited form (RFC 6749 §5.1) and stored that way on the token.
+	if tokenResp["scope"] != requestedScope {
+		t.Errorf("scope = %v, want %q", tokenResp["scope"], requestedScope)
+	}
 
 	var stored database.AccessToken
 	if err := DB.Where("audience = ?", database.AudienceMCPOAuth).First(&stored).Error; err != nil {
 		t.Fatalf("minted token not persisted with mcp-oauth audience: %v", err)
+	}
+	if got, want := database.ParseTokenScopes(stored.Scopes), database.ParseTokenScopes(database.JoinTokenScopes([]string{"interactions:list", "interactions:mcp"})); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("stored scopes = %v, want %v", got, want)
 	}
 	if stored.ExpiresAt == nil || !stored.ExpiresAt.After(time.Now()) {
 		t.Errorf("minted token has no future expiry")
@@ -342,6 +352,46 @@ func TestOAuthTokenRejectsVerifierMismatch(t *testing.T) {
 	}
 	if decodeOAuthJSON(t, rec)["error"] != "invalid_grant" {
 		t.Errorf("expected invalid_grant, got %v", rec.Body.String())
+	}
+}
+
+func TestOAuthTokenRequiresRegisteredClientAndRedirectURI(t *testing.T) {
+	resetOAuthStoresForTest()
+	DB := setupOAuthTestDB(t)
+	h := &UserHandler{}
+
+	// redirect_uri is mandatory on the token request: the code was always
+	// issued together with one, so its absence is a malformed request and must
+	// not fall back to a lax (skip the binding check) comparison.
+	rec := httptest.NewRecorder()
+	h.ExchangeOAuthToken(rec, oauthFormRequest("POST", "/token", url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"some-code"},
+		"client_id":     {"some-client"},
+		"code_verifier": {"verifier-abcdefghijklmnopqrstuvwxyz-0123456789"},
+	}, DB, ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing redirect_uri status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if decodeOAuthJSON(t, rec)["error"] != "invalid_request" {
+		t.Errorf("expected invalid_request, got %v", rec.Body.String())
+	}
+
+	// An unknown (or expired) client_id is rejected before the code is popped,
+	// so an unregistered client cannot burn a code issued to another client.
+	rec = httptest.NewRecorder()
+	h.ExchangeOAuthToken(rec, oauthFormRequest("POST", "/token", url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"some-code"},
+		"client_id":     {"never-registered-client"},
+		"redirect_uri":  {"http://localhost:8085/callback"},
+		"code_verifier": {"verifier-abcdefghijklmnopqrstuvwxyz-0123456789"},
+	}, DB, ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown client_id status = %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if decodeOAuthJSON(t, rec)["error"] != "invalid_client" {
+		t.Errorf("expected invalid_client, got %v", rec.Body.String())
 	}
 }
 
