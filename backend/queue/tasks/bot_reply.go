@@ -3,6 +3,7 @@ package tasks
 import (
 	"backend/api/msgmate"
 	wsapi "backend/api/websocket"
+	"backend/botloop"
 	"backend/database"
 	"backend/workqueue"
 	"context"
@@ -79,6 +80,21 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	var senderUser database.User
 	if err := deps.DB.First(&senderUser, "id = ?", incomingMessage.SenderId).Error; err != nil {
 		return fmt.Errorf("%w: sender not found", asynq.SkipRetry)
+	}
+
+	// ci#747 RC-8: refuse to add another turn to a bot-to-bot loop. Only an
+	// automated peer can loop, so the check is gated on that; a long
+	// all-automated run, a run of identical messages, or a burst of turns
+	// seconds apart stops the spin (the peer never gets a reply, so the loop
+	// ends). Legitimate slow agent-to-agent coordination never trips it.
+	if senderUser.IsAutomated {
+		if decision := botloop.DetectForChat(deps.DB, incomingMessage.ChatId, botloop.ConfigFromEnv(), time.Now()); decision.Loop {
+			logging.Warnf("bot-reply loop breaker (ci#747): refusing to answer chat %s (%s: %s)", payload.ChatUUID, decision.Reason, decision.Detail)
+			failure := ToolExecutionResult{Success: false, Error: "bot-reply loop breaker: " + decision.Reason}
+			_ = writeResult(task, failure)
+			persistTaskResult(deps.DB, task, failure)
+			return fmt.Errorf("bot reply loop breaker (%s): %w", decision.Reason, asynq.SkipRetry)
+		}
 	}
 
 	// The session must outlive the whole turn, not just a fixed 15 minutes:
