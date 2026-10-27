@@ -55,6 +55,13 @@ const (
 	// routes the endpoint's tool allowlist can call; the concrete tool allowlist
 	// is enforced by the integration before it mints the request.
 	AudienceCoderMCP = "coder-mcp"
+	// AudienceMCPOAuth marks the credential the MCP OAuth authorization server
+	// (ci#900) issues through the authorization-code + PKCE flow. It is the
+	// interactive-OAuth twin of AudienceCoderMCP: a user completes the browser
+	// handshake once and the resulting bearer authorizes the MCP serve endpoint
+	// (and only it), so an MCP client can authenticate without pasting a static
+	// token. It is default-deny like every other restricted audience.
+	AudienceMCPOAuth = "mcp-oauth"
 
 	ScopeBotsRead         = "bots:read"
 	ScopeBotsWrite        = "bots:write"
