@@ -97,4 +97,4 @@ func TestMeasureGitHubRunTranslation(t *testing.T) {
 	if m.Total != 4 || m.Expressible != 2 || len(m.Residual) != 2 {
 		t.Fatalf("got %+v, want total=4 expressible=2 residual=2", m)
 	}
-}}
+}
