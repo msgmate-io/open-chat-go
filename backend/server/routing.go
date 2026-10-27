@@ -677,6 +677,18 @@ func BackendRouting(
 		logging.Infof("Skipping local /api docs/version handlers because mobile API/WS proxy is enabled")
 	}
 
+	// MCP OAuth surface (ci#895 discovery, ci#900 authorization server). These
+	// are public and registered outside the mobile-proxy branch so an MCP client
+	// can always probe discovery and complete the browser handshake against a
+	// hosted deployment.
+	mux.Handle("GET /.well-known/oauth-protected-resource", commonMiddlewares(Logging(http.HandlerFunc(userHandler.ProtectedResourceMetadata))))
+	mux.Handle("GET /.well-known/oauth-protected-resource/", commonMiddlewares(Logging(http.HandlerFunc(userHandler.ProtectedResourceMetadata))))
+	mux.Handle("GET /.well-known/oauth-authorization-server", commonMiddlewares(Logging(http.HandlerFunc(userHandler.AuthorizationServerMetadata))))
+	mux.Handle("GET /.well-known/oauth-authorization-server/", commonMiddlewares(Logging(http.HandlerFunc(userHandler.AuthorizationServerMetadata))))
+	mux.Handle("POST /register", commonMiddlewares(Logging(http.HandlerFunc(userHandler.RegisterOAuthClient))))
+	mux.Handle("GET /authorize", commonMiddlewares(Logging(http.HandlerFunc(userHandler.AuthorizeOAuth))))
+	mux.Handle("POST /token", commonMiddlewares(Logging(http.HandlerFunc(userHandler.ExchangeOAuthToken))))
+
 	// ci#739: the public liveness probe. It is registered *outside*
 	// AuthMiddleware (and outside the mobile-proxy branch, so a hosted
 	// deployment can always be probed) on purpose: the crash watchdog and the
