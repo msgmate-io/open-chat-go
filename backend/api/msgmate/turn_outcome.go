@@ -23,6 +23,10 @@ const (
 	TurnEndedCancelled         = "cancelled"
 	TurnEndedNoUsableCall      = "no_usable_tool_call"
 	TurnEndedConfirmablePause  = "confirmable_pause"
+	// TurnEndedContextBudgetExceeded marks a turn that the ci#910 guard
+	// stopped because the outgoing request still exceeded the chat's context
+	// budget after every eviction pass; the request was never sent.
+	TurnEndedContextBudgetExceeded = "context_budget_exceeded"
 )
 
 // TurnOutcome records how a native coder turn ended and what its tool-call

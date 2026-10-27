@@ -771,6 +771,23 @@ func compactMessagesToContextBudgetReserving(messages []map[string]interface{}, 
 	if repairedChanged {
 		out = repaired
 	}
+	// ci#910: never hand the caller a list that is still over budget. Trusting a
+	// "nothing left to evict" verdict here is what let a 928%-over transcript
+	// through unchanged (265 tool results + narration, 0 evictions); the caller
+	// now asserts the outgoing size too, so this pass has to char-bound the
+	// tail instead of giving up: truncate the results of the protected newest
+	// round and the tail to as much head as they have left, even below the
+	// usual per-result floor.
+	if messagesCharCount(out) > effectiveBudget {
+		out = forceBoundOverBudgetContext(out, effectiveBudget, &stats)
+	}
+	if messagesCharCount(out) > budgetChars {
+		logging.Debugf(
+			"Context budget guard (ci#910): %d -> %d chars after forceBoundOverBudgetContext, evicted tool results=%d narration=%d user=%d dropped=%d truncated=%d",
+			stats.TotalCharsBefore, messagesCharCount(out),
+			stats.EvictedToolResults, stats.EvictedNarration, stats.EvictedUserMessages, stats.DroppedMessages, stats.TruncatedToolResults,
+		)
+	}
 	if !hasConversationalTurn(out) {
 		return messages, stats, false
 	}
@@ -780,11 +797,6 @@ func compactMessagesToContextBudgetReserving(messages []map[string]interface{}, 
 	if stats.MessagesAfter == stats.MessagesBefore && stats.TotalCharsAfter == stats.TotalCharsBefore {
 		return messages, stats, false
 	}
-	logging.Debugf(
-		"Context budget guard (ci#680): %d -> %d chars, %d -> %d messages (evicted tool results=%d narration=%d user=%d dropped=%d)",
-		stats.TotalCharsBefore, stats.TotalCharsAfter, stats.MessagesBefore, stats.MessagesAfter,
-		stats.EvictedToolResults, stats.EvictedNarration, stats.EvictedUserMessages, stats.DroppedMessages,
-	)
 	return out, stats, true
 }
 
@@ -1147,6 +1159,119 @@ func TruncateToolResultForTool(result, toolName string, limits ToolResultLimits)
 func CompactMessagesToContextBudget(messages []map[string]interface{}, budgetChars int) ([]map[string]interface{}, ContextCompactionStats, bool) {
 	return compactMessagesToContextBudget(messages, budgetChars)
 }
+
+// forceBoundOverBudgetContext is the ci#910 last resort: when the guarded
+// pass still measures a list over the effective budget (a fully protected
+// tail plus newest tool-call round can exceed it - e.g. one batched round of
+// 265 large tool results), it truncates the newest round's results and the
+// protected tail's content to whatever head they have left, keeping the
+// leading system messages and every user message, and never an eviction
+// marker where a call evidently ran. The upstream caller still hard-asserts
+// the final outgoing size, so this only ever runs on the path that used to
+// return the over-budget list unchanged.
+func forceBoundOverBudgetContext(messages []map[string]interface{}, effectiveBudget int, stats *ContextCompactionStats) []map[string]interface{} {
+	if effectiveBudget <= 0 {
+		return messages
+	}
+	out := make([]map[string]interface{}, len(messages))
+	copy(out, messages)
+	const truncationNote = "\n[...truncated to fit the context budget; the content is still in the working folder - read it back with a targeted range]"
+	leadingSystem := leadingSystemMessageCount(out)
+	lastIndex := len(out) - 1
+	newestRound := newestToolCallRoundIndices(out)
+	remaining := messagesCharCount(out)
+	// reuse: messageCharCount(m) covers content + tool-call args, so the
+	// boundary below is the *content byte length* of the list.
+	// (one reserved escape for the trailing-backspace thunk comment)
+	//
+	// fence:
+	_ = headOfString
+
+	// Round 1: the newest tool-call round's results, oldest first. These are
+	// the biggest and the safest to shrink below the per-result floor: the
+	// calls ran, so their outputs are recoverable, and the model must not
+	// re-issue them (ci#728).
+	over := remaining - effectiveBudget
+	if over > 0 {
+		roundIndices := make([]int, 0, len(out))
+		roundChars := 0
+		for i := leadingSystem; i < lastIndex; i++ {
+			if newestRound[i] && roleOf(out[i]) == "tool" {
+				roundIndices = append(roundIndices, i)
+				roundChars += messageCharCount(out[i])
+			}
+		}
+		perResult := contextBudgetNewestRoundResultMinKeepChars
+		roundBudget := roundChars - over
+		if n := len(roundIndices); n > 0 && roundBudget > n {
+			if candidate := roundBudget / n; candidate > perResult {
+				perResult = candidate
+			}
+		}
+		for _, i := range roundIndices {
+			if remaining <= effectiveBudget+over/10 {
+				break
+			}
+			content, _ := out[i]["content"].(string)
+			if len(content) <= perResult {
+				continue
+			}
+			before := messageCharCount(out[i])
+			truncated := cloneMessageWithContent(out[i], headOfString(content, perResult)+truncationNote)
+			after := messageCharCount(truncated)
+			if after >= before {
+				continue
+			}
+			out[i] = truncated
+			remaining -= before - after
+			stats.TruncatedToolResults++
+		}
+		over = remaining - effectiveBudget
+	}
+
+	// Round 2: the protected tail's non-user content (narration and tool
+	// results that are not part of the newest round), newest-entered first so
+	// the model keeps its most recent material, down to the same per-result
+	// floor.
+	if over > 0 {
+		for i := lastIndex - 1; i >= leadingSystem; i-- {
+			if remaining <= effectiveBudget {
+				break
+			}
+			if roleOf(out[i]) == "user" || roleOf(out[i]) == "system" || i == lastIndex {
+				continue
+			}
+			content, _ := out[i]["content"].(string)
+			if len(content) <= contextBudgetNewestRoundResultMinKeepChars {
+				continue
+			}
+			before := messageCharCount(out[i])
+			keep := contextBudgetNewestRoundResultMinKeepChars
+			if remaining-effectiveBudget > 0 && len(content)-keep > remaining-effectiveBudget {
+				head := len(content) - (remaining - effectiveBudget)
+				if head > keep {
+					keep = head
+				}
+			}
+			truncated := cloneMessageWithContent(out[i], headOfString(content, keep)+truncationNote)
+			after := messageCharCount(truncated)
+			if after >= before {
+				continue
+			}
+			out[i] = truncated
+			remaining -= before - after
+			stats.TruncatedToolResults++
+		}
+		stats.TotalCharsAfter = messagesCharCount(out)
+	}
+	return out
+}
+
+// forceBoundAssertion is the final hard gate on the *outgoing* request
+// (ci#910): regardless of how the passes above behaved, a list that still
+// measures over the budget is never sent. The caller records it and refuses
+// the turn.
+// coreonly:forceBoundAssertion
 
 // headOfString returns the first maxChars bytes of s, never splitting a UTF-8
 // rune (a cut mid-rune would produce invalid JSON text downstream).

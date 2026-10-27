@@ -595,6 +595,14 @@ func streamChatCompletion(
 			// request fits - e.g. when the reserve was under-estimated by a
 			// longer re-rendered notice, or when the second compaction freed
 			// room for a longer notice again.
+			// ci#910: the guard must evict until the *outgoing* request fits. Before
+			// this loop the guard "computed" a 928% overage but a too-eager
+			// `changed` check let the original list through unchanged, so every
+			// consecutive tool call re-sent the whole growing history (observed:
+			// 265 tool results in one round -> ~1.1M chars vs a 120k budget, 0
+			// evictions). The loop now runs until the measured list is at or below
+			// the budget, and a final assertion seals it: a request that still
+			// does not fit is never sent silently.
 			for attempt := 0; attempt < 3 && messagesCharCount(currentMessages) > contextBudget.BudgetChars; attempt++ {
 				compacted, stats, changed := compactMessagesToContextBudget(currentMessages, contextBudget.BudgetChars)
 				if !changed {
@@ -606,6 +614,20 @@ func streamChatCompletion(
 				budgetStats = mergeContextCompactionStats(budgetStats, stats)
 				preReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
 				currentMessages = injectContextBudgetNotice(currentMessages, preReport)
+			}
+			if over := messagesCharCount(currentMessages) - contextBudget.BudgetChars; over > 0 {
+				lastContextReport = BuildContextUsageReport(currentMessages, contextBudget.BudgetChars, budgetStats, contextBudget.Limits, truncatedToolResults)
+				lastContextReport.ChatUUID = meta.ChatUUID
+				RecordContextUsage(meta.ChatUUID, lastContextReport)
+				errChan <- fmt.Errorf(
+					"context budget guard (ci#910): outgoing request is %d chars over the %d char budget (%d%% of budget; evicted tool results=%d narration=%d user=%d truncated=%d dropped=%d); refusing to send an unbounded request",
+					over, contextBudget.BudgetChars,
+					lastContextReport.UsedPercent,
+					budgetStats.EvictedToolResults, budgetStats.EvictedNarration, budgetStats.EvictedUserMessages,
+					budgetStats.TruncatedToolResults, budgetStats.DroppedMessages,
+				)
+				recordOutcome(TurnEndedContextBudgetExceeded)
+				return
 			}
 
 			// ci#680: record the usage report of the request that is about to be
