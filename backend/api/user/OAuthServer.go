@@ -453,8 +453,16 @@ func (h *UserHandler) ExchangeOAuthToken(w http.ResponseWriter, r *http.Request)
 	clientID := strings.TrimSpace(r.Form.Get("client_id"))
 	redirectURI := strings.TrimSpace(r.Form.Get("redirect_uri"))
 	codeVerifier := strings.TrimSpace(r.Form.Get("code_verifier"))
-	if code == "" || clientID == "" || codeVerifier == "" {
-		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code, client_id and code_verifier are required")
+	if code == "" || clientID == "" || codeVerifier == "" || redirectURI == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "code, client_id, redirect_uri and code_verifier are required")
+		return
+	}
+
+	// The client must still be registered (registrations expire) and the code
+	// must have been issued to it. This is checked before the code is consumed
+	// so a stale/unknown client cannot burn another client's code.
+	if _, ok := lookupOAuthClient(clientID); !ok {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client", "client_id is unknown or expired")
 		return
 	}
 
@@ -473,7 +481,7 @@ func (h *UserHandler) ExchangeOAuthToken(w http.ResponseWriter, r *http.Request)
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "authorization code was issued to a different client")
 		return
 	}
-	if redirectURI != "" && redirectURI != authorization.RedirectURI {
+	if redirectURI != authorization.RedirectURI {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri does not match the authorization request")
 		return
 	}
