@@ -145,12 +145,15 @@ var bashUsageCategories = []BashUsageCategory{
 			"gh pr create --title X --body Y --base main",
 			"gh pr comment 873 --body '...'",
 			"gh api repos/msgmate-io/open-chat-go-ci/pulls/873/reviews",
+			"gh run list --repo msgmate-io/open-chat-go --limit 10 --status in_progress",
+			"gh run view 123456789 --repo msgmate-io/open-chat-go --json status,jobs",
 			"gh auth status",
 		},
 		TargetTools: []string{
 			"github_issue_view", "github_issue_list", "github_issue_create", "github_issue_comment",
 			"github_pr_view", "github_pr_list", "github_pr_create", "github_pr_comment", "github_pr_review",
 			"github_pr_merge", "github_auth_status", "github_api",
+			"github_run_list", "github_run_view",
 		},
 		Policy: "read/write per tool; github_pr_merge is admin scope",
 		Notes: []string{
