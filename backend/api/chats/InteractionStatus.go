@@ -66,25 +66,25 @@ type InteractionStatusResponse struct {
 func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	inspector, err := util.GetAsynqInspector(r)
 	if err != nil {
-		http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Async queue unavailable")
 		return
 	}
 
 	chatUUID, chatUUIDErr := parseChatUUID(r)
 	if chatUUIDErr != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
 	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
-		http.Error(w, "Chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Chat not found")
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 
 	status, err := resolveInteractionStatus(DB, inspector, chat)
 	if err != nil {
-		http.Error(w, "Unable to resolve interaction status", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Unable to resolve interaction status")
 		return
 	}
 	// ci#609: an interaction that cannot provision must never rest in a silent
@@ -125,36 +125,36 @@ func (h *ChatsHandler) GetInteractionStatus(w http.ResponseWriter, r *http.Reque
 func (h *ChatsHandler) GetSharedInteractionStatus(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {
-		http.Error(w, "Unable to get database", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database")
 		return
 	}
 
 	inspector, err := util.GetAsynqInspector(r)
 	if err != nil {
-		http.Error(w, "Async queue unavailable", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Async queue unavailable")
 		return
 	}
 
 	shareUUID := strings.TrimSpace(r.PathValue("chat_share_uuid"))
 	if shareUUID == "" {
-		http.Error(w, "Invalid shared chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid shared chat UUID")
 		return
 	}
 
 	chat, share, err := getSharedChatByUUID(DB, shareUUID)
 	if err != nil {
-		http.Error(w, "Shared chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Shared chat not found")
 		return
 	}
 
 	if !shareAllowsUser(share, util.GetOptionalUser(r)) {
-		http.Error(w, "Shared chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Shared chat not found")
 		return
 	}
 
 	status, err := resolveInteractionStatus(DB, inspector, chat)
 	if err != nil {
-		http.Error(w, "Unable to resolve interaction status", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Unable to resolve interaction status")
 		return
 	}
 
@@ -167,6 +167,35 @@ func (h *ChatsHandler) GetSharedInteractionStatus(w http.ResponseWriter, r *http
 // message, but a newer user message may sit on top of it).
 const confirmationScanLimit = 5
 
+// chatQueueActivity answers the two live-queue questions the resolver asks of a
+// chat. The default implementation queries the asynq inspector per chat; the
+// chat-list and batch-state endpoints pass a BotReplyActivity snapshot so N
+// chats cost one queue listing instead of N (ci#850).
+type chatQueueActivity interface {
+	isActive(chatUUID string) bool
+	queuedCount(chatUUID string) int
+}
+
+type inspectorQueueActivity struct{ inspector *asynq.Inspector }
+
+func (a inspectorQueueActivity) isActive(chatUUID string) bool {
+	return a.inspector != nil && workqueue.BotReplyIsActive(a.inspector, chatUUID)
+}
+
+func (a inspectorQueueActivity) queuedCount(chatUUID string) int {
+	return workqueue.BotReplyQueuedCount(a.inspector, chatUUID)
+}
+
+type snapshotQueueActivity struct{ snapshot *workqueue.BotReplyActivity }
+
+func (a snapshotQueueActivity) isActive(chatUUID string) bool {
+	return a.snapshot.IsActive(chatUUID)
+}
+
+func (a snapshotQueueActivity) queuedCount(chatUUID string) int {
+	return a.snapshot.QueuedCount(chatUUID)
+}
+
 // ResolveInteractionStatus exposes the deterministic interaction-state resolver
 // to other core packages (the trusted agent-dispatch surface) so a dispatched
 // agent's live state is computed by the same logic the chat status endpoint uses.
@@ -175,6 +204,10 @@ func ResolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 }
 
 func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat database.Chat) (InteractionStatusResponse, error) {
+	return resolveInteractionStatusWithQueue(DB, chat, inspectorQueueActivity{inspector: inspector})
+}
+
+func resolveInteractionStatusWithQueue(DB *gorm.DB, chat database.Chat, queue chatQueueActivity) (InteractionStatusResponse, error) {
 	response := InteractionStatusResponse{
 		ChatUUID: chat.UUID,
 		IsActive: false,
@@ -186,7 +219,12 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	// ci#656: report how many replies are queued behind the live turn so the UI
 	// can render those persisted messages as pending rather than lost. Resolved
 	// once here and carried through every early return below.
-	response.QueuedReplies = workqueue.BotReplyQueuedCount(inspector, chat.UUID)
+	response.QueuedReplies = queue.queuedCount(chat.UUID)
+
+	// ci#850: read the transcript tail once and reuse it for both questions the
+	// resolver asks of it - "is the newest message a pending user action?" and
+	// "what is the newest message?" - instead of two separate round-trips.
+	recent, recentErr := recentMessagesForChat(DB, chat.ID, confirmationScanLimit)
 
 	// Pending user actions take precedence over backend activity: when the
 	// agent is waiting on the user (a confirmable action, an opencode
@@ -195,9 +233,9 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 	// keeps the blue "needs confirmation" state visible while an ask-only
 	// question is paused, instead of the running backend short-circuit hiding
 	// it. Runs before the backend/queue checks below on purpose.
-	if hasPendingConfirmationInRecentMessages(DB, chat.ID) {
-		if latest, err := latestMessageForChat(DB, chat.ID); err == nil {
-			response.LatestMessageUUID = latest.UUID
+	if recentErr == nil && messagesHavePendingConfirmation(recent) {
+		if len(recent) > 0 {
+			response.LatestMessageUUID = recent[0].UUID
 		}
 		response.State = string(chatstate.StateNeedsConfirmation)
 		response.IsActive = false
@@ -219,14 +257,22 @@ func resolveInteractionStatus(DB *gorm.DB, inspector *asynq.Inspector, chat data
 		}
 	}
 
-	if inspector != nil && workqueue.BotReplyIsActive(inspector, chat.UUID) {
+	if queue.isActive(chat.UUID) {
 		response.IsActive = true
 		response.State = string(chatstate.StateActive)
 		response.Source = "queue"
 		return response, nil
 	}
 
-	latest, err := latestMessageForChat(DB, chat.ID)
+	var latest database.Message
+	var err error
+	if recentErr == nil && len(recent) > 0 {
+		// Reuse the tail read above: it is newest-first, so its head is the
+		// latest message and needs no second query (ci#850).
+		latest = recent[0]
+	} else {
+		latest, err = latestMessageForChat(DB, chat.ID)
+	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return response, nil
@@ -311,16 +357,34 @@ func latestMessageForChat(DB *gorm.DB, chatID uint) (database.Message, error) {
 	return message, err
 }
 
-func hasPendingConfirmationInRecentMessages(DB *gorm.DB, chatID uint) bool {
+// recentMessagesForChat reads the newest `limit` messages of a chat, newest
+// first. It is the single transcript-tail read shared by the interaction-status
+// and pending-confirmation resolvers (ci#850): the ordering matches
+// latestMessageForChat, so the head of the slice is the latest message.
+func recentMessagesForChat(DB *gorm.DB, chatID uint, limit int) ([]database.Message, error) {
 	var messages []database.Message
 	err := DB.Where("chat_id = ?", chatID).
 		Where("deleted_at IS NULL").
 		Order("created_at DESC").
-		Limit(confirmationScanLimit).
+		Order("id DESC").
+		Limit(limit).
 		Find(&messages).Error
+	return messages, err
+}
+
+func hasPendingConfirmationInRecentMessages(DB *gorm.DB, chatID uint) bool {
+	messages, err := recentMessagesForChat(DB, chatID, confirmationScanLimit)
 	if err != nil {
 		return false
 	}
+	return messagesHavePendingConfirmation(messages)
+}
+
+// messagesHavePendingConfirmation reports whether any of the given (newest-first)
+// messages still carries a pending user action. It is the slice-level form of
+// hasPendingConfirmationInRecentMessages, so a caller that already read the
+// transcript tail does not have to answer the question with a second query.
+func messagesHavePendingConfirmation(messages []database.Message) bool {
 	for _, message := range messages {
 		if messageHasPendingConfirmation(message) {
 			return true

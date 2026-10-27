@@ -117,6 +117,27 @@ func UserFromContext(ctx context.Context) *database.User {
 	return user
 }
 
+// authBusyRetryPolicy bounds how long an authentication lookup retries a
+// transient SQLite lock. The startup bootstrap policy (20 attempts, up to 5s
+// backoff) is deliberately generous but far too slow for a live request path,
+// so the auth path uses a short, bounded budget instead.
+var authBusyRetryPolicy = database.BusyRetryPolicy{
+	Attempts:     3,
+	InitialDelay: 50 * time.Millisecond,
+	MaxDelay:     250 * time.Millisecond,
+}
+
+// runAuthQuery runs one authentication-path database operation, retrying it
+// while SQLite reports transient lock contention ("database is locked" /
+// SQLITE_BUSY). Without this, a momentary write lock on the shared database
+// file makes a token/user lookup return no rows, which the auth middleware
+// cannot distinguish from a genuinely invalid credential and therefore reports
+// as a hard 403 - i.e. a transient backend hiccup is surfaced as an
+// authentication failure (open-chat-go-ci#854).
+func runAuthQuery(label string, operation func() error) error {
+	return database.RetryOnBusyWithPolicy(context.Background(), authBusyRetryPolicy, label, operation)
+}
+
 func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, *database.AccessToken, bool) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if authHeader == "" || !strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
@@ -130,7 +151,9 @@ func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, *
 	tokenHash := hex.EncodeToString(h[:])
 
 	var accessToken database.AccessToken
-	if err := DB.Where("token_hash = ?", tokenHash).First(&accessToken).Error; err != nil {
+	if err := runAuthQuery("auth: access token lookup", func() error {
+		return DB.Where("token_hash = ?", tokenHash).First(&accessToken).Error
+	}); err != nil {
 		return nil, nil, false
 	}
 	if accessToken.RevokedAt != nil {
@@ -157,7 +180,9 @@ func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, *
 	// tokens) become invalid as soon as the parent is revoked or expired.
 	if accessToken.ParentTokenId != nil {
 		var parent database.AccessToken
-		if err := DB.First(&parent, "id = ?", *accessToken.ParentTokenId).Error; err != nil {
+		if err := runAuthQuery("auth: parent token lookup", func() error {
+			return DB.First(&parent, "id = ?", *accessToken.ParentTokenId).Error
+		}); err != nil {
 			return nil, nil, false
 		}
 		if parent.RevokedAt != nil {
@@ -169,10 +194,16 @@ func resolveUserFromBearerToken(DB *gorm.DB, r *http.Request) (*database.User, *
 	}
 
 	var user database.User
-	if err := DB.First(&user, "id = ?", accessToken.UserId).Error; err != nil {
+	if err := runAuthQuery("auth: user lookup", func() error {
+		return DB.First(&user, "id = ?", accessToken.UserId).Error
+	}); err != nil {
 		return nil, nil, false
 	}
-	if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
+	// EnsureAccountStateRowForUser performs an idempotent write on every bearer
+	// request, so it is a prime source of transient lock contention under load.
+	if err := runAuthQuery("auth: ensure account state", func() error {
+		return database.EnsureAccountStateRowForUser(DB, &user)
+	}); err != nil {
 		return nil, nil, false
 	}
 
@@ -314,11 +345,11 @@ func enforceEmailVerificationForAPI(DB *gorm.DB, r *http.Request, userID uint) e
 func enforceAccountNotSuspended(DB *gorm.DB, userID uint, w http.ResponseWriter) bool {
 	suspended, err := database.IsUserSuspended(DB, userID)
 	if err != nil {
-		http.Error(w, "Unable to load account state", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "account_state_unavailable", "Unable to load account state")
 		return false
 	}
 	if suspended {
-		http.Error(w, "account suspended", http.StatusForbidden)
+		writeAPIError(w, http.StatusForbidden, "account_suspended", "account suspended")
 		return false
 	}
 	return true
@@ -391,7 +422,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		DB, ok := r.Context().Value("db").(*gorm.DB)
 		if !ok {
-			http.Error(w, "Unable to get database", http.StatusBadRequest)
+			writeAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database")
 			return
 		}
 
@@ -400,7 +431,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
-				http.Error(w, "email verification required", http.StatusForbidden)
+				writeAPIError(w, http.StatusForbidden, "email_verification_required", "email verification required")
 				return
 			}
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
@@ -411,36 +442,36 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		tokens := sessionTokensFromRequest(r)
 		if len(tokens) == 0 {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "forbidden", "Forbidden")
 			return
 		}
 
 		session, found, err := resolveValidSessionFromRequest(DB, r)
 		if err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "forbidden", "Forbidden")
 			logging.Debugf("%v", err)
 			return
 		}
 		if !found {
 			clearSessionCookie(w, r)
-			http.Error(w, "Invalid token", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "invalid_token", "Invalid token")
 			return
 		}
 
 		var user database.User
 		if err := DB.First(&user, "id = ?", session.UserId).Error; err != nil {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "forbidden", "Forbidden")
 			return
 		}
 		if err := database.EnsureAccountStateRowForUser(DB, &user); err != nil {
-			http.Error(w, "Unable to load user state", http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, "account_state_unavailable", "Unable to load user state")
 			return
 		}
 		if !enforceAccountNotSuspended(DB, user.ID, w) {
 			return
 		}
 		if err := enforceEmailVerificationForAPI(DB, r, user.ID); err != nil {
-			http.Error(w, "email verification required", http.StatusForbidden)
+			writeAPIError(w, http.StatusForbidden, "email_verification_required", "email verification required")
 			return
 		}
 

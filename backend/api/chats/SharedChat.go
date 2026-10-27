@@ -144,26 +144,29 @@ func ensureOwnedChatShare(DB *gorm.DB, chat database.Chat, owningUserID uint, ac
 func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	chatUUID, chatUUIDErr := parseChatUUID(r)
 	if chatUUIDErr != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
-	chat, err := findOwnedChat(DB, user.ID, chatUUID)
+	// ci#865: scope like the rest of the chats API — through the
+	// acting user — and answer in JSON so the generated client can
+	// decode the failure instead of dying in its JSON parser.
+	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
-		http.Error(w, "Chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Chat not found")
 		return
 	}
 
 	var payload publishChatRequest
 	if r.Body != nil {
 		if decodeErr := json.NewDecoder(r.Body).Decode(&payload); decodeErr != nil && decodeErr != io.EOF {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			writeChatErrorJSON(w, http.StatusBadRequest, "Invalid JSON")
 			return
 		}
 	}
@@ -176,7 +179,7 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 	if accessMode == "user" {
 		target, targetErr := findShareTargetUser(DB, payload.TargetUsername, payload.TargetUserUUID)
 		if targetErr != nil {
-			http.Error(w, "Share target user not found", http.StatusBadRequest)
+			writeChatErrorJSON(w, http.StatusBadRequest, "Share target user not found")
 			return
 		}
 		targetUserID = &target.ID
@@ -184,9 +187,9 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		targetUserUUID = target.UUID
 	}
 
-	share, err := ensureOwnedChatShare(DB, chat, user.ID, accessMode, targetUserID, contentMode)
+	share, err := ensureOwnedChatShare(DB, chat, resolveChatActingUserID(DB, user), accessMode, targetUserID, contentMode)
 	if err != nil {
-		http.Error(w, "Failed to publish chat", http.StatusInternalServerError)
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Failed to publish chat")
 		return
 	}
 
@@ -218,24 +221,27 @@ func (h *ChatsHandler) Publish(w http.ResponseWriter, r *http.Request) {
 func (h *ChatsHandler) Unpublish(w http.ResponseWriter, r *http.Request) {
 	DB, user, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Unable to get database or user")
 		return
 	}
 
 	chatUUID, chatUUIDErr := parseChatUUID(r)
 	if chatUUIDErr != nil {
-		http.Error(w, "Invalid chat UUID", http.StatusBadRequest)
+		writeChatErrorJSON(w, http.StatusBadRequest, "Invalid chat UUID")
 		return
 	}
 
-	chat, err := findOwnedChat(DB, user.ID, chatUUID)
+	// ci#865: scope like the rest of the chats API — through the
+	// acting user — and answer in JSON so the generated client can
+	// decode the failure instead of dying in its JSON parser.
+	chat, err := findAccessibleChat(DB, user, chatUUID)
 	if err != nil {
-		http.Error(w, "Chat not found", http.StatusNotFound)
+		writeChatErrorJSON(w, http.StatusNotFound, "Chat not found")
 		return
 	}
 
-	if err := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, user.ID).Delete(&database.SharedChatInstance{}).Error; err != nil {
-		http.Error(w, "Failed to unpublish chat", http.StatusInternalServerError)
+	if err := DB.Where("chat_id = ? AND owning_user_id = ?", chat.ID, resolveChatActingUserID(DB, user)).Delete(&database.SharedChatInstance{}).Error; err != nil {
+		writeChatErrorJSON(w, http.StatusInternalServerError, "Failed to unpublish chat")
 		return
 	}
 
@@ -408,7 +414,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 		return
 	}
 
-	pagination := database.Pagination{Page: 1, Limit: 40}
+	pagination := database.Pagination{Page: 1, Limit: 40, Sort: messageListSort}
 	if pageParam := r.URL.Query().Get("page"); pageParam != "" {
 		if page, parseErr := strconv.Atoi(pageParam); parseErr == nil && page > 0 {
 			pagination.Page = page
@@ -416,7 +422,7 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 	}
 	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
 		if limit, parseErr := strconv.Atoi(limitParam); parseErr == nil && limit > 0 {
-			pagination.Limit = limit
+			pagination.Limit = clampMessageListLimit(limit)
 		}
 	}
 
@@ -449,12 +455,6 @@ func (h *ChatsHandler) ListSharedInteractionMessages(w http.ResponseWriter, r *h
 
 	w.Header().Set("Content-Type", "application/json")
 	writeSharedMessagesJSON(w, response, share.IsCensored())
-}
-
-func findOwnedChat(DB *gorm.DB, userID uint, chatUUID string) (database.Chat, error) {
-	var chat database.Chat
-	err := DB.Where("uuid = ? AND (user1_id = ? OR user2_id = ?)", chatUUID, userID, userID).First(&chat).Error
-	return chat, err
 }
 
 func getSharedChatByUUID(DB *gorm.DB, shareUUID string) (database.Chat, database.SharedChatInstance, error) {

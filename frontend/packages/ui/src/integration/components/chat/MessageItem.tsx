@@ -567,6 +567,18 @@ function TurnSequence({
     [thoughtBlocks, toolCalls],
   );
 
+  // The reasoning ("thinking") blocks render *after* every tool call and
+  // narration block. The transcript auto-scrolls to the newest content, so a
+  // thought block that sits above the calls is pushed out of view as more calls
+  // stream in; keeping it at the bottom keeps it visible while the turn runs.
+  const orderedBlocks = useMemo<TurnBlock[]>(
+    () => [
+      ...blocks.filter((block) => block.kind !== "thought"),
+      ...blocks.filter((block) => block.kind === "thought"),
+    ],
+    [blocks],
+  );
+
   if (blocks.length === 0) {
     return null;
   }
@@ -576,7 +588,7 @@ function TurnSequence({
       <CollapsibleTrigger className="flex items-center gap-2 hover:opacity-80">{header}</CollapsibleTrigger>
       <CollapsibleContent className="CollapsibleContent transition-all duration-300">
         <div className="space-y-2" data-testid="turn-sequence">
-          {blocks.map((block, blockIndex) =>
+          {orderedBlocks.map((block, blockIndex) =>
             block.kind === "tool_call" ? (
               <ToolCallCard
                 key={`${messageUUID}-tool-call-${block.index}`}
@@ -1006,6 +1018,10 @@ export function BotMessageItem({
     toolCalls: message?.tool_calls || [],
   });
   const inlineConfirmableActions = Boolean(uiExtension?.inlineConfirmableActions);
+  // An extension body that interleaves the reasoning blocks with its tool calls
+  // owns the message's thoughts entirely; the core then skips its own grouped
+  // thoughts block below so a reasoning turn is not rendered twice (ci#852).
+  const inlineThoughts = Boolean(uiExtension?.inlineThoughts) && Boolean(uiExtension?.MessageBody);
   if (inlineConfirmableActions && isConfirmableEvent) {
     return null;
   }
@@ -1181,7 +1197,7 @@ export function BotMessageItem({
             )
         : null}
 
-      {!metaFinished && nonEmptyThoughts.length > 0 && !usesTurnSequence ? (
+      {!metaFinished && nonEmptyThoughts.length > 0 && !usesTurnSequence && !inlineThoughts ? (
         CustomThoughts ? (
           <CustomThoughts
             messageUUID={message.uuid}
@@ -1240,7 +1256,7 @@ export function BotMessageItem({
         />
       ) : null}
 
-      {metaFinished && !usesTurnSequence && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
+      {metaFinished && !usesTurnSequence && !inlineThoughts && (thinkingSteps.length > 0 || nonEmptyThoughts.length > 0) ? (
         CustomThoughts ? (
           <CustomThoughts
             messageUUID={message.uuid}
