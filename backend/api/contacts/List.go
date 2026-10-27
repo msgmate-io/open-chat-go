@@ -5,9 +5,12 @@ import (
 	"backend/database"
 	"backend/server/util"
 	"encoding/json"
-	"gorm.io/gorm"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
+
+	"gorm.io/gorm"
 )
 
 type ListedContact struct {
@@ -43,10 +46,22 @@ func contactToContactListed(DB *gorm.DB, ch *websocket.WebSocketHandler, contact
 			partner = contact.ContactUser
 		}
 
-		// try to retrieve possible partner profile data
-		// TODO: properly handle errors
+		// Resolve the partner's public profile (backend/api/contacts/List.go:
+		// the old TODO). A missing profile is normal (users without a public
+		// profile row have none) and yields an empty object; any other query
+		// error is logged and also yields an empty object — a profile must
+		// never take down the contact list.
 		profileData := make(map[string]interface{})
-		DB.Model(&database.PublicProfile{}).Where("user_id = ?", partner.ID).First(&profileData)
+		var publicProfile database.PublicProfile
+		if err := DB.Model(&database.PublicProfile{}).Where("user_id = ?", partner.ID).First(&publicProfile).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				log.Printf("contacts: failed to load profile for user %d: %v", partner.ID, err)
+			}
+		} else if len(publicProfile.ProfileData) > 0 {
+			if err := json.Unmarshal(publicProfile.ProfileData, &profileData); err != nil {
+				log.Printf("contacts: failed to parse profile data for user %d: %v", partner.ID, err)
+			}
+		}
 		// fmt.Println("profileData", profileData)
 
 		if isSubscriber(subscribers, partner.UUID) {
@@ -200,10 +215,18 @@ func (h *ContactsHander) GetContactByToken(w http.ResponseWriter, r *http.Reques
 	}
 
 	var publicProfile database.PublicProfile
-	DB.Model(&database.PublicProfile{}).Where("user_id = ?", user.ID).First(&publicProfile)
-	// Now parse the profile data
+	if err := DB.Model(&database.PublicProfile{}).Where("user_id = ?", user.ID).First(&publicProfile).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("contacts: failed to load profile for user %d: %v", user.ID, err)
+	}
+	// Now parse the profile data. A missing profile (ErrRecordNotFound) or an
+	// empty body both produce an empty profile object; a corrupt row must not
+	// turn the contact lookup into a 500.
 	var profileData map[string]interface{}
-	json.Unmarshal(publicProfile.ProfileData, &profileData)
+	if len(publicProfile.ProfileData) > 0 {
+		if err := json.Unmarshal(publicProfile.ProfileData, &profileData); err != nil {
+			log.Printf("contacts: failed to parse profile data for user %d: %v", user.ID, err)
+		}
+	}
 	if profileData == nil {
 		profileData = map[string]interface{}{}
 	}
@@ -273,13 +296,21 @@ func (h *ContactsHander) GetContactByChatUUID(w http.ResponseWriter, r *http.Req
 		contactUser = chat.User1
 	}
 
-	// Get the contact's public profile
+	// Get the contact's public profile. A missing profile is normal and yields
+	// an empty object; a query failure or a corrupt row only logs (a profile
+	// must never break the chat contact lookup).
 	var publicProfile database.PublicProfile
-	DB.Model(&database.PublicProfile{}).Where("user_id = ?", contactUser.ID).First(&publicProfile)
+	if err := DB.Model(&database.PublicProfile{}).Where("user_id = ?", contactUser.ID).First(&publicProfile).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("contacts: failed to load profile for user %d: %v", contactUser.ID, err)
+	}
 
 	// Parse the profile data
 	var profileData map[string]interface{}
-	json.Unmarshal(publicProfile.ProfileData, &profileData)
+	if len(publicProfile.ProfileData) > 0 {
+		if err := json.Unmarshal(publicProfile.ProfileData, &profileData); err != nil {
+			log.Printf("contacts: failed to parse profile data for user %d: %v", contactUser.ID, err)
+		}
+	}
 	if profileData == nil {
 		profileData = map[string]interface{}{}
 	}
