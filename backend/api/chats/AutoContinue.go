@@ -50,6 +50,10 @@ const (
 	autoContinueConfigKey = "auto_continue"
 	// autoContinueMaxKey caps the number of continuations per interaction.
 	autoContinueMaxKey = "auto_continue_max"
+	// autoContinueTokenBudgetKey caps the total tokens an interaction may spend
+	// before its self-driving loop stops (0/unset = unlimited). It bounds the
+	// cost of a runaway interaction.
+	autoContinueTokenBudgetKey = "token_budget"
 	// autoContinueMaxIncompleteRetriesKey bounds the *consecutive* retries of an
 	// incomplete turn (ci#724): a turn that ends without a final summary is
 	// retried, but only a bounded number of times. Zero disables the retry.
@@ -64,6 +68,9 @@ const (
 	autoContinueCompletionMarkerKey = "auto_continue_completion_marker"
 	// autoContinueHumanMarkerKey overrides the default human sentinel.
 	autoContinueHumanMarkerKey = "auto_continue_human_marker"
+	// autoContinueStopTokenBudget is the recorded stop reason when the loop is
+	// halted because the interaction reached its token budget.
+	autoContinueStopTokenBudget = "token_budget_exceeded"
 
 	// autoContinueTaskCompletedKey is a message-metadata flag an agent may set to
 	// declare the whole task complete. It is the machine-readable counterpart of
@@ -162,6 +169,10 @@ type AutoContinueConfig struct {
 	MaxIncompleteRetries int
 	// IncompletePrompt is the instruction used for an incomplete-turn retry.
 	IncompletePrompt string
+	// TokenBudget caps the total tokens an interaction may spend before its
+	// self-driving loop stops (0 = unlimited). It bounds the cost of a runaway
+	// interaction whose per-turn prompt would otherwise keep re-billing.
+	TokenBudget int
 }
 
 // ResolveAutoContinueConfig resolves the loop policy from a chat shared config.
@@ -199,6 +210,13 @@ func ResolveAutoContinueConfig(config map[string]interface{}) AutoContinueConfig
 		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
 	} else if value, ok := configInt(dispatch, autoContinueDelayKey); ok {
 		resolved.Delay = time.Duration(clampAutoContinueDelay(value)) * time.Second
+	}
+	// Per-interaction token budget (0/unset = unlimited): stops the loop once
+	// the interaction has spent too many tokens.
+	if value, ok := configInt(config, autoContinueTokenBudgetKey); ok && value > 0 {
+		resolved.TokenBudget = value
+	} else if value, ok := configInt(dispatch, autoContinueTokenBudgetKey); ok && value > 0 {
+		resolved.TokenBudget = value
 	}
 	// ci#724: the incomplete-turn retry budget. An explicit value (including 0,
 	// which disables the retry) wins over the default.
@@ -498,6 +516,15 @@ func maybeAutoContinueInteraction(ctx context.Context, db *gorm.DB, client *asyn
 	}
 	meta, _ := decodeMessageMetadata(message.MetaData)
 	state := loadAutoContinueState(db, chat.ID)
+	// Per-interaction token budget (ci#910 follow-up): stop the self-driving
+	// loop once the interaction has spent its budget, so a runaway interaction
+	// cannot keep re-billing its growing context.
+	if config.TokenBudget > 0 {
+		if used := InteractionTokensUsed(db, chat.ID); used >= int64(config.TokenBudget) {
+			recordAutoContinueStop(db, chat, state, autoContinueStopTokenBudget)
+			return false
+		}
+	}
 	activeTurn := chatHasLiveBotReply(inspector, chat.UUID)
 
 	decision := decideAutoContinue(config, state, message, meta, activeTurn)
@@ -802,6 +829,25 @@ func saveAutoContinueState(db *gorm.DB, chatID uint, state autoContinueState) er
 		return db.Create(&database.ChatSettings{ChatId: chatID, ConfigData: encoded}).Error
 	}
 	return db.Model(&settings).Update("config_data", database.JSONRaw(encoded)).Error
+}
+
+// InteractionTokensUsed sums the provider-reported total tokens of every
+// persisted message of an interaction (all senders). It backs the
+// per-interaction token budget so a runaway self-driving interaction stops
+// before it keeps re-billing its growing context.
+func InteractionTokensUsed(db *gorm.DB, chatID uint) int64 {
+	if db == nil || chatID == 0 {
+		return 0
+	}
+	query := "SELECT COALESCE(SUM(json_extract(meta_data,'$.token_usage.total_tokens')),0) FROM messages WHERE chat_id = ?"
+	if db.Dialector.Name() == "postgres" {
+		query = "SELECT COALESCE(SUM((meta_data->'token_usage'->>'total_tokens')::bigint),0) FROM messages WHERE chat_id = ?"
+	}
+	var total int64
+	if err := db.Raw(query, chatID).Scan(&total).Error; err != nil {
+		return 0
+	}
+	return total
 }
 
 // recordAutoContinueStop records why a loop stopped, so the state is inspectable

@@ -514,6 +514,10 @@ func BackendRouting(
 	// Effective native-coder provider admission state (ci#620): the cap that is
 	// actually in force plus the current in-flight/queue counts.
 	v1PrivateApis.HandleFunc("GET /admin/provider-admission", admin.GetProviderAdmissionStatus)
+	// Token / prompt-cache usage overview (ci#910): per-sender prompt vs
+	// completion vs cached token totals, so cost spikes and cache regressions
+	// are observable.
+	v1PrivateApis.HandleFunc("GET /admin/token-usage", admin.GetTokenUsageOverview)
 	// Pool-level DNS/egress readiness gate (ci#613, follow-up of the ci#546
 	// shared-sandbox networking design): the verdict a pooled backing sandbox
 	// has to pass before it accepts leases, plus the ingestion of the in-pod
