@@ -69,6 +69,9 @@ func TestGetTokenUsageOverviewAggregates(t *testing.T) {
 	if len(resp.Rows) != 1 || resp.Rows[0].Bot != "bot" {
 		t.Fatalf("unexpected rows: %+v", resp.Rows)
 	}
+	if resp.Rows[0].CacheHitRatio < 0.53 || resp.Rows[0].CacheHitRatio > 0.54 {
+		t.Fatalf("per-row cache hit ratio = %v, want ~0.533", resp.Rows[0].CacheHitRatio)
+	}
 }
 
 func TestGetTokenUsageOverviewForbidsNonAdmin(t *testing.T) {
