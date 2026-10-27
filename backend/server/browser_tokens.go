@@ -103,6 +103,16 @@ var coderMCPTokenRoutes = []browserTokenRoute{
 	{Method: http.MethodPost, Pattern: "/integrations/hive_mind/influences"},
 }
 
+// mcpOAuthTokenRoutes describes the routes the interactive-OAuth `mcp-oauth`
+// audience token (ci#900) may call. It is deliberately narrower than the
+// per-endpoint `coder-mcp` allowlist: the token only authenticates the MCP
+// serve endpoint itself, which then performs any allowed tool call internally,
+// so a leaked interactive credential cannot reach the wider agent/hive-mind
+// API surface directly. Default-deny as always.
+var mcpOAuthTokenRoutes = []browserTokenRoute{
+	{Method: http.MethodPost, Pattern: "/integrations/msgmate_coder/mcp/serve/{endpoint_uuid}"},
+}
+
 func normalizeBrowserRoutePath(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -160,6 +170,8 @@ func matchRestrictedTokenRoute(audience, method, path string) (scope string, ok 
 		return matchTokenRouteList(mcpInteractionTokenRoutes, method, path)
 	case database.AudienceCoderMCP:
 		return matchTokenRouteList(coderMCPTokenRoutes, method, path)
+	case database.AudienceMCPOAuth:
+		return matchTokenRouteList(mcpOAuthTokenRoutes, method, path)
 	default:
 		return "", false
 	}
