@@ -171,42 +171,42 @@ const agentTranscriptSnippetLimit = 500
 func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 	DB, sessionUser, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 	queueClient, clientErr := util.GetAsynqClient(r)
 	queueInspector, inspectorErr := util.GetAsynqInspector(r)
 	if clientErr != nil || inspectorErr != nil {
-		http.Error(w, "Unable to access async queue", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "async_queue_unavailable", "Unable to access async queue")
 		return
 	}
 	actingUser, err := resolveActingUser(DB, sessionUser)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
 	var req AgentDispatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	if strings.TrimSpace(req.Bot) == "" {
-		http.Error(w, "bot is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "bot_is_required", "bot is required")
 		return
 	}
 	if strings.TrimSpace(req.Message) == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "message_is_required", "message is required")
 		return
 	}
 
 	runtime, err := resolveReadableBot(DB, actingUser, strings.TrimSpace(req.Bot))
 	if err != nil {
 		if errors.Is(err, errAmbiguousIdentifier) {
-			http.Error(w, "ambiguous bot identifier", http.StatusConflict)
+			writeBotAPIError(w, http.StatusConflict, "ambiguous_bot_identifier", "ambiguous bot identifier")
 			return
 		}
-		http.Error(w, "Bot not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "bot_not_found", "Bot not found")
 		return
 	}
 
@@ -312,12 +312,12 @@ func (h *BotsHandler) AgentDispatch(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) AgentList(w http.ResponseWriter, r *http.Request) {
 	DB, sessionUser, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 	actingUser, err := resolveActingUser(DB, sessionUser)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 	inspector, _ := util.GetAsynqInspector(r)
@@ -347,7 +347,7 @@ func (h *BotsHandler) AgentList(w http.ResponseWriter, r *http.Request) {
 		Order("updated_at desc").
 		Offset((page - 1) * limit).Limit(limit).
 		Find(&rows).Error; err != nil {
-		http.Error(w, "Failed to list interactions", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_list_interactions", "Failed to list interactions")
 		return
 	}
 
@@ -376,24 +376,24 @@ func (h *BotsHandler) AgentList(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) AgentGet(w http.ResponseWriter, r *http.Request) {
 	DB, sessionUser, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 	actingUser, err := resolveActingUser(DB, sessionUser)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 	inspector, _ := util.GetAsynqInspector(r)
 
 	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 	limit := 20
@@ -411,18 +411,18 @@ func (h *BotsHandler) AgentGet(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 	DB, sessionUser, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 	queueClient, clientErr := util.GetAsynqClient(r)
 	queueInspector, inspectorErr := util.GetAsynqInspector(r)
 	if clientErr != nil || inspectorErr != nil {
-		http.Error(w, "Unable to access async queue", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "async_queue_unavailable", "Unable to access async queue")
 		return
 	}
 	actingUser, err := resolveActingUser(DB, sessionUser)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
@@ -433,27 +433,27 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 		ResumeAutoContinue bool `json:"resume_auto_continue,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	if strings.TrimSpace(req.Message) == "" {
-		http.Error(w, "message is required", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "message_is_required", "message is required")
 		return
 	}
 
 	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 	bot := automatedParticipant(chat)
 	if bot == nil {
-		http.Error(w, "Interaction has no automated participant", http.StatusConflict)
+		writeBotAPIError(w, http.StatusConflict, "no_automated_participant", "Interaction has no automated participant")
 		return
 	}
 
@@ -462,7 +462,7 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 	autoContinueResumed := false
 	if req.ResumeAutoContinue {
 		if resumeErr := chats.ResumeAutoContinueForChat(DB, chat.ID); resumeErr != nil {
-			http.Error(w, "Failed to resume auto-continue", http.StatusInternalServerError)
+			writeBotAPIError(w, http.StatusInternalServerError, "failed_to_resume_auto_continue", "Failed to resume auto-continue")
 			return
 		}
 		autoContinueResumed = true
@@ -481,7 +481,7 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 		}
 		return tx.Model(&database.Chat{}).Where("id = ?", chat.ID).Update("latest_message_id", message.ID).Error
 	}); err != nil {
-		http.Error(w, "Failed to send message", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_send_message", "Failed to send message")
 		return
 	}
 
@@ -490,7 +490,7 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 		MessageUUID: message.UUID,
 		BotUserID:   bot.ID,
 	}); enqueueErr != nil {
-		http.Error(w, "Failed to enqueue bot reply", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_enqueue_bot_reply", "Failed to enqueue bot reply")
 		return
 	}
 
@@ -508,23 +508,23 @@ func (h *BotsHandler) AgentContinue(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 	DB, sessionUser, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 	actingUser, err := resolveActingUser(DB, sessionUser)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
 	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 
@@ -575,12 +575,12 @@ func (h *BotsHandler) AgentStop(w http.ResponseWriter, r *http.Request) {
 func (h *BotsHandler) AgentRetag(w http.ResponseWriter, r *http.Request) {
 	DB, sessionUser, err := util.GetDBAndUser(r)
 	if err != nil {
-		http.Error(w, "Unable to get database or user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "database_unavailable", "Unable to get database or user")
 		return
 	}
 	actingUser, err := resolveActingUser(DB, sessionUser)
 	if err != nil {
-		http.Error(w, "Unable to resolve acting user", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "acting_user_unresolved", "Unable to resolve acting user")
 		return
 	}
 
@@ -590,26 +590,26 @@ func (h *BotsHandler) AgentRetag(w http.ResponseWriter, r *http.Request) {
 		Remove []string  `json:"remove,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_json", "Invalid JSON")
 		return
 	}
 	if req.Tags != nil && (len(req.Add) > 0 || len(req.Remove) > 0) {
-		http.Error(w, "use either tags or add/remove", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "invalid_tag_request", "use either tags or add/remove")
 		return
 	}
 	if req.Tags == nil && len(req.Add) == 0 && len(req.Remove) == 0 {
-		http.Error(w, "no tag change requested", http.StatusBadRequest)
+		writeBotAPIError(w, http.StatusBadRequest, "no_tag_change_requested", "no tag change requested")
 		return
 	}
 
 	chatUUID, err := util.ParsePathUUID(r, "chat_uuid")
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 	chat, err := findManageableInteraction(DB, sessionUser, actingUser, chatUUID)
 	if err != nil {
-		http.Error(w, "Interaction not found", http.StatusNotFound)
+		writeBotAPIError(w, http.StatusNotFound, "interaction_not_found", "Interaction not found")
 		return
 	}
 
@@ -641,14 +641,14 @@ func (h *BotsHandler) AgentRetag(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, tag := range requested {
 		if scopeTags != nil && !scopeTagsMatchInteraction(scopeTags, database.StringSliceJSON([]string{tag})) {
-			http.Error(w, "tag outside caller scope", http.StatusForbidden)
+			writeBotAPIError(w, http.StatusForbidden, "tag_outside_caller_scope", "tag outside caller scope")
 			return
 		}
 	}
 
 	next := applyTagEdits(base, add, remove)
 	if err := DB.Model(&chat).Update("tags", next).Error; err != nil {
-		http.Error(w, "Failed to update interaction tags", http.StatusInternalServerError)
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_update_interaction_tags", "Failed to update interaction tags")
 		return
 	}
 	chat.Tags = next
