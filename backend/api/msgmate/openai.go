@@ -21,6 +21,42 @@ type TokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// PromptTokensDetails carries the provider's prompt-cache accounting.
+	// DeepSeek (directly, or via OpenRouter) reports how many prompt tokens
+	// were served from its context cache here. Cache reads are billed at a
+	// fraction of the normal prompt price, so this is the dominant cost lever
+	// for the long, tool-call-heavy msgmate-coder interactions: a consecutive
+	// turn that re-sends the whole (growing) context should hit the cache for
+	// the stable prefix, not pay full price for all ~15k prompt tokens again.
+	PromptTokensDetails PromptTokensDetails `json:"prompt_tokens_details"`
+}
+
+// PromptTokensDetails mirrors the OpenAI-compatible `prompt_tokens_details`
+// object. Providers that do not report caching leave CachedTokens at 0.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// CachedTokens is the number of prompt tokens served from the provider's
+// context cache (0 when the provider does not report caching).
+func (u TokenUsage) CachedTokens() int {
+	return u.PromptTokensDetails.CachedTokens
+}
+
+// CacheHitRatio is the fraction of prompt tokens that were cache reads for this
+// request, in [0,1]. It is 0 when the prompt is empty or nothing was cached.
+func (u TokenUsage) CacheHitRatio() float64 {
+	if u.PromptTokens <= 0 {
+		return 0
+	}
+	cached := u.CachedTokens()
+	if cached < 0 {
+		cached = 0
+	}
+	if cached > u.PromptTokens {
+		cached = u.PromptTokens
+	}
+	return float64(cached) / float64(u.PromptTokens)
 }
 
 type ToolCall struct {
@@ -1072,6 +1108,33 @@ func appendExecutedToolCalls(
 	return appended, messages, truncatedResults
 }
 
+// buildStreamingRequestBody assembles the OpenAI-compatible streaming request
+// body. It is separated from processStreamingRequest so the cache-relevant
+// shape can be pinned by tests: the messages prefix and the tools list must be
+// byte-stable across the consecutive tool-call turns of one interaction (that
+// stability is what lets the provider serve the growing prompt from its context
+// cache), and the final usage chunk — which carries the prompt-cache accounting
+// — must be requested.
+func buildStreamingRequestBody(backend, model string, normalizedMessages []map[string]interface{}, tools []interface{}, samplingParams SamplingParams) map[string]interface{} {
+	requestBody := map[string]interface{}{
+		"model":    model,
+		"messages": normalizedMessages,
+		"stream":   true,
+	}
+	if len(tools) > 0 {
+		requestBody["tools"] = tools
+	}
+	// include_usage makes the provider emit a final stream chunk carrying the
+	// token accounting (incl. prompt-cache reads). OpenRouter is OpenAI
+	// compatible and supports it, and without it the cache-hit accounting this
+	// cost optimization depends on is not returned.
+	if backend == "openai" || backend == "openrouter" {
+		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
+	applySamplingParamsToRequestBody(requestBody, samplingParams, backend, model)
+	return requestBody
+}
+
 func processStreamingRequest(
 	ctx context.Context,
 	host, model, backend string,
@@ -1097,18 +1160,7 @@ func processStreamingRequest(
 
 	normalizedMessages := normalizeMessagesForBackend(messages, backend)
 
-	requestBody := map[string]interface{}{
-		"model":    model,
-		"messages": normalizedMessages,
-		"stream":   true,
-	}
-	if len(tools) > 0 {
-		requestBody["tools"] = tools
-	}
-	if backend == "openai" {
-		requestBody["stream_options"] = map[string]interface{}{"include_usage": true}
-	}
-	applySamplingParamsToRequestBody(requestBody, samplingParams, backend, model)
+	requestBody := buildStreamingRequestBody(backend, model, normalizedMessages, tools, samplingParams)
 
 	middlewareCtx := &ProviderRequestContext{
 		ChatUUID:    meta.ChatUUID,
