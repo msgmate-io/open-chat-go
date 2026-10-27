@@ -320,6 +320,14 @@ func (r *SelfMessageRuntime) Tick() error {
 			continue
 		}
 		r.guard.RecordFire(key, nextRun)
+		// ci#744: Fire rotates the schedule's task ID on every fire, so the
+		// runtime must follow it or the next tick would present a stale ID and
+		// drop the schedule as superseded.
+		if id, ok := r.scheduler.ActiveTaskID(key); ok {
+			r.mu.Lock()
+			r.ids[key] = id
+			r.mu.Unlock()
+		}
 	}
 	return reconcileErr
 }
