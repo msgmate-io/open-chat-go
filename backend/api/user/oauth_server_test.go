@@ -155,10 +155,10 @@ func TestOAuthRegisterPinsRedirectURIs(t *testing.T) {
 	if !ok {
 		t.Fatalf("registered client %q not found", clientID)
 	}
-	if !client.allowsRedirectURI("http://localhost:7777/callback") {
+	if !isValidRedirectURI(client, "http://localhost:7777/callback") {
 		t.Errorf("pinned redirect_uri missing")
 	}
-	if client.allowsRedirectURI("http://localhost:7777/evil") {
+	if isValidRedirectURI(client, "http://localhost:7777/evil") {
 		t.Errorf("unexpected redirect_uri allowed")
 	}
 

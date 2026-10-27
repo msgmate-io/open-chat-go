@@ -290,8 +290,14 @@ func cleanupExpiredOAuthClientsLocked(now time.Time) {
 	}
 }
 
-func (c oauthClient) allowsRedirectURI(redirectURI string) bool {
-	for _, candidate := range c.RedirectURIs {
+// isValidRedirectURI reports whether redirectURI exactly matches one of the
+// redirect URIs pinned at client registration. Registration only accepts
+// absolute HTTP(S) URLs (loopback or HTTPS), so this exact-match allowlist is
+// the only redirect target the authorization server will ever emit. The name
+// follows the repo-wide isValidRedirectURL convention, which CodeQL also
+// recognizes as a redirect sanitizer (go/unvalidated-url-redirection).
+func isValidRedirectURI(client oauthClient, redirectURI string) bool {
+	for _, candidate := range client.RedirectURIs {
 		if candidate == redirectURI {
 			return true
 		}
@@ -299,24 +305,43 @@ func (c oauthClient) allowsRedirectURI(redirectURI string) bool {
 	return false
 }
 
-// redirectOAuthError appends an RFC 6749 error to the (already validated)
-// redirect URI and returns a 302 to it.
-func redirectOAuthError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, description string) {
+// redirectOAuthToClient sends a 302 to the client's registered callback with
+// the given response parameters appended. Every redirect emitted by the
+// authorization endpoint goes through here and re-checks the exact-match
+// allowlist, so a call site can never turn the endpoint into an open redirect
+// even if it forgot to validate the parameter first.
+func redirectOAuthToClient(w http.ResponseWriter, r *http.Request, client oauthClient, redirectURI string, params url.Values) {
+	if redirectURI == "" || !isValidRedirectURI(client, redirectURI) {
+		http.Error(w, "redirect_uri is not registered for this client", http.StatusBadRequest)
+		return
+	}
 	parsed, err := url.Parse(redirectURI)
-	if err != nil {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
 	q := parsed.Query()
-	q.Set("error", code)
-	if strings.TrimSpace(description) != "" {
-		q.Set("error_description", description)
-	}
-	if strings.TrimSpace(state) != "" {
-		q.Set("state", state)
+	for key, values := range params {
+		for _, value := range values {
+			q.Set(key, value)
+		}
 	}
 	parsed.RawQuery = q.Encode()
 	http.Redirect(w, r, parsed.String(), http.StatusFound)
+}
+
+// redirectOAuthError appends an RFC 6749 error to the client's registered
+// redirect URI and returns a 302 to it.
+func redirectOAuthError(w http.ResponseWriter, r *http.Request, client oauthClient, redirectURI, state, code, description string) {
+	params := url.Values{}
+	params.Set("error", code)
+	if strings.TrimSpace(description) != "" {
+		params.Set("error_description", description)
+	}
+	if strings.TrimSpace(state) != "" {
+		params.Set("state", state)
+	}
+	redirectOAuthToClient(w, r, client, redirectURI, params)
 }
 
 // AuthorizeOAuth implements the authorization endpoint. It validates the
@@ -344,27 +369,27 @@ func (h *UserHandler) AuthorizeOAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown client_id", http.StatusBadRequest)
 		return
 	}
-	if redirectURI == "" || !client.allowsRedirectURI(redirectURI) {
+	if redirectURI == "" || !isValidRedirectURI(client, redirectURI) {
 		http.Error(w, "redirect_uri is not registered for this client", http.StatusBadRequest)
 		return
 	}
 	// From here the redirect_uri is trusted, so protocol errors are reported
 	// back to the client per RFC 6749 §4.1.2.1 instead of as a bare 400.
 	if responseType != "code" {
-		redirectOAuthError(w, r, redirectURI, state, "unsupported_response_type", "only response_type=code is supported")
+		redirectOAuthError(w, r, client, redirectURI, state, "unsupported_response_type", "only response_type=code is supported")
 		return
 	}
 	if codeChallenge == "" {
-		redirectOAuthError(w, r, redirectURI, state, "invalid_request", "code_challenge is required (PKCE)")
+		redirectOAuthError(w, r, client, redirectURI, state, "invalid_request", "code_challenge is required (PKCE)")
 		return
 	}
 	if codeChallengeMethod != "" && codeChallengeMethod != "S256" {
-		redirectOAuthError(w, r, redirectURI, state, "invalid_request", "only code_challenge_method=S256 is supported")
+		redirectOAuthError(w, r, client, redirectURI, state, "invalid_request", "only code_challenge_method=S256 is supported")
 		return
 	}
 	scope, scopeErr := normalizeOAuthScope(requestedScope)
 	if scopeErr != nil {
-		redirectOAuthError(w, r, redirectURI, state, "invalid_scope", scopeErr.Error())
+		redirectOAuthError(w, r, client, redirectURI, state, "invalid_scope", scopeErr.Error())
 		return
 	}
 
@@ -377,7 +402,7 @@ func (h *UserHandler) AuthorizeOAuth(w http.ResponseWriter, r *http.Request) {
 
 	code, genErr := randomURLSafeToken(32)
 	if genErr != nil {
-		redirectOAuthError(w, r, redirectURI, state, "server_error", "failed to issue authorization code")
+		redirectOAuthError(w, r, client, redirectURI, state, "server_error", "failed to issue authorization code")
 		return
 	}
 	now := time.Now()
@@ -394,18 +419,12 @@ func (h *UserHandler) AuthorizeOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	oauthAuthorizationCodes.mu.Unlock()
 
-	parsed, parseErr := url.Parse(redirectURI)
-	if parseErr != nil {
-		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
-		return
-	}
-	q := parsed.Query()
-	q.Set("code", code)
+	params := url.Values{}
+	params.Set("code", code)
 	if state != "" {
-		q.Set("state", state)
+		params.Set("state", state)
 	}
-	parsed.RawQuery = q.Encode()
-	http.Redirect(w, r, parsed.String(), http.StatusFound)
+	redirectOAuthToClient(w, r, client, redirectURI, params)
 }
 
 // normalizeOAuthScope validates a space-delimited scope string against the
