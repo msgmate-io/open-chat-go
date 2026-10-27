@@ -352,12 +352,16 @@ func (h *BotsHandler) AgentList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stateFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("state")))
+	// ci#850: resolve the live state for the whole page with ONE queue snapshot;
+	// the previous per-chat inspector round-trips dominated this listing at
+	// ~40ms per interaction.
+	statuses := chats.ResolveInteractionStatusesWithSnapshot(DB, workqueue.SnapshotBotReplyActivity(inspector), rows)
 	views := make([]AgentInteractionView, 0, len(rows))
-	for _, chat := range rows {
+	for i, chat := range rows {
 		if !callerMayManageInteraction(DB, sessionUser, actingUser, chat) {
 			continue
 		}
-		view := agentInteractionView(DB, inspector, actingUser, chat)
+		view := agentInteractionViewWithStatus(DB, actingUser, chat, statuses[i])
 		if stateFilter != "" && strings.ToLower(view.State) != stateFilter {
 			continue
 		}
@@ -694,6 +698,18 @@ func applyTagEdits(base, add, remove []string) database.StringSliceJSON {
 
 // agentInteractionView renders the stable agent-facing view of a chat.
 func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *database.User, chat database.Chat) AgentInteractionView {
+	status, err := chats.ResolveInteractionStatus(DB, inspector, chat)
+	if err != nil {
+		status = chats.InteractionStatusResponse{State: "idle"}
+	}
+	return agentInteractionViewWithStatus(DB, actingUser, chat, status)
+}
+
+// agentInteractionViewWithStatus builds one interaction view from an
+// already-resolved status, so a listing can resolve the live state for all its
+// chats with one queue snapshot instead of one inspector round-trip per chat
+// (ci#850).
+func agentInteractionViewWithStatus(DB *gorm.DB, actingUser *database.User, chat database.Chat, status chats.InteractionStatusResponse) AgentInteractionView {
 	view := AgentInteractionView{
 		ChatUUID:           chat.UUID,
 		ChatType:           chat.ChatType,
@@ -713,19 +729,18 @@ func agentInteractionView(DB *gorm.DB, inspector *asynq.Inspector, actingUser *d
 		t := chat.UpdatedAt
 		view.LatestMessageAt = &t
 	}
-	if status, statusErr := chats.ResolveInteractionStatus(DB, inspector, chat); statusErr == nil {
-		view.State = status.State
-		view.IsActive = status.IsActive
-		view.LatestMessageUUID = status.LatestMessageUUID
-		view.LatestMessageFinished = status.LatestMessageFinished
-		// ci#609: surface a stalled (never-started) interaction explicitly, so a
-		// watching/lead agent can tell a silent freeze from healthy idle work and
-		// see the reason instead of guessing.
-		view.Stalled = status.Stalled
-		view.StallReason = status.StallReason
-		view.StallAgeSeconds = status.StallAgeSeconds
-		view.StallThresholdSeconds = status.StallThresholdSeconds
-	} else {
+	view.State = status.State
+	view.IsActive = status.IsActive
+	view.LatestMessageUUID = status.LatestMessageUUID
+	view.LatestMessageFinished = status.LatestMessageFinished
+	// ci#609: surface a stalled (never-started) interaction explicitly, so a
+	// watching/lead agent can tell a silent freeze from healthy idle work and
+	// see the reason instead of guessing.
+	view.Stalled = status.Stalled
+	view.StallReason = status.StallReason
+	view.StallAgeSeconds = status.StallAgeSeconds
+	view.StallThresholdSeconds = status.StallThresholdSeconds
+	if view.State == "" {
 		view.State = "idle"
 	}
 	if config := sharedConfigForChat(DB, chat); config != nil {
