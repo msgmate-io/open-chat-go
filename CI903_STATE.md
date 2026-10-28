@@ -1,4 +1,4 @@
-# ci#903 — r75 consolidation tracker: delivery state (2026-10-27)
+# ci#903 — r75 consolidation tracker: delivery state (2026-10-27, closed)
 
 ## Verdict: already delivered via #1193
 - PR #1193 `chore/consolidate-2026-10-27-r75` (dev → main consolidation,
@@ -17,12 +17,20 @@
     mcp `03adb21`, rest_api_tool `a79d3ad`) and all public submodule gitlinks
     were already at their upstream `main` tips.
 
-## Follow-up carried here (VERSION 0.0.789)
-- Version bump 0.0.788 → 0.0.789 so the next consolidation has its own
-  version const ahead of an imminent promotion/release.
-- Nothing else queued: PR CI on the r75 head was green
-  (`Analyze`, all four `Run PR CI Go Tests` shards, `Build Backend Image Once`,
-  `PR Test Merge Requirement`) before merge.
+## Follow-ups carried here
+- **#1200** `chore/consolidate-2026-10-27-r75-followup` (merged into `main` on
+  2026-10-27 as merge `2dbbd40`): VERSION bump 0.0.788 → 0.0.789 so the next
+  consolidation has its own version const, plus this `CI903_STATE.md` record
+  (at that point, added by commit `6192193` and re-verified byte-identical on
+  current `main`).
+- Later r76–r78 consolidations landed on `main` independently (#1197, #1206,
+  #1211, #1218); the tracker only accounts for exactly the r75 scope above.
+- PR CI on the r75 head was green before merge (`Analyze`, all four
+  `Run PR CI Go Tests` shards, `Build Backend Image Once`,
+  `PR Test Merge Requirement`).
+- No pin refresh was needed any round: `integrations.lock.json`
+  (go_client `79b39a1`, mcp `03adb21`, rest_api_tool `a79d3ad`) and all public
+  submodule gitlinks were already at their upstream `main` tips.
 
 ## Still pending (not part of this consolidation)
 - OAuth end-to-end `opencode mcp auth` against ci.msgmate.io + consent UX
