@@ -8,6 +8,16 @@
       "test_backend": 0,
       "test_packages": 239
     },
+    "github.com/msgmate-io/mcp-integration": {
+      "backend": 1,
+      "backend_packages": [
+        "backend"
+      ],
+      "directory": "mcp_integration",
+      "packages": 16,
+      "test_backend": 0,
+      "test_packages": 16
+    },
     "github.com/msgmate-io/rest-api-tool-integration": {
       "backend": 0,
       "backend_packages": [],
