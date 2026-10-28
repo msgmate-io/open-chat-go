@@ -1484,6 +1484,37 @@ open, so the umbrella's final checkbox cannot be ticked while a bot still
 resolves to the opencode backend. The report job exposes the same evidence with
 `--format=stop` and `--require-stopped` (non-zero exit while it is incomplete).
 
+## Integration-owned agent turns (Host v5 Agent runtime, ci#394)
+
+`integrationinterface.HostVersion` 5 adds `Host.Agent()`, the core's generic tool
+loop exposed to compiled-in integrations. It lets a coding integration (the
+`msgmate_coder` integration) own a full agent turn — its system prompt, tool set,
+tool-init and turn hooks — while the core keeps ownership of provider
+selection/streaming, message persistence and websocket frames, the
+confirmation/parked-action flow, context budgeting/compaction and the generation
+registry. An integration therefore never reimplements the platform.
+
+The `msgmate_coder` integration registers a `ChatBackendFunc` for the
+`msgmate_coder` chat backend that calls `Host.Agent().Run(ctx, AgentRequest{...})`.
+The core adapter (`backend/integrationhost/agent.go`) bridges that onto
+`msgmate.RunAgentTurn` and carries the bot-reply turn on the context, so the same
+reply path runs for a coder chat as for any native bot.
+
+`AgentRequest.Hooks` carries the integration-owned turn behaviour: `PreCallInit`
+(seed tool-init), `NormalizeToolCall`, `ToolFailureGuidance`, `ToolBudgetExempt`
+and `ToolSchemaExtend`. Precedence is **per hook**: the core only applies a hook
+when the integration declares it, so a partial hook set never disables the core's
+fallback for the hooks it does not own yet — this keeps every intermediate state
+green.
+
+Because the decoupling guard (ci#423) forbids an integration importing
+`backend/...`, the coder policy that used to live in the core tool loop
+(`backend/api/msgmate/coder_workspace_guidance.go`, the ci#739 sandbox framing)
+is ported into the integration rather than delegated. `backend/nativecoder` is
+being drained the same way; `backend/api/msgmate/runtime_selector_routing.go`
+still consumes its runtime flip registry (`NativeBotStages`, `NativeBotRotation`,
+`LegacyRuntimeBotAliases`).
+
 ## Decoupled integration builds (ci#423)
 
 Once an integration's shipped packages no longer import `backend/...` (verified by
