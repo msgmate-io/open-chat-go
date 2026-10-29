@@ -22,12 +22,10 @@
   instead of being surfaced immediately as back-pressure with a *clear
   saturation signal* (in the "plan" phase of the 108-chat run, back pressure
   shows up as repeated provider_402_429_loop failures).
-- Decision: **FOCUSED backend change** — when concurrency saturation happens
-  on the *pre-stream* (non-streaming) attempt to reach the provider key, do
-  NOT let the provider retry loop absorb it (which makes the saturation error
-  indistinguishable from a provider failure). Instead surface it immediately
-  as retryable provider back-pressure so CI's per-chat failure mode stays
-  honest ("provider_402_429_loop" etc), and the evaluation can distinguish
+- Decision: **FOCUSED backend change** — do NOT classify the provider
+  key-slot saturation signal as a repetition loop; surface key-slot pressure
+  as backpressure instead, so CI's per-chat failure mode stays honest
+  ("provider_402_429_loop" etc), and the evaluation can distinguish
   true provider errors from actual saturation.
 
 ## Files examined (already read) — no changes are lost
