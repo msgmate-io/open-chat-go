@@ -1022,7 +1022,14 @@ type toolCallResult struct {
 	// carries the "stopped: repeated output detected" note instead of the junk
 	// (ci#670).
 	repetitionLoop bool
-	usage          *TokenUsage
+	// backpressure records that the round was stopped because provider
+	// admission saturation was detected (ci#909): the repeated "error" was a
+	// queue timeout. It is the semantic inverse of repetitionLoop — the loop
+	// is dropped without the note and the response carries
+	// failure_reason=provider_backpressure so the caller reports the
+	// saturation itself.
+	backpressure bool
+	usage        *TokenUsage
 	// calls holds every tool call of the round, in the order the model
 	// emitted them (ci#655). The singular id/toolName/result/... fields above
 	// mirror the last call for backwards compatibility.
@@ -1257,6 +1264,8 @@ func processStreamingRequest(
 		// metrics see it without parsing the assistant text (ci#670).
 		if result.repetitionLoop {
 			response["failure_reason"] = FailureReasonRepetitionLoop
+		} else if result.backpressure {
+			response["failure_reason"] = FailureReasonProviderBackpressure
 		}
 		if result.toolName != "" {
 			toolCallRepr := map[string]interface{}{
@@ -2018,8 +2027,17 @@ func processStreamingResponseReader(
 			// detail — so the runaway tail is stopped as soon as it forms.
 			// The one-line note is streamed so the persisted message (built
 			// from the streamed text) ends with a clear statement of why it
-			// stops.
+			// stops. A provider admission saturation (ci#909) can also be the
+			// "error" the tail detects (a queue timeout rendered into the
+			// stream's accumulated text); that case must be reported, not
+			// silently flattened into the repetition note, and the caller
+			// converts the classification back into a ProviderSaturationError
+			// so downstream back-pressure handling stays type-driven.
 			if _, looping := detectDegenerateTail(accumulated); looping {
+				if sat := ClassifyGenerationFailure(fmt.Errorf("%s", accumulated)); sat.Reason == FailureReasonProviderBackpressure {
+					repetitionLoopDetected = true
+					break
+				}
 				repetitionLoopDetected = true
 				chunkChan <- repetitionLoopNote
 				break
@@ -2078,12 +2096,22 @@ func processStreamingResponseReader(
 	// replace it with a clear one-line note, so the persisted message states
 	// why it ends instead of carrying the junk (ci#670). The mid-stream check
 	// and this one run on the same accumulated text, so a mid-stream trip
-	// always truncates here too; the flag is set from either signal.
-	truncatedResponse, responseTruncated := applyRepetitionLoopGuard(result.aiResponse)
-	if responseTruncated {
-		result.aiResponse = truncatedResponse
+	// always truncates here too; the flag is set from either signal. A
+	// provider admission saturation (ci#909) detected as the repeated "error"
+	// must never be flattened into the repetition note: if the repeated unit
+	// classifies as provider back-pressure, the loop is dropped without the
+	// note, the round is flagged as backpressure, and the caller reports the
+	// saturation itself.
+	if sat := ClassifyGenerationFailure(fmt.Errorf("%s", result.aiResponse)); sat.Reason == FailureReasonProviderBackpressure {
+		result.repetitionLoop = false
+		result.backpressure = true
+	} else {
+		truncatedResponse, responseTruncated := applyRepetitionLoopGuard(result.aiResponse)
+		if responseTruncated {
+			result.aiResponse = truncatedResponse
+		}
+		result.repetitionLoop = repetitionLoopDetected || responseTruncated
 	}
-	result.repetitionLoop = repetitionLoopDetected || responseTruncated
 
 	// A leaked context-compaction transcript is model bookkeeping, never a
 	// user-facing answer: strip it so it can never be stored as (or posted as)
