@@ -16,7 +16,7 @@ private-side changes into **one** tested consolidation PR
   chat publish/unpublish to the acting user and returns JSON errors.
 - `chore/ci903-close-out` — merge of ready PR #1221: retires the r75
   consolidation tracker (`CI903_STATE.md` now a true leaf, historical record).
-- `chore(version)`: backend VERSION 0.0.795 → 0.0.796.
+- `chore(version)`: backend VERSION 0.0.795 → 0.0.797 (r79).
 - Public pin refresh: NOT needed. All public pins verified fresh against
   upstream `main` tips: `integrations.lock.json` (go_client `79b39a1`, mcp
   `03adb21`, rest_api_tool `a79d3ad`) and every public submodule gitlink
@@ -36,8 +36,10 @@ private-side changes into **one** tested consolidation PR
 
 ## Status
 
-- [x] r79 head assembled from the 4 ready public branches (no conflicts)
-- [x] VERSION bumped 0.0.795 → 0.0.796
+- [x] r79 head assembled from the 4 ready public branches, rebased onto the
+      r76-r78 main chain (+#1221, #1222, #1223 re-applied), one historical
+      conflict (`CI903_STATE.md`) resolved
+- [x] VERSION bumped 0.0.795 → 0.0.797 (r79)
 - [x] helm chart #6 merged into the private chart repo
 - [x] consolidation PR #1224 `chore/consolidate-2026-10-29-r79` opened
       (`deploy` + `sandbox-test` labels)
@@ -46,6 +48,6 @@ private-side changes into **one** tested consolidation PR
 - [ ] PR #1224 checks green (Go tests, E2E, sandbox, Pin Freshness Gate)
 - [ ] PR merged to `main` (merge when green)
 - [ ] merged-deploy-main deployment on ci.msgmate.io verified (rollout +
-      `/api/version` 0.0.796)
+      `/api/version` 0.0.797)
 - [ ] live canary / selfcheck ok
 - [ ] tracker closed (ci#916)
