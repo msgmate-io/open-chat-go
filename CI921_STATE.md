@@ -1,4 +1,4 @@
-# ci#921 — r79 consolidation tracker: delivery state (2026-10-29, in progress)
+# ci#916 — r79 consolidation tracker: delivery state (2026-10-29, in progress)
 
 Consolidation round r79, assembling currently-open public PRs and the ready
 private-side changes into **one** tested consolidation PR
@@ -41,9 +41,11 @@ private-side changes into **one** tested consolidation PR
 - [x] helm chart #6 merged into the private chart repo
 - [x] consolidation PR #1224 `chore/consolidate-2026-10-29-r79` opened
       (`deploy` + `sandbox-test` labels)
+- [x] tracker issue ci#916 created (private `open-chat-go-ci`, labelled
+      `consolidation`)
 - [ ] PR #1224 checks green (Go tests, E2E, sandbox, Pin Freshness Gate)
 - [ ] PR merged to `main` (merge when green)
 - [ ] merged-deploy-main deployment on ci.msgmate.io verified (rollout +
       `/api/version` 0.0.796)
 - [ ] live canary / selfcheck ok
-- [ ] tracker closed (ci#921)
+- [ ] tracker closed (ci#916)
