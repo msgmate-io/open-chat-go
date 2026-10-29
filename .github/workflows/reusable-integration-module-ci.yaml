@@ -105,4 +105,10 @@ jobs:
           INTEGRATION_PROFILE: ${{ inputs.profile }}
           RUN_TESTS: ${{ inputs.run_tests }}
           DECOUPLED: ${{ inputs.decoupled }}
+          # ci#423: the decoupling guard must be a hard gate on the decoupled
+          # path (a module that re-couples to backend/... must fail the job, not
+          # be reported). REQUIRE_DECOUPLED defaults to DECOUPLED in
+          # integration_module_ci.sh; passing it explicitly keeps the contract
+          # visible in the workflow for readers who do not follow that default.
+          REQUIRE_DECOUPLED: ${{ inputs.decoupled }}
         run: bash development/scripts/integration_module_ci.sh
