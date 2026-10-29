@@ -309,6 +309,13 @@ func botReplyFailureMessage(err error) string {
 		return "I can't reach my AI provider right now. Please check the provider configuration and try again."
 	case msgmate.FailureReasonContextWindow:
 		return "The response exceeded the model's maximum context window. Try a shorter prompt, reduce large pasted content, or run commands that produce less output."
+	case msgmate.FailureReasonProviderBackpressure:
+		// ci#909: provider admission saturation (the per-key slot cap was
+		// exhausted and no slot freed up within the queue timeout, so the
+		// request never reached the provider) is OpenChat's own concurrency
+		// back-pressure, never a provider fault. It must not suggest switching
+		// model/provider or blame credits/outage.
+		return "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept."
 	case msgmate.FailureReasonTimeout:
 		return "This turn ran longer than the server's time limit for a single reply and was stopped. The work already done is kept - send another message to continue from here."
 	}
