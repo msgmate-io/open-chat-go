@@ -88,11 +88,14 @@ func HandleBotReply(ctx context.Context, task *asynq.Task, deps Deps) error {
 	// seconds apart stops the spin (the peer never gets a reply, so the loop
 	// ends). Legitimate slow agent-to-agent coordination never trips it, and a
 	// single automated sender that is still making progress (ci#915) is treated
-	// as an ongoing run rather than a loop.
+	// as an ongoing run rather than a loop. When the breaker does refuse a
+	// mid-round coder run, surface the reason in the task result so the
+	// per-run agent (a msgmate_coder_* probe) sees a concrete failure instead
+	// of a silent completion it can only attribute to its own tool output.
 	if senderUser.IsAutomated {
 		if decision := botloop.DetectForChat(deps.DB, incomingMessage.ChatId, botloop.ConfigFromEnv(), time.Now()); decision.Loop {
 			logging.Warnf("bot-reply loop breaker (ci#747): refusing to answer chat %s (%s: %s)", payload.ChatUUID, decision.Reason, decision.Detail)
-			failure := ToolExecutionResult{Success: false, Error: "bot-reply loop breaker: " + decision.Reason}
+			failure := ToolExecutionResult{Success: false, Error: "bot-reply loop breaker: " + decision.Reason + ": " + decision.Detail}
 			_ = writeResult(task, failure)
 			persistTaskResult(deps.DB, task, failure)
 			return fmt.Errorf("bot reply loop breaker (%s): %w", decision.Reason, asynq.SkipRetry)
