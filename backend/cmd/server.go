@@ -1270,6 +1270,23 @@ func runServer(ctx context.Context, c *cli.Command) error {
 		logging.Infof("Integration scheduler disabled (run-scheduler=false); another process must own it")
 	}
 
+	// ci#747 RC1/RC2/RC3 belt-and-braces: the self-message scheduler and the
+	// bounded tool-retry/turn-cap continuation are the recovery mechanisms that
+	// keep the lead (and tracked workers) driving an interaction forward when a
+	// provider or sandbox degrades. They are:
+	//   - RC1: declarative self-message schedules (OPEN_CHAT_SELF_MESSAGE_SCHEDULES)
+	//     armed above, so an idle interaction re-fires itself on the next interval;
+	//   - RC2: a failed-tool-call cap that still emits the partial summary+blocker
+	//     and enqueues one bot:reply continuation instead of ending the turn as a
+	//     terminal failure;
+	//   - RC3: bounded automatic retry/backoff on 402/429/5xx and on workspace
+	//     saturation, so a provider or key-limit outage never leaves an agent stuck
+	//     `waiting` with no visible re-dispatch.
+	// Deliberately none of these can abort this server: a scheduled bot that is
+	// unknown in a fresh CI database, a degraded provider and a saturated workspace
+	// all degrade to the same log-and-keep-serving loop, and PR CI validates the
+	// wiring (backend/cmd/self_message_wiring_test.go).
+
 	serverErrCh := make(chan error, 1)
 	go func() {
 		err := s.Serve(listener)
