@@ -1901,7 +1901,8 @@ jobs:
       (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != '' &&
       (needs.approve-and-dispatch-deploy.result == 'success' ||
-       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production'))
+       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production') ||
+       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'main'))
     uses: ./.github/workflows/reusable-sandbox-benchmark.yaml
     with:
       target_ref: ${{ needs.run-pr-ci-tests-and-deployments.outputs.target_ref }}
@@ -1938,7 +1939,8 @@ jobs:
       (needs.build-backend-image-once.result == 'success' || needs.build-backend-image-once.result == 'skipped') &&
       needs.run-pr-ci-tests-and-deployments.outputs.should_sandbox_test != '' &&
       (needs.approve-and-dispatch-deploy.result == 'success' ||
-       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production'))
+       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'production') ||
+       (needs.approve-and-dispatch-deploy.result == 'skipped' && github.event.pull_request.base.ref == 'main'))
     env:
       CI_DISPATCH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
       CI_REF: ${{ vars.CI_REF || 'main' }}
