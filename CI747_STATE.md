@@ -44,12 +44,14 @@ coordination/queue-tasks/msgmate unit tests + gofmt/vet); PR CI is the gate.
 
 ## Deliverable (this branch's PR)
 
-- [x] Branch `ci/747-coordination-continuity` pushed; PR #1231 (draft) open
-      against `main` with the CI label.
-- [ ] Final (non-draft) state of PR #1231: carries the RC4 regression tests;
-      update the PR body to reference the leaf it closes (RC4 = the archive/enqueue
-      slice of ci#747, live canary already landed in ci#768 MERGED) so the
-      merge-requirement gate sees a genuine leaf, not a bare umbrella link.
-- [ ] Confirm the local checks: workqueue RC4 tests green, coordination /
-      queue/tasks / api/msgmate unit suites green, gofmt/vet clean.
-- [ ] Report local check results (fast, targeted only; PR CI is the gate).
+- [x] Branch `ci/747-coordination-continuity` pushed; PR #1231 open against
+      `main` with the `test` label.
+- [x] PR #1231 is non-draft, carries the RC4 regression tests, and its body
+      references the leaf it closes (RC4 = the archive/enqueue slice of ci#747,
+      live canary landed in ci#768 MERGED) via `Closes msgmate-io/open-chat-go-ci#918`.
+- [x] Local checks confirmed (re-attach run 2026-10-29, HEAD `ee8bd4f`):
+      `TestEnqueueBotReplyAfterArchive` + `TestBotReplyTaskRetentionArchivedBlocked`
+      PASS; coordination / queue/tasks / api/msgmate + tools unit suites green;
+      gofmt clean; go vet clean.
+- [x] Local check results reported on the interaction (fast, targeted only;
+      PR CI is the gate).
