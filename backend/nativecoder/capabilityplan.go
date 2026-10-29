@@ -200,6 +200,27 @@ var capabilityScenarios = []CapabilityScenario{
 		Tracks: []int{390, 394, 514, 630},
 	},
 	{
+		ID:              "msgmate_coder_bugfix",
+		Title:           "Fix the inaccurate add() logic in mathops.py and confirm the probe test passes",
+		Role:            "repl",
+		Capability:      "edit_and_git",
+		Tags:            []string{"live", "sandbox", "bugfix"},
+		RequiresSandbox: true,
+		Tools:           []string{"coder_glob", "coder_read", "coder_edit", "coder_bash"},
+		Prompt: "Real-world capability scenario BUGFIX. In the bound workspace, locate the file mathops.py " +
+			"(use coder_glob in case it moved), read it and fix the inaccurate add() logic in it so the function " +
+			"returns the correct sum of its arguments. Then confirm the probe test passes by running it with " +
+			"coder_bash (report the verbatim command and its output). " +
+			"Finish with the exact marker " + capabilityMarkerToken + " on its own line.",
+		Acceptance: []string{
+			"mathops.py was located and read before being edited",
+			"the add() logic was corrected so the function returns the accurate sum of its arguments",
+			"the probe test was run with coder_bash and passes, with the verbatim command and output reported",
+			"the reply contains the marker nonce",
+		},
+		Tracks: []int{390, 915},
+	},
+	{
 		ID:              "search_semantics_paths",
 		Title:           "coder_glob/coder_grep path and filter semantics",
 		Role:            "review",
