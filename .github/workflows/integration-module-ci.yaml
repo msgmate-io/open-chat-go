@@ -20,6 +20,7 @@ on:
       - development/scripts/integration_module_ci.sh
       - development/scripts/check_integration_decoupling.py
       - development/scripts/tests/test_integration_decoupling.sh
+      - development/scripts/tests/test_integration_module_ci_defaults.sh
       # ci#423 step 4: the dependency-surface measurement and its baseline.
       - backend/scripts/integration_dep_surface.py
       # ci#423 step 4: the dependency-surface gate wrapper (baseline validation
@@ -107,6 +108,14 @@ jobs:
         run: |
           python3 -m py_compile development/scripts/check_integration_decoupling.py
           bash development/scripts/tests/test_integration_decoupling.sh
+
+      # ci#423: the decoupled-path default (`REQUIRE_DECOUPLED` defaults to
+      # DECOUPLED) makes the `decoupled: true` build a hard gate rather than a
+      # report; the mapping is pinned hermetically.
+      - name: decoupled-path defaults self-test
+        run: |
+          bash -n development/scripts/integration_module_ci.sh
+          bash development/scripts/tests/test_integration_module_ci_defaults.sh
 
       # ci#423 step 4: the dependency-surface delta (baseline) reporting decides
       # whether an integration regressed, so its outcomes are pinned

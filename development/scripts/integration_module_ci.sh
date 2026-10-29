@@ -41,8 +41,10 @@
 #   INTEGRATION_PROFILE  manifest profile to materialize (default: core-only)
 #   RUN_TESTS            "true"/"false" - run `go test ./...` (default: true)
 #   REQUIRE_DECOUPLED    "true"/"false" - fail when the module still imports
-#                        backend/... in its shipped packages (default: false,
-#                        report only while the ci#423 migration is incremental)
+#                        backend/... in its shipped packages (defaults to
+#                        DECOUPLED: a decoupled build must stay decoupled;
+#                        otherwise report-only while the ci#423 migration is
+#                        incremental)
 #   DECOUPLED            "true"/"false" - skip profile materialization and build
 #                        the module against its minimal compile inputs, i.e. the
 #                        per-integration prebuild precondition (ci#423)
@@ -63,6 +65,11 @@ FROZEN="${FROZEN:-true}"
 # DECOUPLED=true builds exactly those inputs and enforces the decoupling guard.
 DECOUPLED="${DECOUPLED:-false}"
 GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-10m}"
+
+# ci#423: a decoupled build must stay decoupled, so REQUIRE_DECOUPLED defaults to
+# DECOUPLED (the decoupling guard then runs as a hard gate instead of a report;
+# see the report block at the bottom).
+REQUIRE_DECOUPLED="${REQUIRE_DECOUPLED:-$DECOUPLED}"
 
 step() { printf '\n=== %s\n' "$*"; }
 
