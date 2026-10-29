@@ -22,7 +22,9 @@ import (
 // conservative: it only fires for an automated peer (bot-to-bot) and only on a
 // strong signal (a long all-automated run, a run of identical messages, or a
 // burst of turns inside a short window), so legitimate slow agent-to-agent
-// coordination is untouched.
+// coordination is untouched. The consecutive-automated rule also exempts a
+// single automated sender that is still making progress (for example a coder
+// harness mid tool round), so a long one-sided tool run is never refused.
 
 // Config are the loop-breaker thresholds. All are "0 disables the check".
 type Config struct {
@@ -99,18 +101,45 @@ func Detect(messages []database.Message, automated map[uint]bool, cfg Config, no
 	// 1. A long trailing run of automated senders with no human in between.
 	if cfg.MaxConsecutiveAutomated > 0 {
 		consecutive := 0
+		runSender := uint(0)
+		singleSender := true
 		for _, message := range messages {
 			if automated[message.SenderId] {
 				consecutive++
+				if runSender == 0 {
+					runSender = message.SenderId
+				} else if message.SenderId != runSender {
+					singleSender = false
+				}
 				continue
 			}
 			break
 		}
 		if consecutive >= cfg.MaxConsecutiveAutomated {
-			return Decision{
-				Loop:   true,
-				Reason: "consecutive_automated",
-				Detail: strconv.Itoa(consecutive) + " consecutive automated messages",
+			// ci#915: a single automated agent's ongoing tool run (the coder
+			// harness, or a WhatsApp-style peer that answers its own last
+			// output) can legitimately extend an all-automated run while it is
+			// mid-round, and the breaker must not refuse to finish it. Only
+			// treat the run as a loop when it is actually a bot-to-bot spin:
+			// two distinct automated senders alternating, or a no-progress
+			// (empty-text) dump. A single sender with real progress is an
+			// ongoing run, not a loop.
+			progress := false
+			for _, message := range messages {
+				if !automated[message.SenderId] {
+					break
+				}
+				if message.Text != nil && strings.TrimSpace(*message.Text) != "" {
+					progress = true
+					break
+				}
+			}
+			if !singleSender || !progress {
+				return Decision{
+					Loop:   true,
+					Reason: "consecutive_automated",
+					Detail: strconv.Itoa(consecutive) + " consecutive automated messages",
+				}
 			}
 		}
 	}
