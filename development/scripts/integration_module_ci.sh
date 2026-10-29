@@ -41,8 +41,10 @@
 #   INTEGRATION_PROFILE  manifest profile to materialize (default: core-only)
 #   RUN_TESTS            "true"/"false" - run `go test ./...` (default: true)
 #   REQUIRE_DECOUPLED    "true"/"false" - fail when the module still imports
-#                        backend/... in its shipped packages (default: false,
-#                        report only while the ci#423 migration is incremental)
+#                        backend/... in its shipped packages (defaults to
+#                        DECOUPLED: a decoupled build enforces the decoupling
+#                        guard as a hard gate; a non-decoupled build stays
+#                        report-only while the ci#423 migration is incremental)
 #   DECOUPLED            "true"/"false" - skip profile materialization and build
 #                        the module against its minimal compile inputs, i.e. the
 #                        per-integration prebuild precondition (ci#423)
@@ -53,15 +55,23 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-INTEGRATION_SRC="${INTEGRATION_SRC:?INTEGRATION_SRC must point at the integration checkout}"
-WORKSPACE_PATH="${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}"
+# Normalize to absolute paths up front: the workspace is extracted at
+# WORKSPACE_PATH (repo-relative) and the integration checkout at INTEGRATION_SRC.
+# Working purely with absolute forms makes the `cd` below a no-op and keeps the
+# "compile via the monorepo layout" contract independent of the caller's cwd.
+INTEGRATION_SRC="$(cd "$(dirname "${INTEGRATION_SRC:?INTEGRATION_SRC must point at the integration checkout}")" && pwd)/$(basename "${INTEGRATION_SRC}")"
+WORKSPACE_PATH="$(cd "$REPO_ROOT" && pwd)/$(basename "${WORKSPACE_PATH:?WORKSPACE_PATH must be the workspace-relative build path}")"
 INTEGRATION_PROFILE="${INTEGRATION_PROFILE:-core-only}"
 RUN_TESTS="${RUN_TESTS:-true}"
 FROZEN="${FROZEN:-true}"
 # ci#423: once an integration's shipped packages are decoupled, its compile inputs
 # no longer need the materialized profile - only the interface module next to it.
 # DECOUPLED=true builds exactly those inputs and enforces the decoupling guard.
+# A decoupled build must never silently re-couple: REQUIRE_DECOUPLED defaults to
+# DECOUPLED, so the guard is a hard gate there, while non-decoupled builds stay
+# report-only for the incremental migration.
 DECOUPLED="${DECOUPLED:-false}"
+REQUIRE_DECOUPLED="${REQUIRE_DECOUPLED:-$DECOUPLED}"
 GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-10m}"
 
 step() { printf '\n=== %s\n' "$*"; }
@@ -114,7 +124,7 @@ if [ "$DECOUPLED" = "true" ]; then
   step "Decoupled preflight: module must not import backend/... (ci#423)"
   PREFLIGHT_GUARD="$REPO_ROOT/development/scripts/check_integration_decoupling.py"
   if [ -f "$PREFLIGHT_GUARD" ] && command -v python3 >/dev/null 2>&1; then
-    if ! python3 "$PREFLIGHT_GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
+    if ! python3 "$PREFLIGHT_GUARD" --module-dir "$WORKSPACE_PATH"; then
       echo "::error::decoupled build requires a module that no longer imports backend/... (ci#423)" >&2
       exit 1
     fi
@@ -166,9 +176,9 @@ fi
 # --- ci#423: integration decoupling report ---------------------------------
 # An integration is *decoupled* once its shipped artifact stops importing
 # backend/... (see development/scripts/check_integration_decoupling.py and the
-# ci#345 design). The migration is incremental, so this is a report by default;
-# REQUIRE_DECOUPLED=true turns remaining coupling into a failure and is meant for
-# an integration whose go.mod cleanup has already landed.
+# ci#345 design). The migration is incremental, so non-decoupled builds report
+# by default; a decoupled build defaults REQUIRE_DECOUPLED to DECOUPLED, so
+# remaining coupling there is a hard failure.
 #
 # DECOUPLED=true already enforced the guard before the build, so there is nothing
 # left to report (and the guard must not run twice).
@@ -178,13 +188,14 @@ if [ "$DECOUPLED" != "true" ]; then
   if [ -f "$GUARD" ] && command -v python3 >/dev/null 2>&1; then
     # Measure the materialized workspace: that layout has the relative `replace`
     # targets next to it, so `go list -deps` resolves exactly like the build above.
-    # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
-    if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
-      if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
+    if ! python3 "$GUARD" --module-dir "$WORKSPACE_PATH"; then
+      if [ "$REQUIRE_DECOUPLED" = "true" ]; then
         echo "::error::integration is still coupled to backend/... (ci#423)" >&2
         exit 1
       fi
-      echo "note: coupling is reported, not enforced (set REQUIRE_DECOUPLED=true to enforce)"
+      echo "note: coupling is reported, not enforced (on a non-decoupled build " \
+        "REQUIRE_DECOUPLED defaults to DECOUPLED=false; enable the " \
+        "decoupled prebuild to make the guard a hard gate)"
     fi
   else
     echo "skipped: guard script or python3 unavailable"
