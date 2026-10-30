@@ -1798,10 +1798,11 @@ func writeCreateInteractionError(w http.ResponseWriter, err error) {
 	default:
 		// ci#865: the generic 500 body carries no detail, so the Live Runtime
 		// Canary only reported "create-interaction failed after retries" with an
-		// empty body. Log the underlying error server-side so the next canary
-		// run names the actual cause.
+		// empty body. Log the underlying error server-side and echo it in the
+		// response body's detail field so the next canary run names the actual
+		// cause.
 		logging.Errorf("create interaction failed: %v", err)
-		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_create_interaction", "Failed to create interaction")
+		writeBotAPIDetailedError(w, http.StatusInternalServerError, "failed_to_create_interaction", "Failed to create interaction", err.Error())
 	}
 }
 
