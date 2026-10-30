@@ -41,8 +41,10 @@
 #   INTEGRATION_PROFILE  manifest profile to materialize (default: core-only)
 #   RUN_TESTS            "true"/"false" - run `go test ./...` (default: true)
 #   REQUIRE_DECOUPLED    "true"/"false" - fail when the module still imports
-#                        backend/... in its shipped packages (default: false,
-#                        report only while the ci#423 migration is incremental)
+#                        backend/... in its shipped packages (default: DECOUPLED,
+#                        so a decoupled build is a hard gate; a non-decoupled
+#                        build stays report-only while the ci#423 migration is
+#                        incremental)
 #   DECOUPLED            "true"/"false" - skip profile materialization and build
 #                        the module against its minimal compile inputs, i.e. the
 #                        per-integration prebuild precondition (ci#423)
@@ -62,9 +64,19 @@ FROZEN="${FROZEN:-true}"
 # no longer need the materialized profile - only the interface module next to it.
 # DECOUPLED=true builds exactly those inputs and enforces the decoupling guard.
 DECOUPLED="${DECOUPLED:-false}"
+# ci#423: the decoupling guard is a *hard gate* on the decoupled path - a module
+# whose `replace backend` cleanup has landed must not silently re-couple to
+# backend/... and keep building. REQUIRE_DECOUPLED defaults to DECOUPLED so the
+# decoupled build enforces it; a non-decoupled build stays report-only while the
+# ci#423 migration is incremental.
+REQUIRE_DECOUPLED="${REQUIRE_DECOUPLED:-$DECOUPLED}"
 GO_TEST_TIMEOUT="${GO_TEST_TIMEOUT:-10m}"
 
 step() { printf '\n=== %s\n' "$*"; }
+
+# ci#423: report the resolved gate contract so the effective defaults are
+# visible in CI logs (and pinable by the defaults self-test).
+echo "gate contract: DECOUPLED=$DECOUPLED REQUIRE_DECOUPLED=$REQUIRE_DECOUPLED"
 
 if [ ! -d "$INTEGRATION_SRC" ]; then
   echo "error: INTEGRATION_SRC=$INTEGRATION_SRC is not a directory" >&2
@@ -166,9 +178,9 @@ fi
 # --- ci#423: integration decoupling report ---------------------------------
 # An integration is *decoupled* once its shipped artifact stops importing
 # backend/... (see development/scripts/check_integration_decoupling.py and the
-# ci#345 design). The migration is incremental, so this is a report by default;
-# REQUIRE_DECOUPLED=true turns remaining coupling into a failure and is meant for
-# an integration whose go.mod cleanup has already landed.
+# ci#345 design). The migration is incremental, so a non-decoupled build reports
+# by default; REQUIRE_DECOUPLED=true turns remaining coupling into a failure and
+# is meant for an integration whose go.mod cleanup has already landed.
 #
 # DECOUPLED=true already enforced the guard before the build, so there is nothing
 # left to report (and the guard must not run twice).
@@ -180,7 +192,7 @@ if [ "$DECOUPLED" != "true" ]; then
     # targets next to it, so `go list -deps` resolves exactly like the build above.
     # (cwd is already inside it, so go through REPO_ROOT for the absolute path.)
     if ! python3 "$GUARD" --module-dir "$REPO_ROOT/$WORKSPACE_PATH"; then
-      if [ "${REQUIRE_DECOUPLED:-false}" = "true" ]; then
+      if [ "$REQUIRE_DECOUPLED" = "true" ]; then
         echo "::error::integration is still coupled to backend/... (ci#423)" >&2
         exit 1
       fi

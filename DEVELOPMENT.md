@@ -1495,11 +1495,14 @@ minimal compile inputs only:
 
 That path skips profile materialization, so the compile inputs are the integration
 module plus the pinned `clients/go_integration_interface` module, and it enforces the
-decoupling guard (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`). It is the
+decoupling guard as a **hard gate** (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`, so a
+decoupled build fails when the module still couples to `backend/...`). It is the
 per-integration prebuild precondition from the ci#345 design
 (`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
 for the remaining integrations lives in
-`frontend/pages/docs/content/integration-development.mdx`.
+`frontend/pages/docs/content/integration-development.mdx`. It is safe to enable
+`decoupled: true` the moment the integration's decoupling lands: the guard then
+protects against a later `replace backend` cleanup re-coupling the module silently.
 
 ### Re-baselining the dependency surface deliberately
 
