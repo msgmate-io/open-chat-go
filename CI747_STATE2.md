@@ -1,3 +1,41 @@
+# ci#747 umbrella drive — final record
+
+Drive: coordination-continuity reliability umbrella (self-resume/lock, error
+recovery, identity/permissions, dedupe). PR for this record: #1254
+(`devtracker-747-coordination-continuity` → main, label `test`).
+
+## Outcome vs acceptance
+
+- Lead/workers recover from a stalled/aborted turn without a human re-dispatch:
+  covered by the self-message scheduler (RC1) + continuation dispatch on
+  cap-exhaustion (RC2) + bounded provider retry (RC3) — all merged on main via
+  PR #1231 (`6b89916`).
+- Lead's own entry is declaratively scheduled (RC1): `SelfMessageScheduler` is
+  boot-wired; `SetEnqueue`/`SetCancel` use the real dispatch/cancel path; a
+  newer schedule replaces (never duplicates) the previous task via the stable
+  task id; focused tests present.
+- Lead can list/re-dispatch its work and de-duplicate an owned ticket
+  (RC7/QW4): dispatcher owner-key dedupe is (ticket, lane), one owner per
+  ticket, asserted in tests; RC5 identity gap documented in the umbrella (the
+  lead's operator-API token is `Forbidden`; the workflow route is the primary
+  stop/resume path for chats the lead does not directly own).
+- Live canary (QW3): enqueue-after-archive must not 500 (RC4 regression) and a
+  scheduled actor must re-fire within one interval — these are the process-side
+  live assertions tracked from this umbrella; code-side regression tests are on
+  main.
+
+## Fast targeted verification (this sandbox, redis on 127.0.0.1:6380)
+
+- `go test -count=1 ./api/msgmate/... ./coordination/ ./workqueue/` → all ok
+- `go build ./api/msgmate/... ./coordination/... ./workqueue/... ./queue/...` → OK
+- `go vet ./api/msgmate/... ./coordination/ ./workqueue/` → OK
+- `gofmt -l` on api/msgmate, coordination, workqueue, cmd → clean
+- No full-suite/E2E/Docker or canary runs locally; PR CI (label `test` on
+  #1254) is the authoritative full-suite gate and the live canary runs out of
+  this repo's deployment process, tracked separately under the umbrella.
+
+---
+
 # ci#747 drive state snapshot
 
 Goal: record what is already merged on main vs what this drive must implement,
