@@ -86,8 +86,15 @@ regression + RC1 self-scheduler wiring assertions")
 2. The umbrella acceptance: PR opened against main with the applicable CI
    labels (this monorepo: targeting main implies full suite per DEVELOPMENT.md —
    label is `test`; see workflow policy before adding more).
-3. Report a concise summary: what changed (likely: targeted wiring/regression
-   tests still missing + verification), PR URL, pending CI.
+3. Reported a concise summary (PR comment #6531003903, 2026-10-30T18:53Z) and
+   posted the final drive state: PR #1254 (head cb2c1861) is fully green on PR
+   CI — PR Test Merge Requirement ✅, Pin Freshness Gate ✅, Go Tests 1-4/4 ✅,
+   E2E 1-4/4 ✅, Core-Only ✅, CodeQL/Analyze ✅, Full Suite Gate skipped
+   (docs-only; no code diff). The ONLY remaining gate is the repo ruleset
+   `Main (Staging) Merge Protection` approving review (count 1; reviewer
+   requirement is by-invitation / human maintainers — author cur1ousdude
+   cannot self-approve) + `Run PR CI Tests and Deployments` ✅. Merge waits on
+   a maintainer's approval; nothing pending on this branch's side.
 
 ## Verification evidence (2026-10-30 rerun, after rebasing onto current main e2decab8)
 
