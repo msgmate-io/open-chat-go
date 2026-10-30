@@ -298,7 +298,18 @@ func DevSetupScript(spec DevSetupSpec) string {
 		return "set -e\n" + strings.Join(lines, "\n") + "\n"
 	}
 	if spec.Submodules {
-		lines = append(lines, `if [ -f .gitmodules ]; then git submodule update --init --recursive; fi`)
+		// ci#756: pull the repository's submodules up front so the integration
+		// profile set-up below can materialize the checkouts it needs (Helm,
+		// mobile client). The recursive update is guarded on `.gitmodules` so a
+		// submodule-absorbed revision does not make the sandbox fail; `git`
+		// may be absent in the freshly-cloned image, in which case the profile
+		// set-up reports the gap instead of silently handing over a bare
+		// checkout.
+		lines = append(lines,
+			`if [ -f .gitmodules ] && command -v git >/dev/null 2>&1; then`,
+			`  git submodule update --init --recursive || echo "[ci#756 dev-setup] WARNING: submodule pull failed; continuing with upstream discovery (see build_tools.sh)" >&2`,
+			`fi`,
+		)
 	}
 	for _, repo := range spec.ExtraRepos {
 		name := devSetupRepoDir(repo)
