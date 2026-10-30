@@ -1,0 +1,1506 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-03T00:00:00Z",
+  "snapshot": "2026-10-25",
+  "test_groups": [
+    {
+      "id": "msgmate_coder",
+      "label": "Msgmate coder (24)",
+      "tests": [
+        "msgmate_coder_ask",
+        "msgmate_coder_bash",
+        "msgmate_coder_bash_stream",
+        "msgmate_coder_bugfix",
+        "msgmate_coder_codesearch",
+        "msgmate_coder_command_confirmation",
+        "msgmate_coder_compact",
+        "msgmate_coder_edit",
+        "msgmate_coder_fibonacci_json",
+        "msgmate_coder_gh_code_review",
+        "msgmate_coder_gh_pr_comment",
+        "msgmate_coder_git_action",
+        "msgmate_coder_github_primitives",
+        "msgmate_coder_grep_replace",
+        "msgmate_coder_hive_mind",
+        "msgmate_coder_in_sandbox",
+        "msgmate_coder_openchat_mcp",
+        "msgmate_coder_patch",
+        "msgmate_coder_shell_mode",
+        "msgmate_coder_structured_read",
+        "msgmate_coder_task",
+        "msgmate_coder_todo",
+        "msgmate_coder_tool_scope",
+        "msgmate_coder_websearch"
+      ]
+    },
+    {
+      "id": "opencode",
+      "label": "Open-code (8)",
+      "tests": [
+        "basic_smoke",
+        "image_file_attachment",
+        "parallel_sessions",
+        "parallel_smoke",
+        "playwright_blog_research",
+        "playwright_mcp_bootstrap",
+        "playwright_mcp_sandbox",
+        "session_continuation"
+      ]
+    },
+    {
+      "id": "github",
+      "label": "GitHub (3)",
+      "tests": [
+        "msgmate_coder_gh_code_review",
+        "msgmate_coder_gh_pr_comment",
+        "msgmate_coder_github_primitives"
+      ]
+    },
+    {
+      "id": "playwright",
+      "label": "Playwright (3)",
+      "tests": [
+        "playwright_blog_research",
+        "playwright_mcp_bootstrap",
+        "playwright_mcp_sandbox"
+      ]
+    },
+    {
+      "id": "rest_api",
+      "label": "REST API / legacy (3)",
+      "tests": [
+        "lw_rest_api_email_pin",
+        "lw_rest_api_ensure_user",
+        "lw_rest_api_tool_init"
+      ]
+    },
+    {
+      "id": "kubernetes",
+      "label": "Kubernetes (1)",
+      "tests": [
+        "kubernetes_deploy"
+      ]
+    },
+    {
+      "id": "smoke",
+      "label": "Smoke (2)",
+      "tests": [
+        "basic_smoke",
+        "parallel_smoke"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "model": "cohere/north-mini-code:free",
+      "slug": "cohere_north-mini-code_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Cohere",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "dots-studio/dots-3-note-preview:free",
+      "slug": "dots-studio_dots-3-note-preview_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Dots Studio",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "google/gemma-4-26b-a4b-it:free",
+      "slug": "google_gemma-4-26b-a4b-it_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Google",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "google/gemma-4-31b-it:free",
+      "slug": "google_gemma-4-31b-it_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Google",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "liquid/lfm-2.5-2.6b:free",
+      "slug": "liquid_lfm-2-5-2-6b_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Liquid AI",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "slug": "nvidia_nemotron-3-nano-omni-30b-a3b-reasoning_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "NVIDIA",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "slug": "nvidia_nemotron-3-super-120b-a12b_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "NVIDIA",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "slug": "nvidia_nemotron-3-ultra-550b-a55b_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "NVIDIA",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "nvidia/nemotron-3.5-lightning:free",
+      "slug": "nvidia_nemotron-3-5-lightning_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "NVIDIA",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "nvidia/nemotron-3.5-super-vl:free",
+      "slug": "nvidia_nemotron-3-5-super-vl_free",
+      "vision": true,
+      "tests_run": 41,
+      "pass": 11,
+      "fail": 28,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 3,
+      "pass_rate": 0.268,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "NVIDIA",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "fail",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "poolside/laguna-s-2.1:free",
+      "slug": "poolside_laguna-s-2-1_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Poolside",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "poolside/laguna-xs-2.1:free",
+      "slug": "poolside_laguna-xs-2-1_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Poolside",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "recursive/flint-v1.0:free",
+      "slug": "recursive_flint-v1-0_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Recursive",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "thinkingmachines/inkling:free",
+      "slug": "thinkingmachines_inkling_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Thinking Machines",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "thinkingmachines/inkling-small:free",
+      "slug": "thinkingmachines_inkling-small_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Thinking Machines",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "xingchen-agi/xing4.0-29b-a4b:free",
+      "slug": "xingchen-agi_xing4-0-29b-a4b_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 27,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "Xingchen AGI",
+      "provider_errors": 2,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "fail",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "fail",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "fail",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "fail",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "fail",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "fail",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "fail",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    },
+    {
+      "model": "openrouter/free",
+      "slug": "openrouter_free",
+      "vision": false,
+      "tests_run": 40,
+      "pass": 11,
+      "fail": 20,
+      "fail_after_retry": 0,
+      "timeout": 0,
+      "not_run": 4,
+      "pass_rate": 0.275,
+      "capabilities": [
+        "msgmate_coder",
+        "opencode",
+        "github",
+        "playwright",
+        "rest_api",
+        "kubernetes",
+        "smoke"
+      ],
+      "provider": "OpenRouter",
+      "provider_errors": 9,
+      "cells": {
+        "msgmate_coder": {
+          "msgmate_coder_ask": "pass",
+          "msgmate_coder_bash": "fail",
+          "msgmate_coder_bash_stream": "fail",
+          "msgmate_coder_bugfix": "provider_rate_limit",
+          "msgmate_coder_codesearch": "fail",
+          "msgmate_coder_command_confirmation": "pass",
+          "msgmate_coder_compact": "provider_rate_limit",
+          "msgmate_coder_edit": "fail",
+          "msgmate_coder_fibonacci_json": "provider_error",
+          "msgmate_coder_gh_code_review": "provider_rate_limit",
+          "msgmate_coder_gh_pr_comment": "pass",
+          "msgmate_coder_git_action": "fail",
+          "msgmate_coder_github_primitives": "provider_rate_limit",
+          "msgmate_coder_grep_replace": "fail",
+          "msgmate_coder_hive_mind": "fail",
+          "msgmate_coder_in_sandbox": "pass",
+          "msgmate_coder_openchat_mcp": "provider_error",
+          "msgmate_coder_patch": "fail",
+          "msgmate_coder_shell_mode": "provider_rate_limit",
+          "msgmate_coder_structured_read": "fail",
+          "msgmate_coder_task": "pass",
+          "msgmate_coder_todo": "provider_rate_limit",
+          "msgmate_coder_tool_scope": "fail",
+          "msgmate_coder_websearch": "fail"
+        },
+        "opencode": {
+          "basic_smoke": "pass",
+          "image_file_attachment": "not_run",
+          "parallel_sessions": "fail",
+          "parallel_smoke": "provider_rate_limit",
+          "playwright_blog_research": "not_run",
+          "playwright_mcp_bootstrap": "not_run",
+          "playwright_mcp_sandbox": "not_run",
+          "session_continuation": "fail"
+        },
+        "github": {
+          "github_legacy_issues": "pass",
+          "github_pr_flow": "fail",
+          "github_releases_api": "fail"
+        },
+        "playwright": {
+          "playwright_mcp_bootstrap": "pass",
+          "playwright_mcp_sandbox": "fail",
+          "playwright_blog_research": "fail"
+        },
+        "rest_api": {
+          "rest_api_lesson": "pass",
+          "rest_api_message_audit": "fail",
+          "rest_api_one_shot": "fail"
+        },
+        "kubernetes": {
+          "kubernetes_dashboard": "pass"
+        },
+        "smoke": {
+          "smoke_hello": "pass",
+          "smoke_restart": "fail"
+        }
+      }
+    }
+  ]
+}
