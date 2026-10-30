@@ -42,12 +42,16 @@ profiles:
     - mcp
     - rest_api_tool
     - go_client
-  # The public coding profile: the thin Community Coder integration. It shares
-  # the coder turn hooks/policy with the private `msgmate_coder` integration
-  # through the public `coder` library, and is never built together with it
-  # (they share the `coder_*` Go tool names); the private `full`/`default`
-  # profiles exclude it via `!community_coder`.
+  # The public coding profile: the thin Community Coder integration plus the
+  # base integrations the core itself imports. It shares the coder turn
+  # hooks/policy with the private `msgmate_coder` integration through the public
+  # `coder` library, and is never built together with it (they share the
+  # `coder_*` Go tool names); the private `full`/`default` profiles exclude it
+  # via `!community_coder`.
   community-coder:
+    - mcp
+    - rest_api_tool
+    - go_client
     - community_coder
 
 integrations:
