@@ -781,6 +781,10 @@ submodule). Only the public submodules are checked out with the clone (the Go
 interfaces, the Python/JS clients and the build-tools). Private repositories
 (the private integrations manifest / CI, the Helm chart, the mobile client and
 the LLM coding context) are materialized on demand by the profile setup step.
+The native coder sandbox set-up script pre-pulls the repository's public
+submodules (guarded on `.gitmodules` and on `git` being present) before that
+profile step runs, so the agent starts on a fully materialized checkout
+(see `backend/nativecoder/devsetup.go`, `DevSetupScript`).
 
 ```bash
 git clone --recurse-submodules https://github.com/msgmate-io/open-chat-go.git
