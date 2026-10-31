@@ -1,6 +1,12 @@
 {
   "version": 1,
   "integrations": {
+    "community_coder": {
+      "repo": "https://github.com/msgmate-io/open-chat-go-community-coder-integration",
+      "ref": "main",
+      "commit": "b9125964e244d9d4936e122ef1512ba158719ff4",
+      "source": "git"
+    },
     "go_client": {
       "repo": "https://github.com/msgmate-io/open-chat-go-golang-client",
       "ref": "main",
