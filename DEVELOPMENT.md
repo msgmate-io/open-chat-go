@@ -1494,10 +1494,13 @@ minimal compile inputs only:
 - set `DECOUPLED=true` when calling `development/scripts/integration_module_ci.sh` directly.
 
 That path skips profile materialization, so the compile inputs are the integration
-module plus the pinned `clients/go_integration_interface` module, and it enforces the
-decoupling guard (`REQUIRE_DECOUPLED` defaults to `DECOUPLED`). It is the
+module plus the pinned `clients/go_integration_interface` module. `decoupled: true` is
+a **hard gate**: a decoupled build defaults `REQUIRE_DECOUPLED` to `DECOUPLED`, so the
+decoupling guard (`development/scripts/check_integration_decoupling.py`) failing is a
+job failure and the module cannot silently re-couple to `backend/...`. It is the
 per-integration prebuild precondition from the ci#345 design
-(`frontend/pages/docs/content/integration-prebuild-design.mdx`); the migration recipe
+(`frontend/pages/docs/content/integration-prebuild-design.mdx`), so it is safe to
+enable the moment the integration's decoupling lands; the migration recipe
 for the remaining integrations lives in
 `frontend/pages/docs/content/integration-development.mdx`.
 
