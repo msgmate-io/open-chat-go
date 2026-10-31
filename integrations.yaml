@@ -42,6 +42,11 @@ profiles:
     - mcp
     - rest_api_tool
     - go_client
+    # The core imports the shared public coder library (the coder config
+    # defaults and agent surfaces live there), so every build must materialize
+    # the community coder module. core-only is public, so selecting it here is
+    # safe in a public build.
+    - community_coder
   # The public coding profile: the thin Community Coder integration plus the
   # base integrations the core itself imports. It shares the coder turn
   # hooks/policy with the private `msgmate_coder` integration through the public
