@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	tooldefs "backend/api/msgmate/tools"
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 )
 
 // coderCompactRunner is the core-side runner behind the `coder_compact` tool
@@ -20,13 +20,13 @@ type coderCompactRunner struct {
 	// surface is the coder_compact surface bound to a chat. It is lazily
 	// resolved from the shared parity surface of the msgmate handler; when the
 	// deployment publishes none, calls fail loudly.
-	surface *nativecoder.CoderParitySurface
+	surface *coder.CoderParitySurface
 }
 
 // The seams are package-level (the coderScheduleRunner pattern) so a test can
 // drive the runner against a scratch store instead of a live bot context.
 var (
-	coderCompactGlobalSurface = func() *nativecoder.CoderParitySurface {
+	coderCompactGlobalSurface = func() *coder.CoderParitySurface {
 		if h := GetGlobalMsgmateHandler(); h != nil {
 			if s := h.GetCoderParitySurface(); s != nil {
 				return s
@@ -41,8 +41,8 @@ var (
 // runner needs. The backing type is unexported, so the runner holds it as this
 // interface instead of a concrete package type.
 type coderCompactOps interface {
-	Compact(nativecoder.CoderCompactRequest) (nativecoder.CoderCompactResult, error)
-	State(chatID string) (nativecoder.CoderCompactResult, error)
+	Compact(coder.CoderCompactRequest) (coder.CoderCompactResult, error)
+	State(chatID string) (coder.CoderCompactResult, error)
 }
 
 // resolveSurface returns the coder_compact surface for chatUUID, resolving the
@@ -70,7 +70,7 @@ func (r *coderCompactRunner) CompactCoderContext(chatUUID string, text string, c
 	if err != nil {
 		return nil, err
 	}
-	result, err := compact.Compact(nativecoder.CoderCompactRequest{
+	result, err := compact.Compact(coder.CoderCompactRequest{
 		ChatID:   chatUUID,
 		Text:     text,
 		Capacity: capBytes,
@@ -99,7 +99,7 @@ func (r *coderCompactRunner) CoderContextSummary(chatUUID string) (map[string]in
 // context_summary needs. A chat with no persisted summary yields an empty map
 // (the tool layer turns that into its own "no summary" error), so a read of a
 // never-touched chat never invents a placeholder summary.
-func coderCompactResultState(result nativecoder.CoderCompactResult) map[string]interface{} {
+func coderCompactResultState(result coder.CoderCompactResult) map[string]interface{} {
 	if strings.TrimSpace(result.Summary) == "" {
 		return map[string]interface{}{}
 	}
@@ -126,6 +126,6 @@ func coderCompactToolRunner() tooldefs.CoderCompactRunner {
 	return &coderCompactRunner{}
 }
 
-// ensure backend/nativecoder.JSON is referenced (kept for parity with the
+// ensure backend/coder.JSON is referenced (kept for parity with the
 // schedule runner's explicit json use).
 var _ = json.Marshal

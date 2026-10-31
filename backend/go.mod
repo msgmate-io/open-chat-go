@@ -4,6 +4,8 @@ go 1.26.0
 
 require github.com/urfave/cli/v3 v3.11.0
 
+require github.com/msgmate-io/open-chat-go-community-coder-integration v0.0.0
+
 require golang.org/x/crypto v0.55.0
 
 require (
