@@ -3,8 +3,8 @@ package chats
 import (
 	"backend/api/websocket"
 	"backend/database"
-	"backend/nativecoder"
 	"backend/server/util"
+	"backend/toolbudget"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -541,9 +541,9 @@ func TestCreateChatSnapshotsToolCallBudget(t *testing.T) {
 		t.Fatalf("expected config object in response")
 	}
 
-	snapshot, ok := nativecoder.ToolCallBudgetSnapshot(config)
+	snapshot, ok := toolbudget.ToolCallBudgetSnapshot(config)
 	if !ok {
-		t.Fatalf("expected a per-chat tool-call budget snapshot, got %#v", config[nativecoder.ToolCallBudgetConfigKey])
+		t.Fatalf("expected a per-chat tool-call budget snapshot, got %#v", config[toolbudget.ToolCallBudgetConfigKey])
 	}
 	// The snapshot keeps the caps the chat was created with...
 	if snapshot.MaxTotal != 400 || snapshot.MaxFailed != 25 {
@@ -556,13 +556,13 @@ func TestCreateChatSnapshotsToolCallBudget(t *testing.T) {
 	// would win. Resolve both sides against the constants so raising the floor
 	// (500/20 as of #931) keeps this regression honest.
 	wantTotal, wantFailed := 400, 25
-	if nativecoder.DefaultToolCallMaxTotal > wantTotal {
-		wantTotal = nativecoder.DefaultToolCallMaxTotal
+	if toolbudget.DefaultToolCallMaxTotal > wantTotal {
+		wantTotal = toolbudget.DefaultToolCallMaxTotal
 	}
-	if nativecoder.DefaultToolCallMaxFailed > wantFailed {
-		wantFailed = nativecoder.DefaultToolCallMaxFailed
+	if toolbudget.DefaultToolCallMaxFailed > wantFailed {
+		wantFailed = toolbudget.DefaultToolCallMaxFailed
 	}
-	resolved := nativecoder.ResolveToolCallBudget(config, nil)
+	resolved := toolbudget.ResolveToolCallBudget(config, nil)
 	if resolved.MaxTotal != wantTotal || resolved.MaxFailed != wantFailed {
 		t.Fatalf("expected the effective budget %d/%d, got %+v", wantTotal, wantFailed, resolved)
 	}

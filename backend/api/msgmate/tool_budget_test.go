@@ -3,7 +3,7 @@ package msgmate
 import (
 	"testing"
 
-	"backend/nativecoder"
+	"backend/toolbudget"
 )
 
 // TestToolCallBudgetExemptionIsBookkeepingOnly is the ci#724 rule: scheduling the
@@ -100,7 +100,7 @@ func TestTurnOutcomeReportsBudgetExemptCalls(t *testing.T) {
 		Reason:            TurnEndedToolCallCap,
 		ToolCalls:         12,
 		BudgetExemptCalls: 3,
-		Budget:            nativecoder.ToolCallBudget{MaxTotal: 12, MaxFailed: 3, Source: nativecoder.ToolCallBudgetSourceChatSnapshot},
+		Budget:            toolbudget.ToolCallBudget{MaxTotal: 12, MaxFailed: 3, Source: toolbudget.ToolCallBudgetSourceChatSnapshot},
 	}
 
 	usage := outcome.usage()
