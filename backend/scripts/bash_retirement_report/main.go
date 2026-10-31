@@ -64,8 +64,10 @@ type reportLine struct {
 }
 
 // retirementReport is the job's output: the phase 0 coverage metric, the
-// phase 1 GitHub exit criterion measured on the same samples, and the per-phase
-// exit gates (ci#514) that turn the metric into "may this phase close?".
+// phase 1 GitHub exit criterion measured on the same samples, the per-phase
+// exit gates (ci#514) that turn the metric into "may this phase close?", and
+// the machine-checked drive record that states the target surface and the
+// phase that retires each category.
 type retirementReport struct {
 	nativecoder.BashCoverageReport
 	// GitHubPhase1 is the phase 1 readiness metric, emitted as its own object
@@ -85,6 +87,10 @@ type retirementReport struct {
 	// harder than ReadyToClose: it also requires that every criterion has
 	// evidence at all, not just that the categories passed their threshold.
 	CriteriaReadyToClose bool `json:"criteria_ready_to_close"`
+	// Drive is the machine-checked ci#514 drive record: the target typed-tool
+	// surface, the per-phase status and the phase that retires each category,
+	// hardened against the classifier that produces this report.
+	Drive nativecoder.BashRetirementDriveRecord `json:"drive"`
 }
 
 func main() {
@@ -237,6 +243,33 @@ func buildReport(samples []nativecoder.BashCallSample, coderSystemPrompt string)
 		ReadyToClose:         nativecoder.BashRetirementReadyToClose(phases),
 		Criteria:             criteria,
 		CriteriaReadyToClose: nativecoder.BashRetirementCriteriaReadyToClose(criteria),
+		Drive: nativecoder.BashRetirementDriveRecord{
+			Phase:  "ci514-drive",
+			Ticket: "ci#514",
+			Surface: []string{
+				"github_issue_list", "github_issue_view", "github_issue_comment",
+				"github_pr_view", "github_pr_create", "github_pr_comment", "github_pr_merge", "github_pr_review",
+				"github_api", "github_auth_status",
+				"coder_git status/log/diff/show/blame/remote", "coder_git add/commit/branch/checkout/push/reset/stash/fetch/tag",
+				"coder_read", "coder_list", "coder_glob", "coder_grep", "coder_write", "coder_edit",
+				"coder_webfetch", "coder_websearch",
+			},
+			Phases: []nativecoder.BashRetirementDrivePhase{
+				{ID: "phase_0_measure", State: nativecoder.BashRetirementDriveStateShipped, Targets: "classifier + bash_retirement_report job", EvidenceAnchor: "bashretirement.go, scripts/bash_retirement_report"},
+				{ID: "phase_1_github", Retires: nativecoder.BashCategoryGitHubCLI, State: nativecoder.BashRetirementDriveStateShipped, Targets: "github_* typed tools + githubshell.go bridge", EvidenceAnchor: "githubshell.go, githubapi.go"},
+				{ID: "phase_2_git", Retires: nativecoder.BashCategoryGitMutation, State: nativecoder.BashRetirementDriveStateShipped, Targets: "coder_git typed family + gitshell.go guarded bridge", EvidenceAnchor: "gitshell.go"},
+				{ID: "phase_3_shellmodes", State: nativecoder.BashRetirementDriveStateOpen, Targets: "shellmodes.go routing for interactive/repair niche", EvidenceAnchor: "shellmodes.go"},
+				{ID: "phase_4_longtail", State: nativecoder.BashRetirementDriveStateOpen, Targets: "kubernetes/docker_sandbox/integration typed tools", EvidenceAnchor: "plan registry"},
+				{ID: "phase_5_close", State: nativecoder.BashRetirementDriveStateOpen, Targets: "residual shell below threshold, incl. credentials", EvidenceAnchor: "retirementgate.go, retirementcriteria.go"},
+			},
+			Categories: []nativecoder.BashRetirementDriveCategory{
+				{Category: nativecoder.BashCategoryGitHubCLI, RetiredBy: "phase_1_github", Shipped: true},
+				{Category: nativecoder.BashCategoryGitMutation, RetiredBy: "phase_2_git", Shipped: true},
+				{Category: nativecoder.BashCategoryRepoInspection, RetiredBy: "phase_2_git", Shipped: false},
+				{Category: nativecoder.BashCategoryEnvProbing, Shipped: false},
+				{Category: nativecoder.BashCategoryResidualShell, Shipped: false},
+			},
+		},
 	}
 }
 
