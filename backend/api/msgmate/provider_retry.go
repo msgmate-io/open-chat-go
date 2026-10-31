@@ -48,6 +48,31 @@ func (e *ProviderRequestError) Error() string {
 	return fmt.Sprintf("non-200 response: %d %s", e.StatusCode, e.Body)
 }
 
+// isRetryableBackpressureError reports whether err is a provider back-pressure
+// condition: admission saturation (no slot became free within the queue
+// timeout, ci#909) or an HTTP 402/429 from the provider (exhausted credits /
+// rate limit, ci#927, ci#619/#620). Both are global-capacity conditions that
+// per-request retrying will not fix; they must surface as back-pressure, not
+// as a repeating per-request provider error.
+func isRetryableBackpressureError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.As(err, &providerSaturationErrorType) {
+		return true
+	}
+	code, _, _, isProviderStatus := providerErrorInfo(err)
+	return isProviderStatus && isProviderBackpressureStatus(code)
+}
+
+// isProviderBackpressureStatus reports whether a provider HTTP status means
+// the provider side is out of capacity: 402 (billing/credits exhausted) or
+// 429 (rate limit). These statuses are retryable, but exhausting the retries
+// must be reported as provider back-pressure (ci#927).
+func isProviderBackpressureStatus(code int) bool {
+	return code == http.StatusPaymentRequired || code == http.StatusTooManyRequests
+}
+
 // providerErrorInfo extracts the provider HTTP status, response body and the
 // number of attempts that were made from a provider request error.
 func providerErrorInfo(err error) (code int, body string, attempts int, ok bool) {
@@ -358,6 +383,14 @@ func ClassifyGenerationFailure(err error) GenerationFailureClassification {
 		// user to lower concurrency instead and keeps ProviderAttempts honest
 		// (no attempts were made against the provider).
 		return GenerationFailureClassification{Reason: FailureReasonProviderBackpressure}
+	}
+	if isRetryableBackpressureError(err) {
+		summary, attempts := describeProviderFailure(err)
+		return GenerationFailureClassification{
+			Reason:           FailureReasonProviderBackpressure,
+			ProviderSummary:  summary,
+			ProviderAttempts: attempts,
+		}
 	}
 	summary, attempts := describeProviderFailure(err)
 	if attempts < 1 {
