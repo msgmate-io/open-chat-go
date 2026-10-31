@@ -1,0 +1,43 @@
+msgmate_coder_ask	✅ passed
+msgmate_coder_bash	❌ provider_unreachable
+msgmate_coder_bash_stream	✅ passed
+msgmate_coder_bugfix	❌ failed
+msgmate_coder_codesearch	✅ passed
+msgmate_coder_command_confirmation	✅ passed
+msgmate_coder_compact	❌ provider_unreachable
+msgmate_coder_edit	✅ passed
+msgmate_coder_fibonacci_json	✅ passed
+msgmate_coder_gh_code_review	not_run
+msgmate_coder_gh_pr_comment	not_run
+msgmate_coder_git_action	✅ passed
+msgmate_coder_github_primitives	not_run
+msgmate_coder_grep_replace	✅ passed
+msgmate_coder_hive_mind	✅ passed
+msgmate_coder_in_sandbox	✅ passed
+msgmate_coder_openchat_mcp	✅ passed
+msgmate_coder_patch	✅ passed
+msgmate_coder_shell_mode	✅ passed
+msgmate_coder_structured_read	✅ passed
+msgmate_coder_task	✅ passed
+msgmate_coder_todo	✅ passed
+msgmate_coder_tool_scope	✅ passed
+msgmate_coder_websearch	✅ passed
+basic_smoke	not_run
+image_file_attachment	n/a
+parallel_sessions	not_run
+parallel_smoke	not_run
+playwright_blog_research	not_run
+playwright_mcp_bootstrap	not_run
+playwright_mcp_sandbox	not_run
+session_continuation	not_run
+github_issue	not_run
+github_issue_comment	not_run
+github_repo_create	not_run
+playwright_tests	not_run
+rest_api_tests	not_run
+lw_rest_api_email_pin	not_run
+lw_rest_api_ensure_user	not_run
+lw_rest_api_tool_init	not_run
+kubernetes_deploy	not_run
+smoke_test	not_run
+websearch_tests	not_run

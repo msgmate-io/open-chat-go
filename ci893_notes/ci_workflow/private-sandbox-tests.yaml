@@ -1,0 +1,886 @@
+name: Private Sandbox Tests
+run-name: Private sandbox ${{ github.event.inputs.tags || 'lw' }} ${{ github.event.inputs.target_ref || 'main' }} ${{ github.run_id }}
+
+# Second sandbox layer: runs the extended sandbox suite from this (private) CI
+# repository, in parallel with the public sandbox benchmark (`reusable-sandbox-
+# benchmark.yaml` in msgmate-io/open-chat-go). Unlike the public suite the
+# results are reported *privately*: the run uploads a markdown report to the
+# `ci/sandbox-results` branch of this repository, sets a commit status on the
+# source PR head and posts/updates a PR comment that simply links the report.
+#
+# The source PR deployment workflow dispatches this with the built backend image
+# and the PR coordinates. It can also be run manually.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: open-chat-go ref or SHA to test
+        required: false
+        default: main
+      backend_image:
+        description: Prebuilt backend image to test; empty builds one from target_ref
+        required: false
+        default: ""
+      sandbox_image_url:
+        description: Optional prebuilt coding sandbox image; empty resolves/builds by content hash
+        required: false
+        default: ""
+      tags:
+        description: Comma-separated sandbox test tags (default lw; empty = all tests)
+        required: false
+        default: lw
+      opencode_provider:
+        description: opencode provider id (empty = repo variable, then openrouter)
+        required: false
+        default: ""
+      opencode_model:
+        description: opencode model id to pin (empty = repo variable, then deepseek/deepseek-v4-flash-0731)
+        required: false
+        default: ""
+      sandbox_interaction_timeout:
+        description: Per-test interaction timeout in seconds
+        required: false
+        default: "900"
+      sandbox_test_timeout:
+        description: Total wall-clock limit per test in seconds, across all retry attempts (default 1800)
+        required: false
+        default: "1800"
+      source_repo:
+        description: Repository (owner/name) that owns the source PR
+        required: false
+        default: msgmate-io/open-chat-go
+      pr_number:
+        description: Source pull request number (for the private link comment/status)
+        required: false
+        default: ""
+      source_sha:
+        description: Source PR head SHA for the commit status
+        required: false
+        default: ""
+      bot_user:
+        description: GitHub login that owns the bot comments
+        required: false
+        default: cur1ousdude
+      lw_ref:
+        description: Little World backend ref to build for the lw_* tests
+        required: false
+        default: main
+  # Nightly drift check on main (ci#479). A merge-time run only happens when a
+  # PR with the sandbox-test label is deployed; without this a regression that
+  # is not tied to a merge (dependency/provider drift, a sandbox image change)
+  # would stay silent. Scheduled runs run the native coder suite (tag
+  # `msgmate_coder`) against `main` and feed the regression guard below.
+  schedule:
+    - cron: '0 3 * * *'
+
+concurrency:
+  group: private-sandbox-${{ github.event.inputs.source_repo || 'msgmate-io/open-chat-go' }}-${{ github.event.inputs.pr_number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+  statuses: write
+  issues: write
+  pull-requests: write
+  packages: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  TARGET_REF: ${{ github.event.inputs.target_ref || 'main' }}
+  BACKEND_IMAGE_INPUT: ${{ github.event.inputs.backend_image || '' }}
+  SANDBOX_IMAGE_INPUT: ${{ github.event.inputs.sandbox_image_url || '' }}
+  # Scheduled (nightly) main runs only need the native coder capability suite;
+  # they exist to feed the ci#479 regression guard, not to re-run the lw
+  # tests. Manual/PR dispatches keep the lw default.
+  REQUESTED_TAGS: ${{ github.event.inputs.tags || (github.event_name == 'schedule' && 'msgmate_coder') || 'lw' }}
+  OPENCODE_PROVIDER: ${{ github.event.inputs.opencode_provider || vars.SANDBOX_OPENCODE_PROVIDER || 'openrouter' }}
+  OPENCODE_MODEL: ${{ github.event.inputs.opencode_model || vars.SANDBOX_OPENCODE_MODEL || 'deepseek/deepseek-v4-flash-0731' }}
+  SOURCE_REPO: ${{ github.event.inputs.source_repo || 'msgmate-io/open-chat-go' }}
+  PR_NUMBER: ${{ github.event.inputs.pr_number || '' }}
+  SOURCE_SHA: ${{ github.event.inputs.source_sha || '' }}
+  BOT_USER: ${{ github.event.inputs.bot_user || 'cur1ousdude' }}
+  LW_REF: ${{ github.event.inputs.lw_ref || 'main' }}
+  RESULTS_BRANCH: ci/sandbox-results
+  MAIN_REPO: msgmate-io/open-chat-go
+  IMAGE_REPO: ghcr.io/msgmate-io/open-chat-go
+
+jobs:
+  discover:
+    name: Discover Private Tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.discover.outputs.tests }}
+      backend_image: ${{ steps.backend.outputs.image_url }}
+      sandbox_image: ${{ steps.sandbox.outputs.image_url }}
+    steps:
+      - name: Free runner disk space
+        run: |
+          set -euo pipefail
+          # The full-profile backend image build (all integrations, buildx,
+          # registry cache) needs far more disk than a stock GitHub-hosted
+          # runner leaves once its default SDK/tool cache is present; without
+          # this the Go build inside the builder container dies with
+          # `mkdir /tmp/go-build...: no space left on device`
+          # (msgmate-io/open-chat-go-ci#460). Reclaim the large preinstalled
+          # toolchains this job never uses.
+          # This job runs no `setup-*` action, so the runner's whole hosted
+          # tool cache and the preinstalled project SDKs are unused: drop them
+          # (~30 GB on ubuntu-latest, android alone is ~12 GB).
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/local/share/powershell \
+            /opt/hostedtoolcache 2>/dev/null || true
+          sudo docker image prune -af || true
+          sudo docker builder prune -af || true
+          df -h / /mnt
+
+      - name: Checkout open-chat-go
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go
+          ref: ${{ github.event.inputs.target_ref || 'main' }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Materialize profile (full-ci)
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full-ci
+
+      - name: Pin the CI tests to this workflow commit
+        run: |
+          set -euo pipefail
+          if [ ! -d development/ci/.git ]; then
+            echo "::warning::development/ci is not a git checkout; cannot pin to ${GITHUB_SHA}."
+            exit 0
+          fi
+          if git -C development/ci fetch --depth 1 origin "${GITHUB_SHA}"; then
+            git -C development/ci checkout --detach FETCH_HEAD
+          elif git -C development/ci fetch --depth 1 origin main; then
+            echo "::warning::could not fetch ${GITHUB_SHA}; using origin/main for the CI tests."
+            git -C development/ci checkout --detach FETCH_HEAD
+          else
+            echo "::warning::could not pin development/ci; using the materialized checkout."
+          fi
+          git -C development/ci rev-parse HEAD
+
+      - name: Enumerate private sandbox tests
+        id: discover
+        env:
+          REQUESTED_TAGS: ${{ env.REQUESTED_TAGS }}
+        run: |
+          set -euo pipefail
+          requested="$(printf '%s' "$REQUESTED_TAGS" | tr ',' ' ' | xargs)"
+          # The native coder suite (tagged msgmate_coder) must run alongside the
+          # default lw suite so integration regressions are caught on PRs; the
+          # tag name is kept private to this repository. The old opencode-driven
+          # `legacy` variants were retired (ci#411), so only the native coder
+          # suite is added here.
+          case " $requested " in
+            *" lw "*) requested="$requested msgmate_coder" ;;
+          esac
+          mapfile -t dirs < <(
+            find development/ci/sandbox_tests -mindepth 2 -maxdepth 2 -name verify.sh \
+              -printf '%h\n' 2>/dev/null \
+              | sed 's#development/ci/sandbox_tests/##' \
+              | sort -u
+          )
+          selected=()
+          for d in "${dirs[@]:-}"; do
+            [ -n "$d" ] || continue
+            tag_file="development/ci/sandbox_tests/${d}/tags"
+            if [ -f "$tag_file" ]; then
+              tags="$(tr ',' ' ' < "$tag_file" | xargs)"
+            else
+              tags="untagged"
+            fi
+            if [ -z "$requested" ]; then
+              selected+=("$d"); continue
+            fi
+            match=false
+            for rt in $requested; do
+              for t in $tags; do
+                if [ "$rt" = "$t" ]; then match=true; fi
+              done
+            done
+            [ "$match" = true ] && selected+=("$d")
+          done
+          if [ "${#selected[@]}" -gt 0 ]; then
+            tests_json="$(printf '%s\n' "${selected[@]}" | jq -R -s -c 'split("\n") | map(select(. != ""))')"
+          else
+            tests_json="[]"
+          fi
+          echo "tests=$tests_json" >> "$GITHUB_OUTPUT"
+          echo "Discovered private sandbox tests: $tests_json (requested tags: '${REQUESTED_TAGS:-<all>}')"
+
+      - name: Resolve backend image
+        id: backend
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BACKEND_IMAGE_INPUT:-}" ]; then
+            echo "image_url=${BACKEND_IMAGE_INPUT}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "image_url=${IMAGE_REPO}:sandbox-private-$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image when none provided
+        if: env.BACKEND_IMAGE_INPUT == ''
+        env:
+          IMAGE_URL: ${{ steps.backend.outputs.image_url }}
+        run: |
+          set -euo pipefail
+          CACHE_REF="${IMAGE_REPO}:buildcache-full"
+          docker buildx build --target prod-alpine \
+            --build-arg INTEGRATION_PROFILE=full \
+            --cache-from "type=registry,ref=${CACHE_REF}" \
+            --cache-to "type=registry,ref=${CACHE_REF},mode=max" \
+            --push \
+            -t "$IMAGE_URL" .
+
+      - name: Resolve sandbox image
+        id: sandbox
+        run: |
+          set -euo pipefail
+          if [ -n "${SANDBOX_IMAGE_INPUT:-}" ]; then
+            echo "image_url=${SANDBOX_IMAGE_INPUT}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          HASH="$(find clients/integrations/docker_sandbox_integration/sandboxes/coding -type f \
+            -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)"
+          image="${IMAGE_REPO}:sandbox-${HASH}"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "image_url=${image}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_url=${IMAGE_REPO}:sandbox-latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  ensure-lw-image:
+    name: Ensure Little World Image
+    runs-on: ubuntu-latest
+    needs: discover
+    if: needs.discover.outputs.tests != '[]'
+    outputs:
+      image_url: ${{ steps.image.outputs.image_url }}
+    env:
+      GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      LW_REF: ${{ github.event.inputs.lw_ref || 'main' }}
+      IMAGE_REPO: ghcr.io/msgmate-io/open-chat-go
+    steps:
+      - name: Checkout CI repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          path: ci
+
+      - name: Ensure Little World image
+        id: image
+        run: |
+          set -euo pipefail
+          if ! printf '%s' '${{ needs.discover.outputs.tests }}' | grep -q 'lw_'; then
+            echo "No Little World test selected; skipping the LW image build."
+            echo "image_url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          rm -rf lw
+          git clone --depth 1 --branch "$LW_REF" \
+            "https://x-access-token:${GH_TOKEN}@github.com/a-little-world/little-world-backend.git" lw
+          DOCKERFILE="ci/sandbox_tests/lib/lw/Dockerfile.lw"
+          HASH="$(cat "$DOCKERFILE" lw/back/requirements.txt lw/back/requirements.dev.txt | sha256sum | cut -c1-12)"
+          image="${IMAGE_REPO}:lw-sandbox-${HASH}"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "Little World image ${image} already present; reusing."
+            echo "image_url=${image}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Building Little World image ${image} (content hash ${HASH})..."
+          docker build -f "$DOCKERFILE" -t "$image" lw
+          docker push "$image"
+          echo "image_url=${image}" >> "$GITHUB_OUTPUT"
+
+  run-tests:
+    name: Private Test ${{ matrix.test }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: [discover, ensure-lw-image]
+    if: needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]'
+    # Bounded parallelism. The default `lw` request expands to 20+ tests
+    # (lw + msgmate_coder); running them all at once had each
+    # GitHub-hosted runner start a backend + redis + coding sandbox + Little
+    # World stack + (for some tests) an in-container k3s, and every job's
+    # parallel model interactions hit the same shared proxy. That over-subscribed
+    # both the runner fleet and the LLM host. A repo variable tunes the cap
+    # (SANDBOX_MAX_PARALLEL); 6 keeps the fleet busy without saturating the
+    # shared model proxy. See the resource budget in sandbox_tests/README.md.
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(vars.SANDBOX_MAX_PARALLEL || '6') }}
+      matrix:
+        test: ${{ fromJson(needs.discover.outputs.tests) }}
+    env:
+      BACKEND_IMAGE: ${{ needs.discover.outputs.backend_image }}
+      SANDBOX_IMAGE_URL: ${{ needs.discover.outputs.sandbox_image }}
+      LW_BACKEND_IMAGE: ${{ needs.ensure-lw-image.outputs.image_url }}
+      SANDBOX_WORKSPACE_HOST_PATH: ${{ github.workspace }}/.sandbox-scratch
+      SANDBOX_RESULTS_DIR: ${{ github.workspace }}/.sandbox-results
+      SANDBOX_INTERACTION_TIMEOUT: ${{ github.event.inputs.sandbox_interaction_timeout || '900' }}
+      SANDBOX_TEST_TIMEOUT: ${{ github.event.inputs.sandbox_test_timeout || '1800' }}
+      SANDBOX_OPENCODE_PROVIDER: ${{ github.event.inputs.opencode_provider || vars.SANDBOX_OPENCODE_PROVIDER || 'openrouter' }}
+      SANDBOX_OPENCODE_MODEL: ${{ github.event.inputs.opencode_model || vars.SANDBOX_OPENCODE_MODEL || 'deepseek/deepseek-v4-flash-0731' }}
+      # The native-coder benchmark bots ship a DeepInfra provider in their test
+      # configs. Retarget only those bots to the OpenRouter provider (and the
+      # DeepSeek V4.1 Flash model the fleet uses) so the private suite exercises
+      # the same model path as production; openrouter/other bots are untouched.
+      SANDBOX_INTERACTION_BACKEND: openrouter
+      SANDBOX_INTERACTION_MODEL: ${{ github.event.inputs.opencode_model || vars.SANDBOX_OPENCODE_MODEL || 'deepseek/deepseek-v4-flash-0731' }}
+      SANDBOX_INTERACTION_REPLACE_BACKEND: deepinfra
+      LW_REF: ${{ github.event.inputs.lw_ref || 'main' }}
+      LITELLM_API_HOST: ${{ secrets.AI_TEST_API_HOST }}
+      LITELLM_API_KEY: ${{ secrets.AI_TEST_API_KEY }}
+      DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY || secrets.AI_TEST_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.SANDBOX_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY || secrets.AI_TEST_API_KEY }}
+      IONOS_API_KEY: ${{ secrets.IONOS_API_KEY || secrets.AI_TEST_API_KEY }}
+      OPENCODE_PERMISSION_MODE: auto
+      SANDBOX_GH_TOKEN: ${{ secrets.SANDBOX_GH_TOKEN || secrets.BOT_TOKEN || github.token }}
+      SANDBOX_GH_PR_REPO: ${{ github.event.inputs.source_repo || 'msgmate-io/open-chat-go' }}
+      SANDBOX_GH_PR_NUMBER: ${{ github.event.inputs.pr_number || '' }}
+      GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+      # Per-service resource budget for this job's stack. Empty values fall
+      # back to the compose defaults (docker-compose.sandbox.yaml /
+      # docker-compose.sandbox-overlay.yaml / lib/lw/docker-compose.lw.yaml).
+      # Tune per deployment with repo variables (see the resource budget in
+      # sandbox_tests/README.md).
+      BACKEND_CPUS: ${{ vars.SANDBOX_BACKEND_CPUS || '' }}
+      BACKEND_MEM_LIMIT: ${{ vars.SANDBOX_BACKEND_MEM_LIMIT || '' }}
+      REDIS_CPUS: ${{ vars.SANDBOX_REDIS_CPUS || '' }}
+      REDIS_MEM_LIMIT: ${{ vars.SANDBOX_REDIS_MEM_LIMIT || '' }}
+      SANDBOX_CPUS: ${{ vars.SANDBOX_CODER_CPUS || '' }}
+      SANDBOX_MEM_LIMIT: ${{ vars.SANDBOX_CODER_MEM_LIMIT || '' }}
+      LW_BACKEND_CPUS: ${{ vars.SANDBOX_LW_CPUS || '' }}
+      LW_BACKEND_MEM_LIMIT: ${{ vars.SANDBOX_LW_MEM_LIMIT || '' }}
+      REAP_STRICT: "true"
+    steps:
+      - name: Checkout open-chat-go
+        uses: actions/checkout@v4
+        with:
+          repository: msgmate-io/open-chat-go
+          ref: ${{ github.event.inputs.target_ref || 'main' }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Materialize profile (full-ci)
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${{ secrets.BOT_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
+          BUILD_TOOLS="$(bash "${GITHUB_WORKSPACE}/development/scripts/build_tools.sh")"
+          "$BUILD_TOOLS" sync --frozen --profile full-ci
+          if [ -d development/ci/.git ]; then
+            git -C development/ci fetch --depth 1 origin "${GITHUB_SHA}" && git -C development/ci checkout --detach FETCH_HEAD || true
+          fi
+
+      - name: Login to GHCR for image pulls
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BOT_TOKEN || github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Run private sandbox test ${{ matrix.test }}
+        id: test
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          # The native coder is driven by a stochastic model, so a single test
+          # can miss on model variance (a refusal, a different-but-valid tool
+          # choice, a stray framing sentence) without any regression. Retry a
+          # failed test once; run_test.sh's EXIT trap tears the stack down between
+          # attempts, so each attempt starts clean and independent.
+          #
+          # ci#803: a retry must not multiply the limit. Cap the whole test
+          # (every attempt) with SANDBOX_TEST_TIMEOUT and give each attempt only
+          # the remaining budget, so a hanging test cannot occupy a runner for
+          # two full per-attempt windows.
+          test_timeout="${SANDBOX_TEST_TIMEOUT:-1800}"
+          case "$test_timeout" in
+            ''|*[!0-9]*)
+              echo "::error::SANDBOX_TEST_TIMEOUT must be a positive integer in seconds (got '${test_timeout}')"
+              exit 1
+              ;;
+          esac
+          deadline=$(( $(date +%s) + test_timeout ))
+          max_attempts=2
+          attempt=1
+          while :; do
+            remaining=$(( deadline - $(date +%s) ))
+            if [ "$remaining" -le 30 ]; then
+              echo "::error::sandbox test '${{ matrix.test }}' exceeded its ${test_timeout}s total limit (ci#803)"
+              exit 1
+            fi
+            attempt_timeout="$remaining"
+            [ "$attempt_timeout" -gt 1560 ] && attempt_timeout=1560
+            echo "::group::sandbox test ${{ matrix.test }} - attempt ${attempt}/${max_attempts} (budget ${attempt_timeout}s of ${remaining}s remaining)"
+            rc=0
+            if timeout --foreground --kill-after=30 "$attempt_timeout" \
+                 bash development/ci/sandbox_tests/lib/run_test.sh "${{ matrix.test }}"; then
+              echo "::endgroup::"
+              exit 0
+            else
+              rc=$?
+            fi
+            echo "::endgroup::"
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              # ci#479: a provider-side failure (drained balance, outage) is not a
+              # coder regression. Reuse the sourceable classifier shipped by
+              # open-chat-go (checked out at ${GITHUB_WORKSPACE}).
+              cls=""
+              if [ -f "$GITHUB_WORKSPACE/development/scripts/sandbox_provider_failure.sh" ]; then
+                . "$GITHUB_WORKSPACE/development/scripts/sandbox_provider_failure.sh"
+                cls="$(sandbox_provider_failure_class "${SANDBOX_RESULTS_DIR:-}" 2>/dev/null || true)"
+              fi
+              if [ -n "$cls" ]; then
+                sed -i "1s/\t[^\t]*\t/\tprovider_${cls}\t/" "${SANDBOX_RESULTS_DIR:-}/${{ matrix.test }}.tsv" || true
+                echo "::error title=Provider ${cls}::sandbox test '${{ matrix.test }}' failed on provider infrastructure (${cls}), not a coder regression (ci#479)."
+                exit "$rc"
+              fi
+              echo "::error::sandbox test '${{ matrix.test }}' failed after ${attempt} attempt(s)."
+              exit "$rc"
+            fi
+            echo "::warning::sandbox test '${{ matrix.test }}' failed on attempt ${attempt} (model variance); retrying."
+            attempt=$(( attempt + 1 ))
+          done
+
+      - name: Upload private test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-sandbox-result-${{ matrix.test }}
+          path: |
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.tsv
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.out
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.backend-logs.txt
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.run_config.json
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.interaction.json
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.verify.txt
+            ${{ github.workspace }}/.sandbox-results/${{ matrix.test }}.lw-*.log
+            ${{ github.workspace }}/.sandbox-results/*.last_bot.json
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      - name: Reap sandbox-test resources
+        # Always runs: the test step is wrapped in `timeout --kill-after`, so a
+        # wedged test can be SIGKILLed before its own EXIT trap fires. This is
+        # the independent backstop and fails the job loudly if it cannot
+        # reclaim every container/volume, so leaks surface instead of quietly
+        # overloading the runner CPU. It runs after the artifact upload so
+        # results are always preserved.
+        if: always()
+        env:
+          REAP_STRICT: "true"
+        run: |
+          set -euo pipefail
+          reaper="development/ci/sandbox_tests/lib/reap_ci_resources.sh"
+          if [ -f "$reaper" ]; then
+            bash "$reaper"
+          else
+            # The materialized development/ci checkout can be an older pin than
+            # this workflow commit; fall back to an inline reap so cleanup is
+            # never skipped.
+            echo "::warning::$reaper not present in this checkout; running inline fallback reap"
+            docker rm -f $(docker ps -aq --filter "name=open-chat-sandbox-") dev-sandbox 2>/dev/null || true
+            docker volume prune -f || true
+          fi
+
+  report:
+    name: Publish Private Report
+    runs-on: ubuntu-latest
+    needs: [discover, run-tests]
+    if: ${{ always() && needs.discover.outputs.tests != '' && needs.discover.outputs.tests != '[]' }}
+    outputs:
+      report_url: ${{ steps.publish.outputs.report_url }}
+    steps:
+      - name: Checkout CI repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ secrets.BOT_TOKEN || github.token }}
+          path: ci-repo
+          fetch-depth: 0
+
+      - name: Download private test results
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ github.workspace }}/private-results
+          pattern: private-sandbox-result-*
+
+      - name: Build report
+        run: |
+          set -euo pipefail
+          results_dir="${{ github.workspace }}/private-results"
+          report_id="${PR_NUMBER:+pr-${PR_NUMBER}-}${SOURCE_SHA:-$(date -u +%Y%m%d%H%M%S)}-${GITHUB_RUN_ID}"
+          # Build the report OUTSIDE the ci-repo checkout: the publish step
+          # switches ci-repo to the results branch, and a file inside that
+          # checkout would collide with the destination (same file).
+          report_dir="${{ github.workspace }}/.private-report"
+          mkdir -p "$report_dir"
+          report_file="$report_dir/${report_id}.md"
+
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          {
+            echo "# Private Sandbox Tests — ${report_id}"
+            echo
+            echo "- Run: [${GITHUB_RUN_ID}](${run_url})"
+            echo "- Backend image: \`${{ needs.discover.outputs.backend_image }}\`"
+            echo "- Sandbox image: \`${{ needs.discover.outputs.sandbox_image }}\`"
+            echo "- Provider/model: \`${OPENCODE_PROVIDER}/${OPENCODE_MODEL}\`"
+            if [ -n "${PR_NUMBER:-}" ]; then
+              echo "- Source PR: [${SOURCE_REPO}#${PR_NUMBER}](https://github.com/${SOURCE_REPO}/pull/${PR_NUMBER})"
+            fi
+            echo
+            echo "| Test | Status | Runtime | Provider/Model | Tokens | Detail |"
+            echo "|---|---|---|---|---|---|"
+          } > "$report_file"
+
+          found_any=false
+          for f in $(find "$results_dir" -name '*.tsv' 2>/dev/null | sort); do
+            found_any=true
+            name="$(cut -f1 "$f")"
+            status="$(cut -f2 "$f")"
+            detail="$(cut -f3 "$f" | tr -d '\t\r\n' | head -c 120)"
+            runtime="$(cut -f4 "$f" | tr -d '\t\r\n')"
+            model="$(cut -f5 "$f" | tr -d '\t\r\n')"
+            tokens="$(cut -f6 "$f" | tr -d '\t\r\n')"
+            [ -n "$runtime" ] || runtime="-"
+            [ -n "$model" ] || model="-"
+            [ -n "$tokens" ] || tokens="-"
+            if [ "$status" = "passed" ]; then badge="✅ passed"; else badge="❌ ${status}"; fi
+            # shellcheck disable=SC2016
+            printf '| `%s` | %s | %s | %s | %s | %s |\n' \
+              "$name" "$badge" "$runtime" "$model" "$tokens" "$detail" >> "$report_file"
+          done
+          if [ "$found_any" = false ]; then
+            echo "| _(no results)_ | - | - | - | - | run produced no TSV output |" >> "$report_file"
+          fi
+
+          echo "report_file=$report_file" >> "$GITHUB_OUTPUT"
+          echo "report_id=$report_id" >> "$GITHUB_OUTPUT"
+        id: build_report
+
+      - name: Publish report to the results branch
+        id: publish
+        run: |
+          set -euo pipefail
+          cd ci-repo
+          git config user.name "open-chat-ci-bot"
+          git config user.email "cur1ousdude@users.noreply.github.com"
+          git fetch origin "$RESULTS_BRANCH" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/$RESULTS_BRANCH"; then
+            git checkout -B "$RESULTS_BRANCH" "origin/$RESULTS_BRANCH"
+          else
+            git checkout -B "$RESULTS_BRANCH"
+          fi
+          # Copy the report (built outside the checkout) into the branch.
+          mkdir -p sandbox_tests/results
+          cp "${{ steps.build_report.outputs.report_file }}" \
+            "sandbox_tests/results/$(basename "${{ steps.build_report.outputs.report_file }}")"
+          git add "sandbox_tests/results"
+          if git diff --cached --quiet; then
+            echo "No report changes to publish."
+          else
+            git commit -m "ci(sandbox): private results ${{ steps.build_report.outputs.report_id }}"
+            git push origin "HEAD:$RESULTS_BRANCH"
+          fi
+          report_path="sandbox_tests/results/$(basename "${{ steps.build_report.outputs.report_file }}")"
+          report_url="https://github.com/${GITHUB_REPOSITORY}/blob/${RESULTS_BRANCH}/${report_path}"
+          echo "report_url=${report_url}" >> "$GITHUB_OUTPUT"
+          echo "Private report: ${report_url}"
+
+      - name: Set commit status on the source PR head
+        # ci#683: the suite must NOT set a commit status on a source PR head.
+        # The `private-sandbox-tests` context is not required by the `main`
+        # ruleset (which requires exactly `Run PR CI Tests and Deployments`),
+        # but GitHub derives `mergeable_state: blocked` — and therefore
+        # `gh pr merge`'s "the base branch policy prohibits the merge" preflight
+        # — from *any* non-success commit status on the head. A failing private
+        # suite therefore blocked the agents' merge path on PRs the ruleset
+        # considers mergeable (the r25 consolidation PR #700 incident), even
+        # though the identical REST merge succeeded.
+        #
+        # The result stays private and visible through the report branch plus the
+        # link comment below; a *main* run (the nightly schedule or a merge
+        # dispatch) still records a status, because there it is a genuine
+        # pipeline signal and never blocks a PR merge.
+        if: ${{ needs.discover.outputs.tests != '[]' && env.SOURCE_SHA != '' && env.PR_NUMBER == '' }}
+        env:
+          REPORT_URL: ${{ steps.publish.outputs.report_url }}
+          STATUS_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          RUN_RESULT: ${{ needs.run-tests.result }}
+        run: |
+          set -euo pipefail
+          if [ "$RUN_RESULT" = "success" ]; then state="success"; else state="failure"; fi
+          payload="$(jq -n \
+            --arg state "$state" \
+            --arg context "private-sandbox-tests" \
+            --arg description "Private sandbox report" \
+            --arg target_url "$REPORT_URL" \
+            '{state: $state, context: $context, description: $description, target_url: $target_url}')"
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${STATUS_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPO}/statuses/${SOURCE_SHA}" \
+            -d "$payload" >/dev/null
+          echo "Set status ${state} on ${SOURCE_REPO}@${SOURCE_SHA}."
+
+      - name: Post/update the PR link comment
+        if: ${{ needs.discover.outputs.tests != '[]' && env.PR_NUMBER != '' }}
+        env:
+          REPORT_URL: ${{ steps.publish.outputs.report_url }}
+          COMMENT_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          RUN_RESULT: ${{ needs.run-tests.result }}
+        run: |
+          set -euo pipefail
+          if [ "$RUN_RESULT" = "success" ]; then verdict="✅ passed"; else verdict="❌ failed"; fi
+          body="$(cat <<EOF
+          <!-- open-chat-private-sandbox -->
+          **Private sandbox tests** (extended suite, ${verdict}) — results are kept in the private CI repository:
+          [open private report](${REPORT_URL})
+          EOF
+          )"
+          payload="$(jq -n --arg body "$body" '{body: $body}')"
+          comments_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments")"
+          comment_id="$(jq -r --arg bot_user "$BOT_USER" '[.[] | select(.user.login == $bot_user and (.body | contains("<!-- open-chat-private-sandbox -->")))][0].id // ""' <<< "$comments_json")"
+          if [ -n "$comment_id" ]; then
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/comments/${comment_id}" \
+              -d "$payload" >/dev/null
+          else
+            curl -fsSL -X POST \
+              -H "Authorization: Bearer ${COMMENT_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${SOURCE_REPO}/issues/${PR_NUMBER}/comments" \
+              -d "$payload" >/dev/null
+          fi
+          echo "Posted private sandbox link comment on ${SOURCE_REPO}#${PR_NUMBER}."
+
+      - name: Coder sandbox regression guard (ci#479)
+        # Automated guard: a failing `tags=coder` run on `main` (merge dispatch
+        # or the nightly schedule) opens/updates ONE tracking issue with the
+        # failing tests, run link and assertion excerpts; a later passing run
+        # annotates and closes it. While only the known #477 MCP/hive-mind tests
+        # are red the guard stays quiet on #477 and does NOT open its own issue.
+        if: ${{ always() && needs.discover.outputs.tests != '[]' }}
+        env:
+          GH_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+          RUN_RESULT: ${{ needs.run-tests.result }}
+          GUARD_MARKER: "<!-- open-chat-coder-sandbox-regression -->"
+          BASELINE_MARKER: "<!-- open-chat-coder-sandbox-baseline -->"
+          BASELINE_ISSUE: "477"
+          BASELINE_TESTS: "msgmate_coder_openchat_mcp,msgmate_coder_hive_mind"
+          SOURCE_SHA: ${{ github.event.inputs.source_sha || '' }}
+        run: |
+          set -euo pipefail
+          # Only track `main`: PR dispatches carry a pr_number, scheduled and
+          # manual main dispatches do not.
+          if [ "${GITHUB_EVENT_NAME}" != "schedule" ] && [ -n "${PR_NUMBER:-}" ]; then
+            echo "Not a main run (pr_number='${PR_NUMBER:-}'); skipping the coder sandbox regression guard."
+            exit 0
+          fi
+
+          results_dir="${{ github.workspace }}/private-results"
+          work="$RUNNER_TEMP/coder-regression"
+          mkdir -p "$work"
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          target_ref="${TARGET_REF:-main}"
+          source_sha="${SOURCE_SHA:-$(gh api "repos/msgmate-io/open-chat-go/commits/${target_ref}" --jq .sha 2>/dev/null || true)}"
+          [ -n "$source_sha" ] || source_sha="$target_ref"
+
+          total=0
+          failing=""
+          unexpected=""
+          provider_failing=0
+          failing_rows=""
+          declare -A excerpt_for=()
+          while IFS= read -r tsv; do
+            [ -n "$tsv" ] || continue
+            total=$(( total + 1 ))
+            name="$(cut -f1 "$tsv")"
+            status="$(cut -f2 "$tsv")"
+            detail="$(cut -f3 "$tsv" | tr '\t\r\n' '   ' | head -c 200)"
+            [ "$status" = "passed" ] && continue
+            case "$status" in
+              provider_*) provider_failing=$(( provider_failing + 1 )); continue ;;
+            esac
+            failing="${failing}${name}"$'\n'
+            failing_rows="${failing_rows}${name}"$'\t'"${status}"$'\t'"${detail}"$'\n'
+            known=false
+            for k in ${BASELINE_TESTS//,/ }; do
+              if [ "$name" = "$k" ]; then known=true; fi
+            done
+            [ "$known" = true ] || unexpected="${unexpected}${name}"$'\n'
+            vlog="$(dirname "$tsv")/${name}.verify.txt"
+            excerpt=""
+            if [ -f "$vlog" ]; then
+              excerpt="$(grep -E '✗|\[verify\].*(fail|missing|not )|::error::' "$vlog" 2>/dev/null | head -n 8 | sed 's/^[[:space:]]*//' | cut -c1-400 || true)"
+            fi
+            [ -n "$excerpt" ] || excerpt="- ${detail}"
+            excerpt_for[$name]="$excerpt"
+          done < <(find "$results_dir" -name '*.tsv' 2>/dev/null | sort)
+
+          if [ "$total" -eq 0 ]; then
+            echo "::warning::No private sandbox result TSVs were produced; cannot evaluate the coder regression guard this run (top-level run result: ${RUN_RESULT:-unknown})."
+            echo "- Coder sandbox regression guard: no result TSVs produced (run result: ${RUN_RESULT:-unknown}); nothing to evaluate." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # -- shared failing-detail body -------------------------------------
+          {
+            echo "Automated coder sandbox assessment (ci#479)."
+            echo
+            echo "- Run: [${GITHUB_RUN_ID}](${run_url})"
+            echo "- Source ref: \`${target_ref}\` @ \`${source_sha}\`"
+            echo "- Backend image: \`${{ needs.discover.outputs.backend_image }}\`"
+            echo "- Sandbox image: \`${{ needs.discover.outputs.sandbox_image }}\`"
+            echo
+            echo "### Failing tests"
+            echo
+            echo "| Test | Status | Detail |"
+            echo "|---|---|---|"
+            while IFS=$'\t' read -r n s d; do
+              [ -n "$n" ] || continue
+              echo "| \`$n\` | \`$s\` | $(printf '%s' "$d" | sed 's/|/\\|/g') |"
+            done <<< "$failing_rows"
+            echo
+            echo "### Failed assertions"
+            echo
+            while IFS= read -r n; do
+              [ -n "$n" ] || continue
+              echo "<details><summary><code>$n</code></summary>"
+              echo
+              echo '```'
+              printf '%s\n' "${excerpt_for[$n]:-}"
+              echo '```'
+              echo "</details>"
+              echo
+            done <<< "$failing"
+          } > "$work/failing-body.md"
+
+          # -- provider infrastructure only -----------------------------------
+          # ci#479: when every non-passing test was classified as provider
+          # infrastructure the run verified no coder code at all, so the guard
+          # must not claim a recovery (and close the tracker) for it. Leave the
+          # tracker untouched and report the provider-side block instead.
+          if [ -z "$failing" ] && [ "${provider_failing:-0}" -gt 0 ]; then
+            echo "::warning::${provider_failing} coder sandbox test(s) failed on provider infrastructure; not touching the coder regression tracker."
+            {
+              echo "- Coder sandbox regression guard: WARN - ${provider_failing} test(s) failed on provider infrastructure (no coder code verified); tracker left unchanged."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # -- recovery -------------------------------------------------------
+          if [ -z "$failing" ]; then
+            # ci#562: select by label *and* marker. Selecting the first issue
+            # that merely carries the label let this guard adopt (and overwrite)
+            # a readiness-gate ticket that had been mislabelled with it.
+            guard_issue="$(gh issue list --repo "$GITHUB_REPOSITORY" --label coder-sandbox-regression --state open --limit 30 \
+              --json number,body --jq "[.[] | select(.body | contains(\"$GUARD_MARKER\"))][0].number // \"\"" 2>/dev/null || true)"
+            if [ -n "$guard_issue" ]; then
+              {
+                echo "✅ **Recovered.** The ${total} coder sandbox test(s) passed on \`main\` in [run ${GITHUB_RUN_ID}](${run_url}) (\`${source_sha}\`). Closing this tracking issue."
+              } > "$work/recovery.md"
+              gh issue comment "$guard_issue" --repo "$GITHUB_REPOSITORY" --body-file "$work/recovery.md" >/dev/null
+              gh issue close "$guard_issue" --repo "$GITHUB_REPOSITORY" --reason completed >/dev/null 2>&1 || true
+              echo "Recovered on main: closed coder-sandbox-regression issue #${guard_issue}."
+              echo "- Coder sandbox regression guard: ✅ recovered (${total} passed); closed #${guard_issue}." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Recovered on main: no open coder-sandbox-regression issue to close."
+              echo "- Coder sandbox regression guard: ✅ all ${total} coder sandbox tests passed." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          # -- only the known #477 baseline is red ----------------------------
+          if [ -z "$unexpected" ]; then
+            {
+              echo "$BASELINE_MARKER"
+              echo "⚠️ **Coder sandbox capability still red on \`main\`** — only the known baseline tracked by #${BASELINE_ISSUE} failed; no new/unexpected failures."
+              echo
+              cat "$work/failing-body.md"
+            } > "$work/baseline.md"
+            if [ -n "${BASELINE_ISSUE:-}" ]; then
+              comments="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${BASELINE_ISSUE}/comments?per_page=100" 2>/dev/null || echo '[]')"
+              comment_id="$(jq -r --arg m "$BASELINE_MARKER" '[.[] | select(.body | contains($m))][0].id // ""' <<< "$comments")"
+              if [ -n "$comment_id" ]; then
+                gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -F "body=@$work/baseline.md" >/dev/null
+              else
+                gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${BASELINE_ISSUE}/comments" -F "body=@$work/baseline.md" >/dev/null
+              fi
+              echo "Updated the known-baseline status comment on #${BASELINE_ISSUE}."
+              echo "- Coder sandbox regression guard: known #${BASELINE_ISSUE} failures only; no new tracking issue." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          # -- unexpected failure: open/update the single guard issue ---------
+          gh label create coder-sandbox-regression --repo "$GITHUB_REPOSITORY" \
+            --color "b60205" --description "Automated native coder sandbox regression (ci#479)" --force >/dev/null 2>&1 || true
+          gh label create automated --repo "$GITHUB_REPOSITORY" \
+            --color "ededed" --description "Filed automatically by CI" --force >/dev/null 2>&1 || true
+          {
+            echo "$GUARD_MARKER"
+            echo "# Coder sandbox regression on main (ci#479)"
+            echo
+            echo "The private \`tags=coder\` sandbox suite failed on \`main\` with **unexpected** failures (outside the known #${BASELINE_ISSUE} MCP/hive-mind baseline). This single issue is updated in place on every failing \`main\` run and closed automatically when a later run passes."
+            echo
+            echo "### Unexpected failures"
+            echo
+            while IFS= read -r n; do
+              [ -n "$n" ] || continue
+              echo "- \`$n\`"
+            done <<< "$unexpected"
+            echo
+            cat "$work/failing-body.md"
+            echo
+            echo "Related: #${BASELINE_ISSUE} (known MCP/hive-mind baseline)."
+          } > "$work/guard-body.md"
+          # ci#562: label *and* marker, never label alone.
+          guard_issue="$(gh issue list --repo "$GITHUB_REPOSITORY" --label coder-sandbox-regression --state open --limit 30 \
+            --json number,body --jq "[.[] | select(.body | contains(\"$GUARD_MARKER\"))][0].number // \"\"" 2>/dev/null || true)"
+          if [ -n "$guard_issue" ]; then
+            gh issue edit "$guard_issue" --repo "$GITHUB_REPOSITORY" --body-file "$work/guard-body.md" >/dev/null
+            echo "Updated coder sandbox regression issue #${guard_issue}."
+            echo "- Coder sandbox regression guard: ❌ unexpected failures; updated #${guard_issue}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            new_url="$(gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "[test] Coder sandbox regression on main (tags=coder)" \
+              --body-file "$work/guard-body.md" \
+              --label bug --label coder-sandbox-regression --label automated)"
+            echo "Opened coder sandbox regression issue: ${new_url}"
+            echo "- Coder sandbox regression guard: ❌ unexpected failures; opened ${new_url}." >> "$GITHUB_STEP_SUMMARY"
+          fi
