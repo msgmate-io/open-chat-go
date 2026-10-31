@@ -902,6 +902,10 @@ jobs:
           if [ -d "$CACHE_DIR/.integrations" ]; then
             cp -a "$CACHE_DIR/.integrations/." .integrations/
           fi
+          # A restore-keys hit can carry read-only git objects (the cache is
+          # restored with its stored mode); make them writable so `sync
+          # --frozen` can validate/checkout over them.
+          chmod -R u+w clients/integrations .integrations 2>/dev/null || true
 
       - name: Materialize full integrations
         run: |
@@ -915,6 +919,11 @@ jobs:
         run: |
           set -euo pipefail
           CACHE_DIR="$RUNNER_TEMP/openchat-integrations"
+          # A restore-keys hit may have populated CACHE_DIR from an older lock
+          # hash with read-only files; `cp -a` over those fails with EACCES.
+          # Clear the destinations first so staging always writes the freshly
+          # materialized checkouts.
+          rm -rf "$CACHE_DIR/clients/integrations" "$CACHE_DIR/.integrations"
           mkdir -p "$CACHE_DIR/clients/integrations" "$CACHE_DIR/.integrations"
           if [ -d clients/integrations ]; then
             cp -a clients/integrations/. "$CACHE_DIR/clients/integrations/"

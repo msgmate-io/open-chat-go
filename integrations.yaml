@@ -42,8 +42,30 @@ profiles:
     - mcp
     - rest_api_tool
     - go_client
+  # The public coding profile: the thin Community Coder integration plus the
+  # base integrations the core itself imports. It shares the coder turn
+  # hooks/policy with the private `msgmate_coder` integration through the public
+  # `coder` library, and is never built together with it (they share the
+  # `coder_*` Go tool names); the private `full`/`default` profiles exclude it
+  # via `!community_coder`.
+  community-coder:
+    - mcp
+    - rest_api_tool
+    - go_client
+    - community_coder
 
 integrations:
+  community_coder:
+    module: github.com/msgmate-io/open-chat-go-community-coder-integration
+    import: github.com/msgmate-io/open-chat-go-community-coder-integration/integration
+    source: git
+    repo: https://github.com/msgmate-io/open-chat-go-community-coder-integration
+    ref: main
+    path: clients/integrations/community_coder_integration
+    private: false
+    frontend:
+      name: community_coder
+
   mcp:
     module: github.com/msgmate-io/mcp-integration
     import: github.com/msgmate-io/mcp-integration

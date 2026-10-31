@@ -589,12 +589,9 @@ func (aih *AIHandlerImpl) GenerateResponse(ctx context.Context, message wsapi.Ne
 	// own system prompt and tool set; the core keeps ownership of the loop.
 	agentSpec, hasAgentSpec := agentTurnSpecFromContext(ctx)
 	if hasAgentSpec && strings.TrimSpace(agentSpec.SystemPrompt) != "" {
+		// The integration owns the coder system prompt (workspace-root and
+		// typed-first guidance) and supplies it through the Agent spec.
 		systemPrompt = agentSpec.SystemPrompt
-	} else {
-		// ci#819 part A (prompt half): a native coder is told the workspace root
-		// up front, so it stops rediscovering it with a `cd` prefix on every
-		// `coder_bash` call. Non-coder configs are untouched.
-		systemPrompt = coderWorkspaceSystemPrompt(systemPrompt, configMap)
 	}
 	if hasAgentSpec && len(agentSpec.Tools) > 0 {
 		tools = append([]string(nil), agentSpec.Tools...)
