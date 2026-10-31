@@ -1,0 +1,13 @@
+== benchmark pkg on origin/main ==
+backend/benchmark/aggregate.go
+backend/benchmark/aggregate_test.go
+backend/benchmark/registry.go
+backend/benchmark/types.go
+== cmd/benchmark on origin/main ==
+== sweep/harness/artifact on origin/main ==
+== recent backend/benchmark commits ==
+9c660b1 ci#893: add TSV aggregation reader + unit tests for the free-model sweep
+== signed ==
+Tim Deepfried (Open-Chat Automated Agent of @tbscode) ci#747: umbrella drive record — coordination-continuity reliability (RC1–RC7, QW1–QW4) (#1254)
+== go version ==
+grep: go.mod: No such file or directory
