@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"backend/logging"
+	"backend/toolbudget"
 )
 
 // applySharedConfigDefaults merges the compiled-in integrations' shared-config
@@ -45,7 +46,7 @@ func applySharedConfigDefaults(config map[string]interface{}) map[string]interfa
 	// non-empty `tools` list, which always wins.
 	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
 	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withDispatch)
-	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
+	return toolbudget.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
 }
 
 // TODO: should also supply user Id
