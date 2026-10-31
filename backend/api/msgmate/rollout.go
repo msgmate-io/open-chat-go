@@ -1,11 +1,10 @@
-package nativecoder
+package msgmate
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
-
-	"backend/runtimecfg"
 )
 
 // rollout.go is the machine-checked registry of the native-bot migration of
@@ -170,7 +169,7 @@ func NativeBotStageByName(name string) (NativeBotStage, bool) {
 // empty or unknown value closes every window.
 func NativeBotRollbackStages() map[string]bool {
 	open := map[string]bool{}
-	raw := strings.TrimSpace(runtimecfg.GetAll()[NativeBotRollbackWindowEnvKey].Value)
+	raw := strings.TrimSpace(os.Getenv(NativeBotRollbackWindowEnvKey))
 	if raw == "" {
 		return open
 	}
