@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"backend/nativecoder"
+	"backend/toolbudget"
 )
 
 // ci709CapServer answers every provider request with one tool call for toolName
@@ -42,10 +42,10 @@ func TestToolCallCapEndsTurnWithResolvedTextAndStructuredCounters(t *testing.T) 
 	toolMap := map[string]Tool{"coder_read": tool}
 	server := ci709CapServer(t, "coder_read")
 
-	budget := nativecoder.ToolCallBudget{
+	budget := toolbudget.ToolCallBudget{
 		MaxTotal:          4,
 		MaxFailed:         3,
-		Source:            nativecoder.ToolCallBudgetSourceChatSnapshot,
+		Source:            toolbudget.ToolCallBudgetSourceChatSnapshot,
 		SnapshotMaxTotal:  4,
 		SnapshotMaxFailed: 3,
 	}
@@ -120,7 +120,7 @@ func TestToolCallCapEndsTurnWithResolvedTextAndStructuredCounters(t *testing.T) 
 		t.Fatalf("expected the total budget to be reported exhausted, got %#v", usageMetadata)
 	}
 	budgetMetadata := outcome.Budget.Metadata()
-	if budgetMetadata["max_total"] != 4 || budgetMetadata["source"] != nativecoder.ToolCallBudgetSourceChatSnapshot {
+	if budgetMetadata["max_total"] != 4 || budgetMetadata["source"] != toolbudget.ToolCallBudgetSourceChatSnapshot {
 		t.Fatalf("expected the resolved budget (with its source) in metadata, got %#v", budgetMetadata)
 	}
 	if budgetMetadata["snapshot_max_total"] != 4 {

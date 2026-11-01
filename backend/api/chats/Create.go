@@ -3,7 +3,6 @@ package chats
 import (
 	"backend/chatstate"
 	"backend/database"
-	"backend/nativecoder"
 	"backend/server/util"
 	"backend/sharecensor"
 	"backend/workqueue"
@@ -16,7 +15,9 @@ import (
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
 	"gorm.io/gorm"
 
+	"backend/agentdefaults"
 	"backend/logging"
+	"backend/toolbudget"
 )
 
 // applySharedConfigDefaults merges the compiled-in integrations' shared-config
@@ -36,16 +37,14 @@ func applySharedConfigDefaults(config map[string]interface{}) map[string]interfa
 	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
 	// integration defaults fill the full coder tool set instead of being
 	// suppressed by the empty list.
-	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
-	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
-	// ci#757: a native coder/dev-agent chat also defaults to the hive-mind
-	// dispatch family so a development lead can start/steer peer agents natively
-	// instead of the deprecated trigger-coding-interaction GitHub workflow. The
-	// merge is skipped for a non-coder config and for an operator-narrowed
-	// non-empty `tools` list, which always wins.
-	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
-	withAutonomous := nativecoder.ApplyCoderAutonomousConfig(withDispatch)
-	return nativecoder.WithToolCallBudgetSnapshot(withAutonomous, time.Now())
+	withDefaults := extiface.ApplySharedConfigDefaults(agentdefaults.DropEmptyTools(config))
+	// The coder integration owns the agent defaults (auto-consolidation ci#653,
+	// dev-agent hive-mind ci#757, autonomous confirmation ci#506).
+	withAgent, _ := agentdefaults.ApplyAgentDefaults(withDefaults)
+	// ci#709: record the per-chat tool-call budget snapshot so the budget a chat
+	// was started with survives a re-attach and a re-provision and stays
+	// inspectable as structured state.
+	return toolbudget.WithToolCallBudgetSnapshot(withAgent, time.Now())
 }
 
 // TODO: should also supply user Id
@@ -300,16 +299,14 @@ func (h *ChatsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// reached the first LLM turn with no submodules and no build tooling. The
 	// repository comes from the interaction's repo:<...> tag (or the selected
 	// workspace's git_repo); an explicit coder_sandbox_setup_commands script wins.
-	if resolvedSharedConfig != nil && nativecoder.IsCoderAgentConfig(resolvedSharedConfig) {
+	if resolvedSharedConfig != nil {
+		// ci#756: apply the coder integration's chat-create dev set-up (a
+		// non-coder config is returned unchanged by the integration).
 		var toolInit map[string]interface{}
 		if data.SharedConfig != nil {
 			toolInit, _ = data.SharedConfig["tool_init"].(map[string]interface{})
 		}
-		resolvedSharedConfig = nativecoder.WithDevSetup(
-			resolvedSharedConfig,
-			nativecoder.DevSetupRepoForInteraction(resolvedSharedConfig, data.Tags, toolInit, nil),
-			nativecoder.DevSetupEnvValue(),
-		)
+		resolvedSharedConfig, _ = agentdefaults.ApplyAgentChatSetup(resolvedSharedConfig, data.Tags, toolInit)
 	}
 	if resolvedSharedConfig != nil {
 		configData, err := json.Marshal(resolvedSharedConfig)

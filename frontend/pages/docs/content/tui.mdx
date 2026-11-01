@@ -25,15 +25,43 @@ integration, the subcommand is not registered.
 
 ## Using it
 
+The UI is modal and vim-first: `NORMAL` is the default and the composer (and the
+auth/form fields) use `INSERT`. A tabline, a reverse-video statusline (mode,
+session/model, scroll ruler) and a command line frame every view. The cursor is a
+blinking block in `NORMAL` and a blinking bar in `INSERT`.
+
 - Move with the arrow keys or `j`/`k`, confirm with `Enter`.
 - **Servers** — add, edit, delete and switch between Open Chat servers. A local
   server (`http://127.0.0.1:1984`) is available by default.
 - **Sign in** — either through **Browser Login**, which opens the Open Chat CLI
   authorization page and polls until the device is approved, or by pasting a
   personal access token (`ocat_…`) under **Authorize via API key**.
-- **Chat** — messages go to your default bot; the conversation renders in the
-  same terminal session. When a chat is pre-bound (see below) the TUI attaches
-  to it directly instead of creating a new one.
+- **Pick a model** — a new chat with the default bot first asks which of the
+  bot's models to use (the last choice is preselected and remembered). The
+  choice is sent as the chat's `shared_config`, so the server routes the reply to
+  that model's provider.
+- **Chat** — the chat starts as a `conversation` with the default bot; press
+  `i` to compose and `Enter` to send. The composer supports vim motions
+  (`w`/`b`/`e`, `0`/`$`, `x`/`D`/`C`/`s`, `A`/`I`). `:`, `/`, `?` and `\` open the
+  command palette, search, help and which-key panels. When a chat is pre-bound
+  (see below) the TUI attaches to it directly instead of creating a new one.
+- **Pick a chat** — `p` lists your conversations and interactions (including
+  chats created in the web UI) and attaches to the selected one.
+
+### Keys
+
+| Key | Action |
+| --- | --- |
+| `h j k l` / arrows | move (`3j` counts); in the composer `h`/`l` move the caret |
+| `w` / `b` / `e` | composer word motions (`NORMAL`) |
+| `gg` / `G` | top / bottom |
+| `Ctrl-d` / `Ctrl-u` | half page down / up |
+| `i` `a` `A` `I` | enter `INSERT` (before / after / line end / line start) |
+| `x` `D` `C` `s` | composer delete / change (`NORMAL`) |
+| `Enter` | open / select / send |
+| `Esc`, `Esc Esc` | stop a live turn, otherwise leave `INSERT` then go back |
+| `/` `:` `?` `\` | search, command palette, help, which-key |
+| `q` | close view / quit |
 
 ## Status and control
 

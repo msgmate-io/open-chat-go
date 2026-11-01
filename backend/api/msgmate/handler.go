@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"backend/logging"
-	"backend/nativecoder"
+	"github.com/msgmate-io/open-chat-go-community-coder-integration/coder"
 )
 
 // FunctionType represents the type of function
@@ -52,17 +52,17 @@ type MsgmateHandler struct {
 	// native-coder tools (ci#394 gap 7, ticket ci#957). It is created lazily on
 	// first tool use and serves every chat: the coder_compact store is keyed by
 	// chat id, so one shared surface answers any chat.
-	coderParitySurface *nativecoder.CoderParitySurface
+	coderParitySurface *coder.CoderParitySurface
 }
 
 // GetCoderParitySurface returns the process-wide coder parity surface, creating
 // it on first use. It is the surface the `coder_compact` runner dispatches to.
-func (h *MsgmateHandler) GetCoderParitySurface() *nativecoder.CoderParitySurface {
+func (h *MsgmateHandler) GetCoderParitySurface() *coder.CoderParitySurface {
 	if h == nil {
 		return nil
 	}
 	if h.coderParitySurface == nil {
-		h.coderParitySurface = nativecoder.NewCoderParitySurface("")
+		h.coderParitySurface = coder.NewCoderParitySurface("")
 	}
 	return h.coderParitySurface
 }
