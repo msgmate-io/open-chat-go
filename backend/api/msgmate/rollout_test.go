@@ -1,10 +1,9 @@
-package nativecoder
+package msgmate
 
 import (
+	"os"
 	"strings"
 	"testing"
-
-	"backend/runtimecfg"
 )
 
 // TestNativeBotStagesFlipOrderIsLeadLast guards the ci#584 rollout order: the
@@ -120,10 +119,16 @@ func TestNativeBotRotationKeepsLegacyOutOfRotation(t *testing.T) {
 // TestNativeBotRollbackWindowParsesStageAndLegacyNames checks the runtime knob
 // that pauses or rolls back a family without a rebuild.
 func TestNativeBotRollbackWindowParsesStageAndLegacyNames(t *testing.T) {
-	previous := runtimecfg.GetAll()
-	defer runtimecfg.SetAll(previous)
+	previous, had := os.LookupEnv(NativeBotRollbackWindowEnvKey)
+	defer func() {
+		if had {
+			os.Setenv(NativeBotRollbackWindowEnvKey, previous)
+		} else {
+			os.Unsetenv(NativeBotRollbackWindowEnvKey)
+		}
+	}()
 
-	runtimecfg.SetValue(NativeBotRollbackWindowEnvKey, runtimecfg.Value{Value: "repl, issue-review-bot"})
+	os.Setenv(NativeBotRollbackWindowEnvKey, "repl, issue-review-bot")
 	open := NativeBotRollbackStages()
 	if !open[stageRepl] || !open[stageReview] {
 		t.Fatalf("expected repl and review windows open, got %v", open)
@@ -132,7 +137,7 @@ func TestNativeBotRollbackWindowParsesStageAndLegacyNames(t *testing.T) {
 		t.Fatalf("expected the lead window closed, got %v", open)
 	}
 
-	runtimecfg.SetValue(NativeBotRollbackWindowEnvKey, runtimecfg.Value{Value: "all"})
+	os.Setenv(NativeBotRollbackWindowEnvKey, "all")
 	open = NativeBotRollbackStages()
 	for _, stage := range NativeBotStages() {
 		if !open[stage.Stage] {
@@ -140,7 +145,7 @@ func TestNativeBotRollbackWindowParsesStageAndLegacyNames(t *testing.T) {
 		}
 	}
 
-	runtimecfg.SetValue(NativeBotRollbackWindowEnvKey, runtimecfg.Value{Value: ""})
+	os.Setenv(NativeBotRollbackWindowEnvKey, "")
 	if open := NativeBotRollbackStages(); len(open) != 0 {
 		t.Fatalf("expected every window closed without a setting, got %v", open)
 	}

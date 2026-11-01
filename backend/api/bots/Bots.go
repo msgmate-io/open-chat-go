@@ -1,13 +1,13 @@
 package bots
 
 import (
+	"backend/agentdefaults"
 	"backend/api/chats"
 	"backend/api/msgmate"
 	"backend/apierror"
 	"backend/database"
 	"backend/integrations"
 	"backend/logging"
-	"backend/nativecoder"
 	"backend/server/util"
 	"backend/workqueue"
 	"crypto/rand"
@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"backend/toolbudget"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	extiface "github.com/msgmate-io/go-integration-interface/integrationinterface"
@@ -34,34 +35,15 @@ func applyIntegrationDefaultsForUser(DB *gorm.DB, user *database.User, config ma
 	_ = DB
 	_ = user
 	// A stored `tools: []` means "not configured" (ci#617): drop the key so the
-	// integration defaults fill the full coder tool set (coder_bash/coder_git/
-	// coder_read) instead of being suppressed by the empty list.
-	withDefaults := extiface.ApplySharedConfigDefaults(nativecoder.DropEmptyTools(config))
-	// Auto-consolidation is a first-class default of the native msgmate_coder
-	// agent (ci#653): an agent that declares itself as a coder agent gets the
-	// `auto_consolidation` block unless it is switched off. Applying the default
-	// here as well as through the integration keeps it working in a core-only
-	// build, and an explicit per-agent value always wins.
-	//
-	// The autonomous-confirmation contract (ci#506) is promoted here as well, so
-	// an interaction that the trusted dispatch surface created with
-	// `autonomous: true` states `coder_interaction: autonomous` on its own
-	// shared config — the key the coder integration reads — and never parks on a
-	// per-action confirmation. An already configured mode always wins and a
-	// non-dispatch config is untouched.
-	//
-	// The tool-call budget snapshot (ci#709) is deliberately NOT recorded here:
-	// this helper also builds a bot's *default* shared config, which is the live
-	// source a cap raise comes from. The snapshot belongs to a chat and is
-	// recorded on the chat itself (chats.Create, createBotInteraction).
-	withConsolidation := nativecoder.ApplyAutoConsolidationDefault(withDefaults, nativecoder.AutoConsolidationEnvValue())
-	// The native agent-dispatch tool family (ci#757) is a default of a native
-	// coder/dev-agent config too, so a lead agent can start and steer peer agents
-	// through the hive mind instead of shelling out to the deprecated
-	// trigger-coding-interaction GitHub workflow. An explicit non-empty `tools`
-	// list still wins and `OPENCHAT_DEV_AGENT_HIVEMIND_TOOLS=off` disables it.
-	withDispatch, _ := nativecoder.ApplyDevAgentHiveMindConfig(withConsolidation, nativecoder.DevAgentHiveMindEnvValue())
-	return nativecoder.ApplyCoderAutonomousConfig(withDispatch), nil
+	// integration defaults fill the full coder tool set instead of being
+	// suppressed by the empty list.
+	withDefaults := extiface.ApplySharedConfigDefaults(agentdefaults.DropEmptyTools(config))
+	// The coder integration owns the bot-level agent defaults (auto-consolidation
+	// ci#653, the dev-agent hive-mind dispatch family ci#757, the
+	// autonomous-confirmation contract ci#506). A build without the coder
+	// integration (the public core-only profile) applies none of them.
+	withAgent, _ := agentdefaults.ApplyAgentDefaults(withDefaults)
+	return withAgent, nil
 }
 
 type BotDTO struct {
@@ -1561,7 +1543,7 @@ func createBotInteraction(
 	// config that omits the init payload of a RequiresInit tool: seeding first is
 	// what makes such a dispatch valid at all.
 	if toolNames, err := collectToolNames(effectiveConfig["tools"]); err == nil {
-		effectiveConfig = nativecoder.WithPreCallInit(effectiveConfig, toolNames, req.Tags, nativecoder.DefaultPreCallInitResolvers())
+		effectiveConfig, _ = agentdefaults.ApplyAgentInteractionDefaults(effectiveConfig, toolNames, req.Tags, req.ToolInit, req.ConfigOverrides)
 	}
 	if err := validateAndAttachDynamicToolsForUser(DB, actingUser, effectiveConfig); err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: configValidationMessage(toolInitStagePrefix, err)}
@@ -1573,35 +1555,7 @@ func createBotInteraction(
 	// the budget survives a re-attach / re-provision and is reported as
 	// structured state. The bot's default shared config stays the live source,
 	// so a later cap raise still reaches this interaction.
-	effectiveConfig = nativecoder.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
-	// ci#413: a native coder interaction provisions its disposable per-chat
-	// sandbox from tool_init.coder_select_workspace.git_repo, so the sandbox must
-	// clone the repository this interaction was dispatched for instead of the
-	// bot-wide default checkout. An explicit `repo:<...>` tag wins, otherwise the
-	// effective config's repo key (bot/trigger default); a repository the caller
-	// pinned itself in tool_init/config_overrides is never touched. It is a no-op
-	// for bots that do not switch auto_sandbox on, so fixed workspaces and
-	// non-coder bots keep exactly the config they were created with.
-	if repo := nativecoder.AutoSandboxRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides); repo != "" {
-		effectiveConfig = nativecoder.WithAutoSandboxRepo(effectiveConfig, repo)
-	}
-	// ci#756: a native coder interaction also prepares the full development
-	// set-up of the repository it works on *before* the agent starts, so the
-	// first tool call already sees submodules and the build tooling (helm, ci,
-	// mobile, ...) the requested profile pulls in. The resolved repository is
-	// the one the sandbox clones (`repo:<...>` tag, else the effective config's
-	// repo key); an explicit `coder_sandbox_setup_commands` script always wins,
-	// and non-coder interactions are untouched.
-	effectiveConfig = nativecoder.WithDevSetup(effectiveConfig, nativecoder.DevSetupRepoForInteraction(effectiveConfig, req.Tags, req.ToolInit, req.ConfigOverrides), nativecoder.DevSetupEnvValue())
-	// ci#413 follow-up: the same dispatch can name the branch the per-chat
-	// sandbox should check out (`branch:<name>` tag), eg the branch of an open
-	// pull request, so a re-run for that PR resumes the right checkout instead of
-	// the bot default (usually `main`). A branch the caller pinned in tool_init is
-	// never touched, and the value keeps its case (git branches are
-	// case-sensitive; only the `refs/heads/` prefix is stripped).
-	if branch := nativecoder.AutoSandboxBranchForInteraction(req.Tags, req.ToolInit); branch != "" {
-		effectiveConfig = nativecoder.WithAutoSandboxBranch(effectiveConfig, branch)
-	}
+	effectiveConfig = toolbudget.WithToolCallBudgetSnapshot(effectiveConfig, time.Now())
 	configJSON, err := json.Marshal(effectiveConfig)
 	if err != nil {
 		return BotInteractionResponse{}, &interactionConfigError{message: "failed to process config"}
@@ -1611,7 +1565,14 @@ func createBotInteraction(
 	// per-repo tag (mirroring the opencode integration's single tag), so coder
 	// chats can be grouped per bot/repo and filtered by `tags=repo:<owner/name>`.
 	// Non-coder bots keep exactly the tags their caller asked for.
-	tags := database.NormalizeChatTags(nativecoder.DefaultInteractionTags(effectiveConfig, botDisplayName(runtime), req.Tags))
+	// ci#650: the coder integration adds a per-bot and a per-repo tag so coder
+	// interactions can be grouped/filtered; a non-coder bot keeps exactly the
+	// tags its caller asked for.
+	interactionTags := req.Tags
+	if t, ok := agentdefaults.ApplyAgentInteractionTags(effectiveConfig, botDisplayName(runtime), req.Tags); ok {
+		interactionTags = t
+	}
+	tags := database.NormalizeChatTags(interactionTags)
 	var chat database.Chat
 	var message database.Message
 	var share database.SharedChatInstance
