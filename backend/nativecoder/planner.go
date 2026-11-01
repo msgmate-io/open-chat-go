@@ -57,16 +57,16 @@ type PullRequest struct {
 	// InformationalChecks names red checks/statuses the base-branch ruleset does
 	// not require (eg the `private-sandbox-tests` commit status). They are
 	// reported, and they never block a merge.
-	InformationalChecks []string  `json:"informational_checks,omitempty"`
+	InformationalChecks []string `json:"informational_checks,omitempty"`
 	// ChecksEmpty reports that the head commit carried neither check runs nor
 	// legacy commit statuses: the /status endpoint's cached `pending` with an
 	// empty statuses list is the ci#928 stale-cache fingerprint for a
 	// just-merged commit. A bare `pending` is not a required check, so a PR
 	// with no checks at all must not read as merge-blocked on that alone (the
 	// planner's require_green gate still rejects an unevaluated PR elsewhere).
-	ChecksEmpty bool `json:"checks_empty,omitempty"`
-	Labels              []string  `json:"labels,omitempty"`
-	CreatedAt           time.Time `json:"created_at,omitempty"`
+	ChecksEmpty bool      `json:"checks_empty,omitempty"`
+	Labels      []string  `json:"labels,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
 	// Body is the PR description, used to resolve the leaf issue the PR closes
 	// (ci#813).
 	Body string `json:"-"`
