@@ -10,7 +10,8 @@
 #
 # Rules this wrapper enforces:
 #   * one explicit subcommand per docker workflow (mirrors the typed
-#     docker_sandbox_* tools in backend/nativecoder/dockertooling.go);
+#     docker_sandbox_* tools in the shared coder library
+#     `community_coder_integration/coder/dockertooling.go`, ci#394);
 #   * a fast readiness probe so an agent learns "no daemon here" once instead of
 #     once per command (exit code 3, never a raw docker error);
 #   * a hard refusal to install or start a daemon inside the sandbox;
