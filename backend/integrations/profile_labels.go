@@ -8,7 +8,8 @@ package integrations
 // Keep this in sync with integrations.yaml. A test
 // (profile_labels_test.go) parses the manifest and fails when the set drifts.
 var coreOnlyIntegrationNames = map[string]struct{}{
-	"mcp":           {},
-	"rest_api_tool": {},
-	"go_client":     {},
+	"mcp":             {},
+	"rest_api_tool":   {},
+	"go_client":       {},
+	"community_coder": {},
 }
