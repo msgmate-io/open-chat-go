@@ -1736,6 +1736,11 @@ func (e *interactionConfigError) Error() string { return e.message }
 const (
 	toolInitStagePrefix     = "invalid tools/tool_init"
 	integrationsStagePrefix = "invalid integrations"
+	// infraStageDetail is the client-facing label for a backend-internal failure
+	// (database, async queue, dispatch backend, ...). It is attached as a detail
+	// string rather than as a raw error message, so the response points at the
+	// failing stage without leaking internal detail.
+	infraStageDetail = "backend interaction service unavailable (check logs for <correlation>; retry)"
 )
 
 // innerStageMarkers are the stage labels a validator may already carry itself.
@@ -1799,9 +1804,10 @@ func writeCreateInteractionError(w http.ResponseWriter, err error) {
 		// ci#865: the generic 500 body carries no detail, so the Live Runtime
 		// Canary only reported "create-interaction failed after retries" with an
 		// empty body. Log the underlying error server-side so the next canary
-		// run names the actual cause.
+		// run names the actual cause; the client body names the failing stage
+		// (backend service) and asks for a retry instead of echoing the detail.
 		logging.Errorf("create interaction failed: %v", err)
-		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_create_interaction", "Failed to create interaction")
+		writeBotAPIError(w, http.StatusInternalServerError, "failed_to_create_interaction", infraStageDetail)
 	}
 }
 
