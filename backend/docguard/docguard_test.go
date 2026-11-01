@@ -80,6 +80,7 @@ var publicAgentDocPaths = []string{
 	// (msgmate-io/open-chat-go-msgmate-coder, docs/agent/). Naming the path
 	// keeps a future "restore the doc" change from re-adding it silently.
 	"docs/native-coder-selfcheck-ci622.md",
+			"docs/native-coder-selfcheck-ci927.md",
 }
 
 // publicDocFiles collects the documentation surface a human reads: the repo
