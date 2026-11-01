@@ -3,6 +3,7 @@ package bots
 import (
 	"backend/api/chats"
 	"backend/api/msgmate"
+	"backend/apierror"
 	"backend/database"
 	"backend/integrations"
 	"backend/logging"
@@ -1089,8 +1090,7 @@ func (h *BotsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		responsePassword = generatedPassword
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: responsePassword})
+	_ = apierror.WriteJSON(w, http.StatusOK, CreateBotResponse{Bot: toDTO(runtime), GeneratedPassword: responsePassword})
 }
 
 // List bots
@@ -1157,8 +1157,7 @@ func (h *BotsHandler) List(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toDTO(row))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListedBotsPage{Limit: limit, Page: page, TotalPages: totalPages, Rows: items})
+	_ = apierror.WriteJSON(w, http.StatusOK, ListedBotsPage{Limit: limit, Page: page, TotalPages: totalPages, Rows: items})
 }
 
 // Get bot
@@ -1197,8 +1196,7 @@ func (h *BotsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toDTO(runtime))
+	_ = apierror.WriteJSON(w, http.StatusOK, toDTO(runtime))
 }
 
 // Update bot
@@ -1316,8 +1314,7 @@ func (h *BotsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toDTO(runtime))
+	_ = apierror.WriteJSON(w, http.StatusOK, toDTO(runtime))
 }
 
 // Save bot config
@@ -1399,8 +1396,7 @@ func (h *BotsHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toDTO(runtime))
+	_ = apierror.WriteJSON(w, http.StatusOK, toDTO(runtime))
 }
 
 // Delete bot
@@ -1445,8 +1441,7 @@ func (h *BotsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	runtime.IsActive = false
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toDTO(runtime))
+	_ = apierror.WriteJSON(w, http.StatusOK, toDTO(runtime))
 }
 
 // Create bot interaction
@@ -1508,8 +1503,7 @@ func (h *BotsHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = apierror.WriteJSON(w, http.StatusOK, response)
 }
 
 // errInteractionMessageRequired is returned by createBotInteraction when the
