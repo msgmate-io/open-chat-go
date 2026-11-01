@@ -24,6 +24,7 @@ package nativecoder
 // mirror the opencode contract so the two integrations behave the same way.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -316,6 +317,26 @@ func RenderCoderTodoPlan(plan CoderTodoPlan) string {
 		}
 	}
 	return strings.TrimRight(builder.String(), "\n")
+}
+
+// CoderTodoPlanJSON marshals a plan into the stable JSON form a structured tool
+// result carries (revision, status counts, version). It never includes command
+// or output text, so serialized plan metadata stays safe to render anywhere.
+func CoderTodoPlanJSON(plan CoderTodoPlan) (string, error) {
+	payload := struct {
+		Revision int              `json:"revision"`
+		Version  int              `json:"version,omitempty"`
+		Summary  CoderTodoSummary `json:"summary"`
+	}{
+		Revision: plan.Revision,
+		Version:  plan.Version,
+		Summary:  plan.Summary(),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func renderCoderTodoLine(item CoderTodoItem) string {
