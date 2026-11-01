@@ -4,15 +4,15 @@ go 1.26.0
 
 require github.com/urfave/cli/v3 v3.11.0
 
-require github.com/msgmate-io/open-chat-go-community-coder-integration v0.0.0
-
-// The core imports the shared public coder library from the community coder
-// module. It is materialized by every profile (core-only selects it; the private
-// profiles pull it in through msgmate_coder's depends_on), so point the require
-// at the local checkout. Without this replace `go mod download` resolves the
-// v0.0.0 require from the network (the `use` directive alone only satisfies the
-// build/import graph, not the module-graph download) and fails for core-only.
-replace github.com/msgmate-io/open-chat-go-community-coder-integration => ../clients/integrations/community_coder_integration
+// The core imports the shared public coder library from
+// github.com/msgmate-io/open-chat-go-community-coder-integration, but it is
+// deliberately NOT required here. The module is always materialized by the
+// selected profile (core-only selects it directly; the private profiles pull it
+// in through msgmate_coder's depends_on) and supplied by the generated go.work
+// `use`. A v0.0.0 require with a local replace breaks the frozen-workspace
+// build: msgmate_coder (also a workspace module) replaces the same module at a
+// different path, and Go rejects the conflicting replacements. Without the
+// require, `go mod download` no longer tries to fetch the unversioned module.
 
 require golang.org/x/crypto v0.55.0
 
