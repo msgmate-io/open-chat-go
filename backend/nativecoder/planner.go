@@ -362,9 +362,24 @@ func checksGreen(state string) bool {
 // endpoint succeeded. Being blocked by an informational status is accepted only
 // with positive evidence: at least one red check must be known to be
 // non-required, and the required checks must be green.
+//
+// ci#928: a `BLOCKED` computed from a stale cached status is not evidence of a
+// red check either — GitHub's server-side status cache is momentarily stale for
+// a freshly created commit and can report a bare `pending` (an empty status
+// context list) for a commit that has none. A commit status rollup that names
+// no context (empty `InformationalChecks`) therefore cannot explain a block; it
+// is stale-cache noise on a just-merged commit rather than a real gate, so the
+// block is accepted when every *required* context is green. The authoritative
+// per-context facts are re-read as `RequiredChecksKnown`, and the empty rule
+// set falls back on the aggregate `ChecksState`.
 func informationalStatusOnlyBlock(pr PullRequest) bool {
 	if len(pr.InformationalChecks) == 0 {
-		return false
+		// ci#928: a block with no red informational contexts named is
+		// stale-cache noise, not a required-check failure. Accept it only when
+		// the (authoritative) required contexts are green; a ruleset that
+		// requires nothing leaves the aggregate state authoritative.
+		state := effectiveChecksState(pr)
+		return state == "" || checksGreen(state)
 	}
 	state := effectiveChecksState(pr)
 	return checksGreen(state)

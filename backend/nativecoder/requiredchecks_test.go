@@ -357,6 +357,91 @@ func TestBranchCheckStatesPrefersNewestRequiredContextInstance(t *testing.T) {
 	}
 }
 
+// TestBranchCheckStatesToleratesStaleBarePendingStatus is the ci#928 core
+// case: GitHub's server-side status cache is momentarily stale for a freshly
+// created commit — `/status` reports `pending` with an empty `statuses` list and
+// `/check-runs` reports nothing (there is no open PR and no pending or required
+// check on the commit, eg a just squash-merged commit). The bare pending
+// rollup names no context, so it must not make the required state pending and
+// must not be reflected in the aggregate state either.
+func TestBranchCheckStatesToleratesStaleBarePendingStatus(t *testing.T) {
+	client := testClient(requiredChecksServer(t, requiredRulesJSON,
+		`{"check_runs":[]}`, `{"state":"pending","statuses":[]}`))
+	states, err := client.branchCheckStates(t.Context(), "main", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !states.Known {
+		t.Fatal("expected the ruleset to be known")
+	}
+	// The required context (`Run PR CI Tests and Deployments`) has simply not
+	// reported on this commit — the conservative per-context resolution keeps
+	// it pending rather than assuming it green.
+	if states.RequiredState != "pending" {
+		t.Fatalf("required state = %q, want pending (the required context has not reported: %v)", states.RequiredState, states.FailingRequired)
+	}
+	if len(states.FailingRequired) != 1 {
+		t.Fatalf("expected the unreported required context to be listed as pending/failing, got %v", states.FailingRequired)
+	}
+	if len(states.Informational) != 0 {
+		t.Fatalf("a bare stale pending rollup names no context: got informational %v", states.Informational)
+	}
+
+	// The aggregate state of every check resolves to success: no runs, no
+	// status contexts — a bare `pending` rollup is stale-cache noise (ci#928),
+	// not a report.
+	runs, statuses, err := client.commitChecks(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 0 || len(statuses) != 0 {
+		t.Fatalf("expected an empty fact set, got %d runs and %d statuses", len(runs), len(statuses))
+	}
+	if got := combinedStateFromFacts(runs, statuses); got != "success" {
+		t.Fatalf("combined state = %q, want success for a bare stale pending rollup with no contexts", got)
+	}
+}
+
+// TestCombinedStateFromFactsKeepsRealPendingReports guards the safety side of
+// ci#928: only the *bare* stale rollup is downgraded. A real pending report —
+// an actual status context or a non-completed check run — still resolves to
+// pending.
+func TestCombinedStateFromFactsKeepsRealPendingReports(t *testing.T) {
+	for name, facts := range map[string]struct {
+		runs     []checkRunFact
+		statuses []statusFact
+	}{
+		"a real pending status context stays pending": {
+			statuses: []statusFact{{Context: "Run PR CI Tests and Deployments", State: "pending"}},
+		},
+		"a pending legacy rollup with a green context stays green": {
+			statuses: []statusFact{{Context: "Run PR CI Tests and Deployments", State: "success"}},
+		},
+		"a non-completed check run stays pending": {
+			runs: []checkRunFact{{Name: "Full Suite Gate", Status: "queued"}},
+		},
+		"a red status context stays red": {
+			statuses: []statusFact{{Context: "CodeQL", State: "failure"}},
+		},
+	} {
+		want := "pending"
+		if len(facts.statuses) > 0 {
+			switch facts.statuses[0].State {
+			case "success":
+				// A green context reports a green rollup; with no pending
+				// context the aggregate is success.
+				want = "success"
+			case "failure":
+				// The red-context case is expected to resolve to failure.
+				want = "failure"
+			}
+		}
+		if got := combinedStateFromFacts(facts.runs, facts.statuses); got != want {
+			t.Errorf("%s: combined state = %q, want %q", name, got, want)
+		}
+	}
+}
+
 // TestNewestCheckRunsKeepsARealCancelledFailure guards the safety side of
 // ci#847: only a *superseded* instance is dropped. When the newest instance of a
 // context is itself cancelled/failed, the context stays red.

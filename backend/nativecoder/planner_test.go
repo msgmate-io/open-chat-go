@@ -321,12 +321,13 @@ func TestPlanToleratesInformationalStatusOnlyBlock(t *testing.T) {
 		name   string
 		pr     PullRequest
 		reason string
+		ready  bool
 	}{
 		{
 			name: "a blocked state without informational evidence stays rejected",
 			pr: PullRequest{
 				Number: 121, Author: "cur1ousdude", BaseRef: "dev", Mergeable: true,
-				MergeStateStatus: MergeStateBlocked, ChecksState: "success",
+				MergeStateStatus: MergeStateBlocked, ChecksState: "failure",
 			},
 			reason: "merge state is BLOCKED",
 		},
@@ -340,6 +341,20 @@ func TestPlanToleratesInformationalStatusOnlyBlock(t *testing.T) {
 			},
 			reason: "BLOCKED",
 		},
+		{
+			// ci#928: a `BLOCKED` computed from GitHub's momentarily-stale
+			// status cache (a bare `pending` rollup with no status contexts)
+			// with no check evidence must not block — a just-merged commit has
+			// no pending/required checks, so the block is stale-cache noise.
+			name: "a blocked state from a stale bare pending status does not block",
+			pr: PullRequest{
+				Number: 123, Author: "cur1ousdude", BaseRef: "dev", Mergeable: true,
+				MergeStateStatus: MergeStateBlocked, ChecksState: "success",
+				RequiredChecksKnown: true, RequiredChecksState: "success",
+				LinkedIssues: []int{123},
+			},
+			ready: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := Plan(policy, ConsolidationFacts{
@@ -347,6 +362,12 @@ func TestPlanToleratesInformationalStatusOnlyBlock(t *testing.T) {
 				OpenPRs: []PullRequest{tc.pr},
 			})
 			decision := decisionFor(t, plan, tc.pr.Number)
+			if tc.ready {
+				if !decision.Ready {
+					t.Fatalf("expected the PR to be ready, got rejected (reasons %v)", decision.Reasons)
+				}
+				return
+			}
 			if decision.Ready {
 				t.Fatalf("expected the PR to be rejected, got ready (reasons %v)", decision.Reasons)
 			}

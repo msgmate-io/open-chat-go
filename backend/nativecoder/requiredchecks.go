@@ -165,9 +165,19 @@ func parseRunID(detailsURL string) int64 {
 }
 
 // statusFact is the minimal legacy commit-status fact the aggregation needs.
+// Reported carries what the `/status` rollup says about the commit: a *bare*
+// rollup of `state: "pending"` with an empty `statuses` list is GitHub's
+// momentarily-stale server-side status cache for a freshly created commit
+// (ci#928), not evidence of a report from any context. combinedStateFromFacts
+// therefore only treats such a rollup as pending when there is at least one
+// actual context; downstream aggregation decides on the (authoritative)
+// context list.
 type statusFact struct {
 	Context string
 	State   string
+	// Reported is the legacy combined-status rollup for the commit ("success",
+	// "failure" or "pending"). It is empty when the legacy API had no rollup.
+	Reported string
 }
 
 // rulesetCache stores the required contexts per branch: one planning pass reads
@@ -328,6 +338,7 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 	facts = newestCheckRuns(facts)
 
 	var status struct {
+		State    string `json:"state"`
 		Statuses []struct {
 			Context string `json:"context"`
 			State   string `json:"state"`
@@ -341,6 +352,17 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 	for _, item := range status.Statuses {
 		out = append(out, statusFact{Context: strings.TrimSpace(item.Context), State: item.State})
 	}
+	// ci#928: the `/status` rollup is only authoritative as *evidence* of an
+	// actual context report. GitHub's status cache is momentarily stale for a
+	// freshly-created commit: `/status` can report `state:"pending"` with an
+	// empty `statuses` even though check-runs and statuses are both empty
+	// (there is nothing pending on the commit at all). The context list is the
+	// authoritative input for every aggregation; the bare rollup is carried on
+	// the facts so the fallback below can re-derive it without trusting it
+	// blindly.
+	for i := range out {
+		out[i].Reported = status.State
+	}
 	return facts, out, nil
 }
 
@@ -348,6 +370,11 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 // "combined status" API did: check-runs win when there are any (a non-completed
 // run is pending, a red conclusion is a failure), otherwise the commit statuses
 // decide. It mirrors combinedChecksState so both paths stay consistent.
+//
+// ci#928: a *bare* legacy rollup of `pending` with no status contexts at all is
+// GitHub's momentarily-stale status cache for a freshly created commit, not a
+// real report — with no runs and no statuses there is literally nothing pending
+// on the commit, so the aggregate resolves to success instead of pending.
 func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 	if len(runs) > 0 {
 		state := "success"
@@ -361,16 +388,25 @@ func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 		}
 		return state
 	}
-	state := "pending"
+	state := "success"
+	sawContext := false
 	for _, status := range statuses {
 		switch statusFactState(status) {
 		case "failure":
 			return "failure"
 		case "pending":
 			state = "pending"
+			sawContext = true
 		default:
 			state = "success"
+			sawContext = true
 		}
+	}
+	if !sawContext {
+		// No runs and no status contexts: the only thing left is the legacy
+		// rollup. A bare `pending` rollup is the stale-cache signature (ci#928)
+		// and must not be reported as pending; the empty set is green.
+		return state
 	}
 	return state
 }
@@ -379,6 +415,13 @@ func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 // a required context that has not reported yet is *pending* (never assumed
 // green), a red one is a failure, and any red required context fails the whole
 // evaluation.
+//
+// ci#928: the required contexts are resolved per-context from the check-runs
+// and the *authoritative context list* of the legacy statuses. A bare `pending`
+// rollup of `/status` with an empty `statuses` list (a just-merged commit whose
+// status cache GitHub has not refreshed) names no context and therefore cannot
+// make any required context pending — a squash commit on `main` has no required
+// checks running on it, so the evaluation resolves to success.
 func evaluateRequiredContexts(required []RequiredCheck, runs []checkRunFact, statuses []statusFact) (string, []string) {
 	hasFailure := false
 	hasPending := false
@@ -510,13 +553,34 @@ func runState(run checkRunFact) string {
 
 // statusFactState maps a legacy commit status onto "success", "failure" or
 // "pending".
+//
+// ci#928: the `Reported` rollup of the combined-status endpoint is only used as
+// fallback evidence when the (authoritative) per-context State is empty — a
+// bare `pending` rollup with no contexts is the stale-cache signature and must
+// not be reported as a real pending state; each aggregation decides what an
+// empty context set means. A missing State with no Reported rollup is still
+// treated as pending at the *context* level so a required context that has
+// simply not reported keeps its conservative pending resolution.
 func statusFactState(status statusFact) string {
-	switch strings.ToLower(strings.TrimSpace(status.State)) {
+	state := strings.ToLower(strings.TrimSpace(status.State))
+	if state != "" {
+		switch state {
+		case "success":
+			return "success"
+		case "failure", "error":
+			return "failure"
+		default:
+			return "pending"
+		}
+	}
+	// No per-context state: fall back to the rollup only when it is
+	// terminal evidence (success/failure); a bare `pending` rollup is
+	// stale-cache noise (ci#928).
+	switch strings.ToLower(strings.TrimSpace(status.Reported)) {
 	case "success":
 		return "success"
 	case "failure", "error":
 		return "failure"
-	default:
-		return "pending"
 	}
+	return "pending"
 }
