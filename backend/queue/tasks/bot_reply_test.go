@@ -39,7 +39,7 @@ func TestBotReplyFailureMessage(t *testing.T) {
 		{
 			name:     "provider http failure",
 			err:      &msgmate.ProviderRequestError{StatusCode: 429, Body: `{"error":{"message":"insufficient_quota"}}`, Attempts: 1},
-			expected: "I could not generate a reply: my AI provider request failed (HTTP 429 (insufficient_quota)). Please try again in a moment or switch to another model.",
+			expected: "Too many AI requests are queued for this provider key right now, so this reply was stopped before reaching the AI provider. Please lower the number of concurrent requests (or wait a moment) and try again. The work already done is kept.",
 		},
 		{
 			name:     "transient network failure",
