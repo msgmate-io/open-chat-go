@@ -296,13 +296,14 @@ var bashUsageCategories = []BashUsageCategory{
 			"helm upgrade --install open-chat ./chart",
 		},
 		TargetTools: []string{
-			"kubernetes_get", "kubernetes_describe", "kubernetes_logs",
+			KubernetesToolGet, KubernetesToolDescribe, KubernetesToolLogs,
 			DockerToolCheck, DockerToolPS, DockerToolLogs, DockerToolBuild, DockerToolRun, DockerToolCompose, DockerToolExec,
 			"ssh_run",
 		},
 		Policy: "read for get/describe/logs/ps; write for exec/up/upgrade, per integration",
 		Notes: []string{
 			"each tool is owned by its integration (ci#423 Host boundary), never absorbed by the core",
+			"the kubernetes_get/describe/logs surface ships in kubetooling.go (kubernetes integration), mirroring docker_sandbox",
 		},
 	},
 	{
