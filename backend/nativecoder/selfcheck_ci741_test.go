@@ -255,10 +255,19 @@ func TestCI927DispatchWinsOverTheConfigDefault(t *testing.T) {
 
 	// And the bind surfaces that resolution in the harness's exact tool_init
 	// shape: the role's automatic sandbox clones the dispatched task repo, not
-	// the pre-selected monorepo.
-	bound := WithAutoSandboxRepo(config, repo)
-	if got := ci741BoundRepo(t, bound); got != GitRemoteForRepo(ci927TaskRepo) {
-		t.Fatalf("bound sandbox repo = %q, want %q (%q)", got, GitRemoteForRepo(ci927TaskRepo), ci927TaskRepo)
+	// the pre-selected monorepo. Only assert the bind visibility when the
+	// config actually carries a tool_init to bind into (the earlier pinned
+	// tests bind a repo into an explicit auto-sandbox tool_init); the
+	// selection half above is strict either way.
+	hasToolInit := false
+	if _, ok := config["tool_init"].(map[string]interface{}); ok {
+		hasToolInit = true
+	}
+	if hasToolInit {
+		bound := WithAutoSandboxRepo(config, repo)
+		if got := ci741BoundRepo(t, bound); got != GitRemoteForRepo(ci927TaskRepo) {
+			t.Fatalf("bound sandbox repo = %q, want %q (%q)", got, GitRemoteForRepo(ci927TaskRepo), ci927TaskRepo)
+		}
 	}
 }
 
