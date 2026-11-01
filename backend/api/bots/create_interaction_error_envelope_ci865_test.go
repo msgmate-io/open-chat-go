@@ -97,7 +97,9 @@ func TestWriteCreateInteractionErrorDoesNotLeakInternalDetail(t *testing.T) {
 
 // TestCreateInteractionErrorNeverEmptyBody guards the generic 500 path: an
 // unmapped error must still produce a parseable JSON envelope, because the
-// canary calls response.json() regardless of the status code.
+// canary calls response.json() regardless of the status code. The body names
+// the failing stage (backend service) with a retry hint so a future canary can
+// tell a backend failure apart from a canary-script bug (ci#865).
 func TestCreateInteractionErrorNeverEmptyBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeCreateInteractionError(rec, errors.New("dial tcp 10.0.0.5:3306: connect: connection refused"))
@@ -116,22 +118,16 @@ func TestCreateInteractionErrorNeverEmptyBody(t *testing.T) {
 	if env.Code != "failed_to_create_interaction" {
 		t.Fatalf("code = %q, want failed_to_create_interaction", env.Code)
 	}
-	// The body must not leak infrastructure detail in the generic message. The
-	// underlying cause is echoed in the opt-in `detail` field instead, so the
-	// canary can name it while the stable `error` field stays generic (ci#865
-	// follow-up).
+	// The body must not leak infrastructure detail.
 	if strings.Contains(env.Error, "3306") || strings.Contains(env.Error, "10.0.0.5") {
 		t.Fatalf("internal error detail leaked to the client: %q", env.Error)
 	}
-
-	var detailed apierror.ResponseWithDetail
-	if err := json.Unmarshal(rec.Body.Bytes(), &detailed); err != nil {
-		t.Fatalf("body %q is not valid JSON: %v", rec.Body.String(), err)
+	// The canary-facing label: the stage must be identifiable without the
+	// underlying detail, and the caller must be told to look at logs / retry.
+	if !strings.Contains(env.Error, infraStageDetail) {
+		t.Fatalf("generic 500 body lost the backend-stage label: %q", env.Error)
 	}
-	if detailed.Code != "failed_to_create_interaction" {
-		t.Fatalf("code = %q, want failed_to_create_interaction", detailed.Code)
-	}
-	if !strings.Contains(detailed.Detail, "3306") || !strings.Contains(detailed.Detail, "10.0.0.5") {
-		t.Fatalf("detail should surface the underlying cause, got %q", detailed.Detail)
+	if !strings.Contains(env.Error, "logs") || !strings.Contains(env.Error, "retry") {
+		t.Fatalf("generic 500 body has no actionable logs/retry hint: %q", env.Error)
 	}
 }
