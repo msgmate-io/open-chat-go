@@ -51,7 +51,7 @@ func TestCoderTodoSurfaceWriteRead(t *testing.T) {
 			t.Errorf("rendered plan missing %q (rendered=%q)", content, written.Rendered)
 		}
 	}
-	// JSON metadata carries revision/version/counts only.
+	// JSON metadata carries revision/version and a nested summary only.
 	var meta map[string]interface{}
 	if err := json.Unmarshal([]byte(written.JSON), &meta); err != nil {
 		t.Fatalf("json decode: %v", err)
@@ -62,11 +62,16 @@ func TestCoderTodoSurfaceWriteRead(t *testing.T) {
 	if meta["version"] != float64(CoderTodoPlanVersion) {
 		t.Errorf("json version = %v, want %d", meta["version"], CoderTodoPlanVersion)
 	}
-	if meta["item_count"] != float64(3) {
-		t.Errorf("json item_count = %v, want 3", meta["item_count"])
+	summary, ok := meta["summary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("json summary missing: %v", meta)
 	}
-	if meta["in_progress"] != float64(1) || meta["completed"] != float64(1) || meta["pending"] != float64(1) {
-		t.Errorf("json status counts wrong: %v", meta)
+	if summary["total"] != float64(3) ||
+		summary["in_progress"] != float64(1) ||
+		summary["completed"] != float64(1) ||
+		summary["pending"] != float64(1) ||
+		summary["cancelled"] != float64(0) {
+		t.Errorf("json summary wrong: %v", summary)
 	}
 
 	// Read reflects the same plan with a fresh render.
@@ -164,7 +169,8 @@ func TestCoderShellSurfaceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tail 3: %v", err)
 	}
-	if chunk3.Data != "" || chunk3.Pending {
+	// A tail fully past the buffer is pending: possibly more output ahead.
+	if chunk3.Data != "" || !chunk3.Pending {
 		t.Fatalf("tail past end = %+v", chunk3)
 	}
 
