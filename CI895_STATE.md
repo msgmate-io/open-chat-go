@@ -64,9 +64,11 @@ rounds.
 ## Notes
 
 - This sandbox restarted on `main` (tip `3faca383` [Dev promotion] #1271) with
-  `origin/dev` at `29f16e75`; the branch tip is a checkout of origin's main,
-  so the OAuth files are present in the working tree.
+  `origin/dev` at `29f16e75`; the original branch tip was a checkout of
+  origin's main, so the OAuth files are present in the working tree.
 - Delivery record: this state file is committed on branch
-  `docs/ci895-verdict` (commit `1e7ce7e4`) and opened as **PR #1279** against
-  `dev` (docs-only, `test` label, open at last check). No runtime code change
-  is made here because the feature is already merged upstream (see Verdict).
+  `docs/ci895-verdict` (commits `fae0a017` + `ec10a4d7`, a rebase of the
+  original `1e7ce7e4` onto `origin/dev` tip `29f16e75`) and opened as
+  **PR #1279** against `dev` (docs-only, `test` label, open). No runtime code
+  change is made here because the feature is already merged upstream (see
+  Verdict).
