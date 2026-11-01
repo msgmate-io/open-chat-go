@@ -68,7 +68,14 @@ rounds.
   origin's main, so the OAuth files are present in the working tree.
 - Delivery record: this state file is committed on branch
   `docs/ci895-verdict` (commits `fae0a017` + `ec10a4d7`, a rebase of the
-  original `1e7ce7e4` onto `origin/dev` tip `29f16e75`) and opened as
-  **PR #1279** against `dev` (docs-only, `test` label, open). No runtime code
-  change is made here because the feature is already merged upstream (see
-  Verdict).
+  original `1e7ce7e4` onto `origin/dev` tip `29f16e75`, then `272872ae`) and
+  opened as **PR #1279** against `dev` (docs-only, `test` label, open). No
+  runtime code change is made here because the feature is already merged
+  upstream (see Verdict).
+- PR CI note: the `PR Test Merge Requirement` gate failed because the original
+  body lacked a standalone `Closes msgmate-io/open-chat-go-ci#895` line (the
+  scanner matches
+  `^[[:space:]]*(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(msgmate-io/open-chat-go-ci#|open-chat-go-ci#|ci#)[0-9]+[[:space:]]*$`
+  against `.pull_request.body` from `$GITHUB_EVENT_PATH`). The body now
+  carries that line; this note commit re-triggers the gate on a fresh event
+  payload.
