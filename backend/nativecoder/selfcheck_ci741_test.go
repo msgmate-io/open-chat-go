@@ -185,3 +185,71 @@ func TestCI741StringFlagEnablesBinding(t *testing.T) {
 		t.Fatal("an empty auto_sandbox flag must not enable binding")
 	}
 }
+
+// ci#927 regression pins (native-coder self-check suite, ci#622, run
+// 41039710251). The `plan` role of that suite failed with
+// sandbox_misprovisioned_workspace (ci#687) - the same failure mode that sank
+// the `review` role in ci#741 - and the `review` role failed its own
+// `review_submitted` check.
+//
+// The two failures are pinned here so the suite cannot silently regress again:
+//
+//  1. the core already wins the workspace-bind half (the ci#741 pins): a
+//     dispatched task repo is bound into every auto-sandbox tool_init, but a
+//     caller pin stays authoritative;
+//  2. that half is a *soundness* contract that must hold not only for the
+//     empty tool_init the ci#741 suite spawned, but for the tool_inits the
+//     self-check actually dispatches: the harness passes an auto-sandbox
+//     workspace (the tool-init-default key path), and the pinned task repo is
+//     `msgmate-io/ci-927-fixture`, while the default checkout stays the
+//     monorepo. The remaining gap between the ci#741 pins and a live dispatch
+//     is the default-key path: with auto_sandbox only (no `git_repo` input),
+//     the *pre-selected default workspace* is the monorepo and the dispatched
+//     task repo must still win over it - otherwise a role is handed the wrong
+//     checkout again, which is the ci#687 `plan` failure;
+//  3. the review half is a delivery contract: the self-check's `review` role
+//     must publish its finding as a pull request review on the fixture PR, not
+//     an issue comment, so `review_submitted` can be satisfied. That contract
+//     is pinned in `backend/api/bots/post_interaction_review_test.go`
+//     (TestCI927ReviewPublishesAsPullRequestReview) against the same review
+//     post action the suite dispatch attaches; this file carries only the
+//     nativecoder-side dispatch pins.
+
+const (
+	ci927TaskRepo = "msgmate-io/ci-927-fixture"
+)
+
+// TestCI927EmptyAutoSandboxToolInitBindsTheTaskRepo is the ci#927
+// tool-init-default analog of the ci#741 empty tool_init bind: the default
+// auto-sandbox tool_init (the harness's exact shape, with no git repo pinned)
+// carries a caller-pinned task repo into the bound config.
+func TestCI927EmptyAutoSandboxToolInitBindsTheTaskRepo(t *testing.T) {
+	config := map[string]interface{}{
+		"tool_init": map[string]interface{}{
+			AutoSandboxToolInitKey: map[string]interface{}{AutoSandboxFlagInput: true},
+		},
+	}
+
+	bound := WithAutoSandboxRepo(config, ci927TaskRepo)
+	if got := ci741BoundRepo(t, bound); got != GitRemoteForRepo(ci927TaskRepo) {
+		t.Fatalf("bound sandbox repo = %q, want %q", got, GitRemoteForRepo(ci927TaskRepo))
+	}
+}
+
+// TestCI927DispatchWinsOverTheConfigDefault if the monorepo default checkout
+// wins, the role is handed the prepicked monorepo and works on - or gives up on
+// - the wrong thing again, i.e. the ci#687 `plan` failure.
+func TestCI927DispatchWinsOverTheConfigDefault(t *testing.T) {
+	config := map[string]interface{}{"repo": ci741MonorepoRepo}
+
+	repo := AutoSandboxRepoForInteraction(config, []string{"bot:coder", RepoTagPrefix + ci927TaskRepo}, nil, nil)
+	if strings.TrimSpace(repo) == "" {
+		t.Fatalf("AutoSandboxRepoForInteraction = %q, want the dispatched task repo", repo)
+	}
+	if !strings.Contains(GitRemoteForRepo(repo), ci927TaskRepo) {
+		t.Fatalf("resolved remote = %q, want it to reference %q", GitRemoteForRepo(repo), ci927TaskRepo)
+	}
+	if strings.Contains(GitRemoteForRepo(repo), ci741MonorepoRepo) {
+		t.Fatalf("resolved remote = %q still points at the config default", GitRemoteForRepo(repo))
+	}
+}
