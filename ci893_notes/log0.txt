@@ -1,0 +1,27 @@
+## STATUS ##
+?? benchmark-results/
+?? ci893_notes/
+## BRANCH ##
+main
+## AHEAD/BEHIND ##
+0	0
+## HEAD ##
+38478503976721d3a23f349f15fe5d52b4cebb8f
+## origin/main ##
+38478503976721d3a23f349f15fe5d52b4cebb8f
+## LOG ##
+3847850 ci#747: umbrella drive record — coordination-continuity reliability (RC1–RC7, QW1–QW4) (#1254)
+e2decab Merge pull request #1255 from msgmate-io/ci/756-dev-setup-audit-closeout
+a031972 ci#756: document sandbox submodule pre-pull in the clone section
+4552ab1 ci#756: pre-pull repo submodules in the coder sandbox set-up
+6b89916 Merge pull request #1231 from msgmate-io/ci/747-coordination-continuity
+3d8d138 docs(ci747): refresh state for Pin Freshness Gate hardening fast-forward (ci#747)
+## BRANCHES ##
+* main
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+## benchmark tracked? ##
+backend/benchmark/aggregate.go
+backend/benchmark/aggregate_test.go
+backend/benchmark/registry.go
+backend/benchmark/types.go

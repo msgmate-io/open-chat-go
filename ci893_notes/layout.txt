@@ -1,0 +1,59 @@
+== go.mod / go.work on disk ==
+ls: go.mod: No such file or directory
+ls: go.work: No such file or directory
+backend/go.mod
+== on main ==
+.gitmodules
+== top-level dirs on main ==
+.dockerignore
+.github
+.gitignore
+.gitmodules
+CI747_STATE.md
+CI747_STATE2.md
+CI900_STATE.md
+CI903_STATE.md
+CI921_STATE.md
+COPYRIGHT
+DEVELOPMENT.md
+Dockerfile
+LICENSE
+NOTICE
+README.md
+REATTACH_909.md
+SECURITY.md
+backend
+ci909_notes
+clients
+dev.dockerfile
+development
+docker-compose.ci.yaml
+docker-compose.lw-shared.yaml
+docker-compose.postgres.yaml
+docker-compose.pro.yaml
+docker-compose.yaml
+docs
+flake.lock
+flake.nix
+== clients/frontend dirs on main? ==
+clients
+frontend
+== development/ci on main (head) ==
+development
+== labels ==
+test
+ai-test-real
+ai-test-mock
+test-core-only
+sandbox-test
+test-e2e
+slow-android-build-test
+dependencies
+sandbox-test:lw
+ci-fix-blocked
+sandbox-test:coder
+ci-recheck
+ci:full-ci
+ci
+run-tests-docker-kind
+run-tests
