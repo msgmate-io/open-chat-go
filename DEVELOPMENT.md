@@ -784,7 +784,7 @@ the LLM coding context) are materialized on demand by the profile setup step.
 The native coder sandbox set-up script pre-pulls the repository's public
 submodules (guarded on `.gitmodules` and on `git` being present) before that
 profile step runs, so the agent starts on a fully materialized checkout
-(see `backend/nativecoder/devsetup.go`, `DevSetupScript`).
+(see `clients/integrations/community_coder_integration/coder/devsetup.go`, `DevSetupScript`).
 
 ```bash
 git clone --recurse-submodules https://github.com/msgmate-io/open-chat-go.git
@@ -827,7 +827,7 @@ python3 -m venv .venv
   submodules (`git submodule update --init --recursive`, guarded on both a
   `.gitmodules` file and `git` being present) before the profile set-up runs,
   so the batteries-included checkouts are materialized before the LLM starts
-  working (see `backend/nativecoder/devsetup.go`, `DevSetupScript`).
+  working (see `clients/integrations/community_coder_integration/coder/devsetup.go`, `DevSetupScript`).
 - The per-repo default is configurable per bot or interaction: a
   `coder_dev_setup` map may carry a `profiles` table next to its `profile`
   default (`profiles: {msgmate-io/open-chat-go: full-development,
@@ -835,7 +835,7 @@ python3 -m venv .venv
   repository prefix wins and a repository outside the table keeps the declared
   default, so one bot config can serve several repositories with different
   development set-ups instead of forcing every interaction onto the same one.
-- `backend/nativecoder/devsetupmatrix.go` is the audit surface of that per-repo
+- `clients/integrations/community_coder_integration/coder/devsetupmatrix.go` is the audit surface of that per-repo
   default: `DevSetupMatrixPlan` resolves what a ci.msgmate.io coding interaction
   on each configured repository actually gets (sandbox palette variant, profile,
   submodules, extra checkouts), `ValidateDevSetupMatrix` lists defects and
@@ -844,7 +844,7 @@ python3 -m venv .venv
   operator table; the unit tests keep the public profile catalogue, the per-repo
   default table and the sandbox palette from drifting apart — every repository
   the palette maps a ci.msgmate.io trigger to must carry a per-repo entry of its
-  own (`backend/nativecoder/devsetup_perrepo_test.go`), so a client, integration
+  own (`clients/integrations/community_coder_integration/coder/devsetup_perrepo_test.go`), so a client, integration
   or toolchain repository never inherits the monorepo's batteries-included
   `full-development` set-up by accident.
 - The map form of `coder_dev_setup` accepts a `setup_commands` escape hatch for
@@ -857,8 +857,8 @@ python3 -m venv .venv
   and nothing is guessed; the environment persistence lines
   (`SandboxEnvSetupLines`, ci#739) still apply so the toolchain PATH survives
   into the agent's later tool-call shells. This ships in
-  `backend/nativecoder/devsetup.go` (`ResolveDevSetup`, `DevSetupScript`).
-- `backend/nativecoder/devsetupfleet.go` is the per-bot / per-use-case audit of
+  `clients/integrations/community_coder_integration/coder/devsetup.go` (`ResolveDevSetup`, `DevSetupScript`).
+- `clients/integrations/community_coder_integration/coder/devsetupfleet.go` is the per-bot / per-use-case audit of
   that set-up: `CoderDevSetupFleet` lists which coder bot runs which use-case
   against which repository, `DevSetupFleetPlans` resolves the plan each bot
   actually gets (explicit `coder_dev_setup` or per-repo default) and
@@ -1135,9 +1135,9 @@ and it holds the credentials to reach `ci`. The emergency/monitoring agent is
 started **before** a deployment rolls, or manually from CI when monitoring reports
 `ci` down.
 
-The restricted profile itself (`backend/nativecoder/recoveryagent.go`: tool
+The restricted profile itself (`clients/integrations/community_coder_integration/coder/recoveryagent.go`: tool
 families, probes, triggers, markers, the single-host boundary) and its deployment
-half (`backend/nativecoder/recoverydeployment.go`: the delta below, the rendered
+half (`clients/integrations/community_coder_integration/coder/recoverydeployment.go`: the delta below, the rendered
 Helm overlay, the watchdog wiring and the provisioning checklist) are code, and
 both are unit tested. The private chart lives in
 `msgmate-io/open-chat-go-helm-chart`. The values file the overlay is applied on
@@ -1180,7 +1180,7 @@ exactly what `ValidateDeploymentDelta` enforces at build time:
 
 
 The complete config record of the new deployment is the rendered overlay
-`backend/nativecoder/testdata/ci2-helm-values.yaml` (`RenderCI2HelmValues`); a unit
+`clients/integrations/community_coder_integration/coder/testdata/ci2-helm-values.yaml` (`RenderCI2HelmValues`); a unit
 test asserts the committed file equals the render byte for byte, so the deployment
 config can not drift from the code and every change is reviewable in a PR diff. It
 carries **no credential value**: `credentialRef` (`ci-recovery-ssh`) is the runtime
@@ -1242,7 +1242,7 @@ reappears publicly.
 ### Native bot runtimes on the ci deployment (ci#584)
 
 The development bots of the ci deployment run on the native `msgmate-coder`
-runtimes. The flip lives in `backend/nativecoder/rollout.go`: the fleet moves
+runtimes. The flip lives in `backend/api/msgmate/rollout.go`: the fleet moves
 family by family (plan, then repl/coding, then review, then admin, then the
 coordinating `msgmate-coder` lead last), every family keeps the retired opencode
 runtime configured but out of rotation for the rollback window, and the opencode
@@ -1271,14 +1271,14 @@ the deployment, no rebuild and no data migration. `publish-open-chat-config.yaml
 (vault-sync, `DRY_RUN=true` first) is the path for that change. The ci deployment
 profile (`docker-compose.ci.yaml`) forwards `NATIVE_CODER_CUTOVER` and the
 rollback window `MSGMATECODER_NATIVE_ROLLBACK_WINDOW` into the backend container;
-`backend/nativecoder/cutoverenv_test.go` guards that wiring, because a missing
+`backend/api/msgmate/cutoverenv_test.go` guards that wiring, because a missing
 forward makes `retired` unreachable no matter what the vault says.
 
 ### Native coder / opencode capability parity (ci#394)
 
 The second half of the replacement goal is *capability*: flipping the fleet is
 pointless while the native `msgmate_coder` agent still misses parts of the
-opencode surface it replaces. `backend/nativecoder/opencodeparity.go` keeps that
+opencode surface it replaces. `clients/integrations/community_coder_integration/coder/opencodeparity.go` keeps that
 gap list as data - the nine gaps of ci#394 with their sequencing phase
 (`now`/`next`/`later`), status (`open`/`partial`/`closed`), the coder tool that
 closes the gap, the opencode capability it replaces, the tracker tickets and a
@@ -1301,7 +1301,7 @@ one-line note about the current shortfall:
 
 While a gap is still open the agent needs to know what to do *instead* of the
 opencode capability it misses, and that mitigation is data too:
-`backend/nativecoder/parityfallbacks.go` keeps one fallback line per gap id
+`clients/integrations/community_coder_integration/coder/parityfallbacks.go` keeps one fallback line per gap id
 (`ParityFallbackFor`, `ParityFallbackGuidanceLines`,
 `RenderParityFallbackMarkdown`, `ParityFallbackJSON`). Each line names at least
 one tool of `CoderSurfaceTools()`, so the guidance can only point at a tool the
@@ -1313,7 +1313,7 @@ keeps ci#394 honest in both directions: the registry says what is missing, the
 fallback table says how the coder copes until it is added.
 
 Gap 1 (`todo_list`) is being closed from the core side first:
-`backend/nativecoder/todoplan.go` holds the per-chat plan state behind
+`clients/integrations/community_coder_integration/coder/todoplan.go` holds the per-chat plan state behind
 opencode's `todowrite`/`todoread` (`CoderTodoStore.Write`/`Read`/`Clear`),
 mirroring the opencode contract - four statuses, at most one step in progress,
 stable positional ids, a plan cap, a revision that increments per accepted
@@ -1334,7 +1334,7 @@ image and structured reads, session compaction, and only then the large pieces
 Before a bot family is flipped from its opencode-era bot to the native
 `msgmate-coder` replacement, the two are run side by side on the same tickets
 and compared axis by axis. That evidence is data, not prose:
-`backend/nativecoder/abvalidation.go` holds the comparison axes (ticket
+`clients/integrations/community_coder_integration/coder/abvalidation.go` holds the comparison axes (ticket
 implemented, PR opened with CI labels, auto-sandbox used, no `chat_backend`
 fallback, auto-continue completed the turn, no parked turn) and the gate over the
 recorded paired runs.
@@ -1417,7 +1417,7 @@ implements one issue does not need the dispatch family.
    PR and record the version that flipped it, so the change is revertible.
 
 The order above is enforced, not just written down.
-`backend/nativecoder/nativedispatchgate.go` makes the retirement a checked fact:
+`clients/integrations/community_coder_integration/coder/nativedispatchgate.go` makes the retirement a checked fact:
 
 - `LegacyDispatchInputParity()` maps every input of the legacy workflow onto its
   native counterpart, and `LegacyDispatchParityGaps()` lists the inputs for which
@@ -1447,8 +1447,8 @@ the state ci#757 starts from.
 
 ### opencode retirement umbrella (ci#585)
 
-`backend/nativecoder/opencoderetirement.go` gates the retirement of the opencode
-integration on the flipped fleet. `backend/nativecoder/retirementevidence.go`
+`clients/integrations/community_coder_integration/coder/opencoderetirement.go` gates the retirement of the opencode
+integration on the flipped fleet. `clients/integrations/community_coder_integration/coder/retirementevidence.go`
 breaks the same gate down per umbrella step (`OpencodeRetirementEvidence`): each
 checklist entry of the ticket gets the status the gate implies and the blocker
 lines that belong to it, and `RenderOpencodeRetirementEvidenceMarkdown` renders
@@ -1457,7 +1457,7 @@ that table for a ticket comment. Because the rows are derived from
 blocker is still listed.
 
 The config half of the same umbrella (ci#582) is the *delta* the flip publishes:
-`backend/nativecoder/retirementdelta.go` renders the per-bot runtime mutations
+`clients/integrations/community_coder_integration/coder/retirementdelta.go` renders the per-bot runtime mutations
 from the same flip registry - `OpencodeRetirementFlipDelta`,
 `OpencodeRetirementRollbackDelta`, `OpencodeRetirementDeltaJSON` - together with
 the ordered apply plan (`OpencodeRetirementDeltaApplyPlan`), which goes through
@@ -1472,7 +1472,7 @@ ticket comment; `--require-ready` turns the gate into a non-zero exit for a
 scripted check.
 
 The last step of the umbrella (ci#585) removes the integration itself:
-`backend/nativecoder/opencoderetirestop.go` renders the *stop delta* -
+`clients/integrations/community_coder_integration/coder/opencoderetirestop.go` renders the *stop delta* -
 `OpencodeRetireStopDelta`, `OpencodeRetireStopDeltaJSON` - which disables the
 `opencode` chat backend, removes its dev bots and then removes the integration,
 in that order, through the same vault-sync path. `ValidateOpencodeRetireStopDelta`
@@ -1508,12 +1508,17 @@ fallback for the hooks it does not own yet — this keeps every intermediate sta
 green.
 
 Because the decoupling guard (ci#423) forbids an integration importing
-`backend/...`, the coder policy that used to live in the core tool loop
-(`backend/api/msgmate/coder_workspace_guidance.go`, the ci#739 sandbox framing)
-is ported into the integration rather than delegated. `backend/nativecoder` is
-being drained the same way; `backend/api/msgmate/runtime_selector_routing.go`
-still consumes its runtime flip registry (`NativeBotStages`, `NativeBotRotation`,
-`LegacyRuntimeBotAliases`).
+`backend/...`, the coder policy now lives in the shared, decoupled public coder
+library (`open-chat-go-community-coder-integration/coder`): the turn hooks, the
+system-prompt composition, the typed GitHub/git surfaces, the consolidation
+planner/runner, the coder compaction/patch/session-trust surfaces and the
+config defaults. `backend/nativecoder` is **deleted**; the core imports the
+shared library, and the config defaults are applied through the integration
+Definition hooks (`backend/agentdefaults`). The two coder integrations
+(`msgmate_coder` private, `community_coder` public) consume the same library and
+are kept mutually exclusive by the `!community_coder` profile exclusion so they
+never register the `coder_*` tools together. The bot-rotation registry moved to
+`backend/api/msgmate/rollout.go` (its only consumer).
 
 ## Decoupled integration builds (ci#423)
 
