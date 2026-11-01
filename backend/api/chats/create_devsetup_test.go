@@ -8,6 +8,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	// ci#394: the coder integration owns the chat-create dev setup through its
+	// Definition hooks (backend/agentdefaults). The production binary links it
+	// via the generated side-effect imports, but this package's test binary
+	// does not, so register it explicitly or ApplyAgentChatSetup is a no-op.
+	_ "github.com/msgmate-io/open-chat-go-community-coder-integration/integration"
 )
 
 // ci#756: a chat created directly against a repository must receive the same
