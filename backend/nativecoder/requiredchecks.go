@@ -58,6 +58,14 @@ type BranchCheckStates struct {
 	// Informational lists red checks/statuses the ruleset does not require. They
 	// are reported for the plan/log, and they are never a merge blocker.
 	Informational []string
+	// ChecksEmpty reports that the commit carried neither check runs nor legacy
+	// commit statuses (the /status endpoint's cached `pending` with an empty
+	// statuses list is the ci#928 stale-cache fingerprint). An empty commit is
+	// not a merge block: `pending` with no contexts is not a required check. The
+	// caller still decides whether an unevaluated PR may merge (require_green
+	// rejects it elsewhere); this flag only stops `pending` alone from being a
+	// hard block.
+	ChecksEmpty bool
 }
 
 // checkRunFact is the minimal check-run fact the aggregation needs.
