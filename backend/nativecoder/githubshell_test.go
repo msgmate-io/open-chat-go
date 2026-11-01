@@ -35,6 +35,17 @@ func TestTranslateGitHubShellCommandIssueVerbs(t *testing.T) {
 			},
 		},
 		{
+			name:    "issue list carries the label filter into the typed call",
+			command: "gh issue list --label test --label deploy --state open --limit 5",
+			tool:    GitHubToolIssueList,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				labels, ok := call.Arguments["labels"].([]string)
+				if !ok || len(labels) != 2 || labels[0] != "test" || labels[1] != "deploy" {
+					t.Fatalf("labels = %v (%T)", call.Arguments["labels"], call.Arguments["labels"])
+				}
+			},
+		},
+		{
 			name:    "issue view by number",
 			command: "gh issue view 514 --repo msgmate-io/open-chat-go-ci --json body,title",
 			tool:    GitHubToolIssueView,
@@ -120,6 +131,17 @@ func TestTranslateGitHubShellCommandPullRequestVerbs(t *testing.T) {
 				fields, ok := call.Arguments["fields"].([]string)
 				if !ok || len(fields) != 3 {
 					t.Fatalf("fields = %v", call.Arguments["fields"])
+				}
+			},
+		},
+		{
+			name:    "pr list carries the label filter into the typed call",
+			command: "gh pr list --label test --state open --json number,title",
+			tool:    GitHubToolPRList,
+			assertion: func(t *testing.T, call GitHubToolCall) {
+				labels, ok := call.Arguments["labels"].([]string)
+				if !ok || len(labels) != 1 || labels[0] != "test" {
+					t.Fatalf("labels = %v (%T)", call.Arguments["labels"], call.Arguments["labels"])
 				}
 			},
 		},
@@ -445,5 +467,54 @@ func TestGitHubShellTranslationReportJSONIsStable(t *testing.T) {
 		if !strings.Contains(string(payload), key) {
 			t.Fatalf("report JSON missing %s: %s", key, payload)
 		}
+	}
+}
+
+func TestResidualShellArgsDemotesDroppedFilters(t *testing.T) {
+	// A filter the typed calls do not express yet must demote the translation
+	// to residual instead of being counted as covered with the value silently
+	// lost.
+	command := "gh issue list --label test --milestone 3 --state open"
+	translation := TranslateGitHubShellCommand(command)
+	if !translation.Translated {
+		t.Fatalf("expected translation: %+v", translation)
+	}
+	if !translation.Residual {
+		t.Fatalf("a dropped --milestone must demote the call: %+v", translation)
+	}
+	for _, want := range []string{"milestone", "flag"} {
+		if !strings.Contains(translation.Reason, want) {
+			t.Fatalf("reason %q missing %q", translation.Reason, want)
+		}
+	}
+	labels := translation.Call.Arguments["labels"].([]string)
+	if len(labels) != 1 || labels[0] != "test" {
+		t.Fatalf("labels = %v", translation.Call.Arguments["labels"])
+	}
+}
+
+func TestResidualShellArgsKeepsCoveredFilters(t *testing.T) {
+	for _, command := range []string{
+		"gh issue list --label test --state open --limit 5",
+		"gh pr list --label test --state open --json number,title",
+		"gh pr view 873 --repo msgmate-io/open-chat-go-ci",
+	} {
+		translation := TranslateGitHubShellCommand(command)
+		if !translation.Translated {
+			t.Fatalf("expected %q to translate: %+v", command, translation)
+		}
+		if translation.Residual {
+			t.Fatalf("expected %q to keep all filters: %+v", command, translation)
+		}
+	}
+}
+
+func TestResidualShellArgsFoldsRejectedVerbsIntoResidual(t *testing.T) {
+	translation := TranslateGitHubShellCommand("gh pr edit 873 --title t")
+	if translation.Translated {
+		t.Fatalf("an uncovored verb must not translate: %+v", translation)
+	}
+	if !translation.Residual {
+		t.Fatalf("expected residual rejection: %+v", translation)
 	}
 }

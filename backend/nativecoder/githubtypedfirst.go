@@ -17,11 +17,11 @@ const GitHubTypedFirstPromptMarker = "GitHub typed tools (use these instead of `
 // `github_cli` category target surface, so prompt and plan cannot drift apart
 // silently (githubtypedfirst_test.go checks every plan tool is covered).
 var GitHubTypedFirstPurpose = map[string]string{
-	GitHubToolIssueList:    "list and filter issues (`gh issue list`)",
+	GitHubToolIssueList:    "list and filter issues (`gh issue list`) with state/label filters as typed fields",
 	GitHubToolIssueView:    "read one issue with its comments (`gh issue view`)",
 	GitHubToolIssueCreate:  "open an issue (`gh issue create`), mutating",
 	GitHubToolIssueComment: "comment on an issue (`gh issue comment`), mutating",
-	GitHubToolPRList:       "list and filter pull requests (`gh pr list`)",
+	GitHubToolPRList:       "list and filter pull requests (`gh pr list`) with state/label filters as typed fields",
 	GitHubToolPRView:       "read one pull request, its diff and checks (`gh pr view`, `gh pr diff`)",
 	GitHubToolPRCreate:     "open a pull request (`gh pr create`), mutating",
 	GitHubToolPRComment:    "comment on a pull request (`gh pr comment`), mutating",

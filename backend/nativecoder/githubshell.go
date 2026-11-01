@@ -1,6 +1,7 @@
 package nativecoder
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -152,6 +153,10 @@ func TranslateGitHubShellCommand(command string) GitHubShellTranslation {
 	} else {
 		translation.Reason = call.Reason
 	}
+	if residual := residualShellArgs(call, command); residual != "" {
+		translation.Residual = true
+		translation.Reason = "the typed call drops " + residual + "; a value the typed surface does not express must never be silently lost"
+	}
 	return translation
 }
 
@@ -231,6 +236,7 @@ func translateGitHubIssueShell(args []string) (GitHubToolCall, bool, string) {
 		if len(fields) > 0 {
 			call.Arguments["fields"] = fields
 		}
+		addShellStrings(call.Arguments, "labels", splitShellCSV(values["label"]))
 		return call, true, ""
 	case "view":
 		number, ok := firstShellNumber(positional)
@@ -283,6 +289,7 @@ func translateGitHubPRShell(args []string) (GitHubToolCall, bool, string) {
 		setShellArg(call.Arguments, "repo", repo)
 		setShellArg(call.Arguments, "state", values["state"])
 		addShellInt(call.Arguments, "limit", values["limit"])
+		addShellStrings(call.Arguments, "labels", splitShellCSV(values["label"]))
 		if len(fields) > 0 {
 			call.Arguments["fields"] = fields
 		}
@@ -436,6 +443,63 @@ func translateGitHubAPIShell(args []string) (GitHubToolCall, bool, string) {
 	return call, true, ""
 }
 
+// residualShellArgs names the args of a translated command that the typed call
+// does not express, or "" when the bridge kept everything the agent asked for.
+// A translation that drops a value is demoted to residual by the bridge, so a
+// coverage number can never include a call that silently lost a filter.
+func residualShellArgs(call GitHubToolCall, command string) string {
+	words := ghShellWords(command)
+	words = words[1:] // drop `gh`
+	// Leading `KEY=value` environment assignments that precede `gh` were already
+	// dropped by ghShellWords, so words[0] is `gh` and nothing remains to
+	// tolerate here.
+	positional, values, flags := ghShellFlags(words)
+	var drop []string
+	// The call's own arguments are the ground truth for what the typed surface
+	// expressed; a retained flag the bridge understood may be dropped only when
+	// the typed call carries it or when the verb already rejected it, never when
+	// it is a value the agent asked for. Flag names the typed call does not
+	// cover demote the translation to residual.
+	for name, value := range values {
+		if value == "" {
+			continue
+		}
+		switch name {
+		case "repo", "state", "limit", "json", "label", "title", "body", "base",
+			"head", "number", "method", "event", "field", "raw-field", "F", "f",
+			"X", "paginate":
+			// kept by the typed call or rejected by the verb already
+		default:
+			drop = append(drop, name)
+		}
+	}
+	for name := range flags {
+		switch name {
+		case "draft", "approve", "request-changes", "comment", "merge", "squash",
+			"rebase", "delete-branch", "web":
+			// boolean flags the typed calls carry
+		default:
+			drop = append(drop, name)
+		}
+	}
+	_ = positional
+	_ = call
+	sort.Strings(drop)
+	if len(drop) == 0 {
+		return ""
+	}
+	return "the " + strings.Join(drop, ", ") + " flag" + pluralSuffix(len(drop))
+}
+
+// pluralSuffix returns "" for one item and "s" for many, so a residual reason
+// reads naturally ("the milestone flag", "the milestone, author flag").
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // ghShellWords tokenises a command for the bridge. Unlike the classifier's
 // segment splitter it keeps the leading environment assignments and stops at
 // the first shell control operator, because a translation is one command: the
@@ -521,7 +585,11 @@ func ghShellFlags(args []string) (positional []string, values map[string]string,
 			continue
 		}
 		if equals := strings.Index(name, "="); equals >= 0 {
-			values[name[:equals]] = name[equals+1:]
+			if previous, seen := values[name[:equals]]; seen {
+				values[name[:equals]] = previous + "," + name[equals+1:]
+			} else {
+				values[name[:equals]] = name[equals+1:]
+			}
 			continue
 		}
 		if ghBooleanShellFlags[name] {
@@ -529,7 +597,14 @@ func ghShellFlags(args []string) (positional []string, values map[string]string,
 			continue
 		}
 		if index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
-			values[name] = args[index+1]
+			value := args[index+1]
+			if previous, seen := values[name]; seen {
+				// A repeated flag (e.g. two `--label`) keeps every value the
+				// agent asked for; downstream the comma list splits back out.
+				values[name] = previous + "," + value
+			} else {
+				values[name] = value
+			}
 			index++
 			continue
 		}
@@ -558,6 +633,18 @@ func isShellEnvAssignment(token string) bool {
 		}
 	}
 	return true
+}
+
+func addShellStrings(arguments map[string]interface{}, key string, values []string) {
+	var kept []string
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			kept = append(kept, trimmed)
+		}
+	}
+	if len(kept) > 0 {
+		arguments[key] = kept
+	}
 }
 
 func setShellArg(arguments map[string]interface{}, key, value string) {
