@@ -3,6 +3,7 @@ package user
 import (
 	"backend/database"
 	"backend/server/util"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -20,10 +21,21 @@ import (
 const maxUserAccessTokens = 5
 const cliBrowserAuthStateTTL = 5 * time.Minute
 
+// cliBrowserAuthTokenTTL bounds the lifetime of the CLI credential minted by
+// the browser flow. The flow is a convenience for interactive use, so a
+// short-lived token limits the blast radius if a minted credential is ever
+// exposed (see ci#936).
+const cliBrowserAuthTokenTTL = 15 * time.Minute
+
+// cliBrowserAuthResult is the outcome of a completed CLI browser
+// authorization stored under the server-generated state. The poller must
+// present the paired secret (cliCodeVerifier) to collect it: the state alone
+// is not a credential (see ci#936).
 type cliBrowserAuthResult struct {
-	Token     string
-	Error     string
-	ExpiresAt time.Time
+	Token        string
+	Error        string
+	ExpiresAt    time.Time
+	CodeVerifier string
 }
 
 var cliBrowserAuthResults = struct {
@@ -268,6 +280,47 @@ func (h *UserHandler) CreateAccessToken(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// tokenExpiryPtr returns a pointer to the expiry time offset from now by ttl.
+func tokenExpiryPtr(ttl time.Duration) *time.Time {
+	expiresAt := time.Now().Add(ttl)
+	return &expiresAt
+}
+
+func (h *UserHandler) CLIBrowserAuthStart(w http.ResponseWriter, r *http.Request) {
+	// The poller must present the paired secret (code_verifier) when it
+	// collects the result: the state alone is not a credential. Issuing a
+	// fresh server-generated state per request ensures an attacker cannot
+	// pre-seed a state they know and later collect the token minted under it
+	// (see ci#936). Legitimate clients complete the flow in seconds, so a
+	// short TTL keeps the in-memory store bounded.
+	state, err := randomURLSafeToken(24)
+	if err != nil {
+		http.Error(w, "Failed to generate auth state", http.StatusInternalServerError)
+		return
+	}
+	// The paired secret is generated server-side together with the state and
+	// kept out of the URL: the authorize page must show it to the user (for
+	// manual copy) or the client passes it to the authorize URL, and the poll
+	// step requires it again.
+	codeVerifier, err := randomURLSafeToken(24)
+	if err != nil {
+		http.Error(w, "Failed to generate auth secret", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	cliBrowserAuthResults.mu.Lock()
+	cleanupExpiredCLIAuthResultsLocked(now)
+	cliBrowserAuthResults.state[state] = cliBrowserAuthResult{
+		CodeVerifier: codeVerifier,
+		ExpiresAt:    now.Add(cliBrowserAuthStateTTL),
+	}
+	cliBrowserAuthResults.mu.Unlock()
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "code_verifier": codeVerifier})
+}
+
 func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 	DB, err := util.GetDB(r)
 	if err != nil {
@@ -277,6 +330,7 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 
 	redirectURI := strings.TrimSpace(r.URL.Query().Get("redirect_uri"))
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	codeVerifier := strings.TrimSpace(r.URL.Query().Get("code_verifier"))
 	tokenName := strings.TrimSpace(r.URL.Query().Get("name"))
 	if tokenName == "" {
 		tokenName = "open-chat-cli"
@@ -288,6 +342,14 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidCLIAuthState(state) {
 		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
+	// The state must have been issued by CLIBrowserAuthStart and must not
+	// already hold a result: minting under a caller-supplied state is the
+	// exact hijack primitive this flow previously exposed (see ci#936).
+	// The paired secret proves the caller started the flow.
+	if !isPendingCLIAuthState(state, codeVerifier) {
+		http.Error(w, "state was not issued by this server", http.StatusBadRequest)
 		return
 	}
 	if redirectURI != "" && !isValidRedirectURL(redirectURI) {
@@ -318,6 +380,7 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 		Name:        composeTokenName(tokenName, nil),
 		TokenPrefix: prefix,
 		TokenHash:   tokenHash,
+		ExpiresAt:   tokenExpiryPtr(cliBrowserAuthTokenTTL),
 	}
 	if createErr := DB.Create(&accessToken).Error; createErr != nil {
 		handleCLIAuthResult(w, r, redirectURI, state, "Failed to persist token", "")
@@ -329,8 +392,13 @@ func (h *UserHandler) CLIBrowserAuth(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) CLIBrowserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	codeVerifier := strings.TrimSpace(r.URL.Query().Get("code_verifier"))
 	if state == "" {
 		http.Error(w, "state is required", http.StatusBadRequest)
+		return
+	}
+	if codeVerifier == "" {
+		http.Error(w, "code_verifier is required", http.StatusBadRequest)
 		return
 	}
 	if !isValidCLIAuthState(state) {
@@ -338,7 +406,8 @@ func (h *UserHandler) CLIBrowserAuthPoll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, found := popCLIAuthResult(state)
+	result, found := popCLIAuthResult(state, codeVerifier)
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	if !found {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ready": false})
@@ -425,6 +494,29 @@ func isValidCLIAuthState(state string) bool {
 	return true
 }
 
+// isPendingCLIAuthState reports whether state was issued by
+// CLIBrowserAuthStart and no result has been stored under it yet. Minting a
+// token is only allowed for a pending server-issued state, and only when the
+// caller proves it started the flow by presenting the paired secret.
+func isPendingCLIAuthState(state, codeVerifier string) bool {
+	now := time.Now()
+	cliBrowserAuthResults.mu.Lock()
+	defer cliBrowserAuthResults.mu.Unlock()
+
+	cleanupExpiredCLIAuthResultsLocked(now)
+	result, found := cliBrowserAuthResults.state[state]
+	if !found || result.Token != "" || result.Error != "" {
+		return false
+	}
+	return constantTimeEqual(result.CodeVerifier, codeVerifier)
+}
+
+// constantTimeEqual compares two strings without leaking their length
+// difference through early return.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 func loginRedirectURL(target string) string {
 	escaped := url.QueryEscape(strings.TrimSpace(target))
 	return "/login?redirect=" + escaped + "&next=" + escaped
@@ -463,14 +555,22 @@ func setCLIAuthResult(state, token, authErr string) {
 	defer cliBrowserAuthResults.mu.Unlock()
 
 	cleanupExpiredCLIAuthResultsLocked(now)
+	// Preserve the paired secret issued at start: the poller still needs it to
+	// collect the result.
+	codeVerifier := cliBrowserAuthResults.state[state].CodeVerifier
 	cliBrowserAuthResults.state[state] = cliBrowserAuthResult{
-		Token:     strings.TrimSpace(token),
-		Error:     strings.TrimSpace(authErr),
-		ExpiresAt: now.Add(cliBrowserAuthStateTTL),
+		Token:        strings.TrimSpace(token),
+		Error:        strings.TrimSpace(authErr),
+		ExpiresAt:    now.Add(cliBrowserAuthStateTTL),
+		CodeVerifier: codeVerifier,
 	}
 }
 
-func popCLIAuthResult(state string) (cliBrowserAuthResult, bool) {
+// popCLIAuthResult atomically removes and returns the result stored under
+// state, but only when the caller presents the paired secret. Presenting the
+// wrong (or no) secret must not consume the result, otherwise an attacker who
+// can guess a state could destroy a legitimate CLI handshake.
+func popCLIAuthResult(state, codeVerifier string) (cliBrowserAuthResult, bool) {
 	now := time.Now()
 	cliBrowserAuthResults.mu.Lock()
 	defer cliBrowserAuthResults.mu.Unlock()
@@ -478,6 +578,9 @@ func popCLIAuthResult(state string) (cliBrowserAuthResult, bool) {
 	cleanupExpiredCLIAuthResultsLocked(now)
 	result, found := cliBrowserAuthResults.state[state]
 	if !found {
+		return cliBrowserAuthResult{}, false
+	}
+	if result.CodeVerifier == "" || !constantTimeEqual(result.CodeVerifier, codeVerifier) {
 		return cliBrowserAuthResult{}, false
 	}
 	delete(cliBrowserAuthResults.state, state)
