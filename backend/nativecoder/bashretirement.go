@@ -331,8 +331,8 @@ var bashUsageCategories = []BashUsageCategory{
 		Description: "CI waiting and polling: `gh pr checks --watch`, `gh run watch`, `gh run list --watch`, and hand-rolled until/while poll loops over `gh run view`. These are the last shell escape hatch on the GitHub workflows: the dev agent should block-and-settle through a typed, cloud-event driven tool instead of busy-waiting in a shell.",
 		Tier:        CapabilityTierCore,
 		Phase:       "phase_6_github_wait",
-		Shipped: false,
-		Policy:  "read-only: block until a workflow run or PR check set settles, then return the terminal state; never busy-wait, never poll in a loop",
+		Shipped:     false,
+		Policy:      "read-only: block until a workflow run or PR check set settles, then return the terminal state; never busy-wait, never poll in a loop",
 		Examples: []string{
 			"gh pr checks 873 --watch",
 			"gh run watch 123456789 --repo msgmate-io/open-chat-go",
