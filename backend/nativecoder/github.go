@@ -294,10 +294,23 @@ func (c *GitHubAPIClient) pullRequestFromREST(ctx context.Context, row githubPul
 			// The ruleset requires nothing (or is absent): every check stays
 			// authoritative, and the red ones are only reported.
 			pr.ChecksState = combinedStateFromFacts(runs, statuses)
+			// ci#928: the same stale-cache guard as in the combined path — a
+			// just-merged commit that has neither runs nor statuses must not
+			// read as `pending` (blocked); the planner's require_green gate
+			// still rejects an unevaluated PR when the policy demands green.
+			pr.ChecksEmpty = len(runs) == 0 && len(statuses) == 0
 		}
 		pr.InformationalChecks = states.Informational
 	} else if state, err := c.combinedChecksState(ctx, row.Head.SHA); err == nil {
 		pr.ChecksState = state
+		// ci#928: a freshly-created (just-merged) commit can read a stale
+		// `pending` with no contexts from GitHub's /status cache. Resolve the
+		// empty-commit fingerprint so a bare `pending` never reads as a merge
+		// block: the planner's require_green gate still rejects a PR that has
+		// no reported checks when the policy demands green.
+		if empty, err := c.combinedChecksStateEmpty(ctx, row.Head.SHA); err == nil {
+			pr.ChecksEmpty = empty
+		}
 	}
 	return pr
 }
@@ -314,6 +327,24 @@ func (c *GitHubAPIClient) combinedChecksState(ctx context.Context, sha string) (
 		return "", err
 	}
 	return combinedStateFromFacts(runs, statuses), nil
+}
+
+// combinedChecksStateEmpty reports whether a commit carries no checks at all: no check runs
+// and no legacy commit statuses. It is the resolver behind the ci#928 stale-cache
+// fingerprint — GitHub's /status can momentarily return `pending` with an empty statuses
+// list for a freshly-created just-merged commit with no checks, while /check-runs correctly
+// returns []; a bare `pending` with no contexts is not a required check.
+func (c *GitHubAPIClient) combinedChecksStateEmpty(ctx context.Context, sha string) (bool, error) {
+	// Some wrappers short-circuit SHA lookups; never treat a missing sha as a
+	// checks-empty commit (that would defeat the cross-check).
+	if strings.TrimSpace(sha) == "" {
+		return false, nil
+	}
+	runs, statuses, err := c.commitChecks(ctx, sha)
+	if err != nil {
+		return false, err
+	}
+	return len(runs) == 0 && len(statuses) == 0, nil
 }
 
 // ListOpenConsolidations lists the open consolidation PRs (branch prefix or the

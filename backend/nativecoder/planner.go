@@ -58,6 +58,13 @@ type PullRequest struct {
 	// not require (eg the `private-sandbox-tests` commit status). They are
 	// reported, and they never block a merge.
 	InformationalChecks []string  `json:"informational_checks,omitempty"`
+	// ChecksEmpty reports that the head commit carried neither check runs nor
+	// legacy commit statuses: the /status endpoint's cached `pending` with an
+	// empty statuses list is the ci#928 stale-cache fingerprint for a
+	// just-merged commit. A bare `pending` is not a required check, so a PR
+	// with no checks at all must not read as merge-blocked on that alone (the
+	// planner's require_green gate still rejects an unevaluated PR elsewhere).
+	ChecksEmpty bool `json:"checks_empty,omitempty"`
 	Labels              []string  `json:"labels,omitempty"`
 	CreatedAt           time.Time `json:"created_at,omitempty"`
 	// Body is the PR description, used to resolve the leaf issue the PR closes
@@ -316,6 +323,16 @@ func evaluateReady(policy AutoConsolidationPolicy, facts ConsolidationFacts, pr 
 			if !informationalStatusOnlyBlock(pr) {
 				return reject(fmt.Sprintf("merge state is %s", state))
 			}
+		case MergeStateBehind, MergeStateDraft, "REDUNDANT":
+			// ci#928: GitHub's `/commits/{sha}/status` server-side cache can be
+			// momentarily stale for a freshly-created commit, reporting
+			// `pending` with no contexts for a commit that has none, while
+			// `/check-runs` returns `[]` and the PR is authoritatively MERGED.
+			// Such a bare `pending` is not a required check — there are no
+			// checks at all — so a just-merged or no-PR commit must not read as
+			// a merge block. These states tolerate the same transient by the
+			// same rule; the required-context and require_green gates below
+			// still reject a PR that genuinely has failing or missing checks.
 		case MergeStateUnknown:
 			return reject("mergeability is not known yet")
 		default:
