@@ -412,6 +412,33 @@ func RenderCoderShellSessions(sessions []CoderShellSession) string {
 	return strings.TrimRight(builder.String(), "\n")
 }
 
+// RenderCoderShellSession renders one session as the deterministic line the
+// chat view shows right after a live `coder_bash` call started it (same shape
+// as the per-session lines of RenderCoderShellSessions, so a status read and a
+// start follow the same format).
+func RenderCoderShellSession(session CoderShellSession) string {
+	code := ""
+	if session.ExitCode != nil {
+		code = fmt.Sprintf(", exit %d", *session.ExitCode)
+	}
+	return fmt.Sprintf("%s [%s/%s] %s (%d bytes%s)",
+		session.ID, session.Mode, session.Status, session.Command, session.OutputBytes, code)
+}
+
+// CoderShellSessionJSON marshals one session as stable JSON for a live
+// `coder_bash` start result (versioned like CoderShellSessionsJSON, never
+// including retained output bytes).
+func CoderShellSessionJSON(session CoderShellSession) (string, error) {
+	encoded, err := json.Marshal(struct {
+		Version int               `json:"version"`
+		Session CoderShellSession `json:"session"`
+	}{Version: CoderShellParityVersion, Session: session})
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
 // CoderShellSessionsJSON renders sessions as stable JSON for run evidence.
 func CoderShellSessionsJSON(sessions []CoderShellSession) (string, error) {
 	if sessions == nil {
