@@ -1102,7 +1102,8 @@ func userDisplayName(user database.User) string {
 }
 
 func respondAgentJSON(w http.ResponseWriter, status int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	ok := apierror.WriteJSON(w, status, payload)
+	if !ok {
+		logging.Errorf("failed to encode agent dispatch JSON response (status %d)", status)
+	}
 }

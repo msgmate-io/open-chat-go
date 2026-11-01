@@ -47,3 +47,47 @@ func TestWriteAlwaysEmitsJSONBody(t *testing.T) {
 		}
 	}
 }
+
+// ci#865 success-path side of the same contract: the envelope-aware writer used
+// for bot-surface 200s must always produce a parseable JSON body. An empty 200
+// (or one cut off before the JSON starts) is indistinguishable to a generated
+// client from a vanished response, so it must never be emitted by WriteJSON.
+func TestWriteJSONAlwaysEmitsParseableBody(t *testing.T) {
+	payloads := []interface{}{
+		map[string]interface{}{
+			"success":      true,
+			"chat_uuid":    "chat-1",
+			"message_uuid": "msg-1",
+		},
+		struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{ID: "bot-1", Name: "msgmate-coder-bot"},
+	}
+
+	for _, tc := range payloads {
+		rec := httptest.NewRecorder()
+		var got any
+		if !WriteJSON(rec, http.StatusOK, tc) {
+			t.Fatalf("WriteJSON reported failure for payload %#v", tc)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); got != "application/json" {
+			t.Fatalf("content type = %q, want application/json", got)
+		}
+		if rec.Body.Len() == 0 {
+			t.Fatalf("200 returned an empty body")
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("200 body is not JSON (%q): %v", rec.Body.String(), err)
+		}
+	}
+}
+
+func TestWriteJSONNilWriterReportsFailure(t *testing.T) {
+	if WriteJSON(nil, http.StatusOK, map[string]interface{}{"ok": true}) {
+		t.Fatalf("WriteJSON with a nil writer must report failure")
+	}
+}

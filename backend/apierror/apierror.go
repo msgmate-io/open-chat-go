@@ -22,10 +22,25 @@ func Write(w http.ResponseWriter, status int, code string, message string) {
 	if w == nil {
 		return
 	}
+	if !WriteJSON(w, status, Response{Error: message, Code: code}) {
+		logging.Errorf("failed to encode api error response %q (status %d, code %q)", message, status, code)
+	}
+}
+
+// WriteJSON writes a JSON success/error payload with the JSON content type and
+// returns false only when the payload cannot be encoded (a client-facing
+// failure of the same kind as Write: a response the caller could not parse).
+// Encode errors are logged by the caller, which keeps this helper free of a
+// logging import cycle.
+func WriteJSON(w http.ResponseWriter, status int, payload interface{}) bool {
+	if w == nil {
+		return false
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(Response{Error: message, Code: code}); err != nil {
-		logging.Errorf("failed to encode api error response: %v", err)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		return false
 	}
+	return true
 }
