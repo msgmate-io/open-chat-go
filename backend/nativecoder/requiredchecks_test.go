@@ -375,3 +375,45 @@ func TestNewestCheckRunsKeepsARealCancelledFailure(t *testing.T) {
 		t.Fatalf("combined state = %q, want failure", got)
 	}
 }
+
+// TestCombinedChecksStateEmpty is the ci#928 stale-cache fingerprint: a
+// freshly-created just-merged commit can read `pending` with an empty statuses
+// list from GitHub's /status cache while /check-runs returns []. Such a commit
+// carries no checks at all, so combinedChecksStateEmpty must report empty and
+// the bare `pending` must never read as a merge block.
+func TestCombinedChecksStateEmpty(t *testing.T) {
+	// A commit with neither check runs nor legacy statuses is empty — the
+	// /status endpoint's stale cached `pending` has no contexts to back it.
+	client := testClient(requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"pending","statuses":[]}`))
+	empty, err := client.combinedChecksStateEmpty(t.Context(), "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !empty {
+		t.Fatal("a commit with no check runs and no statuses must read as checks-empty")
+	}
+
+	// The safety side: a commit that genuinely carries a check (even a running
+	// one) is never empty, and the resolve must not be defeated by a failure/
+	// success on either transport.
+	for name, server := range map[string]*httptest.Server{
+		"running check run":    requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[{"name":"Run PR CI Tests and Deployments","status":"in_progress","app":{"id":15368}}]}`, `{"state":"pending","statuses":[]}`),
+		"pushed legacy status": requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"pending","statuses":[{"context":"private-sandbox-tests","state":"pending"}]}`),
+		"failed legacy status": requiredChecksServer(t, requiredRulesJSON, `{"check_runs":[]}`, `{"state":"failure","statuses":[{"context":"private-sandbox-tests","state":"failure"}]}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			found, err := testClient(server).combinedChecksStateEmpty(t.Context(), "abc123")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if found {
+				t.Fatalf("a commit with a real %s must not read as checks-empty", name)
+			}
+		})
+	}
+
+	// Empty SHA guard: never treat a missing sha as checks-empty.
+	if found, err := client.combinedChecksStateEmpty(t.Context(), "  "); err != nil || found {
+		t.Fatalf("empty sha: found=%v err=%v, want (false, nil)", found, err)
+	}
+}
