@@ -355,7 +355,11 @@ func (c *GitHubAPIClient) commitChecks(ctx context.Context, sha string) ([]check
 // combinedStateFromFacts aggregates a commit's checks the way the legacy
 // "combined status" API did: check-runs win when there are any (a non-completed
 // run is pending, a red conclusion is a failure), otherwise the commit statuses
-// decide. It mirrors combinedChecksState so both paths stay consistent.
+// decide. It mirrors combinedChecksState so both paths stay consistent. A commit
+// with **no** statuses at all (and no runs) is "unknown" — the legacy aggregate
+// only ever reports pending when a status context actually exists to be pending
+// (ci#928: GitHub's /status can stale-report `pending` with an empty statuses
+// list for a freshly-created just-merged commit that has no checks).
 func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 	if len(runs) > 0 {
 		state := "success"
@@ -369,14 +373,15 @@ func combinedStateFromFacts(runs []checkRunFact, statuses []statusFact) string {
 		}
 		return state
 	}
+	if len(statuses) == 0 {
+		return "unknown"
+	}
 	state := "pending"
 	for _, status := range statuses {
 		switch statusFactState(status) {
 		case "failure":
 			return "failure"
-		case "pending":
-			state = "pending"
-		default:
+		case "success":
 			state = "success"
 		}
 	}
