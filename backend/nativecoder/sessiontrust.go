@@ -71,6 +71,11 @@ var (
 	ErrCoderTrustUnknownAction = errors.New("coder session trust: unknown action")
 )
 
+// coder_todo_write is mutating (it replaces the whole plan of a chat) while
+// coder_todo_read stays read-only, so writing a plan remains a deliberate
+// action: exactly like opencode's todowrite (which needs permission) versus
+// todoread (which does not).
+
 // coderTrustToolClasses maps a coder tool name to the action class it belongs
 // to. It is the single place a tool becomes trustable: a tool that is not listed
 // here has no class, needs no trust and can never be granted any.
@@ -84,6 +89,7 @@ var coderTrustToolClasses = map[string]string{
 	"coder_todo_read":        CoderTrustClassRead,
 	"coder_write":            CoderTrustClassWrite,
 	"coder_edit":             CoderTrustClassWrite,
+	"coder_todo_write":       CoderTrustClassWrite,
 	"coder_patch":            CoderTrustClassWrite,
 	"coder_bash":             CoderTrustClassShell,
 	"coder_git":              CoderTrustClassGit,
@@ -156,8 +162,8 @@ func NormalizeCoderTrustClasses(classes []string) ([]string, error) {
 }
 
 // CoderTrustClassForTool returns the action class of a coder tool, or "" when
-// the tool has no class (read-only helpers such as coder_todo_write, or a tool
-// this build does not know). An empty class means "never trusted implicitly".
+// the tool has no class (a tool this build does not know). An empty class means
+// "never trusted implicitly".
 func CoderTrustClassForTool(tool string) string {
 	return coderTrustToolClasses[strings.ToLower(strings.TrimSpace(tool))]
 }

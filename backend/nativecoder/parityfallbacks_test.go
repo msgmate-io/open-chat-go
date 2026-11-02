@@ -16,10 +16,15 @@ func TestParityFallbackGuidanceCoversEveryGap(t *testing.T) {
 			t.Errorf("parity fallback validation: %v", err)
 		}
 	}
-	if uncovered := UncoveredParityGapIDs(); len(uncovered) != 0 {
-		t.Fatalf("gaps without fallback guidance: %v", uncovered)
-	}
 	for _, gap := range OpenCodeParityGaps() {
+		if gap.Status == ParityStatusClosed {
+			// A closed gap ships its capability: no fallback guidance may
+			// survive, and the fallback coverage only concerns open gaps.
+			if _, ok := ParityFallbackFor(gap.ID); ok {
+				t.Errorf("closed gap %q still carries fallback guidance", gap.ID)
+			}
+			continue
+		}
 		text, ok := ParityFallbackFor(gap.ID)
 		if !ok || strings.TrimSpace(text) == "" {
 			t.Errorf("gap %q has no fallback guidance", gap.ID)
@@ -121,7 +126,7 @@ func TestParityFallbackValidationRejectsDrift(t *testing.T) {
 // uses: whitespace around a copied gap id must not lose the guidance, while an
 // empty or unknown id is reported as absent instead of returning an empty line.
 func TestParityFallbackLookupIsForgiving(t *testing.T) {
-	if _, ok := ParityFallbackFor("  todo_list  "); !ok {
+	if _, ok := ParityFallbackFor("  multi_edit_patch  "); !ok {
 		t.Fatal("padded gap id did not resolve")
 	}
 	for _, id := range []string{"", "   ", "not_a_gap"} {
