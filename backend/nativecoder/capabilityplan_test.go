@@ -157,6 +157,7 @@ func TestCapabilityPlanTracksKnownTickets(t *testing.T) {
 		"typed_github_pr_flow":               {514, 649},
 		"msgmate_coder_bugfix":               {915},
 		"msgmate_coder_ask":                  {925},
+		"msgmate_coder_fibonacci_json":       {939},
 	}
 	for id, tickets := range expectations {
 		scenario, ok := ScenarioByID(id)
