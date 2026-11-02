@@ -217,10 +217,52 @@ type BashCoverageReport struct {
 	// An unset (zero) value means "no recorded verification evidence yet",
 	// which the criteria evaluator treats as unattested rather than assumed.
 	WrittenVerifications int `json:"written_verifications,omitempty"`
+	// WrittenRecorded is the denominator WrittenCoverageFraction divides by:
+	// every mutating typed GitHub write that was recorded during the turn,
+	// whether or not its read-back verified it yet. It is the per-record
+	// persistence of the "0 vs 1" stub WrittenCoverageFraction replaced.
+	WrittenRecorded int `json:"written_recorded,omitempty"`
+	// WrittenUnverified counts the recorded writes that are still waiting on a
+	// verified read-back (the residual the phase-1 exit criterion works off).
+	WrittenUnverified int `json:"written_unverified,omitempty"`
 }
 
 // BashCoverageMaxExamples is how many residual (untyped) commands a report keeps.
 const BashCoverageMaxExamples = 5
+
+// GitHubWriteVerificationsSummary aggregates the verdict rows of a turn into
+// the counted columns the coverage report and the metadata render. It is the
+// pure, dependency-free bridge between the per-record read-back verdicts
+// (github_writes.go) and the report's WrittenRecorded / WrittenVerifications /
+// WrittenUnverified counts, so the api layer stays measurement-only and the
+// criterion evaluator keeps consuming the same row shape as before.
+func GitHubWriteVerificationsSummary(verdicts []GitHubWriteVerificationResult) (recorded, verified, unverified int) {
+	for _, verdict := range verdicts {
+		recorded++
+		if verdict.Verified {
+			verified++
+		} else {
+			unverified++
+		}
+	}
+	return recorded, verified, unverified
+}
+
+// ApplyGitHubWriteVerifications folds the per-record read-back verdicts of the
+// turn into the coverage report: WrittenRecorded counts every recorded mutating
+// typed GitHub write, WrittenVerifications counts the ones the read-back
+// confirmed, and the leftover records are kept visible in WrittenUnverified so
+// "writes still waiting on a read-back" stays a number, not a gap. The report
+// is returned unchanged when no verdicts are supplied (the empty-report case
+// must keep its zero values so the criteria evaluator treats a chat without
+// evidence as unattested, not as all-verified).
+func (r BashCoverageReport) ApplyGitHubWriteVerifications(verdicts []GitHubWriteVerificationResult) BashCoverageReport {
+	recorded, verified, unverified := GitHubWriteVerificationsSummary(verdicts)
+	r.WrittenRecorded = recorded
+	r.WrittenVerifications = verified
+	r.WrittenUnverified = unverified
+	return r
+}
 
 // BuildBashCoverageReport classifies every command of a turn and aggregates the
 // buckets into the coverage report.
@@ -278,19 +320,31 @@ func (r BashCoverageReport) Categories() []string {
 }
 
 // WrittenCoverageFraction is the share of recorded typed GitHub writes that
-// were verified by their read-back (0 when nothing was recorded yet). It is
-// the phase-1 exit-criterion-4 metric: writes verified instead of claimed.
-// Verified writes are counted in WrittenVerifications (the numerator); the
-// denominator (recorded writes) is not exposed yet, so the method returns 1
-// once at least one write is verified and 0 otherwise. TODO(ci#514): derive
-// this as verified/recorded once the per-record read-back pass is wired
-// through the api layer (github_writes.go already emits the per-record
-// verdicts); until then 0 means "no verified writes recorded".
+// were verified by their read-back. It is the phase-1 exit-criterion-4 metric:
+// writes verified instead of claimed. WrittenVerifications is the numerator
+// (the count of read-back verified writes); WrittenRecorded is the denominator
+// (every mutating typed GitHub write that was recorded, verified or not), so
+// 0 means "no writes verified yet" and 1 means "every recorded write was
+// verified" — never a guess: with nothing recorded the metric stays 0
+// (unattested), and the criteria evaluator treats that as no-exit-evidence.
 func (r BashCoverageReport) WrittenCoverageFraction() float64 {
-	if r.WrittenVerifications == 0 {
+	if r.WrittenRecorded == 0 {
 		return 0
 	}
-	return 1
+	if r.WrittenVerifications >= r.WrittenRecorded {
+		return 1
+	}
+	return float64(r.WrittenVerifications) / float64(r.WrittenRecorded)
+}
+
+// WrittenCoveragePercent is WrittenCoverageFraction rounded for the JSON
+// metadata, so the payload reads like the ticket evidence (0..100).
+func (r BashCoverageReport) WrittenCoveragePercent() int {
+	fraction := r.WrittenCoverageFraction()
+	if fraction >= 1 {
+		return 100
+	}
+	return int(fraction * 100)
 }
 
 // Metadata renders the coverage report as JSON-friendly state, so the
@@ -301,12 +355,15 @@ func (r BashCoverageReport) Metadata() map[string]interface{} {
 		byCategory[name] = count
 	}
 	meta := map[string]interface{}{
-		"total":                  r.Total,
-		"by_category":            byCategory,
-		"typed_coverable":        r.TypedCoverable,
-		"typed_coverage_percent": r.TypedCoveragePercent(),
-		"untyped_examples":       r.UntypedExamples,
-		"written_verifications":  r.WrittenVerifications,
+		"total":                    r.Total,
+		"by_category":              byCategory,
+		"typed_coverable":          r.TypedCoverable,
+		"typed_coverage_percent":   r.TypedCoveragePercent(),
+		"untyped_examples":         r.UntypedExamples,
+		"written_verifications":    r.WrittenVerifications,
+		"written_recorded":         r.WrittenRecorded,
+		"written_unverified":       r.WrittenUnverified,
+		"written_coverage_percent": r.WrittenCoveragePercent(),
 	}
 	return meta
 }
