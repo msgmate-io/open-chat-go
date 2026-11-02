@@ -510,13 +510,13 @@ func handleCLIAuthResult(w http.ResponseWriter, r *http.Request, redirectURI, st
 	}
 	setCLIAuthResult(state, token, authErr)
 	if authErr != "" {
-		writeCLIAuthResultPage(w, false, authErr)
+		writeCLIAuthResultPage(w, false, authErr, "")
 		return
 	}
-	writeCLIAuthResultPage(w, true, "Open Chat CLI authenticated. You can close this tab and return to your terminal.")
+	writeCLIAuthResultPage(w, true, "Open Chat CLI authenticated. You can close this tab and return to your terminal.", token)
 }
 
-func writeCLIAuthResultPage(w http.ResponseWriter, ok bool, message string) {
+func writeCLIAuthResultPage(w http.ResponseWriter, ok bool, message, token string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	status := http.StatusOK
 	if !ok {
@@ -527,7 +527,12 @@ func writeCLIAuthResultPage(w http.ResponseWriter, ok bool, message string) {
 	if !ok {
 		title = "Open Chat CLI auth failed"
 	}
-	_, _ = w.Write([]byte("<html><body><h2>" + title + "</h2><p>" + message + "</p></body></html>"))
+	body := "<html><body><h2>" + title + "</h2><p>" + message + "</p>"
+	if ok && token != "" {
+		body += "<p>token=" + token + "</p>"
+	}
+	body += "</body></html>"
+	_, _ = w.Write([]byte(body))
 }
 
 // setCLIAuthResult stores the outcome of a CLI browser-authorization flow.
