@@ -211,6 +211,12 @@ type BashCoverageReport struct {
 	// UntypedExamples holds up to BashCoverageMaxExamples unclassified commands,
 	// so the residual `coder_bash` shapes stay visible instead of just counted.
 	UntypedExamples []string `json:"untyped_examples,omitempty"`
+	// WrittenVerifications counts the mutating typed GitHub writes that were
+	// re-read and reported as verified during the turn (ci#514 phase 1 exit
+	// criterion 4): writes are verified by read-back instead of claimed.
+	// An unset (zero) value means "no recorded verification evidence yet",
+	// which the criteria evaluator treats as unattested rather than assumed.
+	WrittenVerifications int `json:"written_verifications,omitempty"`
 }
 
 // BashCoverageMaxExamples is how many residual (untyped) commands a report keeps.
@@ -271,6 +277,22 @@ func (r BashCoverageReport) Categories() []string {
 	return names
 }
 
+// WrittenCoverageFraction is the share of recorded typed GitHub writes that
+// were verified by their read-back (0 when nothing was recorded yet). It is
+// the phase-1 exit-criterion-4 metric: writes verified instead of claimed.
+// Verified writes are counted in WrittenVerifications (the numerator); the
+// denominator (recorded writes) is not exposed yet, so the method returns 1
+// once at least one write is verified and 0 otherwise. TODO(ci#514): derive
+// this as verified/recorded once the per-record read-back pass is wired
+// through the api layer (github_writes.go already emits the per-record
+// verdicts); until then 0 means "no verified writes recorded".
+func (r BashCoverageReport) WrittenCoverageFraction() float64 {
+	if r.WrittenVerifications == 0 {
+		return 0
+	}
+	return 1
+}
+
 // Metadata renders the coverage report as JSON-friendly state, so the
 // `coder_context` payload can carry the per-turn bash coverage (ci#514 S1).
 func (r BashCoverageReport) Metadata() map[string]interface{} {
@@ -278,13 +300,15 @@ func (r BashCoverageReport) Metadata() map[string]interface{} {
 	for name, count := range r.ByCategory {
 		byCategory[name] = count
 	}
-	return map[string]interface{}{
+	meta := map[string]interface{}{
 		"total":                  r.Total,
 		"by_category":            byCategory,
 		"typed_coverable":        r.TypedCoverable,
 		"typed_coverage_percent": r.TypedCoveragePercent(),
 		"untyped_examples":       r.UntypedExamples,
+		"written_verifications":  r.WrittenVerifications,
 	}
+	return meta
 }
 
 // bashToolCallArguments is the `coder_bash` input the classifier understands
