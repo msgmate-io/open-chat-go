@@ -133,6 +133,14 @@ jobs:
           python3 backend/scripts/integration_dep_surface.py \
               --check-baseline integrations.dep-surface.json
 
+      # ci#423: committed-file invariants are pinned WITHOUT a Go toolchain by
+      # the fixture self-test (module discovery over clients/integrations and
+      # the --check-baseline verdict). The real measurement needs the full
+      # workspace and stays out of this fast job; it runs in smoke.
+      - name: dependency-surface fixture self-test (no Go)
+        run: |
+          python3 development/scripts/tests/test_dep_surface_fixture.py
+
       # ci#423 step 4: the PR gate itself. It is toolchain-free here (no GOWORK
       # in this job, so it validates the baseline and states that it only did
       # that) and its outcomes are pinned by the self-test next to it.
