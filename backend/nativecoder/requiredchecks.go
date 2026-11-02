@@ -528,12 +528,9 @@ func requiredContextState(check RequiredCheck, runs []checkRunFact, statuses []s
 			return statusFactState(status), true
 		}
 	}
-	// ci#928: a commit with no commit statuses at all (the stale
-	// `pending`/`statuses:[]` combined-status report right after a squash merge)
-	// carries no status for this required context, however the aggregate `state`
-	// field read. The check-runs list is the authoritative source for a commit
-	// that has no statuses, so the context has simply not reported. The
-	// sentinel is dropped before this point, so there is nothing left to scan.
+	// ci#928: the sentinel is dropped before the required-context evaluation
+	// (see evaluateRequiredContexts), so there is nothing empty left to scan
+	// here — the remaining statuses are exactly the real ones.
 	return "", false
 }
 
