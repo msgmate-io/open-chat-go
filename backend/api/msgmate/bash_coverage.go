@@ -230,6 +230,102 @@ type BashCoverageReport struct {
 // BashCoverageMaxExamples is how many residual (untyped) commands a report keeps.
 const BashCoverageMaxExamples = 5
 
+// GitHubWriteVerificationsFromMessages derives the per-record write verdicts of
+// a turn straight from the same assistant transcript the coverage report
+// classifies: every mutating typed GitHub tool call is a recorded write, and a
+// later tool-result read-back that mentions the write's payload (the body_or_call
+// the write produced) closes it as verified. It is the transcript pivot nativecoder's
+// read-back modal already works in - a verdict row per recorded mutating write,
+// verified only when the read-back re-read it. A malformed or missing read-back
+// leaves the record unverified rather than inventing a verification, so the
+// criterion's "verified instead of claimed" never sees a claimed write.
+func GitHubWriteVerificationsFromMessages(messages []map[string]interface{}) []GitHubWriteVerificationResult {
+	var verdicts []GitHubWriteVerificationResult
+	for _, message := range messages {
+		if roleOf(message) != "assistant" {
+			continue
+		}
+		for _, call := range toolCallsOf(message) {
+			if function, ok := call["function"].(map[string]interface{}); ok {
+				name, _ := function["name"].(string)
+				if readTool, writeHint := GitHubWriteVerificationFor(name); readTool != "" && writeHint != "" {
+					verdicts = append(verdicts, githubWriteVerificationFromToolCall(call, name, messages))
+				}
+			}
+		}
+	}
+	return verdicts
+}
+
+// toolCallArgumentsOf extracts the raw JSON arguments string of one tool call
+// record, mirroring how BashCommandsFromMessages reads `function.arguments`.
+func toolCallArgumentsOf(call map[string]interface{}) (string, bool) {
+	if function, ok := call["function"].(map[string]interface{}); ok {
+		if arguments, ok := function["arguments"].(string); ok {
+			return arguments, true
+		}
+	}
+	arguments, _ := call["arguments"].(string)
+	return arguments, arguments != ""
+}
+
+// firstString reads the first non-empty string value for key off a parsed JSON
+// payload map, or "".
+func firstString(payload map[string]interface{}, key string) string {
+	if raw, ok := payload[key]; ok {
+		if value, ok := raw.(string); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+// githubWriteVerificationFromToolCall resolves one recorded mutating typed GitHub
+// write into its verdict by matching the write's payload (the body_or_call string
+// the writes layer injects) against the read-back tool results.
+func githubWriteVerificationFromToolCall(call map[string]interface{}, tool string, messages []map[string]interface{}) GitHubWriteVerificationResult {
+	arguments, _ := toolCallArgumentsOf(call)
+	var payload map[string]interface{}
+	_ = json.Unmarshal([]byte(arguments), &payload)
+	body := strings.TrimSpace(firstString(payload, "body_or_call"))
+	if body == "" {
+		body = strings.TrimSpace(firstString(payload, "command"))
+	}
+	if body == "" {
+		if rawCommands, ok := payload["commands"].([]interface{}); ok {
+			for _, entry := range rawCommands {
+				if typed, ok := entry.(string); ok {
+					if trimmed := strings.TrimSpace(typed); trimmed != "" {
+						body = trimmed
+						break
+					}
+				}
+			}
+		}
+	}
+	readTool, _ := GitHubWriteVerificationFor(tool)
+	verdict := GitHubWriteVerificationResult{
+		Tool:     tool,
+		ReadTool: readTool,
+		Body:     body,
+		Reason:   "no matching read-back yet",
+	}
+	if body != "" {
+		for _, message := range messages {
+			if roleOf(message) != "tool" {
+				continue
+			}
+			content, _ := message["content"].(string)
+			if content != "" && strings.Contains(content, body) {
+				verdict.Verified = true
+				verdict.Reason = ""
+				break
+			}
+		}
+	}
+	return verdict
+}
+
 // GitHubWriteVerificationsSummary aggregates the verdict rows of a turn into
 // the counted columns the coverage report and the metadata render. It is the
 // pure, dependency-free bridge between the per-record read-back verdicts
