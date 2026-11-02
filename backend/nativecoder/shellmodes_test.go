@@ -353,6 +353,23 @@ func TestCoderShellSessionsRendering(t *testing.T) {
 		t.Fatalf("the render must not expose stdin details: %q", line)
 	}
 
+	// The single-session render used by a live `coder_bash` start result drops the
+	// list header, keeping the per-session line shape; the versioned JSON is
+	// carried without retained output bytes.
+	if single := RenderCoderShellSession(session); single != line[len("Shell sessions (1):\n- "):] {
+		t.Fatalf("single-session render must match the list line: %q vs %q", line[len("Shell sessions (1):\n- "):], single)
+	}
+	encodedSingle, err := CoderShellSessionJSON(session)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if !strings.Contains(encodedSingle, `"id":"sh-0001"`) || !strings.Contains(encodedSingle, `"version":1`) {
+		t.Fatalf("unexpected json: %s", encodedSingle)
+	}
+	if strings.Contains(encodedSingle, `"output"`) {
+		t.Fatalf("the session json must not carry output: %s", encodedSingle)
+	}
+
 	encoded, err := CoderShellSessionsJSON([]CoderShellSession{session})
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
