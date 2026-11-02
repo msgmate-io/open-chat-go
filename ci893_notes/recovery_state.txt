@@ -1,0 +1,41 @@
+# CI #893 recovery anchor (written at end of re-attach session; context was exhausted)
+Repo: msgmate-io/open-chat-go (worktree at coder-85b611ae-4d13-4d9d-9cdf/open-chat-go)
+Task: free OpenRouter model x private-sandbox capability matrix + landing table + JSON artifact.
+
+KNOWN-TO-BE-IN-PROGRESS (from earlier in this same re-attach session, before eviction):
+- PR #1176 in msgmate-io/open-chat-go was the open consolidation PR for this ticket:
+  * backend/benchmark/ (aggregate.go, registry.go, types.go, aggregate_test.go was modernised)
+  * landing integration: frontend/pages/evaluations_and_benchmarks/+Page.tsx renders
+    ProviderLogoWall (lines ~104-110) and was to be extended with the results table fed by
+    backend/database/product_landing_page_config.go static_data (per-page config,
+    backend/api/integrations/ProductLandingPages.go); seed/static-data plan in
+    ci893_notes/landing/README.md (pages list includes /evaluations_and_benchmarks).
+  * development/free_model_capability_sweep.sh (workspace copy) dispatches the sweep;
+    ci893_notes/private_ci/ holds .current.sh and .ci2.sh variants of the harness.
+- open-chat-go-ci repo: ci/sandbox-results branch holds per-run markdown results
+  sandbox_tests/results/<runid>.md with "Provider/model: `...`" header lines and a
+  status table per test (`| `test` | ✅ passed |` rows). /tmp/srclone is the clone.
+- Free-model runs present on ci/sandbox-results include (partial, from earlier greps):
+  openrouter/cohere/north-mini-code:free twice, openrouter/dots-studio/dots-3-note-preview:free,
+  openrouter/xingchen-agi/xing4.0-29b-a4b:free, openrouter/poolside/laguna-s-2.1:free,
+  openrouter/nvidia/nemotron-3.5-super-vl:free; grid extraction code was written to
+  /tmp/grid_raw.json (statuses per model per test).
+
+VERIFY BEFORE CONTINUING (could not be confirmed; outputs were evicted):
+- None of the many status/branch/PR reads in this session returned output, so treat ALL
+  facts above as unverified. Check in order:
+  1) git status -sb ; git branch --show-current ; git log --oneline -5
+  2) gh pr list -R msgmate-io/open-chat-go --search 893 --state all
+  3) Whether #1176 is still open, what its files/state are, who owns the base branch.
+  4) CURRENT free-model results on origin/ci/sandbox-results (fetch first):
+     cd /tmp/srclone && git fetch origin && git ls-tree -r --name-only origin/ci/sandbox-results | grep results/
+     Then per-model latest run: python3 script grepping Provider/model: line.
+  5) Working-tree tilde of landing page changes still uncommitted or committed.
+
+REMAINING DELIVERABLES (ticket):
+  a) full grid markdown + benchmark-results/free-models-<date>.json artifact (commit)
+  b) methodology write-up (free-tier rate limits, timeouts, provider-error classification,
+     vision n/a for text-only models, lw_* out-of-scope)
+  c) landing table fed from the artifact via the product_landing_pages backend
+  d) PR against main with CI labels; run gofmt + go test ./benchmark/... + frontend
+     lint/typecheck only (NOT full suite / E2E); open PR early, never poll CI.
