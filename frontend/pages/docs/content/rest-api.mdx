@@ -149,8 +149,8 @@ client side.
 | --- | --- | --- |
 | `POST` | `/api/v1/user/login` | Start a session. |
 | `POST` | `/api/v1/user/logout` | End a session. |
-| `GET` | `/api/user/cli-auth` | Begin CLI browser authorization (server-generated `state`; a caller-supplied `state` is rejected). |
-| `GET` | `/api/user/cli-auth/poll?state=...&secret=...` | Poll CLI authorization state with the paired secret. |
+| `GET` | `/api/user/cli-auth` | Begin CLI browser authorization (server-generated `state`; a caller-supplied `state` is rejected, and the flow returns a paired `secret`). |
+| `GET` | `/api/user/cli-auth/poll?state=...&secret=...` | Poll CLI authorization state; the paired secret (not just `state`) is required to collect the minted token. |
 
 See [Authentication](/docs#authentication) and
 [Browser tokens](/docs#browser-tokens) for the full auth model.
