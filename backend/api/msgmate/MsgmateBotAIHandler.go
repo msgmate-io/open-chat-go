@@ -185,12 +185,30 @@ func parseAskPayload(raw string) (map[string]interface{}, bool) {
 // earlier confirmaction backcompat path drops any options key the model sent
 // with it. The answer is keyed by the raw argument name, which is what the ask
 // tool re-emits as its resolved input.
+//
+// The payload carries the raw option values so the interactive frontend renders
+// them verbatim as a selectable widget. The options arm below accepts both a
+// []interface{} list (the shape tool inputs persist as) and a []string list (a
+// caller that built the arguments from a typed struct); a typed []string list
+// is converted to []interface{} so downstream JSON round-trips (map re-serialization
+// in the interactive confirm path) never turn it into a []float64.
 func toolAskPayload(toolCall map[string]interface{}) (map[string]interface{}, bool) {
 	name, _ := toolCall["name"].(string)
 	if strings.TrimSpace(name) != "coder_ask" {
 		return nil, false
 	}
-	if status, _ := toolCall["status"].(string); status == ToolCallStatusFailed {
+	status, _ := toolCall["status"].(string)
+	switch status {
+	case ToolCallStatusFailed:
+		return nil, false
+	case ToolCallStatusPendingConfirmation, ToolCallStatusOngoing, ToolCallStatusSucceeded, "pending", "":
+		// Promotable statuses: a pending/pending-confirmation call pauses the
+		// turn waiting for the answer, an ongoing call is mid-flight, a
+		// succeeded call carries the already-resolved arguments (the promoted
+		// tool-call row keeps the raw coder_ask input), and a missing status is
+		// treated as pending for robustness against varied persistence shapes.
+		// Only an explicit failure must never surface an open question.
+	default:
 		return nil, false
 	}
 
@@ -229,13 +247,22 @@ func toolAskPayload(toolCall map[string]interface{}) (map[string]interface{}, bo
 	if description, ok := args["description"].(string); ok && strings.TrimSpace(description) != "" {
 		payload["description"] = strings.TrimSpace(description)
 	}
+	if answerKey, ok := args["answer_key"].(string); ok && strings.TrimSpace(answerKey) != "" {
+		payload["answer_key"] = strings.TrimSpace(answerKey)
+	}
 	if defaultAnswer, ok := args["default"].(string); ok && strings.TrimSpace(defaultAnswer) != "" {
 		payload["default"] = strings.TrimSpace(defaultAnswer)
 	}
 	if options, ok := args["options"].([]interface{}); ok && len(options) > 0 {
 		payload["options"] = options
 	} else if options, ok := args["options"].([]string); ok && len(options) > 0 {
-		payload["options"] = options
+		// Normalize a typed []string list into []interface{} so the JSON
+		// round-trip through a map never degrades it to []float64 (#945).
+		asInterface := make([]interface{}, len(options))
+		for i, option := range options {
+			asInterface[i] = option
+		}
+		payload["options"] = asInterface
 	}
 	return payload, true
 }
