@@ -101,6 +101,15 @@ type CoderTodoSummary struct {
 	Total      int `json:"total"`
 }
 
+// HasActiveSteps reports whether the plan still has work to do (any pending or
+// in-progress item); a plan of only completed/cancelled steps (or no items) is
+// done. Callers use it instead of peeking at the raw status counts, so a plan
+// cleared or fully finished reads as done without any counting logic.
+func (p CoderTodoPlan) HasActiveSteps() bool {
+	summary := p.Summary()
+	return summary.Pending > 0 || summary.InProgress > 0
+}
+
 // CoderTodoStatusIsValid reports whether a status belongs to the contract. The
 // empty string is accepted by NormalizeCoderTodoItems (it defaults to pending)
 // but not by this predicate, so callers can tell "unset" from "set".
@@ -290,13 +299,15 @@ func (s *CoderTodoStore) Clear(chatID string) {
 // RenderCoderTodoPlan renders a plan as the deterministic markdown a chat shows:
 // in-progress steps first, then pending, completed and cancelled, each preserving
 // its submitted order. The rendering is stable for a given plan so a consumer can
-// diff it, and an empty plan renders as a fixed sentence rather than a blank box.
+// diff it, and a plan with no active steps (never written, cleared, or fully
+// finished) renders as a single done sentence rather than a blank box.
 func RenderCoderTodoPlan(plan CoderTodoPlan) string {
-	if len(plan.Items) == 0 {
-		if plan.Revision == 0 {
-			return "Todo plan: none."
+	if !plan.HasActiveSteps() {
+		line := "Todo plan: none."
+		if plan.Revision > 0 {
+			line = fmt.Sprintf("Todo plan (revision %d): all done.", plan.Revision)
 		}
-		return fmt.Sprintf("Todo plan (revision %d): none.", plan.Revision)
+		return line
 	}
 	summary := plan.Summary()
 	var builder strings.Builder
