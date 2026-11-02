@@ -429,3 +429,49 @@ func TestCombinedEmptyNeverVetoesARedContext(t *testing.T) {
 		t.Fatalf("combined state = %q, want unknown", got)
 	}
 }
+
+// TestRealPendingRequiredContextStillHolds is the ci#928 safety case: the empty
+// sentinel is dropped, but a genuine pending legacy status still reports the
+// required context as pending. The stale aggregate must not be able to *clear*
+// a real pending status.
+func TestRealPendingRequiredContextStillHolds(t *testing.T) {
+	statuses := []statusFact{
+		{Context: "files-sync", State: "pending"},
+		{CombinedEmpty: true},
+	}
+	state, found := requiredContextState(RequiredCheck{Context: "files-sync"}, nil, statuses)
+	if !found || state != "pending" {
+		t.Fatalf("required context state = %q found:%v, want pending/found (a real pending status survives the sentinel drop)", state, found)
+	}
+	state, failing := evaluateRequiredContexts([]RequiredCheck{{Context: "files-sync"}}, nil, statuses)
+	if state != "pending" || len(failing) != 1 || failing[0] != "files-sync" {
+		t.Fatalf("required state = %q failing:%v, want pending with the context reported", state, failing)
+	}
+}
+
+// TestStalePendingAggregateIsNotAPendingStatus guards the case the ci#928
+// follow-up closes: the combined-status endpoint reports a **stale pending
+// aggregate** (`state: pending`) *alongside* a real status. The aggregate never
+// names a check, so a required context that is pending only through the stale
+// aggregate stays not-found — it must not read as a pending required check.
+func TestStalePendingAggregateIsNotAPendingStatus(t *testing.T) {
+	statuses := []statusFact{
+		{Context: "files-sync", State: "success"},
+		{CombinedEmpty: true},
+	}
+	// The empty report is dropped even when a real (non-pending) status is
+	// present: it must not flip a green context into a stale pending block.
+	if state, found := requiredContextState(RequiredCheck{Context: "files-sync"}, nil, statuses); !found || state != "success" {
+		t.Fatalf("required context state = %q found:%v, want success", state, found)
+	}
+	state, failing := evaluateRequiredContexts([]RequiredCheck{{Context: "files-sync"}}, nil, statuses)
+	if state != "success" || len(failing) != 0 {
+		t.Fatalf("required state = %q failing:%v, want success with none failing", state, failing)
+	}
+	// A context that is pending only through the stale aggregate is not-found
+	// (un-reported), never a pending required check.
+	state, failing = evaluateRequiredContexts([]RequiredCheck{{Context: "other-sync"}}, nil, statuses)
+	if state != "pending" || len(failing) != 1 || failing[0] != "other-sync" {
+		t.Fatalf("required state = %q failing:%v, want pending (the ruleset names it but no check exists)", state, failing)
+	}
+}
