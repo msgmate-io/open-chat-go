@@ -149,8 +149,8 @@ client side.
 | --- | --- | --- |
 | `POST` | `/api/v1/user/login` | Start a session. |
 | `POST` | `/api/v1/user/logout` | End a session. |
-| `GET` | `/api/user/cli-auth` | Begin CLI browser authorization. |
-| `GET` | `/api/user/cli-auth/poll` | Poll CLI authorization state. |
+| `GET` | `/api/user/cli-auth` | Begin CLI browser authorization (server-generated `state`; a caller-supplied `state` is rejected). |
+| `GET` | `/api/user/cli-auth/poll?state=...&secret=...` | Poll CLI authorization state with the paired secret. |
 
 See [Authentication](/docs#authentication) and
 [Browser tokens](/docs#browser-tokens) for the full auth model.
